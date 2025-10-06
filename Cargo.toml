@@ -1,0 +1,11 @@
+[package]
+name = "oats"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+deno_ast = "0.50.2"
+inkwell = { version = "0.6.0", features = ["llvm18-1"] }
+anyhow = "1.0"
+url = "2.4"
+

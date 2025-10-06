@@ -1,0 +1,54 @@
+# Rust/Cargo
+/target/
+**/target/
+**/*.rlib
+**/*.rmeta
+Cargo.lock
+
+# Generated LLVM/IR and object files (AOT pipeline)
+*.ll
+*.bc
+*.o
+*.obj
+*.so
+*.dylib
+*.a
+*.exe
+*.out
+
+# Runtime build artifacts (Rust runtime crates)
+/runtime/**/target/
+/runtime/**/target/*
+
+# VS Code / JetBrains
+.vscode/
+.idea/
+*.iml
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temp files
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+
+# Environment files
+.env
+.env.*
+
+# Misc
+dist/
+node_modules/
+
+# Keep local scripts/external tempdir outputs out
+/tmp/
+
+# Ignore build artifacts produced by clang in tempdirs
+**/out
+
+# Allow exceptions: keep README, scripts, source code tracked
+

@@ -21,7 +21,7 @@ fn main() -> Result<()> {
     let source = std::fs::read_to_string(&src_path)?;
 
     // Parse
-    let parsed = parser::parse_oats_module(&source)?;
+    let parsed = parser::parse_oats_module(&source, None)?;
 
     // Require the user script to export a `main` function as the program entrypoint
     let mut func_decl_opt: Option<deno_ast::swc::ast::Function> = None;
@@ -52,7 +52,7 @@ fn main() -> Result<()> {
     let triple = TargetMachine::get_default_triple();
     module.set_triple(&triple);
     let builder = context.create_builder();
-    let codegen = CodeGen { context: &context, module, builder };
+    let codegen = CodeGen { context: &context, module, builder, next_str_id: std::cell::Cell::new(0) };
 
     // Generate IR
     // Emit the user's exported `main` under an internal symbol name to avoid

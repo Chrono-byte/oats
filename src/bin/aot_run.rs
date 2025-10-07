@@ -7,6 +7,7 @@ use anyhow::Result;
 use oats::parser;
 use oats::types::{check_function_strictness, SymbolTable};
 use oats::codegen::CodeGen;
+use oats::diagnostics;
 
 use inkwell::context::Context;
 use inkwell::targets::TargetMachine;
@@ -24,7 +25,115 @@ fn main() -> Result<()> {
 
     let source = std::fs::read_to_string(&src_path)?;
 
-    let parsed = parser::parse_oats_module(&source)?;
+    let parsed = parser::parse_oats_module(&source, Some(&src_path))?;
+
+    // Scan AST and reject any use of `var` declarations. We purposely do
+    // this early so users get a clear error rather than surprising
+    // codegen/runtime behavior later.
+    fn stmt_contains_var(stmt: &deno_ast::swc::ast::Stmt) -> bool {
+        use deno_ast::swc::ast;
+        match stmt {
+            // Only consider true `var` (function-scoped) declarations as
+            // rejected. `let` and `const` are represented by the same
+            // `Decl::Var` AST node but have a different `kind`.
+            ast::Stmt::Decl(ast::Decl::Var(vdecl)) => {
+                matches!(vdecl.kind, ast::VarDeclKind::Var)
+            }
+            ast::Stmt::Block(block) => {
+                for s in &block.stmts {
+                    if stmt_contains_var(s) { return true; }
+                }
+                false
+            }
+            ast::Stmt::If(ifstmt) => {
+                if stmt_contains_var(&*ifstmt.cons) { return true; }
+                if let Some(alt) = &ifstmt.alt { if stmt_contains_var(&*alt) { return true; } }
+                false
+            }
+            ast::Stmt::For(forstmt) => {
+                if stmt_contains_var(&*forstmt.body) { return true; }
+                false
+            }
+            ast::Stmt::While(ws) => stmt_contains_var(&*ws.body),
+            ast::Stmt::DoWhile(dws) => stmt_contains_var(&*dws.body),
+            ast::Stmt::Switch(swt) => {
+                for case in &swt.cases {
+                    for s in &case.cons { if stmt_contains_var(s) { return true; } }
+                }
+                false
+            }
+            ast::Stmt::Try(tr) => {
+                // tr.block is a BlockStmt
+                for s in &tr.block.stmts { if stmt_contains_var(s) { return true; } }
+                if let Some(handler) = &tr.handler {
+                    for s in &handler.body.stmts { if stmt_contains_var(s) { return true; } }
+                }
+                if let Some(finalizer) = &tr.finalizer {
+                    for s in &finalizer.stmts { if stmt_contains_var(s) { return true; } }
+                }
+                false
+            }
+            _ => false,
+        }
+    }
+
+    // Walk top-level items and examine function bodies / declarations.
+    for item in parsed.program_ref().body() {
+        use deno_ast::swc::ast;
+        if let deno_ast::ModuleItemRef::Stmt(stmt) = item {
+            if stmt_contains_var(stmt) {
+                return diagnostics::report_error_and_bail(
+                    Some(&src_path),
+                    Some(&source),
+                    "`var` declarations are not supported. Use `let` or `const` instead.",
+                    Some("`var` has function-scoped semantics which we intentionally disallow; prefer `let` or `const`."),
+                );
+            }
+            // If it's a function decl, also inspect its body for var
+            if let ast::Stmt::Decl(ast::Decl::Fn(fdecl)) = stmt {
+                if let Some(body) = &fdecl.function.body {
+                    for s in &body.stmts {
+                        if stmt_contains_var(s) {
+                            return diagnostics::report_error_and_bail(
+                                Some(&src_path),
+                                Some(&source),
+                                "`var` declarations are not supported. Use `let` or `const` instead.",
+                                Some("`var` has function-scoped semantics which we intentionally disallow; prefer `let` or `const`."),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        if let deno_ast::ModuleItemRef::ModuleDecl(module_decl) = item {
+            if let deno_ast::swc::ast::ModuleDecl::ExportDecl(decl) = module_decl {
+                if let ast::Decl::Var(vdecl) = &decl.decl {
+                    if matches!(vdecl.kind, ast::VarDeclKind::Var) {
+                        return diagnostics::report_error_and_bail(
+                            Some(&src_path),
+                            Some(&source),
+                            "`var` declarations are not supported. Use `let` or `const` instead.",
+                            Some("`var` has function-scoped semantics which we intentionally disallow; prefer `let` or `const"),
+                        );
+                    }
+                }
+                if let ast::Decl::Fn(fdecl) = &decl.decl {
+                    if let Some(body) = &fdecl.function.body {
+                        for s in &body.stmts {
+                            if stmt_contains_var(s) {
+                                return diagnostics::report_error_and_bail(
+                                    Some(&src_path),
+                                    Some(&source),
+                                    "`var` declarations are not supported. Use `let` or `const` instead.",
+                                    Some("`var` has function-scoped semantics which we intentionally disallow; prefer `let` or `const`."),
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     // Module-level body is parsed; do not print debug information here.
 
@@ -55,20 +164,39 @@ fn main() -> Result<()> {
     let triple = TargetMachine::get_default_triple();
     module.set_triple(&triple);
     let builder = context.create_builder();
-    let codegen = CodeGen { context: &context, module, builder };
+    let codegen = CodeGen { context: &context, module, builder, next_str_id: std::cell::Cell::new(0) };
 
     // Emit top-level helper functions (non-exported) found in the module so
     // calls to them can be lowered. Skip exported `main` which we handle
     // separately.
     for item in parsed.program_ref().body() {
         use deno_ast::swc::ast;
+        // non-exported function declarations: `function foo() {}`
         if let deno_ast::ModuleItemRef::Stmt(stmt) = item {
             if let ast::Stmt::Decl(ast::Decl::Fn(fdecl)) = stmt {
                 let fname = fdecl.ident.sym.to_string();
                 let inner_func = (*fdecl.function).clone();
                 let mut inner_symbols = SymbolTable::new();
                 let fsig = check_function_strictness(&inner_func, &mut inner_symbols)?;
-                codegen.gen_function_ir(&fname, &inner_func, &fsig.params, &fsig.ret);
+                // skip exported `main` (we handle exported main separately later)
+                if fname != "main" {
+                    codegen.gen_function_ir(&fname, &inner_func, &fsig.params, &fsig.ret);
+                }
+            }
+        }
+
+        // exported declarations: `export function foo() {}` — emit these too
+        if let deno_ast::ModuleItemRef::ModuleDecl(module_decl) = item {
+            if let deno_ast::swc::ast::ModuleDecl::ExportDecl(decl) = module_decl {
+                if let ast::Decl::Fn(fdecl) = &decl.decl {
+                    let fname = fdecl.ident.sym.to_string();
+                    let inner_func = (*fdecl.function).clone();
+                    let mut inner_symbols = SymbolTable::new();
+                    let fsig = check_function_strictness(&inner_func, &mut inner_symbols)?;
+                    if fname != "main" {
+                        codegen.gen_function_ir(&fname, &inner_func, &fsig.params, &fsig.ret);
+                    }
+                }
             }
         }
     }
@@ -166,10 +294,19 @@ fn main() -> Result<()> {
         anyhow::bail!("clang failed to link final binary");
     }
 
-    // run produced program
+    // run produced program and forward its exit code. This keeps program
+    // output visible while making the runner behave like a thin wrapper.
     let run = Command::new(out_bin).status()?;
-    if !run.success() {
-        anyhow::bail!("running out failed");
+    if let Some(code) = run.code() {
+        if code != 0 {
+            // Exit with the same code as the produced program so callers
+            // can observe the program's result without the runner converting
+            // it into an error.
+            std::process::exit(code);
+        }
+    } else if !run.success() {
+        // If there is no exit code (terminated by signal), return an error.
+        anyhow::bail!("running out failed (terminated by signal)");
     }
 
     Ok(())

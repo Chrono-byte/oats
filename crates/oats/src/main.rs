@@ -329,7 +329,7 @@ fn main() -> Result<()> {
     );
 
     // Print IR
-    println!("{}", codegen.module.print_to_string().to_string());
+    // println!("{}", codegen.module.print_to_string().to_string());
 
     Ok(())
 }

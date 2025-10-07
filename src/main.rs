@@ -23,21 +23,24 @@ fn main() -> Result<()> {
     // Parse
     let parsed = parser::parse_oats_module(&source)?;
 
-    // Find first exported function declaration using the ParsedSource API
+    // Require the user script to export a `main` function as the program entrypoint
     let mut func_decl_opt: Option<deno_ast::swc::ast::Function> = None;
     for item_ref in parsed.program_ref().body() {
         if let deno_ast::ModuleItemRef::ModuleDecl(module_decl) = item_ref {
             if let deno_ast::swc::ast::ModuleDecl::ExportDecl(decl) = module_decl {
                 if let deno_ast::swc::ast::Decl::Fn(f) = &decl.decl {
-                    // f.function is a Box<Function>, so clone and deref
-                    func_decl_opt = Some((*f.function).clone());
-                    break;
+                    let name = f.ident.sym.to_string();
+                    if name == "main" {
+                        // f.function is a Box<Function>, clone and use it
+                        func_decl_opt = Some((*f.function).clone());
+                        break;
+                    }
                 }
             }
         }
     }
 
-    let func_decl = func_decl_opt.ok_or_else(|| anyhow::anyhow!("No exported function found"))?;
+    let func_decl = func_decl_opt.ok_or_else(|| anyhow::anyhow!("No exported `main` function found. Please export `function main(...)` in your script."))?;
 
     // Type check
     let mut symbols = SymbolTable::new();
@@ -52,8 +55,12 @@ fn main() -> Result<()> {
     let codegen = CodeGen { context: &context, module, builder };
 
     // Generate IR
+    // Emit the user's exported `main` under an internal symbol name to avoid
+    // conflicting with the C runtime entrypoint. The script must export
+    // `main`, but we generate `oats_main` as the emitted symbol the host
+    // runtime will call.
     codegen.gen_function_ir(
-        "add_oats",
+        "oats_main",
         &func_decl,
         &func_sig.params,
         &func_sig.ret,

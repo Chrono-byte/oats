@@ -53,101 +53,26 @@ impl<'a> CodeGen<'a> {
         if self.module.get_function("str_concat").is_some() {
             return;
         }
-
-        // Always emit the IR function body for str_concat so generated IR is
-        // self-contained and can be compiled with clang without needing the
-        // repository runtime.
+        // Instead of emitting a full definition here (which can cause
+        // duplicate-symbol linker errors when we also link the runtime
+        // staticlib that provides `str_concat`), only declare the symbol
+        // so the runtime implementation will be used at link time.
         let i8ptr = self.context.ptr_type(AddressSpace::default());
         let fn_type = i8ptr.fn_type(&[i8ptr.into(), i8ptr.into()], false);
 
-        // Emit the IR function body
+        // Ensure libc declarations exist so calls can be built elsewhere.
         self.declare_libc();
 
-        let function = self.module.add_function("str_concat", fn_type, None);
-        let entry = self.context.append_basic_block(function, "entry");
-        self.builder.position_at_end(entry);
-
-        let a = function.get_nth_param(0).unwrap().into_pointer_value();
-        let b = function.get_nth_param(1).unwrap().into_pointer_value();
-
-        // call strlen(a)
-        let strlen_fn = self.module.get_function("strlen").unwrap();
-        let la_cs = self
-            .builder
-            .build_call(strlen_fn, &[a.into()], "la_call")
-            .expect("build_call failed");
-        let la = la_cs.try_as_basic_value().left().unwrap().into_int_value();
-
-        // call strlen(b)
-        let lb_cs = self
-            .builder
-            .build_call(strlen_fn, &[b.into()], "lb_call")
-            .expect("build_call failed");
-        let lb = lb_cs.try_as_basic_value().left().unwrap().into_int_value();
-
-        // total = la + lb + 1
-        let sum = self
-            .builder
-            .build_int_add(la, lb, "sum_len")
-            .expect("build_int_add failed");
-        let one = self.context.i64_type().const_int(1, false);
-        let total = self
-            .builder
-            .build_int_add(sum, one, "total_len")
-            .expect("build_int_add failed");
-
-        // call malloc(total)
-        let malloc_fn = self.module.get_function("malloc").unwrap();
-        let malloc_cs = self
-            .builder
-            .build_call(malloc_fn, &[total.into()], "malloc_call")
-            .expect("build_call failed");
-        let ptr = malloc_cs
-            .try_as_basic_value()
-            .left()
-            .unwrap()
-            .into_pointer_value();
-
-        // memcpy(ptr, a, la)
-        let memcpy_fn = self.module.get_function("memcpy").unwrap();
-        let _ = self
-            .builder
-            .build_call(memcpy_fn, &[ptr.into(), a.into(), la.into()], "copy1");
-
-        // dst = ptr + la
-        let dst = unsafe {
-            self.builder
-                .build_gep(self.context.i8_type(), ptr, &[la], "dst")
-        }
-        .unwrap();
-
-        // memcpy(dst, b, lb)
-        let _ = self
-            .builder
-            .build_call(memcpy_fn, &[dst.into(), b.into(), lb.into()], "copy2");
-
-        // store null terminator at ptr + la + lb
-        let idx = self
-            .builder
-            .build_int_add(la, lb, "idx")
-            .expect("build_int_add failed");
-        let term_ptr = unsafe {
-            self.builder
-                .build_gep(self.context.i8_type(), ptr, &[idx], "term")
-        }
-        .unwrap();
-        let zero = self.context.i8_type().const_int(0, false);
-        let _ = self
-            .builder
-            .build_store(term_ptr, zero.as_basic_value_enum());
-
-        let _ = self.builder.build_return(Some(&ptr.as_basic_value_enum()));
+        // Add the function declaration (no body). If a definition is needed
+        // later (for a self-contained IR mode) we can change this behavior.
+        let _function = self.module.add_function("str_concat", fn_type, None);
     }
 
     pub fn map_type_to_llvm(&self, ty: &OatsType) -> BasicTypeEnum<'a> {
         match ty {
             OatsType::Number => self.context.f64_type().as_basic_type_enum(),
             OatsType::Boolean => self.context.bool_type().as_basic_type_enum(),
+            OatsType::Void => panic!("Void type is not valid for function parameters"),
             OatsType::String => {
                 // represent strings as i8* (pointer) using context.ptr_type
                 self.context
@@ -216,6 +141,39 @@ impl<'a> CodeGen<'a> {
                 }
                 None
             }
+            ast::Expr::Call(call) => {
+                // Support simple identifier callees (calls to nested or module-level functions)
+                if let ast::Callee::Expr(boxed_expr) = &call.callee {
+                    if let ast::Expr::Ident(ident) = &**boxed_expr {
+                        let fname = ident.sym.to_string();
+                        if let Some(fv) = self.module.get_function(&fname) {
+                            // Lower args
+                            let mut lowered_args: Vec<inkwell::values::BasicMetadataValueEnum> = Vec::new();
+                            for a in &call.args {
+                                if let Some(val) = self.lower_expr(&a.expr, function, param_map) {
+                                    lowered_args.push(val.into());
+                                } else {
+                                    // unsupported arg lowering
+                                    return None;
+                                }
+                            }
+                            let cs = self.builder.build_call(fv, &lowered_args, "call_internal").expect("build_call failed");
+                            let either = cs.try_as_basic_value();
+                            match either {
+                                inkwell::Either::Left(bv) => Some(bv),
+                                _ => None,
+                            }
+                        } else {
+                            
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            }
             ast::Expr::Lit(lit) => {
                 use deno_ast::swc::ast::Lit;
                 match &*lit {
@@ -265,22 +223,28 @@ impl<'a> CodeGen<'a> {
             .map(|t| self.map_type_to_llvm(t))
             .collect();
 
-        let ret_basic = self.map_type_to_llvm(ret_type);
-
-        let fn_type = match ret_basic {
-            BasicTypeEnum::FloatType(ft) => {
+        // Build function type, supporting Void return.
+        let fn_type = match ret_type {
+            crate::types::OatsType::Number => {
+                let ft = self.context.f64_type();
                 let args: Vec<inkwell::types::BasicTypeEnum> = llvm_param_types.clone();
                 ft.fn_type(&args.iter().map(|a| (*a).into()).collect::<Vec<_>>(), false)
             }
-            BasicTypeEnum::IntType(it) => {
+            crate::types::OatsType::Boolean => {
+                let it = self.context.bool_type();
                 let args: Vec<inkwell::types::BasicTypeEnum> = llvm_param_types.clone();
                 it.fn_type(&args.iter().map(|a| (*a).into()).collect::<Vec<_>>(), false)
             }
-            BasicTypeEnum::PointerType(pt) => {
+            crate::types::OatsType::String | crate::types::OatsType::NominalStruct(_) => {
+                let pt = self.context.ptr_type(AddressSpace::default());
                 let args: Vec<inkwell::types::BasicTypeEnum> = llvm_param_types.clone();
                 pt.fn_type(&args.iter().map(|a| (*a).into()).collect::<Vec<_>>(), false)
             }
-            _ => panic!("unsupported return type"),
+            crate::types::OatsType::Void => {
+                let vt = self.context.void_type();
+                let args: Vec<inkwell::types::BasicTypeEnum> = llvm_param_types.clone();
+                vt.fn_type(&args.iter().map(|a| (*a).into()).collect::<Vec<_>>(), false)
+            }
         };
 
         // Ensure helper runtime functions (like str_concat) are emitted into the module
@@ -322,5 +286,108 @@ impl<'a> CodeGen<'a> {
         }
 
         function
+    }
+
+    /// Emit a small C-compatible `main` function in the module that calls the
+    /// generated `oats_main`. This avoids needing a separate host shim object.
+    ///
+    /// Supported script signatures:
+    /// - `main()` -> calls `oats_main()` and ignores return value
+    /// - `main(a: number, b: number)` -> calls `oats_main(1.5, 2.25)` and prints the
+    ///   returned double via `print_f64` (provided by the runtime staticlib).
+    /// Returns true if a host `main` was emitted, false if the signature is
+    /// unsupported.
+    pub fn emit_host_main(&self, param_types: &[crate::types::OatsType], _ret_type: &crate::types::OatsType) -> bool {
+        // If main already present, nothing to do
+        if self.module.get_function("main").is_some() {
+            return true;
+        }
+
+        // Ensure the oats_main symbol exists
+        let oats_fn = match self.module.get_function("oats_main") {
+            Some(f) => f,
+            None => return false,
+        };
+
+        // Do not declare or call print_f64 here; printing is the host's
+        // responsibility. This keeps generated modules free of output
+        // side-effects and makes the host agnostic.
+
+        // Build main: int main()
+        let i32t = self.context.i32_type();
+        let main_ty = i32t.fn_type(&[], false);
+        let main_fn = self.module.add_function("main", main_ty, None);
+        let entry = self.context.append_basic_block(main_fn, "entry");
+        self.builder.position_at_end(entry);
+
+        // Prepare call args based on signature
+    let _call_site = match param_types.len() {
+            0 => {
+                // call oats_main()
+                self.builder.build_call(oats_fn, &[], "call_oats_main").expect("build_call failed")
+            }
+            2 => {
+                // Both params must be numbers for our simple host
+                use crate::types::OatsType;
+                if param_types[0] != OatsType::Number || param_types[1] != OatsType::Number {
+                    // unsupported
+                    let zero = i32t.const_int(1, false);
+                    let _ = self.builder.build_return(Some(&zero.as_basic_value_enum()));
+                    return false;
+                }
+                let a = self.context.f64_type().const_float(1.5);
+                let b = self.context.f64_type().const_float(2.25);
+                self.builder.build_call(oats_fn, &[a.into(), b.into()], "call_oats_main").expect("build_call failed")
+            }
+            _ => {
+                // unsupported signature
+                let zero = i32t.const_int(1, false);
+                let _ = self.builder.build_return(Some(&zero.as_basic_value_enum()));
+                return false;
+            }
+        };
+
+
+        // Do not perform any automatic printing of return values here.
+        // The host (rt_main) or a user-level helper should handle I/O.
+
+        let zero = i32t.const_int(0, false);
+        let _ = self.builder.build_return(Some(&zero.as_basic_value_enum()));
+        // Also emit a small uniform entrypoint `oats_entry()` which the
+        // external host object can call without knowing the script
+        // signature. `oats_entry` will call `oats_main` with the same
+        // argument handling as `main` above but will not attempt printing;
+        // it simply invokes the generated function and returns.
+        if self.module.get_function("oats_entry").is_none() {
+            // Emit a silent no-arg oats_entry() that calls the generated oats_main
+            // using the same simple argument preparation as the host `main`.
+            let voidt = self.context.void_type();
+            let entry_ty = voidt.fn_type(&[], false);
+            let entry_fn = self.module.add_function("oats_entry", entry_ty, None);
+            let entry_bb = self.context.append_basic_block(entry_fn, "entry");
+            self.builder.position_at_end(entry_bb);
+
+            match param_types.len() {
+                0 => {
+                    // call oats_main()
+                    let _ = self.builder.build_call(oats_fn, &[], "call_oats_main").expect("build_call failed");
+                }
+                2 => {
+                    use crate::types::OatsType;
+                    if param_types[0] == OatsType::Number && param_types[1] == OatsType::Number {
+                        let a = self.context.f64_type().const_float(1.5);
+                        let b = self.context.f64_type().const_float(2.25);
+                        let _ = self.builder.build_call(oats_fn, &[a.into(), b.into()], "call_oats_main").expect("build_call failed");
+                    }
+                }
+                _ => {
+                    // unsupported signature for automatic invocation; do nothing
+                }
+            }
+
+            let _ = self.builder.build_return(None);
+        }
+
+        true
     }
 }

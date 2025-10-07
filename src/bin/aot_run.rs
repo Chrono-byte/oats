@@ -26,20 +26,25 @@ fn main() -> Result<()> {
 
     let parsed = parser::parse_oats_module(&source)?;
 
-    // extract exported function
+    // Module-level body is parsed; do not print debug information here.
+
+    // Require the user script to export a `main` function as the program entrypoint
     let mut func_decl_opt: Option<deno_ast::swc::ast::Function> = None;
     for item_ref in parsed.program_ref().body() {
         if let deno_ast::ModuleItemRef::ModuleDecl(module_decl) = item_ref {
             if let deno_ast::swc::ast::ModuleDecl::ExportDecl(decl) = module_decl {
                 if let deno_ast::swc::ast::Decl::Fn(f) = &decl.decl {
-                    func_decl_opt = Some((*f.function).clone());
-                    break;
+                    let name = f.ident.sym.to_string();
+                    if name == "main" {
+                        func_decl_opt = Some((*f.function).clone());
+                        break;
+                    }
                 }
             }
         }
     }
 
-    let func_decl = func_decl_opt.ok_or_else(|| anyhow::anyhow!("No exported function found"))?;
+    let func_decl = func_decl_opt.ok_or_else(|| anyhow::anyhow!("No exported `main` function found in script. Please export `function main(...)`."))?;
 
     let mut symbols = SymbolTable::new();
     let func_sig = check_function_strictness(&func_decl, &mut symbols)?;
@@ -52,12 +57,36 @@ fn main() -> Result<()> {
     let builder = context.create_builder();
     let codegen = CodeGen { context: &context, module, builder };
 
+    // Emit top-level helper functions (non-exported) found in the module so
+    // calls to them can be lowered. Skip exported `main` which we handle
+    // separately.
+    for item in parsed.program_ref().body() {
+        use deno_ast::swc::ast;
+        if let deno_ast::ModuleItemRef::Stmt(stmt) = item {
+            if let ast::Stmt::Decl(ast::Decl::Fn(fdecl)) = stmt {
+                let fname = fdecl.ident.sym.to_string();
+                let inner_func = (*fdecl.function).clone();
+                let mut inner_symbols = SymbolTable::new();
+                let fsig = check_function_strictness(&inner_func, &mut inner_symbols)?;
+                codegen.gen_function_ir(&fname, &inner_func, &fsig.params, &fsig.ret);
+            }
+        }
+    }
+
+    // Emit the user's exported `main` under an internal symbol name to avoid
+    // conflicting with the C runtime entrypoint. The script must export
+    // `main`, but we generate `oats_main` as the emitted symbol the host
+    // runtime will call.
     codegen.gen_function_ir(
-        "add_oats",
+        "oats_main",
         &func_decl,
         &func_sig.params,
         &func_sig.ret,
     );
+
+    // Try to emit a host `main` into the module so no external shim is
+    // required. Recompute IR after emission.
+    let emitted_host_main = codegen.emit_host_main(&func_sig.params, &func_sig.ret);
 
     let ir = codegen.module.print_to_string().to_string();
 
@@ -98,7 +127,10 @@ fn main() -> Result<()> {
     // Locate or produce rt_main object. Prefer an existing top-level `rt_main.o` so
     // the repo can ship a prebuilt small host object. Otherwise try to compile
     // `runtime/rt_main/src/main.rs` if it exists.
-    let rt_main_obj = if Path::new("rt_main.o").exists() {
+    let rt_main_obj = if emitted_host_main {
+        // host main emitted into the module; no external rt_main.o required
+        String::new()
+    } else if Path::new("rt_main.o").exists() {
         // Use the repo-provided object file
         String::from("rt_main.o")
     } else if Path::new("runtime/rt_main/src/main.rs").exists() {
@@ -117,36 +149,19 @@ fn main() -> Result<()> {
         }
         rt_main_obj
     } else {
-        // As a fallback, generate a tiny C main that calls the exported function
-        // (assumes the function has signature double add_oats(double,double)).
-        let rt_main_c = format!("{}/rt_main.c", out_dir);
-        let rt_main_obj = format!("{}/rt_main.o", out_dir);
-        let mut cf = File::create(&rt_main_c)?;
-        cf.write_all(b"#include <stdio.h>\n\nextern double add_oats(double,double);\n\nint main(){ double r = add_oats(1.5, 2.25); printf(\"result: %f\\n\", r); return 0; }\n")?;
-        cf.sync_all()?;
-        let status = Command::new("clang")
-            .arg("-O2")
-            .arg("-c")
-            .arg(&rt_main_c)
-            .arg("-o")
-            .arg(&rt_main_obj)
-            .status()?;
-        if !status.success() {
-            anyhow::bail!("clang failed to compile generated rt_main.c");
-        }
-        rt_main_obj
+        anyhow::bail!("No rt_main.o found and no runtime/rt_main/src/main.rs available; please provide a runtime main (rt_main.o) or add a runtime/rt_main/src/main.rs");
     };
-
-    // Link final binary with clang: rt_main.o + out.o + rust runtime staticlib
+    // Link final binary with clang. If we emitted the host `main` in the
+    // module then `rt_main_obj` will be empty and we skip adding it to the
+    // link line.
     let out_bin = format!("{}/out", out_dir);
-    let status = Command::new("clang")
-        .arg("-O2")
-        .arg(&rt_main_obj)
-        .arg(&out_obj)
-        .arg(rust_lib)
-        .arg("-o")
-        .arg(&out_bin)
-        .status()?;
+    let mut link_cmd = Command::new("clang");
+    link_cmd.arg("-O2");
+    if !rt_main_obj.is_empty() {
+        link_cmd.arg(&rt_main_obj);
+    }
+    link_cmd.arg(&out_obj).arg(rust_lib).arg("-o").arg(&out_bin);
+    let status = link_cmd.status()?;
     if !status.success() {
         anyhow::bail!("clang failed to link final binary");
     }

@@ -1,1 +1,7 @@
-export function add_oats(a: number, b: number): number { return a + b; }
+function addAndPrint(a: number, b: number): number {
+    return a + b;
+}
+
+export function main(): number {
+    return addAndPrint(3, 5);
+}

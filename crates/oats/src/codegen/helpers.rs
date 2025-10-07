@@ -2,7 +2,6 @@ use crate::types::OatsType;
 use inkwell::types::BasicType;
 use inkwell::types::BasicTypeEnum;
 use inkwell::values::{BasicValue, BasicValueEnum};
-use inkwell::AddressSpace;
 use std::collections::HashMap;
 
 impl<'a> super::CodeGen<'a> {
@@ -10,10 +9,10 @@ impl<'a> super::CodeGen<'a> {
     // Note: Void is not a valid parameter type; panic if encountered here.
     pub(crate) fn map_type_to_llvm(&self, t: &OatsType) -> BasicTypeEnum<'a> {
         match t {
-            OatsType::Number => self.context.f64_type().as_basic_type_enum(),
-            OatsType::Boolean => self.context.bool_type().as_basic_type_enum(),
+            OatsType::Number => self.f64_t.as_basic_type_enum(),
+            OatsType::Boolean => self.bool_t.as_basic_type_enum(),
             OatsType::String | OatsType::NominalStruct(_) => {
-                self.context.ptr_type(AddressSpace::default()).as_basic_type_enum()
+                self.i8ptr_t.as_basic_type_enum()
             }
             OatsType::Void => panic!("Void cannot be mapped to a BasicTypeEnum for params"),
         }
@@ -24,7 +23,7 @@ impl<'a> super::CodeGen<'a> {
     pub(crate) fn coerce_to_f64(&self, val: BasicValueEnum<'a>) -> Option<inkwell::values::FloatValue<'a>> {
         match val {
             BasicValueEnum::FloatValue(fv) => Some(fv),
-            BasicValueEnum::IntValue(iv) => Some(self.builder.build_signed_int_to_float(iv, self.context.f64_type(), "i2f").expect("i2f failed")),
+            BasicValueEnum::IntValue(iv) => Some(self.builder.build_signed_int_to_float(iv, self.f64_t, "i2f").expect("i2f failed")),
             _ => None,
         }
     }
@@ -36,10 +35,10 @@ impl<'a> super::CodeGen<'a> {
                 if iv.get_type().get_bit_width() == 64 {
                     Some(iv)
                 } else {
-                    Some(self.builder.build_int_cast(iv, self.context.i64_type(), "cast_i64").expect("build_int_cast failed"))
+                    Some(self.builder.build_int_cast(iv, self.i64_t, "cast_i64").expect("build_int_cast failed"))
                 }
             }
-            BasicValueEnum::FloatValue(fv) => Some(self.builder.build_float_to_signed_int(fv, self.context.i64_type(), "f2i").expect("f2i failed")),
+            BasicValueEnum::FloatValue(fv) => Some(self.builder.build_float_to_signed_int(fv, self.i64_t, "f2i").expect("f2i failed")),
             _ => None,
         }
     }
@@ -52,10 +51,10 @@ impl<'a> super::CodeGen<'a> {
                 if iv.get_type().get_bit_width() == 1 {
                     Some(iv)
                 } else {
-                    let zero = self.context.i64_type().const_int(0, false);
+                    let zero = self.i64_t.const_int(0, false);
                     // widen iv to i64 if needed
                     let iv_wide = if iv.get_type().get_bit_width() < 64 {
-                        self.builder.build_int_cast(iv, self.context.i64_type(), "cast_i_wide").expect("build_int_cast failed")
+                        self.builder.build_int_cast(iv, self.i64_t, "cast_i_wide").expect("build_int_cast failed")
                     } else {
                         iv
                     };
@@ -65,7 +64,7 @@ impl<'a> super::CodeGen<'a> {
             }
             BasicValueEnum::FloatValue(fv) => {
                 // JS-like: not zero and not NaN
-                let zero = self.context.f64_type().const_float(0.0);
+                let zero = self.f64_t.const_float(0.0);
                 let is_not_zero = self.builder.build_float_compare(inkwell::FloatPredicate::ONE, fv, zero, "neq0").expect("build_float_compare failed");
                 let is_not_nan = self.builder.build_float_compare(inkwell::FloatPredicate::OEQ, fv, fv, "not_nan").expect("build_float_compare failed");
                 let cond = self.builder.build_and(is_not_zero, is_not_nan, "num_truth").expect("build_and failed");
@@ -79,7 +78,7 @@ impl<'a> super::CodeGen<'a> {
                     let either = cs.try_as_basic_value();
                     if let inkwell::Either::Left(bv) = either {
                         let len = bv.into_int_value();
-                        let zero64 = self.context.i64_type().const_int(0, false);
+                        let zero64 = self.i64_t.const_int(0, false);
                         let len_nonzero = self.builder.build_int_compare(inkwell::IntPredicate::NE, len, zero64, "len_nonzero").expect("build_int_compare failed");
                         let cond = self.builder.build_and(is_not_null, len_nonzero, "ptr_truth").expect("build_and failed");
                         return Some(cond);
@@ -109,10 +108,10 @@ impl<'a> super::CodeGen<'a> {
             if let Some(ev_f) = self.coerce_to_f64(ev) {
                 let tv_f = match tv {
                     BasicValueEnum::FloatValue(fv) => fv,
-                    BasicValueEnum::IntValue(iv) => self.builder.build_signed_int_to_float(iv, self.context.f64_type(), "i2f").expect("i2f failed"),
+                    BasicValueEnum::IntValue(iv) => self.builder.build_signed_int_to_float(iv, self.f64_t, "i2f").expect("i2f failed"),
                     _ => return None,
                 };
-                let ty = self.context.f64_type().as_basic_type_enum();
+                let ty = self.f64_t.as_basic_type_enum();
                 let phi_node = self.builder.build_phi(ty, "phi_tmp").expect("build_phi failed");
                 phi_node.add_incoming(&[(&tv_f.as_basic_value_enum(), then_bb), (&ev_f.as_basic_value_enum(), else_bb)]);
                 return Some(phi_node.as_basic_value());
@@ -122,10 +121,10 @@ impl<'a> super::CodeGen<'a> {
             if let Some(tv_f) = self.coerce_to_f64(tv) {
                 let ev_f = match ev {
                     BasicValueEnum::FloatValue(fv) => fv,
-                    BasicValueEnum::IntValue(iv) => self.builder.build_signed_int_to_float(iv, self.context.f64_type(), "i2f").expect("i2f failed"),
+                    BasicValueEnum::IntValue(iv) => self.builder.build_signed_int_to_float(iv, self.f64_t, "i2f").expect("i2f failed"),
                     _ => return None,
                 };
-                let ty = self.context.f64_type().as_basic_type_enum();
+                let ty = self.f64_t.as_basic_type_enum();
                 let phi_node = self.builder.build_phi(ty, "phi_tmp").expect("build_phi failed");
                 phi_node.add_incoming(&[(&tv_f.as_basic_value_enum(), then_bb), (&ev_f.as_basic_value_enum(), else_bb)]);
                 return Some(phi_node.as_basic_value());
@@ -134,7 +133,7 @@ impl<'a> super::CodeGen<'a> {
 
         // If both pointers, build pointer phi
         if let (inkwell::types::BasicTypeEnum::PointerType(_), inkwell::types::BasicTypeEnum::PointerType(_)) = (tv_ty, ev_ty) {
-            let ty = self.context.ptr_type(AddressSpace::default()).as_basic_type_enum();
+                let ty = self.i8ptr_t.as_basic_type_enum();
             let phi_node = self.builder.build_phi(ty, "phi_tmp").expect("build_phi failed");
                 phi_node.add_incoming(&[(&tv, then_bb), (&ev, else_bb)]);
                 return Some(phi_node.as_basic_value());
@@ -144,7 +143,7 @@ impl<'a> super::CodeGen<'a> {
         if let (inkwell::types::BasicTypeEnum::IntType(_), _) | (_, inkwell::types::BasicTypeEnum::IntType(_)) = (tv_ty, ev_ty) {
             let tv_i = self.coerce_to_i64(tv)?;
             let ev_i = self.coerce_to_i64(ev)?;
-            let ty = self.context.i64_type().as_basic_type_enum();
+            let ty = self.i64_t.as_basic_type_enum();
             let phi_node = self.builder.build_phi(ty, "phi_tmp").expect("build_phi failed");
             phi_node.add_incoming(&[(&tv_i.as_basic_value_enum(), then_bb), (&ev_i.as_basic_value_enum(), else_bb)]);
             return Some(phi_node.as_basic_value());
@@ -194,44 +193,51 @@ impl<'a> super::CodeGen<'a> {
     pub(crate) fn declare_libc(&self) {
         // declare malloc(i64) -> i8*
         if self.module.get_function("malloc").is_none() {
-            let i8ptr = self.context.ptr_type(AddressSpace::default());
-            let i64t = self.context.i64_type();
+            let i8ptr = self.i8ptr_t;
+            let i64t = self.i64_t;
             let malloc_ty = i8ptr.fn_type(&[i64t.into()], false);
-            self.module.add_function("malloc", malloc_ty, None);
+            let f = self.module.add_function("malloc", malloc_ty, None);
+            self.fn_malloc.borrow_mut().replace(f);
         }
 
         // declare strlen(i8*) -> i64
         if self.module.get_function("strlen").is_none() {
-            let i8ptr = self.context.ptr_type(AddressSpace::default());
-            let i64t = self.context.i64_type();
+            let i8ptr = self.i8ptr_t;
+            let i64t = self.i64_t;
             let strlen_ty = i64t.fn_type(&[i8ptr.into()], false);
-            self.module.add_function("strlen", strlen_ty, None);
+            let f = self.module.add_function("strlen", strlen_ty, None);
+            self.fn_strlen.borrow_mut().replace(f);
         }
 
         // declare memcpy(i8*, i8*, i64) -> i8*
         if self.module.get_function("memcpy").is_none() {
-            let i8ptr = self.context.ptr_type(AddressSpace::default());
-            let i64t = self.context.i64_type();
+            let i8ptr = self.i8ptr_t;
+            let i64t = self.i64_t;
             let memcpy_ty = i8ptr.fn_type(&[i8ptr.into(), i8ptr.into(), i64t.into()], false);
-            self.module.add_function("memcpy", memcpy_ty, None);
+            let f = self.module.add_function("memcpy", memcpy_ty, None);
+            self.fn_memcpy.borrow_mut().replace(f);
         }
 
         // declare free(i8*) -> void
         if self.module.get_function("free").is_none() {
             let voidt = self.context.void_type();
-            let i8ptr = self.context.ptr_type(AddressSpace::default());
+            let i8ptr = self.i8ptr_t;
             let free_ty = voidt.fn_type(&[i8ptr.into()], false);
-            self.module.add_function("free", free_ty, None);
+            let f = self.module.add_function("free", free_ty, None);
+            self.fn_free.borrow_mut().replace(f);
         }
+
         // Declare runtime print helpers so user scripts can call them.
         if self.module.get_function("print_f64").is_none() {
-            let print_ty = self.context.void_type().fn_type(&[self.context.f64_type().into()], false);
-            self.module.add_function("print_f64", print_ty, None);
+            let print_ty = self.context.void_type().fn_type(&[self.f64_t.into()], false);
+            let f = self.module.add_function("print_f64", print_ty, None);
+            self.fn_print_f64.borrow_mut().replace(f);
         }
         if self.module.get_function("print_str").is_none() {
-            let i8ptr = self.context.ptr_type(AddressSpace::default());
+            let i8ptr = self.i8ptr_t;
             let print_str_ty = self.context.void_type().fn_type(&[i8ptr.into()], false);
-            self.module.add_function("print_str", print_str_ty, None);
+            let f = self.module.add_function("print_str", print_str_ty, None);
+            self.fn_print_str.borrow_mut().replace(f);
         }
     }
 
@@ -243,7 +249,7 @@ impl<'a> super::CodeGen<'a> {
         // duplicate-symbol linker errors when we also link the runtime
         // staticlib that provides `str_concat`), only declare the symbol
         // so the runtime implementation will be used at link time.
-        let i8ptr = self.context.ptr_type(AddressSpace::default());
+        let i8ptr = self.i8ptr_t;
         let fn_type = i8ptr.fn_type(&[i8ptr.into(), i8ptr.into()], false);
 
         // Ensure libc declarations exist so calls can be built elsewhere.

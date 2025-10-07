@@ -17,8 +17,9 @@ Cargo.lock
 *.out
 
 # Runtime build artifacts (Rust runtime crates)
-/runtime/**/target/
-/runtime/**/target/*
+# (moved into the workspace under crates/runtime)
+crates/runtime/**/target/
+crates/runtime/**/target/*
 
 # VS Code / JetBrains
 .vscode/

@@ -3,8 +3,8 @@
 // signature; it simply calls `oats_entry()` which the AOT module provides as
 // a void, no-argument wrapper around whatever `oats_main` the user exported.
 
-use std::ffi::CString;
 use libc::c_void;
+use std::ffi::CString;
 
 #[cfg(feature = "link_entry")]
 unsafe extern "C" {

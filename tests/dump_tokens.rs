@@ -4,7 +4,8 @@ use oats::parser;
 #[test]
 fn dump_tokens() -> Result<()> {
     let source = r#"export function main(): number { return 1; }"#;
-    let parsed = parser::parse_oats_module(source, None)?;
+    let parsed_mod = parser::parse_oats_module(source, None)?;
+    let parsed = &parsed_mod.parsed;
     let toks = parsed.tokens();
     eprintln!("tokens count: {}", toks.len());
     for t in toks.iter().take(200) {

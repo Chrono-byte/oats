@@ -1,0 +1,69 @@
+name: CI
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        rust: [stable, "1.70.0"]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cache cargo registry and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-rust-${{ matrix.rust }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: ${{ matrix.rust }}
+          override: true
+
+      - name: Install LLVM-18 and Clang
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y llvm-18 llvm-18-dev clang-18 pkg-config
+
+      - name: Configure LLVM env
+        # Export LLVM_SYS_181_PREFIX and make llvm libs/bins available to the job
+        run: |
+          echo "LLVM_SYS_181_PREFIX=/usr/lib/llvm-18" >> $GITHUB_ENV
+          echo "LD_LIBRARY_PATH=/usr/lib/llvm-18/lib" >> $GITHUB_ENV
+          echo "/usr/lib/llvm-18/bin" >> $GITHUB_PATH
+
+      - name: Show llvm-config
+        run: |
+          llvm-config-18 --version || llvm-config --version || true
+
+      - name: Build and run tests
+        run: |
+          cargo test --workspace --verbose
+
+      - name: Generate IR artifact (out.ll)
+        if: success()
+        run: |
+          # Generate IR from the example and save as out.ll
+          . ./scripts/setup_env.sh || true
+          cargo build -p oats --quiet
+          OATS_SRC_FILE="examples/add.oats" cargo run -p oats --bin aot_run -- examples/add.oats > out.ll
+
+      - name: Upload IR artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: oats-ir
+          path: out.ll

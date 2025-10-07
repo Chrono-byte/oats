@@ -1,13 +1,13 @@
-use std::process::Command;
+use anyhow::Result;
 use std::fs::File;
 use std::io::Write;
 use std::path::Path;
-use anyhow::Result;
+use std::process::Command;
 
-use oats::parser;
-use oats::types::{check_function_strictness, SymbolTable};
 use oats::codegen::CodeGen;
 use oats::diagnostics;
+use oats::parser;
+use oats::types::{SymbolTable, check_function_strictness};
 
 use inkwell::context::Context;
 use inkwell::targets::TargetMachine;
@@ -20,12 +20,15 @@ fn main() -> Result<()> {
     } else if let Ok(p) = std::env::var("OATS_SRC_FILE") {
         p
     } else {
-        anyhow::bail!("No source file provided. Pass path as first arg or set OATS_SRC_FILE env var.");
+        anyhow::bail!(
+            "No source file provided. Pass path as first arg or set OATS_SRC_FILE env var."
+        );
     };
 
     let source = std::fs::read_to_string(&src_path)?;
 
-    let parsed = parser::parse_oats_module(&source, Some(&src_path))?;
+    let parsed_mod = parser::parse_oats_module(&source, Some(&src_path))?;
+    let parsed = parsed_mod.parsed;
 
     // Scan AST and reject any use of `var` declarations. We purposely do
     // this early so users get a clear error rather than surprising
@@ -41,35 +44,61 @@ fn main() -> Result<()> {
             }
             ast::Stmt::Block(block) => {
                 for s in &block.stmts {
-                    if stmt_contains_var(s) { return true; }
+                    if stmt_contains_var(s) {
+                        return true;
+                    }
                 }
                 false
             }
             ast::Stmt::If(ifstmt) => {
-                if stmt_contains_var(&*ifstmt.cons) { return true; }
-                if let Some(alt) = &ifstmt.alt { if stmt_contains_var(&*alt) { return true; } }
+                if stmt_contains_var(&*ifstmt.cons) {
+                    return true;
+                }
+                if let Some(alt) = &ifstmt.alt {
+                    if stmt_contains_var(&*alt) {
+                        return true;
+                    }
+                }
                 false
             }
             ast::Stmt::For(forstmt) => {
-                if stmt_contains_var(&*forstmt.body) { return true; }
+                if stmt_contains_var(&*forstmt.body) {
+                    return true;
+                }
                 false
             }
             ast::Stmt::While(ws) => stmt_contains_var(&*ws.body),
             ast::Stmt::DoWhile(dws) => stmt_contains_var(&*dws.body),
             ast::Stmt::Switch(swt) => {
                 for case in &swt.cases {
-                    for s in &case.cons { if stmt_contains_var(s) { return true; } }
+                    for s in &case.cons {
+                        if stmt_contains_var(s) {
+                            return true;
+                        }
+                    }
                 }
                 false
             }
             ast::Stmt::Try(tr) => {
                 // tr.block is a BlockStmt
-                for s in &tr.block.stmts { if stmt_contains_var(s) { return true; } }
+                for s in &tr.block.stmts {
+                    if stmt_contains_var(s) {
+                        return true;
+                    }
+                }
                 if let Some(handler) = &tr.handler {
-                    for s in &handler.body.stmts { if stmt_contains_var(s) { return true; } }
+                    for s in &handler.body.stmts {
+                        if stmt_contains_var(s) {
+                            return true;
+                        }
+                    }
                 }
                 if let Some(finalizer) = &tr.finalizer {
-                    for s in &finalizer.stmts { if stmt_contains_var(s) { return true; } }
+                    for s in &finalizer.stmts {
+                        if stmt_contains_var(s) {
+                            return true;
+                        }
+                    }
                 }
                 false
             }
@@ -86,7 +115,9 @@ fn main() -> Result<()> {
                     Some(&src_path),
                     Some(&source),
                     "`var` declarations are not supported. Use `let` or `const` instead.",
-                    Some("`var` has function-scoped semantics which we intentionally disallow; prefer `let` or `const`."),
+                    Some(
+                        "`var` has function-scoped semantics which we intentionally disallow; prefer `let` or `const`.",
+                    ),
                 );
             }
             // If it's a function decl, also inspect its body for var
@@ -98,7 +129,9 @@ fn main() -> Result<()> {
                                 Some(&src_path),
                                 Some(&source),
                                 "`var` declarations are not supported. Use `let` or `const` instead.",
-                                Some("`var` has function-scoped semantics which we intentionally disallow; prefer `let` or `const`."),
+                                Some(
+                                    "`var` has function-scoped semantics which we intentionally disallow; prefer `let` or `const`.",
+                                ),
                             );
                         }
                     }
@@ -107,13 +140,15 @@ fn main() -> Result<()> {
         }
         if let deno_ast::ModuleItemRef::ModuleDecl(module_decl) = item {
             if let deno_ast::swc::ast::ModuleDecl::ExportDecl(decl) = module_decl {
-                if let ast::Decl::Var(vdecl) = &decl.decl {
+                if let deno_ast::swc::ast::Decl::Var(vdecl) = &decl.decl {
                     if matches!(vdecl.kind, ast::VarDeclKind::Var) {
                         return diagnostics::report_error_and_bail(
                             Some(&src_path),
                             Some(&source),
                             "`var` declarations are not supported. Use `let` or `const` instead.",
-                            Some("`var` has function-scoped semantics which we intentionally disallow; prefer `let` or `const"),
+                            Some(
+                                "`var` has function-scoped semantics which we intentionally disallow; prefer `let` or `const",
+                            ),
                         );
                     }
                 }
@@ -125,7 +160,9 @@ fn main() -> Result<()> {
                                     Some(&src_path),
                                     Some(&source),
                                     "`var` declarations are not supported. Use `let` or `const` instead.",
-                                    Some("`var` has function-scoped semantics which we intentionally disallow; prefer `let` or `const`."),
+                                    Some(
+                                        "`var` has function-scoped semantics which we intentionally disallow; prefer `let` or `const.",
+                                    ),
                                 );
                             }
                         }
@@ -153,7 +190,11 @@ fn main() -> Result<()> {
         }
     }
 
-    let func_decl = func_decl_opt.ok_or_else(|| anyhow::anyhow!("No exported `main` function found in script. Please export `function main(...)`."))?;
+    let func_decl = func_decl_opt.ok_or_else(|| {
+        anyhow::anyhow!(
+            "No exported `main` function found in script. Please export `function main(...)`."
+        )
+    })?;
 
     let mut symbols = SymbolTable::new();
     let func_sig = check_function_strictness(&func_decl, &mut symbols)?;
@@ -181,6 +222,13 @@ fn main() -> Result<()> {
         fn_malloc: std::cell::RefCell::new(None),
         fn_memcpy: std::cell::RefCell::new(None),
         fn_free: std::cell::RefCell::new(None),
+        fn_array_alloc: std::cell::RefCell::new(None),
+        fn_rc_inc: std::cell::RefCell::new(None),
+        fn_rc_dec: std::cell::RefCell::new(None),
+        class_fields: std::cell::RefCell::new(std::collections::HashMap::new()),
+        fn_param_types: std::cell::RefCell::new(std::collections::HashMap::new()),
+        mut_decls: &parsed_mod.mut_decls,
+        source: &parsed_mod.preprocessed,
     };
 
     // Emit top-level helper functions (non-exported) found in the module so
@@ -197,7 +245,7 @@ fn main() -> Result<()> {
                 let fsig = check_function_strictness(&inner_func, &mut inner_symbols)?;
                 // skip exported `main` (we handle exported main separately later)
                 if fname != "main" {
-                    codegen.gen_function_ir(&fname, &inner_func, &fsig.params, &fsig.ret);
+                    codegen.gen_function_ir(&fname, &inner_func, &fsig.params, &fsig.ret, None);
                 }
             }
         }
@@ -211,7 +259,7 @@ fn main() -> Result<()> {
                     let mut inner_symbols = SymbolTable::new();
                     let fsig = check_function_strictness(&inner_func, &mut inner_symbols)?;
                     if fname != "main" {
-                        codegen.gen_function_ir(&fname, &inner_func, &fsig.params, &fsig.ret);
+                        codegen.gen_function_ir(&fname, &inner_func, &fsig.params, &fsig.ret, None);
                     }
                 }
             }
@@ -227,6 +275,7 @@ fn main() -> Result<()> {
         &func_decl,
         &func_sig.params,
         &func_sig.ret,
+        None,
     );
 
     // Try to emit a host `main` into the module so no external shim is
@@ -267,7 +316,9 @@ fn main() -> Result<()> {
         .into_iter()
         .find(|p| Path::new(p).exists())
         .map(|s| s.to_string())
-        .ok_or_else(|| anyhow::anyhow!("runtime staticlib not found; please build the runtime crate"))?;
+        .ok_or_else(|| {
+            anyhow::anyhow!("runtime staticlib not found; please build the runtime crate")
+        })?;
 
     // Compile IR to object file using clang
     let out_obj = format!("{}/out.o", out_dir);
@@ -307,7 +358,9 @@ fn main() -> Result<()> {
         }
         rt_main_obj
     } else {
-        anyhow::bail!("No rt_main.o found and no runtime/rt_main/src/main.rs available; please provide a runtime main (rt_main.o) or add a runtime/rt_main/src/main.rs");
+        anyhow::bail!(
+            "No rt_main.o found and no runtime/rt_main/src/main.rs available; please provide a runtime main (rt_main.o) or add a runtime/rt_main/src/main.rs"
+        );
     };
     // Link final binary with clang. If we emitted the host `main` in the
     // module then `rt_main_obj` will be empty and we skip adding it to the
@@ -334,7 +387,7 @@ fn main() -> Result<()> {
             // it into an error.
             std::process::exit(code);
         }
-    } else if !run.success() {
+    } else {
         // If there is no exit code (terminated by signal), return an error.
         anyhow::bail!("running out failed (terminated by signal)");
     }

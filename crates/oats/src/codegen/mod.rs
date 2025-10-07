@@ -1,15 +1,18 @@
+use inkwell::AddressSpace;
 use inkwell::builder::Builder;
 use inkwell::context::Context;
 use inkwell::module::Module;
 use inkwell::types::BasicType;
 use inkwell::types::BasicTypeEnum;
 use inkwell::values::{BasicValue, BasicValueEnum, CallSiteValue, FunctionValue, PointerValue};
-use inkwell::AddressSpace;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 // ...existing code...
 
 pub mod helpers;
+/// Mapping from function name -> param OatsTypes vector. Stored so
+/// lowering can inspect the declared nominal type of `this` parameters
+/// (e.g. to resolve a `this.field` access to a concrete class name).
 
 pub struct CodeGen<'a> {
     pub context: &'a Context,
@@ -36,16 +39,134 @@ pub struct CodeGen<'a> {
     pub fn_malloc: RefCell<Option<FunctionValue<'a>>>,
     pub fn_memcpy: RefCell<Option<FunctionValue<'a>>>,
     pub fn_free: RefCell<Option<FunctionValue<'a>>>,
+    pub fn_array_alloc: RefCell<Option<FunctionValue<'a>>>,
+    pub fn_rc_inc: RefCell<Option<FunctionValue<'a>>>,
+    pub fn_rc_dec: RefCell<Option<FunctionValue<'a>>>,
+    /// Map of nominal struct name -> ordered list of (field name, field type)
+    /// Populated by the frontend (main.rs) when scanning class declarations.
+    pub class_fields: RefCell<HashMap<String, Vec<(String, crate::types::OatsType)>>>,
+    /// Mapping from function name -> param OatsTypes vector. Stored so
+    /// lowering can inspect the declared nominal type of `this` parameters
+    /// (e.g. to resolve a `this.field` access to a concrete class name).
+    pub fn_param_types: RefCell<HashMap<String, Vec<crate::types::OatsType>>>,
+    /// Set of identifier names that were annotated `mut` by the preprocessor
+    pub mut_decls: &'a std::collections::HashSet<String>,
+    /// Preprocessed source text used to map spans for diagnostics
+    pub source: &'a str,
 }
 
 impl<'a> CodeGen<'a> {
+    fn get_array_alloc(&self) -> FunctionValue<'a> {
+        if let Some(f) = *self.fn_array_alloc.borrow() {
+            return f;
+        }
+        // declare: i8* @array_alloc(i64, i32, i32)
+        let i8ptr = self.i8ptr_t;
+        let i64t = self.i64_t;
+        let i32t = self.i32_t;
+        let fn_type = i8ptr.fn_type(&[i64t.into(), i32t.into(), i32t.into()], false);
+        let f = self.module.add_function("array_alloc", fn_type, None);
+        *self.fn_array_alloc.borrow_mut() = Some(f);
+        f
+    }
+
+    fn get_rc_inc(&self) -> FunctionValue<'a> {
+        if let Some(f) = *self.fn_rc_inc.borrow() {
+            return f;
+        }
+        let voidt = self.context.void_type();
+        let i8ptr = self.i8ptr_t;
+        let fn_type = voidt.fn_type(&[i8ptr.into()], false);
+        let f = self.module.add_function("rc_inc", fn_type, None);
+        *self.fn_rc_inc.borrow_mut() = Some(f);
+        f
+    }
+
+    fn get_rc_dec(&self) -> FunctionValue<'a> {
+        if let Some(f) = *self.fn_rc_dec.borrow() {
+            return f;
+        }
+        let voidt = self.context.void_type();
+        let i8ptr = self.i8ptr_t;
+        let fn_type = voidt.fn_type(&[i8ptr.into()], false);
+        let f = self.module.add_function("rc_dec", fn_type, None);
+        *self.fn_rc_dec.borrow_mut() = Some(f);
+        f
+    }
+
+    fn get_array_get_f64(&self) -> FunctionValue<'a> {
+        if let Some(f) = self.module.get_function("array_get_f64") {
+            return f;
+        }
+        let f64t = self.context.f64_type();
+        let i8ptr = self.i8ptr_t;
+        let i64t = self.i64_t;
+        let fn_type = f64t.fn_type(&[i8ptr.into(), i64t.into()], false);
+        let f = self.module.add_function("array_get_f64", fn_type, None);
+        f
+    }
+
+    fn get_array_get_ptr(&self) -> FunctionValue<'a> {
+        if let Some(f) = self.module.get_function("array_get_ptr") {
+            return f;
+        }
+        let i8ptr = self.i8ptr_t;
+        let i64t = self.i64_t;
+        let fn_type = i8ptr.fn_type(&[i8ptr.into(), i64t.into()], false);
+        let f = self.module.add_function("array_get_ptr", fn_type, None);
+        f
+    }
+
+    // Borrowing variant: returns a borrowed pointer without incrementing
+    // the refcount. Use only when you can guarantee the pointer's lifetime
+    // doesn't outlive the array slot, or explicitly call `rc_inc` when
+    // converting to an owned reference.
+    #[allow(dead_code)]
+    fn get_array_get_ptr_borrow(&self) -> FunctionValue<'a> {
+        if let Some(f) = self.module.get_function("array_get_ptr_borrow") {
+            return f;
+        }
+        let i8ptr = self.i8ptr_t;
+        let i64t = self.i64_t;
+        let fn_type = i8ptr.fn_type(&[i8ptr.into(), i64t.into()], false);
+        let f = self
+            .module
+            .add_function("array_get_ptr_borrow", fn_type, None);
+        f
+    }
+
+    /// Map of nominal struct name -> ordered list of field names.
+    /// Populated by the frontend (main.rs) when scanning class declarations.
+    pub fn _class_fields_placeholder(&self) {}
+
+    fn get_array_set_ptr(&self) -> FunctionValue<'a> {
+        if let Some(f) = self.module.get_function("array_set_ptr") {
+            return f;
+        }
+        let voidt = self.context.void_type();
+        let i8ptr = self.i8ptr_t;
+        let i64t = self.i64_t;
+        let fn_type = voidt.fn_type(&[i8ptr.into(), i64t.into(), i8ptr.into()], false);
+        let f = self.module.add_function("array_set_ptr", fn_type, None);
+        f
+    }
 
     fn lower_expr(
         &self,
         expr: &deno_ast::swc::ast::Expr,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
-        locals: &mut Vec<HashMap<String, (inkwell::values::PointerValue<'a>, BasicTypeEnum<'a>, bool, bool)>>,
+        locals: &mut Vec<
+            HashMap<
+                String,
+                (
+                    inkwell::values::PointerValue<'a>,
+                    BasicTypeEnum<'a>,
+                    bool,
+                    bool,
+                ),
+            >,
+        >,
     ) -> Option<BasicValueEnum<'a>> {
         use deno_ast::swc::ast;
 
@@ -60,22 +181,34 @@ impl<'a> CodeGen<'a> {
                 // coercion now handled by self.coerce_to_f64
 
                 // Helper to handle float arithmetic
-                let float_bin = |builder: &Builder<'a>, lf: inkwell::values::FloatValue<'a>, rf: inkwell::values::FloatValue<'a>, op: &BinaryOp| -> Option<BasicValueEnum<'a>> {
+                let float_bin = |builder: &Builder<'a>,
+                                 lf: inkwell::values::FloatValue<'a>,
+                                 rf: inkwell::values::FloatValue<'a>,
+                                 op: &BinaryOp|
+                 -> Option<BasicValueEnum<'a>> {
                     match op {
                         BinaryOp::Add => {
-                            let v = builder.build_float_add(lf, rf, "sum").expect("build_float_add failed");
+                            let v = builder
+                                .build_float_add(lf, rf, "sum")
+                                .expect("build_float_add failed");
                             Some(v.as_basic_value_enum())
                         }
                         BinaryOp::Sub => {
-                            let v = builder.build_float_sub(lf, rf, "sub").expect("build_float_sub failed");
+                            let v = builder
+                                .build_float_sub(lf, rf, "sub")
+                                .expect("build_float_sub failed");
                             Some(v.as_basic_value_enum())
                         }
                         BinaryOp::Mul => {
-                            let v = builder.build_float_mul(lf, rf, "mul").expect("build_float_mul failed");
+                            let v = builder
+                                .build_float_mul(lf, rf, "mul")
+                                .expect("build_float_mul failed");
                             Some(v.as_basic_value_enum())
                         }
                         BinaryOp::Div => {
-                            let v = builder.build_float_div(lf, rf, "div").expect("build_float_div failed");
+                            let v = builder
+                                .build_float_div(lf, rf, "div")
+                                .expect("build_float_div failed");
                             Some(v.as_basic_value_enum())
                         }
                         _ => None,
@@ -83,7 +216,11 @@ impl<'a> CodeGen<'a> {
                 };
 
                 // Helper to handle float comparisons -> i1
-                let float_cmp = |builder: &Builder<'a>, lf: inkwell::values::FloatValue<'a>, rf: inkwell::values::FloatValue<'a>, op: &BinaryOp| -> Option<BasicValueEnum<'a>> {
+                let float_cmp = |builder: &Builder<'a>,
+                                 lf: inkwell::values::FloatValue<'a>,
+                                 rf: inkwell::values::FloatValue<'a>,
+                                 op: &BinaryOp|
+                 -> Option<BasicValueEnum<'a>> {
                     let pred = match op {
                         BinaryOp::Lt => FloatPredicate::OLT,
                         BinaryOp::LtEq => FloatPredicate::OLE,
@@ -93,7 +230,9 @@ impl<'a> CodeGen<'a> {
                         BinaryOp::NotEq => FloatPredicate::ONE,
                         _ => return None,
                     };
-                    let iv = builder.build_float_compare(pred, lf, rf, "cmp").expect("build_float_compare failed");
+                    let iv = builder
+                        .build_float_compare(pred, lf, rf, "cmp")
+                        .expect("build_float_compare failed");
                     Some(iv.as_basic_value_enum())
                 };
 
@@ -115,17 +254,25 @@ impl<'a> CodeGen<'a> {
                     let then_bb = self.context.append_basic_block(function, "and.then");
                     let else_bb = self.context.append_basic_block(function, "and.else");
                     let merge_bb = self.context.append_basic_block(function, "and.merge");
-                    self.builder.build_conditional_branch(cond, then_bb, else_bb).expect("build_conditional_branch failed");
+                    self.builder
+                        .build_conditional_branch(cond, then_bb, else_bb)
+                        .expect("build_conditional_branch failed");
                     // then: evaluate right
                     self.builder.position_at_end(then_bb);
                     let rv = self.lower_expr(&bin.right, function, param_map, locals);
                     if self.builder.get_insert_block().is_some() {
-                        let _ = self.builder.build_unconditional_branch(merge_bb).expect("build_unconditional_branch failed");
+                        let _ = self
+                            .builder
+                            .build_unconditional_branch(merge_bb)
+                            .expect("build_unconditional_branch failed");
                     }
                     // else: keep left
                     self.builder.position_at_end(else_bb);
                     if self.builder.get_insert_block().is_some() {
-                        let _ = self.builder.build_unconditional_branch(merge_bb).expect("build_unconditional_branch failed");
+                        let _ = self
+                            .builder
+                            .build_unconditional_branch(merge_bb)
+                            .expect("build_unconditional_branch failed");
                     }
                     self.builder.position_at_end(merge_bb);
                     if let Some(rval) = rv {
@@ -142,17 +289,25 @@ impl<'a> CodeGen<'a> {
                     let then_bb = self.context.append_basic_block(function, "or.then");
                     let else_bb = self.context.append_basic_block(function, "or.else");
                     let merge_bb = self.context.append_basic_block(function, "or.merge");
-                    self.builder.build_conditional_branch(cond, then_bb, else_bb).expect("build_conditional_branch failed");
+                    self.builder
+                        .build_conditional_branch(cond, then_bb, else_bb)
+                        .expect("build_conditional_branch failed");
                     // then: keep left
                     self.builder.position_at_end(then_bb);
                     if self.builder.get_insert_block().is_some() {
-                        let _ = self.builder.build_unconditional_branch(merge_bb).expect("build_unconditional_branch failed");
+                        let _ = self
+                            .builder
+                            .build_unconditional_branch(merge_bb)
+                            .expect("build_unconditional_branch failed");
                     }
                     // else: evaluate right
                     self.builder.position_at_end(else_bb);
                     let rv = self.lower_expr(&bin.right, function, param_map, locals);
                     if self.builder.get_insert_block().is_some() {
-                        let _ = self.builder.build_unconditional_branch(merge_bb).expect("build_unconditional_branch failed");
+                        let _ = self
+                            .builder
+                            .build_unconditional_branch(merge_bb)
+                            .expect("build_unconditional_branch failed");
                     }
                     self.builder.position_at_end(merge_bb);
                     if let Some(rval) = rv {
@@ -174,7 +329,8 @@ impl<'a> CodeGen<'a> {
                                     &[lp.into(), rp.into()],
                                     "concat",
                                 );
-                                let call_site: CallSiteValue = call_site.expect("build_call failed");
+                                let call_site: CallSiteValue =
+                                    call_site.expect("build_call failed");
                                 let either = call_site.try_as_basic_value();
                                 match either {
                                     inkwell::Either::Left(bv) => Some(bv),
@@ -202,7 +358,10 @@ impl<'a> CodeGen<'a> {
                     }
                     // build_load signature depends on LLVM version; for newer
                     // inkwell it expects (pointee_ty, ptr, name).
-                    let loaded = self.builder.build_load(ty, ptr, &name).expect("build_load failed");
+                    let loaded = self
+                        .builder
+                        .build_load(ty, ptr, &name)
+                        .expect("build_load failed");
                     return Some(loaded);
                 }
                 // Fallback to function parameter (should be rare since params are
@@ -225,16 +384,25 @@ impl<'a> CodeGen<'a> {
                                 return None;
                             }
                             let a = &call.args[0];
-                            if let Some(val) = self.lower_expr(&a.expr, function, param_map, locals) {
+                            if let Some(val) = self.lower_expr(&a.expr, function, param_map, locals)
+                            {
                                 match val {
                                     BasicValueEnum::FloatValue(fv) => {
-                                        let print_fn = self.module.get_function("print_f64").unwrap();
-                                        let _ = self.builder.build_call(print_fn, &[fv.into()], "print_f64_call").expect("build_call failed");
+                                        let print_fn =
+                                            self.module.get_function("print_f64").unwrap();
+                                        let _ = self
+                                            .builder
+                                            .build_call(print_fn, &[fv.into()], "print_f64_call")
+                                            .expect("build_call failed");
                                         return None;
                                     }
                                     BasicValueEnum::PointerValue(pv) => {
-                                        let print_fn = self.module.get_function("print_str").unwrap();
-                                        let _ = self.builder.build_call(print_fn, &[pv.into()], "print_str_call").expect("build_call failed");
+                                        let print_fn =
+                                            self.module.get_function("print_str").unwrap();
+                                        let _ = self
+                                            .builder
+                                            .build_call(print_fn, &[pv.into()], "print_str_call")
+                                            .expect("build_call failed");
                                         return None;
                                     }
                                     _ => return None,
@@ -246,16 +414,22 @@ impl<'a> CodeGen<'a> {
 
                         if let Some(fv) = self.module.get_function(&fname) {
                             // Lower args
-                            let mut lowered_args: Vec<inkwell::values::BasicMetadataValueEnum> = Vec::new();
+                            let mut lowered_args: Vec<inkwell::values::BasicMetadataValueEnum> =
+                                Vec::new();
                             for a in &call.args {
-                                if let Some(val) = self.lower_expr(&a.expr, function, param_map, locals) {
+                                if let Some(val) =
+                                    self.lower_expr(&a.expr, function, param_map, locals)
+                                {
                                     lowered_args.push(val.into());
                                 } else {
                                     // unsupported arg lowering
                                     return None;
                                 }
                             }
-                            let cs = self.builder.build_call(fv, &lowered_args, "call_internal").expect("build_call failed");
+                            let cs = self
+                                .builder
+                                .build_call(fv, &lowered_args, "call_internal")
+                                .expect("build_call failed");
                             let either = cs.try_as_basic_value();
                             match either {
                                 inkwell::Either::Left(bv) => Some(bv),
@@ -275,21 +449,58 @@ impl<'a> CodeGen<'a> {
                 // support simple assignments `ident = expr` where the left side is an identifier
                 if let Some(bid) = assign.left.as_ident() {
                     let name = bid.id.sym.to_string();
-                        if let Some((ptr, _ty, _init, is_const)) = self.find_local(locals, &name) {
-                            // Disallow assigning to const locals
-                            if is_const {
-                                // For now, emit unreachable to trap at runtime; in a future
-                                // stage we could produce a compile-time diagnostic instead.
-                                let _ = self.builder.build_unreachable();
-                                return None;
-                            }
-                            if let Some(val) = self.lower_expr(&assign.right, function, param_map, locals) {
-                                let _ = self.builder.build_store(ptr, val);
-                                // mark initialized after assignment
-                                self.set_local_initialized(locals, &name, true);
-                                return Some(val);
-                            }
+                    if let Some((ptr, _ty, _init, is_const)) = self.find_local(locals, &name) {
+                        // Disallow assigning to immutable locals at compile-time
+                        if is_const {
+                            // Use span-aware diagnostic: assign.span.lo is a BytePos wrapper
+                            let span_start = assign.span.lo.0 as usize;
+                            let _ = crate::diagnostics::report_error_span_and_bail::<()>(
+                                None,
+                                self.source,
+                                span_start,
+                                "assignment to immutable variable",
+                                Some(
+                                    "This variable was not declared mutable (use `let mut` to make it mutable).",
+                                ),
+                            );
+                            return None;
                         }
+                        if let Some(val) =
+                            self.lower_expr(&assign.right, function, param_map, locals)
+                        {
+                            // If the local is a pointer type, and previously initialized, decrement old refcount
+                            if _ty == self.i8ptr_t.as_basic_type_enum() {
+                                // load old value
+                                let old = self
+                                    .builder
+                                    .build_load(self.i8ptr_t, ptr, "old_val")
+                                    .expect("build_load failed");
+                                // check initialized flag
+                                if _init {
+                                    let rc_dec = self.get_rc_dec();
+                                    let _ = self
+                                        .builder
+                                        .build_call(rc_dec, &[old.into()], "rc_dec_old")
+                                        .expect("build_call failed");
+                                }
+                                // store new value
+                                let _ = self.builder.build_store(ptr, val);
+                                // increment refcount of new value
+                                if let BasicValueEnum::PointerValue(newpv) = val {
+                                    let rc_inc = self.get_rc_inc();
+                                    let _ = self
+                                        .builder
+                                        .build_call(rc_inc, &[newpv.into()], "rc_inc_assign")
+                                        .expect("build_call failed");
+                                }
+                            } else {
+                                let _ = self.builder.build_store(ptr, val);
+                            }
+                            // mark initialized after assignment
+                            self.set_local_initialized(locals, &name, true);
+                            return Some(val);
+                        }
+                    }
                 }
                 None
             }
@@ -302,25 +513,54 @@ impl<'a> CodeGen<'a> {
                     BasicValueEnum::FloatValue(fv) => {
                         // JS-like truthiness for numbers: false for +0, -0, and NaN
                         let zero = self.f64_t.const_float(0.0);
-                        let is_not_zero = self.builder.build_float_compare(inkwell::FloatPredicate::ONE, fv, zero, "neq0").expect("build_float_compare failed");
+                        let is_not_zero = self
+                            .builder
+                            .build_float_compare(inkwell::FloatPredicate::ONE, fv, zero, "neq0")
+                            .expect("build_float_compare failed");
                         // check not NaN: fv == fv
-                        let is_not_nan = self.builder.build_float_compare(inkwell::FloatPredicate::OEQ, fv, fv, "not_nan").expect("build_float_compare failed");
-                        let cond = self.builder.build_and(is_not_zero, is_not_nan, "num_truth").expect("build_and failed");
+                        let is_not_nan = self
+                            .builder
+                            .build_float_compare(inkwell::FloatPredicate::OEQ, fv, fv, "not_nan")
+                            .expect("build_float_compare failed");
+                        let cond = self
+                            .builder
+                            .build_and(is_not_zero, is_not_nan, "num_truth")
+                            .expect("build_and failed");
                         cond.as_basic_value_enum()
                     }
                     BasicValueEnum::PointerValue(pv) => {
                         // pointer truthiness: non-null and non-empty string are truthy
-                        let is_null = self.builder.build_is_null(pv, "is_null").expect("build_is_null failed");
-                        let is_not_null = self.builder.build_not(is_null, "not_null").expect("build_not failed");
+                        let is_null = self
+                            .builder
+                            .build_is_null(pv, "is_null")
+                            .expect("build_is_null failed");
+                        let is_not_null = self
+                            .builder
+                            .build_not(is_null, "not_null")
+                            .expect("build_not failed");
                         // call strlen(ptr) and check != 0
                         if let Some(strlen_fn) = self.module.get_function("strlen") {
-                            let cs = self.builder.build_call(strlen_fn, &[pv.into()], "strlen_call").expect("build_call strlen failed");
+                            let cs = self
+                                .builder
+                                .build_call(strlen_fn, &[pv.into()], "strlen_call")
+                                .expect("build_call strlen failed");
                             let either = cs.try_as_basic_value();
                             if let inkwell::Either::Left(bv) = either {
                                 let len = bv.into_int_value();
                                 let zero64 = self.i64_t.const_int(0, false);
-                                let len_nonzero = self.builder.build_int_compare(inkwell::IntPredicate::NE, len, zero64, "len_nonzero").expect("build_int_compare failed");
-                                let cond = self.builder.build_and(is_not_null, len_nonzero, "ptr_truth").expect("build_and failed");
+                                let len_nonzero = self
+                                    .builder
+                                    .build_int_compare(
+                                        inkwell::IntPredicate::NE,
+                                        len,
+                                        zero64,
+                                        "len_nonzero",
+                                    )
+                                    .expect("build_int_compare failed");
+                                let cond = self
+                                    .builder
+                                    .build_and(is_not_null, len_nonzero, "ptr_truth")
+                                    .expect("build_and failed");
                                 return Some(cond.as_basic_value_enum());
                             }
                         }
@@ -337,20 +577,28 @@ impl<'a> CodeGen<'a> {
 
                 // branch based on cond_i1
                 let cond_val = self.to_condition_i1(cond_i1)?;
-                self.builder.build_conditional_branch(cond_val, then_bb, else_bb).expect("build_conditional_branch failed");
+                self.builder
+                    .build_conditional_branch(cond_val, then_bb, else_bb)
+                    .expect("build_conditional_branch failed");
 
                 // then
                 self.builder.position_at_end(then_bb);
                 let then_val = self.lower_expr(&cond.cons, function, param_map, locals);
                 if self.builder.get_insert_block().is_some() {
-                    let _ = self.builder.build_unconditional_branch(merge_bb).expect("build_unconditional_branch failed");
+                    let _ = self
+                        .builder
+                        .build_unconditional_branch(merge_bb)
+                        .expect("build_unconditional_branch failed");
                 }
 
                 // else
                 self.builder.position_at_end(else_bb);
                 let else_val = self.lower_expr(&cond.alt, function, param_map, locals);
                 if self.builder.get_insert_block().is_some() {
-                    let _ = self.builder.build_unconditional_branch(merge_bb).expect("build_unconditional_branch failed");
+                    let _ = self
+                        .builder
+                        .build_unconditional_branch(merge_bb)
+                        .expect("build_unconditional_branch failed");
                 }
 
                 // merge
@@ -394,7 +642,14 @@ impl<'a> CodeGen<'a> {
 
                         let zero = self.i32_t.const_int(0, false);
                         let indices = &[zero, zero];
-                        let gep = unsafe { self.builder.build_gep(array_ty, gv.as_pointer_value(), indices, "strptr") };
+                        let gep = unsafe {
+                            self.builder.build_gep(
+                                array_ty,
+                                gv.as_pointer_value(),
+                                indices,
+                                "strptr",
+                            )
+                        };
                         if let Ok(ptr) = gep {
                             // store pointer in cache for future reuse
                             self.string_literals.borrow_mut().insert(key, ptr);
@@ -404,6 +659,375 @@ impl<'a> CodeGen<'a> {
                     }
                     _ => None,
                 }
+            }
+            ast::Expr::Array(arr) => {
+                // Lower array literal: determine element kinds by lowering each elt
+                let mut lowered_elems: Vec<BasicValueEnum> = Vec::new();
+                for opt in &arr.elems {
+                    if let Some(expr_or_spread) = opt {
+                        // ExprOrSpread has .expr
+                        if let Some(ev) =
+                            self.lower_expr(&expr_or_spread.expr, function, param_map, locals)
+                        {
+                            lowered_elems.push(ev);
+                        } else {
+                            // unsupported element lowering
+                            return None;
+                        }
+                    } else {
+                        // elided element like [ , ] -> treat as undefined -> unsupported
+                        return None;
+                    }
+                }
+
+                let len = lowered_elems.len() as u64;
+                // decide numeric array if every elem is FloatValue
+                let all_numbers = lowered_elems
+                    .iter()
+                    .all(|v| matches!(v, BasicValueEnum::FloatValue(_)));
+
+                // call runtime array_alloc(i64 len, i32 elem_size, i32 elem_is_number)
+                let array_alloc_fn = self.get_array_alloc();
+                let len_const = self.i64_t.const_int(len, false);
+                let (elem_size_const, is_number_const) = if all_numbers {
+                    (
+                        self.i32_t.const_int(8, false),
+                        self.i32_t.const_int(1, false),
+                    )
+                } else {
+                    // pointer-sized elements
+                    let ptr_size = 8u64;
+                    (
+                        self.i32_t.const_int(ptr_size as u64, false),
+                        self.i32_t.const_int(0, false),
+                    )
+                };
+
+                let call_site = self
+                    .builder
+                    .build_call(
+                        array_alloc_fn,
+                        &[
+                            len_const.into(),
+                            elem_size_const.into(),
+                            is_number_const.into(),
+                        ],
+                        "array_alloc_call",
+                    )
+                    .expect("build_call failed");
+                let either = call_site.try_as_basic_value();
+                let arr_ptr = match either {
+                    inkwell::Either::Left(bv) => bv.into_pointer_value(),
+                    _ => return None,
+                };
+
+                // compute data pointer: arr_ptr points at header start; data starts after header+len
+                let header_bytes = (std::mem::size_of::<u64>() + std::mem::size_of::<u64>()) as u64;
+                // GEP arr_ptr (i8*) by header_bytes to get data start
+                let offset_const = self.i32_t.const_int(header_bytes, false);
+                let data_i8_res = unsafe {
+                    self.builder.build_gep(
+                        self.context.i8_type(),
+                        arr_ptr,
+                        &[offset_const],
+                        "arr_data_i8",
+                    )
+                };
+                let data_ptr_i8 = if let Ok(p) = data_i8_res {
+                    p
+                } else {
+                    return None;
+                };
+                let array_set_ptr_fn = self.get_array_set_ptr();
+
+                if all_numbers {
+                    // For each element, compute byte offset = i * 8, GEP from data_ptr_i8, bitcast to f64* and store
+                    for (i, v) in lowered_elems.into_iter().enumerate() {
+                        if let BasicValueEnum::FloatValue(fv) = v {
+                            let byte_off = (i as u64) * 8u64;
+                            let off_const = self.i32_t.const_int(byte_off, false);
+                            let elem_i8_res = unsafe {
+                                self.builder.build_gep(
+                                    self.context.i8_type(),
+                                    data_ptr_i8,
+                                    &[off_const],
+                                    "elem_i8",
+                                )
+                            };
+                            let elem_i8 = if let Ok(p) = elem_i8_res {
+                                p
+                            } else {
+                                return None;
+                            };
+                            // bitcast to f64* (unwrap Result returned by pointer cast)
+                            let elem_ptr = self
+                                .builder
+                                .build_pointer_cast(
+                                    elem_i8,
+                                    self.context.ptr_type(AddressSpace::default()),
+                                    "elem_f64_ptr",
+                                )
+                                .expect("build_pointer_cast failed");
+                            let _ = self.builder.build_store(elem_ptr, fv);
+                        } else {
+                            return None;
+                        }
+                    }
+                    Some(arr_ptr.as_basic_value_enum())
+                } else {
+                    // pointer array: elements stored as machine pointers; element byte offset = i * ptr_size
+                    let ptr_size = 8u64;
+                    for (i, v) in lowered_elems.into_iter().enumerate() {
+                        let byte_off = (i as u64) * ptr_size;
+                        let off_const = self.i32_t.const_int(byte_off, false);
+                        let elem_i8_res = unsafe {
+                            self.builder.build_gep(
+                                self.context.i8_type(),
+                                data_ptr_i8,
+                                &[off_const],
+                                "elem_i8",
+                            )
+                        };
+                        let elem_i8 = if let Ok(p) = elem_i8_res {
+                            p
+                        } else {
+                            return None;
+                        };
+                        // bitcast to i8** (pointer-to-pointer) and unwrap
+                        let elem_ptr = self
+                            .builder
+                            .build_pointer_cast(
+                                elem_i8,
+                                self.context.ptr_type(AddressSpace::default()),
+                                "elem_ptrptr",
+                            )
+                            .expect("build_pointer_cast failed");
+                        match v {
+                            BasicValueEnum::PointerValue(pv) => {
+                                // call runtime array_set_ptr(arr_ptr, idx, pv)
+                                let idx_const = self.i64_t.const_int(i as u64, false);
+                                let _ = self
+                                    .builder
+                                    .build_call(
+                                        array_set_ptr_fn,
+                                        &[arr_ptr.into(), idx_const.into(), pv.into()],
+                                        "array_set_ptr_call",
+                                    )
+                                    .expect("build_call failed");
+                            }
+                            BasicValueEnum::IntValue(iv) => {
+                                // store integer as-is into pointer slot (coerce as i8*)
+                                let _ = self.builder.build_store(elem_ptr, iv);
+                            }
+                            _ => return None,
+                        }
+                    }
+                    Some(arr_ptr.as_basic_value_enum())
+                }
+            }
+            ast::Expr::Member(member) => {
+                // Support both computed member access (obj[expr]) and dot-member (obj.prop)
+                use deno_ast::swc::ast::MemberProp;
+                match &member.prop {
+                    MemberProp::Computed(boxed) => {
+                        // lower object and index
+                        if let Some(obj_val) =
+                            self.lower_expr(&member.obj, function, param_map, locals)
+                        {
+                            if let Some(idx_val) =
+                                self.lower_expr(&boxed.expr, function, param_map, locals)
+                            {
+                                // only support pointer-array indexing (i8**)
+                                if let BasicValueEnum::PointerValue(arr_ptr) = obj_val {
+                                    // compute index as i64 for runtime helpers
+                                    let idx_i64 = match idx_val {
+                                        BasicValueEnum::IntValue(iv) => self
+                                            .builder
+                                            .build_int_cast(iv, self.i64_t, "idx_i64")
+                                            .expect("int cast"),
+                                        BasicValueEnum::FloatValue(fv) => self
+                                            .builder
+                                            .build_float_to_signed_int(fv, self.i64_t, "f2i")
+                                            .expect("f2i"),
+                                        _ => return None,
+                                    };
+
+                                    // If index is numeric, call typed runtime helper array_get_f64
+                                    if matches!(
+                                        idx_val,
+                                        BasicValueEnum::IntValue(_) | BasicValueEnum::FloatValue(_)
+                                    ) {
+                                        // cast idx to i64
+                                        let idx_i64 = match idx_val {
+                                            BasicValueEnum::IntValue(iv) => self
+                                                .builder
+                                                .build_int_cast(iv, self.i64_t, "idx_i64")
+                                                .expect("cast idx to i64"),
+                                            BasicValueEnum::FloatValue(fv) => self
+                                                .builder
+                                                .build_float_to_signed_int(
+                                                    fv, self.i64_t, "f2i_i64",
+                                                )
+                                                .expect("f2i"),
+                                            _ => return None,
+                                        };
+                                        let array_get = self.get_array_get_f64();
+                                        let cs = self
+                                            .builder
+                                            .build_call(
+                                                array_get,
+                                                &[arr_ptr.into(), idx_i64.into()],
+                                                "array_get_f64_call",
+                                            )
+                                            .expect("build_call failed");
+                                        let either = cs.try_as_basic_value();
+                                        if let inkwell::Either::Left(bv) = either {
+                                            return Some(bv);
+                                        }
+                                    }
+
+                                    // fallback: call runtime helper that returns a pointer and rc_inc's it
+                                    let array_get_ptr_fn = self.get_array_get_ptr();
+                                    let cs = self
+                                        .builder
+                                        .build_call(
+                                            array_get_ptr_fn,
+                                            &[arr_ptr.into(), idx_i64.into()],
+                                            "array_get_ptr_call",
+                                        )
+                                        .expect("build_call failed");
+                                    let either = cs.try_as_basic_value();
+                                    if let inkwell::Either::Left(bv) = either {
+                                        return Some(bv);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    MemberProp::Ident(prop_ident) => {
+                        // dot-member access like obj.prop
+                        let field_name = prop_ident.sym.to_string();
+                        if let Some(obj_val) =
+                            self.lower_expr(&member.obj, function, param_map, locals)
+                        {
+                            // Only support pointer-like objects (i8*) which represent nominal structs
+                            if let BasicValueEnum::PointerValue(obj_ptr) = obj_val {
+                                // Determine nominal class name if obj is the `this` parameter
+                                // or if function param types carry nominal info.
+                                // Check if the object is a param named in param_map
+                                // Try to find which param corresponds to this pointer value
+                                // If it's `this`, param_map contains "this" -> idx 0 typically.
+                                // Use fn_param_types map to get the nominal type for `this`.
+                                let mut class_name_opt: Option<String> = None;
+                                if let Some(_idx) = param_map.get("this") {
+                                    // if the current value is the param at that index, assume it's this
+                                    // fetch actual function param value and compare pointer equality is hard here
+                                    // instead assume semantics: lowering of `this` expressions will resolve via name
+                                    // so if member.obj is an Ident named "this", we can map directly by name
+                                    if let deno_ast::swc::ast::Expr::Ident(ident) = &*member.obj {
+                                        if ident.sym.to_string() == "this" {
+                                            // lookup function-level param types by function name (if available)
+                                            if let Some(param_types) = self
+                                                .fn_param_types
+                                                .borrow()
+                                                .get(function.get_name().to_str().unwrap_or(""))
+                                            {
+                                                if !param_types.is_empty() {
+                                                    if let crate::types::OatsType::NominalStruct(
+                                                        n,
+                                                    ) = &param_types[0]
+                                                    {
+                                                        class_name_opt = Some(n.clone());
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                if let Some(class_name) = class_name_opt {
+                                    // lookup field list for this class
+                                    if let Some(fields) =
+                                        self.class_fields.borrow().get(&class_name)
+                                    {
+                                        // find index of field
+                                        if let Some((field_idx, (_fname, _field_ty))) = fields
+                                            .iter()
+                                            .enumerate()
+                                            .find(|(_, (n, _))| n == &field_name)
+                                        {
+                                            // field storage layout: after u64 header, fields are stored in pointer-sized slots
+                                            // compute byte offset = sizeof(u64) + field_idx * sizeof(void*)
+                                            let hdr_size = self.i64_t.const_int(
+                                                std::mem::size_of::<u64>() as u64,
+                                                false,
+                                            );
+                                            let ptr_sz = self.i64_t.const_int(
+                                                std::mem::size_of::<usize>() as u64,
+                                                false,
+                                            );
+                                            let idx_const =
+                                                self.i64_t.const_int(field_idx as u64, false);
+                                            // offset = hdr_size + idx * ptr_sz
+                                            let mul = self
+                                                .builder
+                                                .build_int_mul(idx_const, ptr_sz, "fld_off_mul")
+                                                .expect("mul failed");
+                                            let offset = self
+                                                .builder
+                                                .build_int_add(hdr_size, mul, "fld_off")
+                                                .expect("add failed");
+                                            // We need a i32 index sequence for gep on i8 pointer: cast offset to i64->i32 for index
+                                            let offset_i64 = offset;
+                                            let offset_i32 = self
+                                                .builder
+                                                .build_int_cast(
+                                                    offset_i64,
+                                                    self.context.i32_type(),
+                                                    "off_i32",
+                                                )
+                                                .expect("cast off_i32");
+                                            // Perform GEP on i8* using i32 index (element type i8, index is byte offset)
+                                            let gep_res = unsafe {
+                                                self.builder.build_gep(
+                                                    self.context.i8_type(),
+                                                    obj_ptr,
+                                                    &[offset_i32],
+                                                    "field_i8ptr",
+                                                )
+                                            };
+                                            let gep_ptr = match gep_res {
+                                                Ok(pv) => pv,
+                                                Err(_) => return None,
+                                            };
+                                            // Cast the i8* pointer to pointer-to-i8* (i8**), so we can load a stored i8* slot
+                                            let slot_ptr_ty =
+                                                self.context.ptr_type(AddressSpace::default());
+                                            let slot_ptr = self
+                                                .builder
+                                                .build_pointer_cast(
+                                                    gep_ptr,
+                                                    slot_ptr_ty,
+                                                    "slot_ptr_cast",
+                                                )
+                                                .expect("cast slot_ptr failed");
+                                            // load slot (an i8*)
+                                            let loaded = self
+                                                .builder
+                                                .build_load(self.i8ptr_t, slot_ptr, "field_load")
+                                                .expect("build_load failed");
+                                            return Some(loaded.as_basic_value_enum());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    MemberProp::PrivateName(_) => {
+                        // not supported
+                    }
+                }
+                return None;
             }
             _ => None,
         }
@@ -415,6 +1039,7 @@ impl<'a> CodeGen<'a> {
         func_decl: &deno_ast::swc::ast::Function,
         param_types: &[crate::types::OatsType],
         ret_type: &crate::types::OatsType,
+        receiver_name: Option<&str>,
     ) -> FunctionValue<'a> {
         let llvm_param_types: Vec<inkwell::types::BasicTypeEnum> = param_types
             .iter()
@@ -429,11 +1054,17 @@ impl<'a> CodeGen<'a> {
                 ft.fn_type(&args.iter().map(|a| (*a).into()).collect::<Vec<_>>(), false)
             }
             crate::types::OatsType::Boolean => {
-                    let it = self.bool_t;
+                let it = self.bool_t;
                 let args: Vec<inkwell::types::BasicTypeEnum> = llvm_param_types.clone();
                 it.fn_type(&args.iter().map(|a| (*a).into()).collect::<Vec<_>>(), false)
             }
             crate::types::OatsType::String | crate::types::OatsType::NominalStruct(_) => {
+                let pt = self.context.ptr_type(AddressSpace::default());
+                let args: Vec<inkwell::types::BasicTypeEnum> = llvm_param_types.clone();
+                pt.fn_type(&args.iter().map(|a| (*a).into()).collect::<Vec<_>>(), false)
+            }
+            crate::types::OatsType::Array(_) => {
+                // Arrays are represented as i8* (opaque pointer to runtime array)
                 let pt = self.context.ptr_type(AddressSpace::default());
                 let args: Vec<inkwell::types::BasicTypeEnum> = llvm_param_types.clone();
                 pt.fn_type(&args.iter().map(|a| (*a).into()).collect::<Vec<_>>(), false)
@@ -450,23 +1081,53 @@ impl<'a> CodeGen<'a> {
 
         let function = self.module.add_function(func_name, fn_type, None);
 
+        // Record the declared parameter types for this function so lowering
+        // (e.g. member access for `this`) can inspect the nominal type of
+        // the receiver. We store the original OatsType vector under the
+        // function name for later lookup.
+        self.fn_param_types
+            .borrow_mut()
+            .insert(func_name.to_string(), param_types.to_vec());
+
         let entry = self.context.append_basic_block(function, "entry");
         self.builder.position_at_end(entry);
 
-        // Build param name -> index map from function declaration params
+        // Build param name -> index map from function declaration params.
+        // If a receiver_name is provided, map it to index 0 and shift other
+        // param indices by +1 to account for the implicit `this` leading
+        // parameter which is present in `param_types` but not in the AST.
         let mut param_map: HashMap<String, u32> = HashMap::new();
+        if let Some(rname) = receiver_name {
+            param_map.insert(rname.to_string(), 0u32);
+        }
         for (i, p) in func_decl.params.iter().enumerate() {
             use deno_ast::swc::ast::Pat;
             if let Pat::Ident(ident) = &p.pat {
                 let name = ident.id.sym.to_string();
-                param_map.insert(name, i as u32);
+                // index in LLVM params is offset by 1 if receiver present
+                let idx = if receiver_name.is_some() {
+                    (i + 1) as u32
+                } else {
+                    i as u32
+                };
+                param_map.insert(name, idx);
             }
         }
 
         // Allocate stack slots for function parameters and store incoming
         // parameter values into them so parameters behave like locals.
         // We create these allocas in the entry block before emitting body.
-        let mut locals_stack: Vec<HashMap<String, (inkwell::values::PointerValue<'a>, BasicTypeEnum<'a>, bool, bool)>> = Vec::new();
+        let mut locals_stack: Vec<
+            HashMap<
+                String,
+                (
+                    inkwell::values::PointerValue<'a>,
+                    BasicTypeEnum<'a>,
+                    bool,
+                    bool,
+                ),
+            >,
+        > = Vec::new();
         locals_stack.push(HashMap::new());
         for (name, idx) in &param_map {
             let i = *idx as usize;
@@ -475,12 +1136,30 @@ impl<'a> CodeGen<'a> {
             }
             let param_ty = llvm_param_types[i];
             // Create an alloca for the parameter's LLVM type
-            let alloca = self.builder.build_alloca(param_ty, name).expect("build_alloca failed");
+            let alloca = self
+                .builder
+                .build_alloca(param_ty, name)
+                .expect("build_alloca failed");
             // Store the incoming parameter into the alloca
             let pv = function.get_nth_param(*idx).unwrap();
             let _ = self.builder.build_store(alloca, pv);
+            // If this parameter is a pointer type, increment refcount for the stored value
+            if param_ty == self.i8ptr_t.as_basic_type_enum() {
+                let rc_inc = self.get_rc_inc();
+                let _ = self
+                    .builder
+                    .build_call(rc_inc, &[pv.into()], "rc_inc_param")
+                    .expect("build_call failed");
+            }
             // Insert into current scope: initialized=true, is_const=false
-            self.insert_local_current_scope(&mut locals_stack, name.clone(), alloca, param_ty, true, false);
+            self.insert_local_current_scope(
+                &mut locals_stack,
+                name.clone(),
+                alloca,
+                param_ty,
+                true,
+                false,
+            );
         }
 
         if let Some(body) = &func_decl.body {
@@ -493,9 +1172,14 @@ impl<'a> CodeGen<'a> {
                 match stmt {
                     ast::Stmt::Return(ret) => {
                         if let Some(arg) = &ret.arg {
-                            if let Some(val) = self.lower_expr(arg, function, &param_map, &mut locals_stack) {
+                            if let Some(val) =
+                                self.lower_expr(arg, function, &param_map, &mut locals_stack)
+                            {
+                                // Decref pointer locals before returning
+                                self.emit_rc_dec_for_locals(&locals_stack);
                                 let _ = self.builder.build_return(Some(&val));
                             } else {
+                                self.emit_rc_dec_for_locals(&locals_stack);
                                 let _ = self.builder.build_return(None);
                             }
                         } else {
@@ -505,50 +1189,243 @@ impl<'a> CodeGen<'a> {
                         break;
                     }
                     ast::Stmt::Expr(expr_stmt) => {
-                        // Lower expression for side-effects (e.g., println calls)
-                        let _ = self.lower_expr(&expr_stmt.expr, function, &param_map, &mut locals_stack);
+                        use deno_ast::swc::ast;
+                        // If this is an assignment statement and the LHS is a `this.field`
+                        // pattern, lower it specially so we can compute the field slot and
+                        // perform refcount updates. Otherwise, fall back to expression
+                        // lowering for side-effects.
+                        if let ast::Expr::Assign(assign) = &*expr_stmt.expr {
+                            // Try to detect `this.<ident> =` by scanning the source text
+                            // for the `this.` occurrence within the statement span.
+                            let start = expr_stmt.span.lo.0 as usize;
+                            let end = expr_stmt.span.hi.0 as usize;
+                            if end > start && end <= self.source.len() {
+                                let slice = &self.source[start..end];
+                                if let Some(pos) = slice.find("this.") {
+                                    let mut j = pos + "this.".len();
+                                    // read identifier
+                                    let mut ident = String::new();
+                                    while j < slice.len() {
+                                        let c = slice.as_bytes()[j] as char;
+                                        if ident.is_empty() {
+                                            if c.is_ascii_alphabetic() || c == '_' {
+                                                ident.push(c);
+                                            } else {
+                                                break;
+                                            }
+                                        } else {
+                                            if c.is_ascii_alphanumeric() || c == '_' {
+                                                ident.push(c);
+                                            } else {
+                                                break;
+                                            }
+                                        }
+                                        j += 1;
+                                    }
+                                    if !ident.is_empty() {
+                                        // Lower RHS value
+                                        if let Some(val) = self.lower_expr(
+                                            &assign.right,
+                                            function,
+                                            &param_map,
+                                            &mut locals_stack,
+                                        ) {
+                                            // If we have a `this` parameter, the function param map should
+                                            // contain its index (usually 0). Use the incoming parameter
+                                            // value rather than the alloca to obtain the object pointer.
+                                            if let Some(this_idx) = param_map.get("this") {
+                                                // fetch the `this` value from function params
+                                                if let Some(pv) = function.get_nth_param(*this_idx)
+                                                {
+                                                    // only handle pointer-like objects
+                                                    if let BasicValueEnum::PointerValue(obj_ptr) =
+                                                        pv.into()
+                                                    {
+                                                        // lookup class name via fn_param_types
+                                                        if let Some(param_types) =
+                                                            self.fn_param_types.borrow().get(
+                                                                function
+                                                                    .get_name()
+                                                                    .to_str()
+                                                                    .unwrap_or(""),
+                                                            )
+                                                        {
+                                                            if !param_types.is_empty() {
+                                                                if let crate::types::OatsType::NominalStruct(n) = &param_types[0] {
+                                                                    let class_name = n.clone();
+                                                                    if let Some(fields) = self.class_fields.borrow().get(&class_name) {
+                                                                        if let Some((field_idx, (_fname, _))) = fields.iter().enumerate().find(|(_, (n, _))| n == &ident) {
+                                                                            // compute byte offset = hdr_size + idx * ptr_size
+                                                                            let hdr_size = self.i64_t.const_int(std::mem::size_of::<u64>() as u64, false);
+                                                                            let ptr_sz = self.i64_t.const_int(std::mem::size_of::<usize>() as u64, false);
+                                                                            let idx_const = self.i64_t.const_int(field_idx as u64, false);
+                                                                            let mul = self.builder.build_int_mul(idx_const, ptr_sz, "fld_off_mul").expect("mul failed");
+                                                                            let offset = self.builder.build_int_add(hdr_size, mul, "fld_off").expect("add failed");
+                                                                            let offset_i32 = self.builder.build_int_cast(offset, self.context.i32_type(), "off_i32").expect("cast off_i32");
+                                                                            // GEP from i8* by byte offset
+                                                                            let gep_res = unsafe { self.builder.build_gep(self.context.i8_type(), obj_ptr, &[offset_i32], "field_i8ptr") };
+                                                                            let gep_ptr = match gep_res { Ok(p) => p, Err(_) => { let _ = self.builder.build_unreachable(); continue; } };
+                                                                            // Cast to pointer slot and store appropriately
+                                                                            let slot_ptr_ty = self.context.ptr_type(AddressSpace::default());
+                                                                            let slot_ptr = self.builder.build_pointer_cast(gep_ptr, slot_ptr_ty, "slot_ptr_cast").expect("cast slot_ptr failed");
+                                                                            match val {
+                                                                                BasicValueEnum::PointerValue(newpv) => {
+                                                                                    // load old value
+                                                                                    let old = self.builder.build_load(self.i8ptr_t, slot_ptr, "old_field").expect("build_load failed");
+                                                                                    // call rc_dec on old (runtime should handle null)
+                                                                                    let rc_dec = self.get_rc_dec();
+                                                                                    let _ = self.builder.build_call(rc_dec, &[old.into()], "rc_dec_old_field").expect("build_call failed");
+                                                                                    // store new pointer
+                                                                                    let _ = self.builder.build_store(slot_ptr, newpv.as_basic_value_enum());
+                                                                                    // increment refcount of new value
+                                                                                    let rc_inc = self.get_rc_inc();
+                                                                                    let _ = self.builder.build_call(rc_inc, &[newpv.into()], "rc_inc_field").expect("build_call failed");
+                                                                                }
+                                                                                BasicValueEnum::FloatValue(fv) => {
+                                                                                    // cast slot to f64* and store
+                                                                                    let elem_ptr = self.builder.build_pointer_cast(gep_ptr, self.context.ptr_type(AddressSpace::default()), "elem_f64_ptr").expect("build_pointer_cast failed");
+                                                                                    let _ = self.builder.build_store(elem_ptr, fv);
+                                                                                }
+                                                                                _ => {
+                                                                                    // unsupported RHS type for member write
+                                                                                }
+                                                                            }
+                                                                            // we've handled the assignment; skip default lowering
+                                                                            continue;
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Fallback: Lower expression for side-effects (e.g., println calls)
+                        let _ = self.lower_expr(
+                            &expr_stmt.expr,
+                            function,
+                            &param_map,
+                            &mut locals_stack,
+                        );
                     }
                     ast::Stmt::Decl(ast::Decl::Var(vdecl)) => {
                         // Evaluate simple variable initializers and create allocas
                         use deno_ast::swc::ast::Pat;
-                        // Decide const-ness for the whole declaration
-                        let is_const_decl = matches!(vdecl.kind, deno_ast::swc::ast::VarDeclKind::Const);
+                        // Decide const-ness for the whole declaration.
+                        // Use `let` as the mutable option; `const` is immutable.
+                        // Parser enforces that `var` is disallowed; codegen no longer emits a diagnostic here.
                         for decl in &vdecl.decls {
                             if let Pat::Ident(ident) = &decl.name {
                                 let name = ident.id.sym.to_string();
+                                // Determine mutability from preprocessor-provided set
+                                let is_const_decl = !self.mut_decls.contains(&name);
                                 // Create an alloca for this local at function entry
                                 // and insert it into the current scope as uninitialized
                                 if let Some(init) = &decl.init {
-                                    if let Some(val) = self.lower_expr(&init, function, &param_map, &mut locals_stack) {
+                                    if let Some(val) = self.lower_expr(
+                                        &init,
+                                        function,
+                                        &param_map,
+                                        &mut locals_stack,
+                                    ) {
                                         match val {
                                             BasicValueEnum::FloatValue(fv) => {
-                                                let alloca = self.builder.build_alloca(self.f64_t, &name).expect("build_alloca failed");
+                                                let alloca = self
+                                                    .builder
+                                                    .build_alloca(self.f64_t, &name)
+                                                    .expect("build_alloca failed");
                                                 // insert as uninitialized first to model TDZ
-                                                self.insert_local_current_scope(&mut locals_stack, name.clone(), alloca, self.f64_t.as_basic_type_enum(), false, is_const_decl);
+                                                self.insert_local_current_scope(
+                                                    &mut locals_stack,
+                                                    name.clone(),
+                                                    alloca,
+                                                    self.f64_t.as_basic_type_enum(),
+                                                    false,
+                                                    is_const_decl,
+                                                );
                                                 let _ = self.builder.build_store(alloca, fv);
                                                 // mark initialized after storing initializer
-                                                self.set_local_initialized(&mut locals_stack, &name, true);
+                                                self.set_local_initialized(
+                                                    &mut locals_stack,
+                                                    &name,
+                                                    true,
+                                                );
                                             }
                                             BasicValueEnum::PointerValue(pv) => {
                                                 let ptr_ty = self.i8ptr_t;
-                                                let alloca = self.builder.build_alloca(ptr_ty, &name).expect("build_alloca failed");
-                                                self.insert_local_current_scope(&mut locals_stack, name.clone(), alloca, ptr_ty.as_basic_type_enum(), false, is_const_decl);
+                                                let alloca = self
+                                                    .builder
+                                                    .build_alloca(ptr_ty, &name)
+                                                    .expect("build_alloca failed");
+                                                self.insert_local_current_scope(
+                                                    &mut locals_stack,
+                                                    name.clone(),
+                                                    alloca,
+                                                    ptr_ty.as_basic_type_enum(),
+                                                    false,
+                                                    is_const_decl,
+                                                );
                                                 let _ = self.builder.build_store(alloca, pv);
-                                                self.set_local_initialized(&mut locals_stack, &name, true);
+                                                // increment refcount for the newly-stored pointer
+                                                let rc_inc = self.get_rc_inc();
+                                                let _ = self
+                                                    .builder
+                                                    .build_call(
+                                                        rc_inc,
+                                                        &[pv.into()],
+                                                        "rc_inc_var_init",
+                                                    )
+                                                    .expect("build_call failed");
+                                                self.set_local_initialized(
+                                                    &mut locals_stack,
+                                                    &name,
+                                                    true,
+                                                );
                                             }
                                             BasicValueEnum::IntValue(iv) => {
                                                 let boolt = self.bool_t;
-                                                let alloca = self.builder.build_alloca(boolt, &name).expect("build_alloca failed");
-                                                self.insert_local_current_scope(&mut locals_stack, name.clone(), alloca, boolt.as_basic_type_enum(), false, is_const_decl);
+                                                let alloca = self
+                                                    .builder
+                                                    .build_alloca(boolt, &name)
+                                                    .expect("build_alloca failed");
+                                                self.insert_local_current_scope(
+                                                    &mut locals_stack,
+                                                    name.clone(),
+                                                    alloca,
+                                                    boolt.as_basic_type_enum(),
+                                                    false,
+                                                    is_const_decl,
+                                                );
                                                 let _ = self.builder.build_store(alloca, iv);
-                                                self.set_local_initialized(&mut locals_stack, &name, true);
+                                                self.set_local_initialized(
+                                                    &mut locals_stack,
+                                                    &name,
+                                                    true,
+                                                );
                                             }
                                             _ => {
                                                 // Unsupported initializer type; still insert uninitialized local
                                                 // so future references can produce TDZ errors.
-                                                let ptr_ty = self.context.ptr_type(AddressSpace::default());
-                                                let alloca = self.builder.build_alloca(ptr_ty, &name).expect("build_alloca failed");
-                                                self.insert_local_current_scope(&mut locals_stack, name.clone(), alloca, ptr_ty.as_basic_type_enum(), false, is_const_decl);
+                                                let ptr_ty =
+                                                    self.context.ptr_type(AddressSpace::default());
+                                                let alloca = self
+                                                    .builder
+                                                    .build_alloca(ptr_ty, &name)
+                                                    .expect("build_alloca failed");
+                                                self.insert_local_current_scope(
+                                                    &mut locals_stack,
+                                                    name.clone(),
+                                                    alloca,
+                                                    ptr_ty.as_basic_type_enum(),
+                                                    false,
+                                                    is_const_decl,
+                                                );
                                             }
                                         }
                                     }
@@ -556,8 +1433,18 @@ impl<'a> CodeGen<'a> {
                                     // No initializer: for const this is a syntax error in JS/TS
                                     // For now, insert uninitialized const/local and let later checks catch usage.
                                     let ptr_ty = self.context.ptr_type(AddressSpace::default());
-                                    let alloca = self.builder.build_alloca(ptr_ty, &name).expect("build_alloca failed");
-                                    self.insert_local_current_scope(&mut locals_stack, name.clone(), alloca, ptr_ty.as_basic_type_enum(), false, is_const_decl);
+                                    let alloca = self
+                                        .builder
+                                        .build_alloca(ptr_ty, &name)
+                                        .expect("build_alloca failed");
+                                    self.insert_local_current_scope(
+                                        &mut locals_stack,
+                                        name.clone(),
+                                        alloca,
+                                        ptr_ty.as_basic_type_enum(),
+                                        false,
+                                        is_const_decl,
+                                    );
                                 }
                             }
                         }
@@ -566,12 +1453,22 @@ impl<'a> CodeGen<'a> {
                         // Lower an if statement: create then/else/merge blocks and
                         // lower the consequent/alternative as statements.
                         // Lower the test to i1
-                        if let Some(test_val) = self.lower_expr(&if_stmt.test, function, &param_map, &mut locals_stack) {
+                        if let Some(test_val) =
+                            self.lower_expr(&if_stmt.test, function, &param_map, &mut locals_stack)
+                        {
                             let cond_i1 = match test_val {
                                 BasicValueEnum::IntValue(iv) => iv,
                                 BasicValueEnum::FloatValue(fv) => {
                                     let zero = self.context.f64_type().const_float(0.0);
-                                    let cmp = self.builder.build_float_compare(inkwell::FloatPredicate::ONE, fv, zero, "if_tcmp").expect("build_float_compare failed");
+                                    let cmp = self
+                                        .builder
+                                        .build_float_compare(
+                                            inkwell::FloatPredicate::ONE,
+                                            fv,
+                                            zero,
+                                            "if_tcmp",
+                                        )
+                                        .expect("build_float_compare failed");
                                     cmp
                                 }
                                 _ => {
@@ -584,7 +1481,9 @@ impl<'a> CodeGen<'a> {
                             let else_bb = self.context.append_basic_block(function, "if.else");
                             let merge_bb = self.context.append_basic_block(function, "if.merge");
 
-                            self.builder.build_conditional_branch(cond_i1, then_bb, else_bb).expect("build_conditional_branch failed");
+                            self.builder
+                                .build_conditional_branch(cond_i1, then_bb, else_bb)
+                                .expect("build_conditional_branch failed");
 
                             // then
                             self.builder.position_at_end(then_bb);
@@ -594,9 +1493,17 @@ impl<'a> CodeGen<'a> {
                                         match s {
                                             ast::Stmt::Return(ret) => {
                                                 if let Some(arg) = &ret.arg {
-                                                    if let Some(val) = self.lower_expr(arg, function, &param_map, &mut locals_stack) {
-                                                        let _ = self.builder.build_return(Some(&val));
+                                                    if let Some(val) = self.lower_expr(
+                                                        arg,
+                                                        function,
+                                                        &param_map,
+                                                        &mut locals_stack,
+                                                    ) {
+                                                        self.emit_rc_dec_for_locals(&locals_stack);
+                                                        let _ =
+                                                            self.builder.build_return(Some(&val));
                                                     } else {
+                                                        self.emit_rc_dec_for_locals(&locals_stack);
                                                         let _ = self.builder.build_return(None);
                                                     }
                                                 } else {
@@ -606,7 +1513,12 @@ impl<'a> CodeGen<'a> {
                                                 break;
                                             }
                                             ast::Stmt::Expr(expr_stmt) => {
-                                                let _ = self.lower_expr(&expr_stmt.expr, function, &param_map, &mut locals_stack);
+                                                let _ = self.lower_expr(
+                                                    &expr_stmt.expr,
+                                                    function,
+                                                    &param_map,
+                                                    &mut locals_stack,
+                                                );
                                             }
                                             ast::Stmt::Decl(ast::Decl::Var(vdecl)) => {
                                                 use deno_ast::swc::ast::Pat;
@@ -614,7 +1526,12 @@ impl<'a> CodeGen<'a> {
                                                     if let Pat::Ident(ident) = &decl.name {
                                                         let name = ident.id.sym.to_string();
                                                         if let Some(init) = &decl.init {
-                                                            if let Some(val) = self.lower_expr(&init, function, &param_map, &mut locals_stack) {
+                                                            if let Some(val) = self.lower_expr(
+                                                                &init,
+                                                                function,
+                                                                &param_map,
+                                                                &mut locals_stack,
+                                                            ) {
                                                                 match val {
                                                                     BasicValueEnum::FloatValue(fv) => {
                                                                         let alloca = self.builder.build_alloca(self.context.f64_type(), &name).expect("build_alloca failed");
@@ -646,9 +1563,16 @@ impl<'a> CodeGen<'a> {
                                 }
                                 ast::Stmt::Return(ret) => {
                                     if let Some(arg) = &ret.arg {
-                                        if let Some(val) = self.lower_expr(arg, function, &param_map, &mut locals_stack) {
+                                        if let Some(val) = self.lower_expr(
+                                            arg,
+                                            function,
+                                            &param_map,
+                                            &mut locals_stack,
+                                        ) {
+                                            self.emit_rc_dec_for_locals(&locals_stack);
                                             let _ = self.builder.build_return(Some(&val));
                                         } else {
+                                            self.emit_rc_dec_for_locals(&locals_stack);
                                             let _ = self.builder.build_return(None);
                                         }
                                     } else {
@@ -657,7 +1581,12 @@ impl<'a> CodeGen<'a> {
                                     emitted_return = true;
                                 }
                                 ast::Stmt::Expr(expr_stmt) => {
-                                    let _ = self.lower_expr(&expr_stmt.expr, function, &param_map, &mut locals_stack);
+                                    let _ = self.lower_expr(
+                                        &expr_stmt.expr,
+                                        function,
+                                        &param_map,
+                                        &mut locals_stack,
+                                    );
                                 }
                                 ast::Stmt::Decl(ast::Decl::Var(vdecl)) => {
                                     use deno_ast::swc::ast::Pat;
@@ -665,24 +1594,67 @@ impl<'a> CodeGen<'a> {
                                         if let Pat::Ident(ident) = &decl.name {
                                             let name = ident.id.sym.to_string();
                                             if let Some(init) = &decl.init {
-                                                if let Some(val) = self.lower_expr(&init, function, &param_map, &mut locals_stack) {
+                                                if let Some(val) = self.lower_expr(
+                                                    &init,
+                                                    function,
+                                                    &param_map,
+                                                    &mut locals_stack,
+                                                ) {
                                                     match val {
                                                         BasicValueEnum::FloatValue(fv) => {
-                                                            let alloca = self.builder.build_alloca(self.f64_t, &name).expect("build_alloca failed");
-                                                            let _ = self.builder.build_store(alloca, fv);
-                                                            self.insert_local_current_scope(&mut locals_stack, name.clone(), alloca, self.f64_t.as_basic_type_enum(), true, false);
+                                                            let alloca = self
+                                                                .builder
+                                                                .build_alloca(self.f64_t, &name)
+                                                                .expect("build_alloca failed");
+                                                            let _ = self
+                                                                .builder
+                                                                .build_store(alloca, fv);
+                                                            self.insert_local_current_scope(
+                                                                &mut locals_stack,
+                                                                name.clone(),
+                                                                alloca,
+                                                                self.f64_t.as_basic_type_enum(),
+                                                                true,
+                                                                false,
+                                                            );
                                                         }
                                                         BasicValueEnum::PointerValue(pv) => {
-                                                            let ptr_ty = self.context.ptr_type(AddressSpace::default());
-                                                            let alloca = self.builder.build_alloca(ptr_ty, &name).expect("build_alloca failed");
-                                                            let _ = self.builder.build_store(alloca, pv);
-                                                            self.insert_local_current_scope(&mut locals_stack, name.clone(), alloca, ptr_ty.as_basic_type_enum(), true, false);
+                                                            let ptr_ty = self
+                                                                .context
+                                                                .ptr_type(AddressSpace::default());
+                                                            let alloca = self
+                                                                .builder
+                                                                .build_alloca(ptr_ty, &name)
+                                                                .expect("build_alloca failed");
+                                                            let _ = self
+                                                                .builder
+                                                                .build_store(alloca, pv);
+                                                            self.insert_local_current_scope(
+                                                                &mut locals_stack,
+                                                                name.clone(),
+                                                                alloca,
+                                                                ptr_ty.as_basic_type_enum(),
+                                                                true,
+                                                                false,
+                                                            );
                                                         }
                                                         BasicValueEnum::IntValue(iv) => {
                                                             let boolt = self.bool_t;
-                                                            let alloca = self.builder.build_alloca(boolt, &name).expect("build_alloca failed");
-                                                            let _ = self.builder.build_store(alloca, iv);
-                                                            self.insert_local_current_scope(&mut locals_stack, name.clone(), alloca, boolt.as_basic_type_enum(), true, false);
+                                                            let alloca = self
+                                                                .builder
+                                                                .build_alloca(boolt, &name)
+                                                                .expect("build_alloca failed");
+                                                            let _ = self
+                                                                .builder
+                                                                .build_store(alloca, iv);
+                                                            self.insert_local_current_scope(
+                                                                &mut locals_stack,
+                                                                name.clone(),
+                                                                alloca,
+                                                                boolt.as_basic_type_enum(),
+                                                                true,
+                                                                false,
+                                                            );
                                                         }
                                                         _ => {}
                                                     }
@@ -697,7 +1669,10 @@ impl<'a> CodeGen<'a> {
                             }
 
                             if self.builder.get_insert_block().is_some() {
-                                let _ = self.builder.build_unconditional_branch(merge_bb).expect("build_unconditional_branch failed");
+                                let _ = self
+                                    .builder
+                                    .build_unconditional_branch(merge_bb)
+                                    .expect("build_unconditional_branch failed");
                             }
 
                             // else
@@ -709,8 +1684,15 @@ impl<'a> CodeGen<'a> {
                                             match s {
                                                 ast::Stmt::Return(ret) => {
                                                     if let Some(arg) = &ret.arg {
-                                                        if let Some(val) = self.lower_expr(arg, function, &param_map, &mut locals_stack) {
-                                                            let _ = self.builder.build_return(Some(&val));
+                                                        if let Some(val) = self.lower_expr(
+                                                            arg,
+                                                            function,
+                                                            &param_map,
+                                                            &mut locals_stack,
+                                                        ) {
+                                                            let _ = self
+                                                                .builder
+                                                                .build_return(Some(&val));
                                                         } else {
                                                             let _ = self.builder.build_return(None);
                                                         }
@@ -721,7 +1703,12 @@ impl<'a> CodeGen<'a> {
                                                     break;
                                                 }
                                                 ast::Stmt::Expr(expr_stmt) => {
-                                                    let _ = self.lower_expr(&expr_stmt.expr, function, &param_map, &mut locals_stack);
+                                                    let _ = self.lower_expr(
+                                                        &expr_stmt.expr,
+                                                        function,
+                                                        &param_map,
+                                                        &mut locals_stack,
+                                                    );
                                                 }
                                                 ast::Stmt::Decl(ast::Decl::Var(vdecl)) => {
                                                     use deno_ast::swc::ast::Pat;
@@ -729,7 +1716,12 @@ impl<'a> CodeGen<'a> {
                                                         if let Pat::Ident(ident) = &decl.name {
                                                             let name = ident.id.sym.to_string();
                                                             if let Some(init) = &decl.init {
-                                                                if let Some(val) = self.lower_expr(&init, function, &param_map, &mut locals_stack) {
+                                                                if let Some(val) = self.lower_expr(
+                                                                    &init,
+                                                                    function,
+                                                                    &param_map,
+                                                                    &mut locals_stack,
+                                                                ) {
                                                                     match val {
                                                                         BasicValueEnum::FloatValue(fv) => {
                                                                             let alloca = self.builder.build_alloca(self.f64_t, &name).expect("build_alloca failed");
@@ -761,7 +1753,12 @@ impl<'a> CodeGen<'a> {
                                     }
                                     ast::Stmt::Return(ret) => {
                                         if let Some(arg) = &ret.arg {
-                                            if let Some(val) = self.lower_expr(arg, function, &param_map, &mut locals_stack) {
+                                            if let Some(val) = self.lower_expr(
+                                                arg,
+                                                function,
+                                                &param_map,
+                                                &mut locals_stack,
+                                            ) {
                                                 let _ = self.builder.build_return(Some(&val));
                                             } else {
                                                 let _ = self.builder.build_return(None);
@@ -772,7 +1769,12 @@ impl<'a> CodeGen<'a> {
                                         emitted_return = true;
                                     }
                                     ast::Stmt::Expr(expr_stmt) => {
-                                        let _ = self.lower_expr(&expr_stmt.expr, function, &param_map, &mut locals_stack);
+                                        let _ = self.lower_expr(
+                                            &expr_stmt.expr,
+                                            function,
+                                            &param_map,
+                                            &mut locals_stack,
+                                        );
                                     }
                                     ast::Stmt::Decl(ast::Decl::Var(vdecl)) => {
                                         use deno_ast::swc::ast::Pat;
@@ -780,24 +1782,67 @@ impl<'a> CodeGen<'a> {
                                             if let Pat::Ident(ident) = &decl.name {
                                                 let name = ident.id.sym.to_string();
                                                 if let Some(init) = &decl.init {
-                                                    if let Some(val) = self.lower_expr(&init, function, &param_map, &mut locals_stack) {
+                                                    if let Some(val) = self.lower_expr(
+                                                        &init,
+                                                        function,
+                                                        &param_map,
+                                                        &mut locals_stack,
+                                                    ) {
                                                         match val {
                                                             BasicValueEnum::FloatValue(fv) => {
-                                                                let alloca = self.builder.build_alloca(self.f64_t, &name).expect("build_alloca failed");
-                                                                let _ = self.builder.build_store(alloca, fv);
-                                                                self.insert_local_current_scope(&mut locals_stack, name.clone(), alloca, self.f64_t.as_basic_type_enum(), true, false);
+                                                                let alloca = self
+                                                                    .builder
+                                                                    .build_alloca(self.f64_t, &name)
+                                                                    .expect("build_alloca failed");
+                                                                let _ = self
+                                                                    .builder
+                                                                    .build_store(alloca, fv);
+                                                                self.insert_local_current_scope(
+                                                                    &mut locals_stack,
+                                                                    name.clone(),
+                                                                    alloca,
+                                                                    self.f64_t.as_basic_type_enum(),
+                                                                    true,
+                                                                    false,
+                                                                );
                                                             }
                                                             BasicValueEnum::PointerValue(pv) => {
-                                                                let ptr_ty = self.context.ptr_type(AddressSpace::default());
-                                                                let alloca = self.builder.build_alloca(ptr_ty, &name).expect("build_alloca failed");
-                                                                let _ = self.builder.build_store(alloca, pv);
-                                                                self.insert_local_current_scope(&mut locals_stack, name.clone(), alloca, ptr_ty.as_basic_type_enum(), true, false);
+                                                                let ptr_ty = self.context.ptr_type(
+                                                                    AddressSpace::default(),
+                                                                );
+                                                                let alloca = self
+                                                                    .builder
+                                                                    .build_alloca(ptr_ty, &name)
+                                                                    .expect("build_alloca failed");
+                                                                let _ = self
+                                                                    .builder
+                                                                    .build_store(alloca, pv);
+                                                                self.insert_local_current_scope(
+                                                                    &mut locals_stack,
+                                                                    name.clone(),
+                                                                    alloca,
+                                                                    ptr_ty.as_basic_type_enum(),
+                                                                    true,
+                                                                    false,
+                                                                );
                                                             }
                                                             BasicValueEnum::IntValue(iv) => {
                                                                 let boolt = self.bool_t;
-                                                                let alloca = self.builder.build_alloca(boolt, &name).expect("build_alloca failed");
-                                                                let _ = self.builder.build_store(alloca, iv);
-                                                                self.insert_local_current_scope(&mut locals_stack, name.clone(), alloca, boolt.as_basic_type_enum(), true, false);
+                                                                let alloca = self
+                                                                    .builder
+                                                                    .build_alloca(boolt, &name)
+                                                                    .expect("build_alloca failed");
+                                                                let _ = self
+                                                                    .builder
+                                                                    .build_store(alloca, iv);
+                                                                self.insert_local_current_scope(
+                                                                    &mut locals_stack,
+                                                                    name.clone(),
+                                                                    alloca,
+                                                                    boolt.as_basic_type_enum(),
+                                                                    true,
+                                                                    false,
+                                                                );
                                                             }
                                                             _ => {}
                                                         }
@@ -813,12 +1858,973 @@ impl<'a> CodeGen<'a> {
                             }
 
                             if self.builder.get_insert_block().is_some() {
-                                let _ = self.builder.build_unconditional_branch(merge_bb).expect("build_unconditional_branch failed");
+                                let _ = self
+                                    .builder
+                                    .build_unconditional_branch(merge_bb)
+                                    .expect("build_unconditional_branch failed");
                             }
 
                             // continue at merge
                             self.builder.position_at_end(merge_bb);
                         }
+                    }
+                    ast::Stmt::For(forstmt) => {
+                        // Build blocks for for-loop: cond -> body -> update -> end
+                        let cond_bb = self.context.append_basic_block(function, "for.cond");
+                        let body_bb = self.context.append_basic_block(function, "for.body");
+                        let update_bb = self.context.append_basic_block(function, "for.update");
+                        let end_bb = self.context.append_basic_block(function, "for.end");
+
+                        // init
+                        if let Some(init) = &forstmt.init {
+                            match init {
+                                ast::VarDeclOrExpr::VarDecl(vdecl) => {
+                                    for decl in &vdecl.decls {
+                                        use deno_ast::swc::ast::Pat;
+                                        if let Pat::Ident(ident) = &decl.name {
+                                            let name = ident.id.sym.to_string();
+                                            let is_const_decl = !self.mut_decls.contains(&name);
+                                            if let Some(init_expr) = &decl.init {
+                                                if let Some(val) = self.lower_expr(
+                                                    init_expr,
+                                                    function,
+                                                    &param_map,
+                                                    &mut locals_stack,
+                                                ) {
+                                                    match val {
+                                                        BasicValueEnum::FloatValue(fv) => {
+                                                            let alloca = self
+                                                                .builder
+                                                                .build_alloca(self.f64_t, &name)
+                                                                .expect("build_alloca failed");
+                                                            self.insert_local_current_scope(
+                                                                &mut locals_stack,
+                                                                name.clone(),
+                                                                alloca,
+                                                                self.f64_t.as_basic_type_enum(),
+                                                                false,
+                                                                is_const_decl,
+                                                            );
+                                                            let _ = self
+                                                                .builder
+                                                                .build_store(alloca, fv);
+                                                            self.set_local_initialized(
+                                                                &mut locals_stack,
+                                                                &name,
+                                                                true,
+                                                            );
+                                                        }
+                                                        BasicValueEnum::PointerValue(pv) => {
+                                                            let ptr_ty = self.i8ptr_t;
+                                                            let alloca = self
+                                                                .builder
+                                                                .build_alloca(ptr_ty, &name)
+                                                                .expect("build_alloca failed");
+                                                            self.insert_local_current_scope(
+                                                                &mut locals_stack,
+                                                                name.clone(),
+                                                                alloca,
+                                                                ptr_ty.as_basic_type_enum(),
+                                                                false,
+                                                                is_const_decl,
+                                                            );
+                                                            let _ = self
+                                                                .builder
+                                                                .build_store(alloca, pv);
+                                                            let rc_inc = self.get_rc_inc();
+                                                            let _ = self
+                                                                .builder
+                                                                .build_call(
+                                                                    rc_inc,
+                                                                    &[pv.into()],
+                                                                    "rc_inc_var_init",
+                                                                )
+                                                                .expect("build_call failed");
+                                                            self.set_local_initialized(
+                                                                &mut locals_stack,
+                                                                &name,
+                                                                true,
+                                                            );
+                                                        }
+                                                        BasicValueEnum::IntValue(iv) => {
+                                                            let boolt = self.bool_t;
+                                                            let alloca = self
+                                                                .builder
+                                                                .build_alloca(boolt, &name)
+                                                                .expect("build_alloca failed");
+                                                            self.insert_local_current_scope(
+                                                                &mut locals_stack,
+                                                                name.clone(),
+                                                                alloca,
+                                                                boolt.as_basic_type_enum(),
+                                                                false,
+                                                                is_const_decl,
+                                                            );
+                                                            let _ = self
+                                                                .builder
+                                                                .build_store(alloca, iv);
+                                                            self.set_local_initialized(
+                                                                &mut locals_stack,
+                                                                &name,
+                                                                true,
+                                                            );
+                                                        }
+                                                        _ => {}
+                                                    }
+                                                }
+                                            } else {
+                                                let alloca = self
+                                                    .builder
+                                                    .build_alloca(self.f64_t, &name)
+                                                    .expect("build_alloca failed");
+                                                self.insert_local_current_scope(
+                                                    &mut locals_stack,
+                                                    name.clone(),
+                                                    alloca,
+                                                    self.f64_t.as_basic_type_enum(),
+                                                    false,
+                                                    is_const_decl,
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
+                                ast::VarDeclOrExpr::Expr(e) => {
+                                    let _ =
+                                        self.lower_expr(e, function, &param_map, &mut locals_stack);
+                                }
+                            }
+                        }
+
+                        if self.builder.get_insert_block().is_some() {
+                            let _ = self
+                                .builder
+                                .build_unconditional_branch(cond_bb)
+                                .expect("build_unconditional_branch failed");
+                        }
+
+                        // cond
+                        self.builder.position_at_end(cond_bb);
+                        if let Some(test) = &forstmt.test {
+                            if let Some(tv) =
+                                self.lower_expr(&*test, function, &param_map, &mut locals_stack)
+                            {
+                                if let Some(cond) = self.to_condition_i1(tv) {
+                                    self.builder
+                                        .build_conditional_branch(cond, body_bb, end_bb)
+                                        .expect("build_conditional_branch failed");
+                                } else {
+                                    self.builder
+                                        .build_unconditional_branch(end_bb)
+                                        .expect("build_unconditional_branch failed");
+                                }
+                            } else {
+                                self.builder
+                                    .build_unconditional_branch(end_bb)
+                                    .expect("build_unconditional_branch failed");
+                            }
+                        } else {
+                            self.builder
+                                .build_unconditional_branch(body_bb)
+                                .expect("build_unconditional_branch failed");
+                        }
+
+                        // body
+                        self.builder.position_at_end(body_bb);
+                        locals_stack.push(HashMap::new());
+                        let mut body_returned = false;
+                        match &*forstmt.body {
+                            ast::Stmt::Block(block) => {
+                                for s in &block.stmts {
+                                    match s {
+                                        ast::Stmt::Return(ret) => {
+                                            if let Some(arg) = &ret.arg {
+                                                if let Some(val) = self.lower_expr(
+                                                    arg,
+                                                    function,
+                                                    &param_map,
+                                                    &mut locals_stack,
+                                                ) {
+                                                    self.emit_rc_dec_for_locals(&locals_stack);
+                                                    let _ = self.builder.build_return(Some(&val));
+                                                } else {
+                                                    self.emit_rc_dec_for_locals(&locals_stack);
+                                                    let _ = self.builder.build_return(None);
+                                                }
+                                            } else {
+                                                let _ = self.builder.build_return(None);
+                                            }
+                                            body_returned = true;
+                                            break;
+                                        }
+                                        ast::Stmt::Expr(expr_stmt) => {
+                                            let _ = self.lower_expr(
+                                                &expr_stmt.expr,
+                                                function,
+                                                &param_map,
+                                                &mut locals_stack,
+                                            );
+                                        }
+                                        ast::Stmt::Decl(ast::Decl::Var(vdecl)) => {
+                                            use deno_ast::swc::ast::Pat;
+                                            for decl in &vdecl.decls {
+                                                if let Pat::Ident(ident) = &decl.name {
+                                                    let name = ident.id.sym.to_string();
+                                                    if let Some(init) = &decl.init {
+                                                        if let Some(val) = self.lower_expr(
+                                                            &init,
+                                                            function,
+                                                            &param_map,
+                                                            &mut locals_stack,
+                                                        ) {
+                                                            match val {
+                                                                BasicValueEnum::FloatValue(fv) => {
+                                                                    let alloca = self
+                                                                        .builder
+                                                                        .build_alloca(
+                                                                            self.f64_t, &name,
+                                                                        )
+                                                                        .expect(
+                                                                            "build_alloca failed",
+                                                                        );
+                                                                    let _ = self
+                                                                        .builder
+                                                                        .build_store(alloca, fv);
+                                                                    self.insert_local_current_scope(&mut locals_stack, name.clone(), alloca, self.f64_t.as_basic_type_enum(), true, false);
+                                                                }
+                                                                BasicValueEnum::PointerValue(
+                                                                    pv,
+                                                                ) => {
+                                                                    let ptr_ty =
+                                                                        self.context.ptr_type(
+                                                                            AddressSpace::default(),
+                                                                        );
+                                                                    let alloca = self
+                                                                        .builder
+                                                                        .build_alloca(ptr_ty, &name)
+                                                                        .expect(
+                                                                            "build_alloca failed",
+                                                                        );
+                                                                    let _ = self
+                                                                        .builder
+                                                                        .build_store(alloca, pv);
+                                                                    self.insert_local_current_scope(&mut locals_stack, name.clone(), alloca, ptr_ty.as_basic_type_enum(), true, false);
+                                                                }
+                                                                BasicValueEnum::IntValue(iv) => {
+                                                                    let boolt = self.bool_t;
+                                                                    let alloca = self
+                                                                        .builder
+                                                                        .build_alloca(boolt, &name)
+                                                                        .expect(
+                                                                            "build_alloca failed",
+                                                                        );
+                                                                    let _ = self
+                                                                        .builder
+                                                                        .build_store(alloca, iv);
+                                                                    self.insert_local_current_scope(&mut locals_stack, name.clone(), alloca, boolt.as_basic_type_enum(), true, false);
+                                                                }
+                                                                _ => {}
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                            }
+                            ast::Stmt::Return(ret) => {
+                                if let Some(arg) = &ret.arg {
+                                    if let Some(val) = self.lower_expr(
+                                        arg,
+                                        function,
+                                        &param_map,
+                                        &mut locals_stack,
+                                    ) {
+                                        self.emit_rc_dec_for_locals(&locals_stack);
+                                        let _ = self.builder.build_return(Some(&val));
+                                    } else {
+                                        self.emit_rc_dec_for_locals(&locals_stack);
+                                        let _ = self.builder.build_return(None);
+                                    }
+                                } else {
+                                    let _ = self.builder.build_return(None);
+                                }
+                                body_returned = true;
+                            }
+                            ast::Stmt::Expr(expr_stmt) => {
+                                let _ = self.lower_expr(
+                                    &expr_stmt.expr,
+                                    function,
+                                    &param_map,
+                                    &mut locals_stack,
+                                );
+                            }
+                            _ => {}
+                        }
+                        if !body_returned {
+                            if self.builder.get_insert_block().is_some() {
+                                let _ = self
+                                    .builder
+                                    .build_unconditional_branch(update_bb)
+                                    .expect("build_unconditional_branch failed");
+                            }
+                        }
+                        locals_stack.pop();
+
+                        // update
+                        self.builder.position_at_end(update_bb);
+                        if let Some(update) = &forstmt.update {
+                            let _ =
+                                self.lower_expr(&*update, function, &param_map, &mut locals_stack);
+                        }
+                        if self.builder.get_insert_block().is_some() {
+                            let _ = self
+                                .builder
+                                .build_unconditional_branch(cond_bb)
+                                .expect("build_unconditional_branch failed");
+                        }
+
+                        // continue after loop
+                        self.builder.position_at_end(end_bb);
+                    }
+                    ast::Stmt::ForOf(forof) => {
+                        // for (let x of y) { body }
+                        // Lower the RHS (iterable) and expect an array-like pointer
+                        if let Some(arr_val) =
+                            self.lower_expr(&forof.right, function, &param_map, &mut locals_stack)
+                        {
+                            if let BasicValueEnum::PointerValue(arr_ptr) = arr_val {
+                                // Setup blocks: cond -> body -> inc -> end
+                                let cond_bb =
+                                    self.context.append_basic_block(function, "forof.cond");
+                                let body_bb =
+                                    self.context.append_basic_block(function, "forof.body");
+                                let inc_bb = self.context.append_basic_block(function, "forof.inc");
+                                let end_bb = self.context.append_basic_block(function, "forof.end");
+
+                                // create index alloca (i64) in entry of surrounding function
+                                let idx_alloca = self
+                                    .builder
+                                    .build_alloca(self.i64_t, "forof_idx")
+                                    .expect("build_alloca failed");
+                                let zero = self.i64_t.const_int(0, false);
+                                let _ = self.builder.build_store(idx_alloca, zero);
+
+                                // Create a local for the loop variable in the current scope (uninitialized)
+                                let loop_var_name = match &forof.left {
+                                    ast::ForHead::VarDecl(boxed_vd) => {
+                                        let vd = &**boxed_vd;
+                                        // expect single decl with Ident pattern
+                                        if let Some(decl) = vd.decls.get(0) {
+                                            if let ast::Pat::Ident(ident) = &decl.name {
+                                                Some(ident.id.sym.to_string())
+                                            } else {
+                                                None
+                                            }
+                                        } else {
+                                            None
+                                        }
+                                    }
+                                    ast::ForHead::Pat(boxed_p) => {
+                                        if let ast::Pat::Ident(ident) = &**boxed_p {
+                                            Some(ident.id.sym.to_string())
+                                        } else {
+                                            None
+                                        }
+                                    }
+                                    _ => None,
+                                };
+
+                                // allocate placeholder alloca for the loop var (use ptr type to be generic)
+                                let mut loop_var_alloca = None;
+                                if let Some(name) = &loop_var_name {
+                                    let ptr_ty = self.i8ptr_t;
+                                    let alloca = self
+                                        .builder
+                                        .build_alloca(ptr_ty, name)
+                                        .expect("build_alloca failed");
+                                    // Insert as uninitialized local
+                                    self.insert_local_current_scope(
+                                        &mut locals_stack,
+                                        name.clone(),
+                                        alloca,
+                                        ptr_ty.as_basic_type_enum(),
+                                        false,
+                                        false,
+                                    );
+                                    loop_var_alloca = Some((name.clone(), alloca));
+                                }
+
+                                // jump to cond
+                                if self.builder.get_insert_block().is_some() {
+                                    let _ = self
+                                        .builder
+                                        .build_unconditional_branch(cond_bb)
+                                        .expect("build_unconditional_branch failed");
+                                }
+
+                                // cond: load length from arr (second u64 at offset sizeof(u64)) and compare idx < len
+                                self.builder.position_at_end(cond_bb);
+                                // compute len: load u64 at arr_ptr + 8
+                                // arr_ptr is i8* ; GEP by 8 to length location
+                                let off_const = self
+                                    .i32_t
+                                    .const_int(std::mem::size_of::<u64>() as u64, false);
+                                let len_i8_res = unsafe {
+                                    self.builder.build_gep(
+                                        self.context.i8_type(),
+                                        arr_ptr,
+                                        &[off_const],
+                                        "len_i8",
+                                    )
+                                };
+                                if let Ok(len_i8) = len_i8_res {
+                                    let len_ptr = self
+                                        .builder
+                                        .build_pointer_cast(
+                                            len_i8,
+                                            self.context.ptr_type(AddressSpace::default()),
+                                            "len_ptr",
+                                        )
+                                        .expect("cast len_ptr failed");
+                                    let len_loaded = self
+                                        .builder
+                                        .build_load(self.i64_t, len_ptr, "len_load")
+                                        .expect("load len failed");
+                                    let len_i64 = len_loaded.into_int_value();
+                                    let idx_loaded = self
+                                        .builder
+                                        .build_load(self.i64_t, idx_alloca, "idx_load")
+                                        .expect("load idx failed")
+                                        .into_int_value();
+                                    let cond = self
+                                        .builder
+                                        .build_int_compare(
+                                            inkwell::IntPredicate::ULT,
+                                            idx_loaded,
+                                            len_i64,
+                                            "forof_cond",
+                                        )
+                                        .expect("build_int_compare failed");
+                                    self.builder
+                                        .build_conditional_branch(cond, body_bb, end_bb)
+                                        .expect("build_conditional_branch failed");
+                                } else {
+                                    // failed to compute length -> skip loop
+                                    self.builder
+                                        .build_unconditional_branch(end_bb)
+                                        .expect("build_unconditional_branch failed");
+                                }
+
+                                // body
+                                self.builder.position_at_end(body_bb);
+                                locals_stack.push(HashMap::new());
+
+                                // load header to determine element-kind flag (elem_is_number stored in high 32 bits)
+                                // header is at arr_ptr as u64
+                                let header_ptr = self
+                                    .builder
+                                    .build_pointer_cast(
+                                        arr_ptr,
+                                        self.context.ptr_type(AddressSpace::default()),
+                                        "header_ptr",
+                                    )
+                                    .expect("cast header_ptr failed");
+                                let header_loaded = self
+                                    .builder
+                                    .build_load(self.i64_t, header_ptr, "header_load")
+                                    .expect("load header failed")
+                                    .into_int_value();
+                                // shift right by 32
+                                let shift_amt = self.i64_t.const_int(32, false);
+                                let header_shr = self
+                                    .builder
+                                    .build_right_shift(
+                                        header_loaded,
+                                        shift_amt,
+                                        false,
+                                        "header_shr",
+                                    )
+                                    .expect("build_right_shift failed");
+                                let one = self.i64_t.const_int(1, false);
+                                let is_number = self
+                                    .builder
+                                    .build_int_compare(
+                                        inkwell::IntPredicate::EQ,
+                                        header_shr,
+                                        one,
+                                        "is_number",
+                                    )
+                                    .expect("build_int_compare failed");
+
+                                // create blocks for number vs pointer element handling
+                                let num_bb =
+                                    self.context.append_basic_block(function, "forof.elem_num");
+                                let ptr_bb =
+                                    self.context.append_basic_block(function, "forof.elem_ptr");
+                                let after_elem_bb = self
+                                    .context
+                                    .append_basic_block(function, "forof.after_elem");
+                                self.builder
+                                    .build_conditional_branch(is_number, num_bb, ptr_bb)
+                                    .expect("build_conditional_branch failed");
+
+                                // number path: call array_get_f64(arr, idx)
+                                self.builder.position_at_end(num_bb);
+                                let array_get_f64 = self.get_array_get_f64();
+                                let idx_loaded = self
+                                    .builder
+                                    .build_load(self.i64_t, idx_alloca, "idx_load2")
+                                    .expect("load idx failed")
+                                    .into_int_value();
+                                let cs = self
+                                    .builder
+                                    .build_call(
+                                        array_get_f64,
+                                        &[arr_ptr.into(), idx_loaded.into()],
+                                        "array_get_f64_call",
+                                    )
+                                    .expect("build_call failed");
+                                if let inkwell::Either::Left(bv) = cs.try_as_basic_value() {
+                                    // store numeric value into loop var: bitcast alloca to f64* and store
+                                    if let Some((name, alloca)) = &loop_var_alloca {
+                                        let elem_f64 = bv.into_float_value();
+                                        let elem_ptr = self
+                                            .builder
+                                            .build_pointer_cast(
+                                                *alloca,
+                                                self.context.ptr_type(AddressSpace::default()),
+                                                "elem_f64_ptr",
+                                            )
+                                            .expect("cast elem_ptr failed");
+                                        let _ = self.builder.build_store(elem_ptr, elem_f64);
+                                        // mark initialized
+                                        self.set_local_initialized(&mut locals_stack, name, true);
+                                    }
+                                }
+                                if self.builder.get_insert_block().is_some() {
+                                    let _ = self
+                                        .builder
+                                        .build_unconditional_branch(after_elem_bb)
+                                        .expect("build_unconditional_branch failed");
+                                }
+
+                                // pointer path: call array_get_ptr(arr, idx)
+                                self.builder.position_at_end(ptr_bb);
+                                let array_get_ptr = self.get_array_get_ptr();
+                                let idx_loaded2 = self
+                                    .builder
+                                    .build_load(self.i64_t, idx_alloca, "idx_load3")
+                                    .expect("load idx failed")
+                                    .into_int_value();
+                                let cs2 = self
+                                    .builder
+                                    .build_call(
+                                        array_get_ptr,
+                                        &[arr_ptr.into(), idx_loaded2.into()],
+                                        "array_get_ptr_call",
+                                    )
+                                    .expect("build_call failed");
+                                if let inkwell::Either::Left(bv2) = cs2.try_as_basic_value() {
+                                    if let Some((name, alloca)) = &loop_var_alloca {
+                                        // If already initialized, decref old
+                                        if let Some((_ptr, _ty, init, _is_const)) =
+                                            self.find_local(&locals_stack, name)
+                                        {
+                                            if init {
+                                                // load old pointer value and call rc_dec
+                                                if let Ok(old_loaded) = self.builder.build_load(
+                                                    self.i8ptr_t.as_basic_type_enum(),
+                                                    *alloca,
+                                                    "old_load",
+                                                ) {
+                                                    if let BasicValueEnum::PointerValue(oldpv) =
+                                                        old_loaded
+                                                    {
+                                                        let rc_dec = self.get_rc_dec();
+                                                        let _ = self
+                                                            .builder
+                                                            .build_call(
+                                                                rc_dec,
+                                                                &[oldpv.into()],
+                                                                "rc_dec_old",
+                                                            )
+                                                            .expect("build_call failed");
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        let pv = bv2.into_pointer_value();
+                                        let _ = self
+                                            .builder
+                                            .build_store(*alloca, pv.as_basic_value_enum());
+                                        // increment refcount for new value
+                                        let rc_inc = self.get_rc_inc();
+                                        let _ = self
+                                            .builder
+                                            .build_call(rc_inc, &[pv.into()], "rc_inc_forof")
+                                            .expect("build_call failed");
+                                        self.set_local_initialized(&mut locals_stack, name, true);
+                                    }
+                                }
+                                if self.builder.get_insert_block().is_some() {
+                                    let _ = self
+                                        .builder
+                                        .build_unconditional_branch(after_elem_bb)
+                                        .expect("build_unconditional_branch failed");
+                                }
+
+                                // after element retrieval: lower the loop body (user provided)
+                                self.builder.position_at_end(after_elem_bb);
+                                match &*forof.body {
+                                    ast::Stmt::Block(block) => {
+                                        for s in &block.stmts {
+                                            match s {
+                                                ast::Stmt::Return(ret) => {
+                                                    if let Some(arg) = &ret.arg {
+                                                        if let Some(val) = self.lower_expr(
+                                                            arg,
+                                                            function,
+                                                            &param_map,
+                                                            &mut locals_stack,
+                                                        ) {
+                                                            self.emit_rc_dec_for_locals(
+                                                                &locals_stack,
+                                                            );
+                                                            let _ = self
+                                                                .builder
+                                                                .build_return(Some(&val));
+                                                        } else {
+                                                            self.emit_rc_dec_for_locals(
+                                                                &locals_stack,
+                                                            );
+                                                            let _ = self.builder.build_return(None);
+                                                        }
+                                                    } else {
+                                                        let _ = self.builder.build_return(None);
+                                                    }
+                                                    break;
+                                                }
+                                                ast::Stmt::Expr(expr_stmt) => {
+                                                    let _ = self.lower_expr(
+                                                        &expr_stmt.expr,
+                                                        function,
+                                                        &param_map,
+                                                        &mut locals_stack,
+                                                    );
+                                                }
+                                                ast::Stmt::Decl(ast::Decl::Var(vdecl)) => {
+                                                    use deno_ast::swc::ast::Pat;
+                                                    for decl in &vdecl.decls {
+                                                        if let Pat::Ident(ident) = &decl.name {
+                                                            let name = ident.id.sym.to_string();
+                                                            if let Some(init) = &decl.init {
+                                                                if let Some(val) = self.lower_expr(
+                                                                    &init,
+                                                                    function,
+                                                                    &param_map,
+                                                                    &mut locals_stack,
+                                                                ) {
+                                                                    match val {
+                                                                        BasicValueEnum::FloatValue(fv) => {
+                                                                            let alloca = self.builder.build_alloca(self.f64_t, &name).expect("build_alloca failed");
+                                                                            let _ = self.builder.build_store(alloca, fv);
+                                                                            self.insert_local_current_scope(&mut locals_stack, name.clone(), alloca, self.f64_t.as_basic_type_enum(), true, false);
+                                                                        }
+                                                                        BasicValueEnum::PointerValue(pv) => {
+                                                                            let ptr_ty = self.context.ptr_type(AddressSpace::default());
+                                                                            let alloca = self.builder.build_alloca(ptr_ty, &name).expect("build_alloca failed");
+                                                                            let _ = self.builder.build_store(alloca, pv);
+                                                                            self.insert_local_current_scope(&mut locals_stack, name.clone(), alloca, ptr_ty.as_basic_type_enum(), true, false);
+                                                                        }
+                                                                        BasicValueEnum::IntValue(iv) => {
+                                                                            let boolt = self.bool_t;
+                                                                            let alloca = self.builder.build_alloca(boolt, &name).expect("build_alloca failed");
+                                                                            let _ = self.builder.build_store(alloca, iv);
+                                                                            self.insert_local_current_scope(&mut locals_stack, name.clone(), alloca, boolt.as_basic_type_enum(), true, false);
+                                                                        }
+                                                                        _ => {}
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                                _ => {}
+                                            }
+                                        }
+                                    }
+                                    ast::Stmt::Expr(expr_stmt) => {
+                                        let _ = self.lower_expr(
+                                            &expr_stmt.expr,
+                                            function,
+                                            &param_map,
+                                            &mut locals_stack,
+                                        );
+                                    }
+                                    _ => {}
+                                }
+
+                                // after body, branch to inc
+                                if self.builder.get_insert_block().is_some() {
+                                    let _ = self
+                                        .builder
+                                        .build_unconditional_branch(inc_bb)
+                                        .expect("build_unconditional_branch failed");
+                                }
+
+                                // pop inner scope
+                                locals_stack.pop();
+
+                                // inc: idx = idx + 1
+                                self.builder.position_at_end(inc_bb);
+                                let idx_now = self
+                                    .builder
+                                    .build_load(self.i64_t, idx_alloca, "idx_now")
+                                    .expect("load idx failed")
+                                    .into_int_value();
+                                let one64 = self.i64_t.const_int(1, false);
+                                let added = self
+                                    .builder
+                                    .build_int_add(idx_now, one64, "idx_inc")
+                                    .expect("build_int_add failed");
+                                let _ = self
+                                    .builder
+                                    .build_store(idx_alloca, added.as_basic_value_enum());
+                                if self.builder.get_insert_block().is_some() {
+                                    let _ = self
+                                        .builder
+                                        .build_unconditional_branch(cond_bb)
+                                        .expect("build_unconditional_branch failed");
+                                }
+
+                                // end: nothing to do
+                                self.builder.position_at_end(end_bb);
+                            }
+                        }
+                    }
+                    ast::Stmt::While(ws) => {
+                        let cond_bb = self.context.append_basic_block(function, "while.cond");
+                        let body_bb = self.context.append_basic_block(function, "while.body");
+                        let end_bb = self.context.append_basic_block(function, "while.end");
+
+                        if self.builder.get_insert_block().is_some() {
+                            let _ = self
+                                .builder
+                                .build_unconditional_branch(cond_bb)
+                                .expect("build_unconditional_branch failed");
+                        }
+
+                        self.builder.position_at_end(cond_bb);
+                        if let Some(tv) =
+                            self.lower_expr(&ws.test, function, &param_map, &mut locals_stack)
+                        {
+                            if let Some(cond) = self.to_condition_i1(tv) {
+                                self.builder
+                                    .build_conditional_branch(cond, body_bb, end_bb)
+                                    .expect("build_conditional_branch failed");
+                            } else {
+                                self.builder
+                                    .build_unconditional_branch(end_bb)
+                                    .expect("build_unconditional_branch failed");
+                            }
+                        } else {
+                            self.builder
+                                .build_unconditional_branch(end_bb)
+                                .expect("build_unconditional_branch failed");
+                        }
+
+                        self.builder.position_at_end(body_bb);
+                        locals_stack.push(HashMap::new());
+                        let mut returned = false;
+                        match &*ws.body {
+                            ast::Stmt::Block(block) => {
+                                for s in &block.stmts {
+                                    match s {
+                                        ast::Stmt::Return(ret) => {
+                                            if let Some(arg) = &ret.arg {
+                                                if let Some(val) = self.lower_expr(
+                                                    arg,
+                                                    function,
+                                                    &param_map,
+                                                    &mut locals_stack,
+                                                ) {
+                                                    self.emit_rc_dec_for_locals(&locals_stack);
+                                                    let _ = self.builder.build_return(Some(&val));
+                                                } else {
+                                                    self.emit_rc_dec_for_locals(&locals_stack);
+                                                    let _ = self.builder.build_return(None);
+                                                }
+                                            } else {
+                                                let _ = self.builder.build_return(None);
+                                            }
+                                            returned = true;
+                                            break;
+                                        }
+                                        ast::Stmt::Expr(expr_stmt) => {
+                                            let _ = self.lower_expr(
+                                                &expr_stmt.expr,
+                                                function,
+                                                &param_map,
+                                                &mut locals_stack,
+                                            );
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                            }
+                            ast::Stmt::Return(ret) => {
+                                if let Some(arg) = &ret.arg {
+                                    if let Some(val) = self.lower_expr(
+                                        arg,
+                                        function,
+                                        &param_map,
+                                        &mut locals_stack,
+                                    ) {
+                                        self.emit_rc_dec_for_locals(&locals_stack);
+                                        let _ = self.builder.build_return(Some(&val));
+                                    } else {
+                                        self.emit_rc_dec_for_locals(&locals_stack);
+                                        let _ = self.builder.build_return(None);
+                                    }
+                                } else {
+                                    let _ = self.builder.build_return(None);
+                                }
+                                returned = true;
+                            }
+                            ast::Stmt::Expr(expr_stmt) => {
+                                let _ = self.lower_expr(
+                                    &expr_stmt.expr,
+                                    function,
+                                    &param_map,
+                                    &mut locals_stack,
+                                );
+                            }
+                            _ => {}
+                        }
+                        if !returned {
+                            if self.builder.get_insert_block().is_some() {
+                                let _ = self
+                                    .builder
+                                    .build_unconditional_branch(cond_bb)
+                                    .expect("build_unconditional_branch failed");
+                            }
+                        }
+                        locals_stack.pop();
+                        self.builder.position_at_end(end_bb);
+                    }
+                    ast::Stmt::DoWhile(dws) => {
+                        let body_bb = self.context.append_basic_block(function, "dowhile.body");
+                        let cond_bb = self.context.append_basic_block(function, "dowhile.cond");
+                        let end_bb = self.context.append_basic_block(function, "dowhile.end");
+
+                        if self.builder.get_insert_block().is_some() {
+                            let _ = self
+                                .builder
+                                .build_unconditional_branch(body_bb)
+                                .expect("build_unconditional_branch failed");
+                        }
+
+                        self.builder.position_at_end(body_bb);
+                        locals_stack.push(HashMap::new());
+                        let mut returned = false;
+                        match &*dws.body {
+                            ast::Stmt::Block(block) => {
+                                for s in &block.stmts {
+                                    match s {
+                                        ast::Stmt::Return(ret) => {
+                                            if let Some(arg) = &ret.arg {
+                                                if let Some(val) = self.lower_expr(
+                                                    arg,
+                                                    function,
+                                                    &param_map,
+                                                    &mut locals_stack,
+                                                ) {
+                                                    self.emit_rc_dec_for_locals(&locals_stack);
+                                                    let _ = self.builder.build_return(Some(&val));
+                                                } else {
+                                                    self.emit_rc_dec_for_locals(&locals_stack);
+                                                    let _ = self.builder.build_return(None);
+                                                }
+                                            } else {
+                                                let _ = self.builder.build_return(None);
+                                            }
+                                            returned = true;
+                                            break;
+                                        }
+                                        ast::Stmt::Expr(expr_stmt) => {
+                                            let _ = self.lower_expr(
+                                                &expr_stmt.expr,
+                                                function,
+                                                &param_map,
+                                                &mut locals_stack,
+                                            );
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                            }
+                            ast::Stmt::Return(ret) => {
+                                if let Some(arg) = &ret.arg {
+                                    if let Some(val) = self.lower_expr(
+                                        arg,
+                                        function,
+                                        &param_map,
+                                        &mut locals_stack,
+                                    ) {
+                                        self.emit_rc_dec_for_locals(&locals_stack);
+                                        let _ = self.builder.build_return(Some(&val));
+                                    } else {
+                                        self.emit_rc_dec_for_locals(&locals_stack);
+                                        let _ = self.builder.build_return(None);
+                                    }
+                                } else {
+                                    let _ = self.builder.build_return(None);
+                                }
+                                returned = true;
+                            }
+                            ast::Stmt::Expr(expr_stmt) => {
+                                let _ = self.lower_expr(
+                                    &expr_stmt.expr,
+                                    function,
+                                    &param_map,
+                                    &mut locals_stack,
+                                );
+                            }
+                            _ => {}
+                        }
+                        locals_stack.pop();
+                        if !returned {
+                            if self.builder.get_insert_block().is_some() {
+                                let _ = self
+                                    .builder
+                                    .build_unconditional_branch(cond_bb)
+                                    .expect("build_unconditional_branch failed");
+                            }
+                        }
+
+                        self.builder.position_at_end(cond_bb);
+                        if let Some(tv) =
+                            self.lower_expr(&dws.test, function, &param_map, &mut locals_stack)
+                        {
+                            if let Some(cond) = self.to_condition_i1(tv) {
+                                self.builder
+                                    .build_conditional_branch(cond, body_bb, end_bb)
+                                    .expect("build_conditional_branch failed");
+                            } else {
+                                self.builder
+                                    .build_unconditional_branch(end_bb)
+                                    .expect("build_unconditional_branch failed");
+                            }
+                        } else {
+                            self.builder
+                                .build_unconditional_branch(end_bb)
+                                .expect("build_unconditional_branch failed");
+                        }
+
+                        self.builder.position_at_end(end_bb);
                     }
                     _ => {
                         // other statement types not supported in prototype
@@ -844,9 +2850,9 @@ impl<'a> CodeGen<'a> {
     /// Returns true if a host `main` was emitted (the module defines
     /// `oats_main`), false otherwise.
     pub fn emit_host_main(
-    &self,
-    _param_types: &[crate::types::OatsType],
-    _ret_type: &crate::types::OatsType,
+        &self,
+        _param_types: &[crate::types::OatsType],
+        _ret_type: &crate::types::OatsType,
     ) -> bool {
         // If main already present, nothing to do
         if self.module.get_function("main").is_some() {
@@ -866,18 +2872,20 @@ impl<'a> CodeGen<'a> {
         let entry = self.context.append_basic_block(main_fn, "entry");
         self.builder.position_at_end(entry);
 
-        // Do NOT call into `oats_main` from the emitted host `main`.
-        // Previously this code invoked the user's `oats_main`, which meant
-        // running user code when the compiled program was executed. To avoid
-        // that behavior the host `main` now simply returns a success exit
-        // code (0) for supported signatures and returns 1 for unsupported
-        // signatures. This guarantees the compiler/runtime will not execute
-        // the user's code as part of the host binary.
+        // The host `main` will invoke the user's `oats_main` when the
+        // emitted `oats_main` exists and has a zero-argument signature. This
+        // keeps the produced binary self-contained (no external rt_main
+        // object required) while ensuring we only call the user function
+        // when its signature is compatible with the simple invocation.
+        if let Some(user_main) = self.module.get_function("oats_main") {
+            if user_main.count_params() == 0 {
+                // Call oats_main and ignore its return value.
+                let _ = self
+                    .builder
+                    .build_call(user_main, &[], "call_oats_main_from_main");
+            }
+        }
 
-        // Do not perform any signature checking here; always emit a host
-        // `main` that returns success (0) so we never execute user code as
-        // part of the host binary. Presence of `oats_main` still gates
-        // whether we emit a host main at all.
         let zero = i32t.const_int(0, false);
         let _ = self.builder.build_return(Some(&zero.as_basic_value_enum()));
 
@@ -889,7 +2897,22 @@ impl<'a> CodeGen<'a> {
             let entry_bb = self.context.append_basic_block(entry_fn, "entry");
             self.builder.position_at_end(entry_bb);
 
-            // Emit a simple oats_entry that does not call into user code.
+            // Emit a simple oats_entry that calls into the user's `oats_main`
+            // if it exists. This makes a linked host executable execute the
+            // user's program when run. We call `oats_main` with no
+            // arguments here and ignore its return value; this is the
+            // pragmatic behavior for the current prototype (examples use
+            // `oats_main()` with no args). If `oats_main` has a different
+            // signature the call will be skipped and oats_entry will return
+            // 0 instead.
+            if let Some(user_main) = self.module.get_function("oats_main") {
+                // Only call if the function type matches a no-arg callable
+                // (defensive: check param count is zero).
+                if user_main.count_params() == 0 {
+                    let _ = self.builder.build_call(user_main, &[], "call_oats_main");
+                }
+            }
+
             let zero = i32t.const_int(0, false);
             let _ = self.builder.build_return(Some(&zero.as_basic_value_enum()));
         }

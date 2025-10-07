@@ -1,0 +1,15 @@
+export class Foo {
+    constructor() {
+        // no-op
+    }
+
+    bar(): number {
+        return 42;
+    }
+}
+
+export function main(): void {
+    // call constructor and method to ensure symbols are referenced
+    let f = Foo_ctor();
+    return;
+}

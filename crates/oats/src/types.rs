@@ -1,11 +1,13 @@
-use std::collections::HashMap;
-use deno_ast::swc::ast;
 use anyhow::Result;
+use deno_ast::swc::ast;
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OatsType {
     Number,
     Boolean,
+    /// Array of element type (e.g. number[])
+    Array(Box<OatsType>),
     Void,
     String,
     NominalStruct(String),
@@ -71,6 +73,14 @@ pub fn check_function_strictness(
                     None
                 }
             }
+            ast::TsType::TsArrayType(arr) => {
+                // element type
+                if let Some(elem) = map_ts_type(&arr.elem_type) {
+                    Some(OatsType::Array(Box::new(elem)))
+                } else {
+                    None
+                }
+            }
             _ => None,
         }
     }
@@ -81,23 +91,31 @@ pub fn check_function_strictness(
         match &param.pat {
             ast::Pat::Ident(ident) => {
                 if let Some(type_ann) = &ident.type_ann {
-                    let ast::TsTypeAnn { type_ann: ts_type, .. } = &**type_ann;
+                    let ast::TsTypeAnn {
+                        type_ann: ts_type, ..
+                    } = &**type_ann;
                     if let Some(mapped) = map_ts_type(&ts_type) {
                         param_types.push(mapped);
                         continue;
                     }
                 }
-                return Err(anyhow::anyhow!("Function parameter missing or unsupported type annotation"));
+                return Err(anyhow::anyhow!(
+                    "Function parameter missing or unsupported type annotation"
+                ));
             }
             _ => {
-                return Err(anyhow::anyhow!("Unsupported parameter pattern; only simple idents supported"));
+                return Err(anyhow::anyhow!(
+                    "Unsupported parameter pattern; only simple idents supported"
+                ));
             }
         }
     }
 
     // Map return type
     let ret_ty = if let Some(rt) = &func_decl.return_type {
-        let ast::TsTypeAnn { type_ann: ts_type, .. } = &**rt;
+        let ast::TsTypeAnn {
+            type_ann: ts_type, ..
+        } = &**rt;
         if let Some(mapped) = map_ts_type(&ts_type) {
             mapped
         } else {
@@ -107,5 +125,8 @@ pub fn check_function_strictness(
         return Err(anyhow::anyhow!("Function missing return type annotation"));
     };
 
-    Ok(FunctionSig { params: param_types, ret: ret_ty })
+    Ok(FunctionSig {
+        params: param_types,
+        ret: ret_ty,
+    })
 }

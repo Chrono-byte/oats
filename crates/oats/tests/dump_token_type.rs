@@ -2,7 +2,9 @@ use anyhow::Result;
 use oats::parser;
 use std::any::type_name;
 
-fn type_of<T>(_: &T) -> &str { type_name::<T>() }
+fn type_of<T>(_: &T) -> &str {
+    type_name::<T>()
+}
 
 #[test]
 fn dump_token_type() -> Result<()> {

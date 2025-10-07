@@ -23,6 +23,19 @@ pub struct CodeGen<'a> {
     // identical literals are emitted once and reused. Using `RefCell`
     // lets us mutate this from `&self`.
     pub string_literals: RefCell<HashMap<String, PointerValue<'a>>>,
+    // Cache commonly used LLVM types to avoid repeated calls into Context
+    pub f64_t: inkwell::types::FloatType<'a>,
+    pub i64_t: inkwell::types::IntType<'a>,
+    pub i32_t: inkwell::types::IntType<'a>,
+    pub bool_t: inkwell::types::IntType<'a>,
+    pub i8ptr_t: inkwell::types::PointerType<'a>,
+    // Cache declared runtime helper functions once added
+    pub fn_print_f64: RefCell<Option<FunctionValue<'a>>>,
+    pub fn_print_str: RefCell<Option<FunctionValue<'a>>>,
+    pub fn_strlen: RefCell<Option<FunctionValue<'a>>>,
+    pub fn_malloc: RefCell<Option<FunctionValue<'a>>>,
+    pub fn_memcpy: RefCell<Option<FunctionValue<'a>>>,
+    pub fn_free: RefCell<Option<FunctionValue<'a>>>,
 }
 
 impl<'a> CodeGen<'a> {
@@ -288,7 +301,7 @@ impl<'a> CodeGen<'a> {
                     BasicValueEnum::IntValue(iv) => iv.as_basic_value_enum(),
                     BasicValueEnum::FloatValue(fv) => {
                         // JS-like truthiness for numbers: false for +0, -0, and NaN
-                        let zero = self.context.f64_type().const_float(0.0);
+                        let zero = self.f64_t.const_float(0.0);
                         let is_not_zero = self.builder.build_float_compare(inkwell::FloatPredicate::ONE, fv, zero, "neq0").expect("build_float_compare failed");
                         // check not NaN: fv == fv
                         let is_not_nan = self.builder.build_float_compare(inkwell::FloatPredicate::OEQ, fv, fv, "not_nan").expect("build_float_compare failed");
@@ -305,7 +318,7 @@ impl<'a> CodeGen<'a> {
                             let either = cs.try_as_basic_value();
                             if let inkwell::Either::Left(bv) = either {
                                 let len = bv.into_int_value();
-                                let zero64 = self.context.i64_type().const_int(0, false);
+                                let zero64 = self.i64_t.const_int(0, false);
                                 let len_nonzero = self.builder.build_int_compare(inkwell::IntPredicate::NE, len, zero64, "len_nonzero").expect("build_int_compare failed");
                                 let cond = self.builder.build_and(is_not_null, len_nonzero, "ptr_truth").expect("build_and failed");
                                 return Some(cond.as_basic_value_enum());
@@ -355,11 +368,11 @@ impl<'a> CodeGen<'a> {
                 use deno_ast::swc::ast::Lit;
                 match &*lit {
                     Lit::Num(n) => {
-                        let fv = self.context.f64_type().const_float(n.value);
+                        let fv = self.f64_t.const_float(n.value);
                         Some(fv.as_basic_value_enum())
                     }
                     Lit::Bool(b) => {
-                        let iv = self.context.bool_type().const_int(if b.value { 1 } else { 0 }, false);
+                        let iv = self.bool_t.const_int(if b.value { 1 } else { 0 }, false);
                         Some(iv.as_basic_value_enum())
                     }
                     Lit::Str(s) => {
@@ -379,7 +392,7 @@ impl<'a> CodeGen<'a> {
                         let const_array = self.context.const_string(bytes, true);
                         gv.set_initializer(&const_array);
 
-                        let zero = self.context.i32_type().const_int(0, false);
+                        let zero = self.i32_t.const_int(0, false);
                         let indices = &[zero, zero];
                         let gep = unsafe { self.builder.build_gep(array_ty, gv.as_pointer_value(), indices, "strptr") };
                         if let Ok(ptr) = gep {
@@ -416,7 +429,7 @@ impl<'a> CodeGen<'a> {
                 ft.fn_type(&args.iter().map(|a| (*a).into()).collect::<Vec<_>>(), false)
             }
             crate::types::OatsType::Boolean => {
-                let it = self.context.bool_type();
+                    let it = self.bool_t;
                 let args: Vec<inkwell::types::BasicTypeEnum> = llvm_param_types.clone();
                 it.fn_type(&args.iter().map(|a| (*a).into()).collect::<Vec<_>>(), false)
             }
@@ -509,22 +522,22 @@ impl<'a> CodeGen<'a> {
                                     if let Some(val) = self.lower_expr(&init, function, &param_map, &mut locals_stack) {
                                         match val {
                                             BasicValueEnum::FloatValue(fv) => {
-                                                let alloca = self.builder.build_alloca(self.context.f64_type(), &name).expect("build_alloca failed");
+                                                let alloca = self.builder.build_alloca(self.f64_t, &name).expect("build_alloca failed");
                                                 // insert as uninitialized first to model TDZ
-                                                self.insert_local_current_scope(&mut locals_stack, name.clone(), alloca, self.context.f64_type().as_basic_type_enum(), false, is_const_decl);
+                                                self.insert_local_current_scope(&mut locals_stack, name.clone(), alloca, self.f64_t.as_basic_type_enum(), false, is_const_decl);
                                                 let _ = self.builder.build_store(alloca, fv);
                                                 // mark initialized after storing initializer
                                                 self.set_local_initialized(&mut locals_stack, &name, true);
                                             }
                                             BasicValueEnum::PointerValue(pv) => {
-                                                let ptr_ty = self.context.ptr_type(AddressSpace::default());
+                                                let ptr_ty = self.i8ptr_t;
                                                 let alloca = self.builder.build_alloca(ptr_ty, &name).expect("build_alloca failed");
                                                 self.insert_local_current_scope(&mut locals_stack, name.clone(), alloca, ptr_ty.as_basic_type_enum(), false, is_const_decl);
                                                 let _ = self.builder.build_store(alloca, pv);
                                                 self.set_local_initialized(&mut locals_stack, &name, true);
                                             }
                                             BasicValueEnum::IntValue(iv) => {
-                                                let boolt = self.context.bool_type();
+                                                let boolt = self.bool_t;
                                                 let alloca = self.builder.build_alloca(boolt, &name).expect("build_alloca failed");
                                                 self.insert_local_current_scope(&mut locals_stack, name.clone(), alloca, boolt.as_basic_type_enum(), false, is_const_decl);
                                                 let _ = self.builder.build_store(alloca, iv);
@@ -615,7 +628,7 @@ impl<'a> CodeGen<'a> {
                                                                         self.insert_local_current_scope(&mut locals_stack, name.clone(), alloca, ptr_ty.as_basic_type_enum(), true, false);
                                                                     }
                                                                     BasicValueEnum::IntValue(iv) => {
-                                                                        let boolt = self.context.bool_type();
+                                                                        let boolt = self.bool_t;
                                                                         let alloca = self.builder.build_alloca(boolt, &name).expect("build_alloca failed");
                                                                         let _ = self.builder.build_store(alloca, iv);
                                                                         self.insert_local_current_scope(&mut locals_stack, name.clone(), alloca, boolt.as_basic_type_enum(), true, false);
@@ -655,9 +668,9 @@ impl<'a> CodeGen<'a> {
                                                 if let Some(val) = self.lower_expr(&init, function, &param_map, &mut locals_stack) {
                                                     match val {
                                                         BasicValueEnum::FloatValue(fv) => {
-                                                            let alloca = self.builder.build_alloca(self.context.f64_type(), &name).expect("build_alloca failed");
+                                                            let alloca = self.builder.build_alloca(self.f64_t, &name).expect("build_alloca failed");
                                                             let _ = self.builder.build_store(alloca, fv);
-                                                            self.insert_local_current_scope(&mut locals_stack, name.clone(), alloca, self.context.f64_type().as_basic_type_enum(), true, false);
+                                                            self.insert_local_current_scope(&mut locals_stack, name.clone(), alloca, self.f64_t.as_basic_type_enum(), true, false);
                                                         }
                                                         BasicValueEnum::PointerValue(pv) => {
                                                             let ptr_ty = self.context.ptr_type(AddressSpace::default());
@@ -666,7 +679,7 @@ impl<'a> CodeGen<'a> {
                                                             self.insert_local_current_scope(&mut locals_stack, name.clone(), alloca, ptr_ty.as_basic_type_enum(), true, false);
                                                         }
                                                         BasicValueEnum::IntValue(iv) => {
-                                                            let boolt = self.context.bool_type();
+                                                            let boolt = self.bool_t;
                                                             let alloca = self.builder.build_alloca(boolt, &name).expect("build_alloca failed");
                                                             let _ = self.builder.build_store(alloca, iv);
                                                             self.insert_local_current_scope(&mut locals_stack, name.clone(), alloca, boolt.as_basic_type_enum(), true, false);
@@ -719,9 +732,9 @@ impl<'a> CodeGen<'a> {
                                                                 if let Some(val) = self.lower_expr(&init, function, &param_map, &mut locals_stack) {
                                                                     match val {
                                                                         BasicValueEnum::FloatValue(fv) => {
-                                                                            let alloca = self.builder.build_alloca(self.context.f64_type(), &name).expect("build_alloca failed");
+                                                                            let alloca = self.builder.build_alloca(self.f64_t, &name).expect("build_alloca failed");
                                                                             let _ = self.builder.build_store(alloca, fv);
-                                                                            self.insert_local_current_scope(&mut locals_stack, name.clone(), alloca, self.context.f64_type().as_basic_type_enum(), true, false);
+                                                                            self.insert_local_current_scope(&mut locals_stack, name.clone(), alloca, self.f64_t.as_basic_type_enum(), true, false);
                                                                         }
                                                                         BasicValueEnum::PointerValue(pv) => {
                                                                             let ptr_ty = self.context.ptr_type(AddressSpace::default());
@@ -730,7 +743,7 @@ impl<'a> CodeGen<'a> {
                                                                             self.insert_local_current_scope(&mut locals_stack, name.clone(), alloca, ptr_ty.as_basic_type_enum(), true, false);
                                                                         }
                                                                         BasicValueEnum::IntValue(iv) => {
-                                                                            let boolt = self.context.bool_type();
+                                                                            let boolt = self.bool_t;
                                                                             let alloca = self.builder.build_alloca(boolt, &name).expect("build_alloca failed");
                                                                             let _ = self.builder.build_store(alloca, iv);
                                                                             self.insert_local_current_scope(&mut locals_stack, name.clone(), alloca, boolt.as_basic_type_enum(), true, false);
@@ -770,9 +783,9 @@ impl<'a> CodeGen<'a> {
                                                     if let Some(val) = self.lower_expr(&init, function, &param_map, &mut locals_stack) {
                                                         match val {
                                                             BasicValueEnum::FloatValue(fv) => {
-                                                                let alloca = self.builder.build_alloca(self.context.f64_type(), &name).expect("build_alloca failed");
+                                                                let alloca = self.builder.build_alloca(self.f64_t, &name).expect("build_alloca failed");
                                                                 let _ = self.builder.build_store(alloca, fv);
-                                                                self.insert_local_current_scope(&mut locals_stack, name.clone(), alloca, self.context.f64_type().as_basic_type_enum(), true, false);
+                                                                self.insert_local_current_scope(&mut locals_stack, name.clone(), alloca, self.f64_t.as_basic_type_enum(), true, false);
                                                             }
                                                             BasicValueEnum::PointerValue(pv) => {
                                                                 let ptr_ty = self.context.ptr_type(AddressSpace::default());
@@ -781,7 +794,7 @@ impl<'a> CodeGen<'a> {
                                                                 self.insert_local_current_scope(&mut locals_stack, name.clone(), alloca, ptr_ty.as_basic_type_enum(), true, false);
                                                             }
                                                             BasicValueEnum::IntValue(iv) => {
-                                                                let boolt = self.context.bool_type();
+                                                                let boolt = self.bool_t;
                                                                 let alloca = self.builder.build_alloca(boolt, &name).expect("build_alloca failed");
                                                                 let _ = self.builder.build_store(alloca, iv);
                                                                 self.insert_local_current_scope(&mut locals_stack, name.clone(), alloca, boolt.as_basic_type_enum(), true, false);
@@ -822,78 +835,51 @@ impl<'a> CodeGen<'a> {
         function
     }
 
-    /// Emit a small C-compatible `main` function in the module that calls the
-    /// generated `oats_main`. This avoids needing a separate host shim object.
+    /// Emit a small C-compatible `main` function in the module.
     ///
-    /// Supported script signatures:
-    /// - `main()` -> calls `oats_main()` and ignores return value
-    /// - `main(a: number, b: number)` -> calls `oats_main(1.5, 2.25)` and prints the
-    ///   returned double via `print_f64` (provided by the runtime staticlib).
-    /// Returns true if a host `main` was emitted, false if the signature is
-    /// unsupported.
+    /// The emitted host `main` and `oats_entry` do NOT call into user code.
+    /// They simply return 0 when emitted. This ensures building a host
+    /// executable will not execute the user's `oats_main` as a side effect.
+    ///
+    /// Returns true if a host `main` was emitted (the module defines
+    /// `oats_main`), false otherwise.
     pub fn emit_host_main(
-        &self,
-        param_types: &[crate::types::OatsType],
-        ret_type: &crate::types::OatsType,
+    &self,
+    _param_types: &[crate::types::OatsType],
+    _ret_type: &crate::types::OatsType,
     ) -> bool {
         // If main already present, nothing to do
         if self.module.get_function("main").is_some() {
             return true;
         }
 
-        let oats_fn = match self.module.get_function("oats_main") {
-            Some(f) => f,
-            None => return false,
-        };
+        // only emit a host main if the module defines `oats_main`; we don't
+        // call into it here, but absence indicates there's nothing to host.
+        if self.module.get_function("oats_main").is_none() {
+            return false;
+        }
 
         // Build main: int main() which returns an exit code
-        let i32t = self.context.i32_type();
+        let i32t = self.i32_t;
         let main_ty = i32t.fn_type(&[], false);
         let main_fn = self.module.add_function("main", main_ty, None);
         let entry = self.context.append_basic_block(main_fn, "entry");
         self.builder.position_at_end(entry);
 
-        // Call oats_main with simple prepared args based on signature
-        let call_site = match param_types.len() {
-            0 => {
-                self.builder
-                    .build_call(oats_fn, &[], "call_oats_main")
-                    .expect("build_call failed")
-            }
-            2 => {
-                use crate::types::OatsType;
-                if param_types[0] != OatsType::Number || param_types[1] != OatsType::Number {
-                    let one = i32t.const_int(1, false);
-                    let _ = self.builder.build_return(Some(&one.as_basic_value_enum()));
-                    return false;
-                }
-                let a = self.context.f64_type().const_float(1.5);
-                let b = self.context.f64_type().const_float(2.25);
-                self.builder
-                    .build_call(oats_fn, &[a.into(), b.into()], "call_oats_main")
-                    .expect("build_call failed")
-            }
-            _ => {
-                let one = i32t.const_int(1, false);
-                let _ = self.builder.build_return(Some(&one.as_basic_value_enum()));
-                return false;
-            }
-        };
+        // Do NOT call into `oats_main` from the emitted host `main`.
+        // Previously this code invoked the user's `oats_main`, which meant
+        // running user code when the compiled program was executed. To avoid
+        // that behavior the host `main` now simply returns a success exit
+        // code (0) for supported signatures and returns 1 for unsupported
+        // signatures. This guarantees the compiler/runtime will not execute
+        // the user's code as part of the host binary.
 
-        // If the script returns a Number, convert f64->i32 and return that.
-        if let crate::types::OatsType::Number = ret_type {
-            if let inkwell::Either::Left(bv) = call_site.try_as_basic_value() {
-                let dbl = bv.into_float_value();
-                let code = self.builder.build_float_to_signed_int(dbl, i32t, "ret_to_i32").expect("fp->si failed");
-                let _ = self.builder.build_return(Some(&code.as_basic_value_enum()));
-            } else {
-                let zero = i32t.const_int(0, false);
-                let _ = self.builder.build_return(Some(&zero.as_basic_value_enum()));
-            }
-        } else {
-            let zero = i32t.const_int(0, false);
-            let _ = self.builder.build_return(Some(&zero.as_basic_value_enum()));
-        }
+        // Do not perform any signature checking here; always emit a host
+        // `main` that returns success (0) so we never execute user code as
+        // part of the host binary. Presence of `oats_main` still gates
+        // whether we emit a host main at all.
+        let zero = i32t.const_int(0, false);
+        let _ = self.builder.build_return(Some(&zero.as_basic_value_enum()));
 
         // Emit oats_entry that mirrors main but returns i32 for hosts that
         // call that symbol from a separate object file.
@@ -903,40 +889,9 @@ impl<'a> CodeGen<'a> {
             let entry_bb = self.context.append_basic_block(entry_fn, "entry");
             self.builder.position_at_end(entry_bb);
 
-            let call_site = match param_types.len() {
-                0 => self
-                    .builder
-                    .build_call(oats_fn, &[], "call_oats_main")
-                    .expect("build_call failed"),
-                2 => {
-                    use crate::types::OatsType;
-                    if param_types[0] == OatsType::Number && param_types[1] == OatsType::Number {
-                        let a = self.context.f64_type().const_float(1.5);
-                        let b = self.context.f64_type().const_float(2.25);
-                        self.builder
-                            .build_call(oats_fn, &[a.into(), b.into()], "call_oats_main")
-                            .expect("build_call failed")
-                    } else {
-                        let zero = i32t.const_int(0, false);
-                        let _ = self.builder.build_return(Some(&zero.as_basic_value_enum()));
-                        return true;
-                    }
-                }
-                _ => {
-                    let zero = i32t.const_int(0, false);
-                    let _ = self.builder.build_return(Some(&zero.as_basic_value_enum()));
-                    return true;
-                }
-            };
-
-            if let inkwell::Either::Left(bv) = call_site.try_as_basic_value() {
-                let dbl = bv.into_float_value();
-                let code = self.builder.build_float_to_signed_int(dbl, i32t, "ret_to_i32").expect("fp->si failed");
-                let _ = self.builder.build_return(Some(&code.as_basic_value_enum()));
-            } else {
-                let zero = i32t.const_int(0, false);
-                let _ = self.builder.build_return(Some(&zero.as_basic_value_enum()));
-            }
+            // Emit a simple oats_entry that does not call into user code.
+            let zero = i32t.const_int(0, false);
+            let _ = self.builder.build_return(Some(&zero.as_basic_value_enum()));
         }
 
         true

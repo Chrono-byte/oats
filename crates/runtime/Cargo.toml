@@ -1,0 +1,18 @@
+[package]
+name = "runtime"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+libc = "0.2"
+
+# Features
+[features]
+# When enabled the runtime binary will call `oats_entry` via a direct
+# extern declaration and therefore requires that symbol to be resolved at
+# link time. When disabled (default) the binary uses dlsym and does not
+# require the symbol at link time.
+link_entry = []

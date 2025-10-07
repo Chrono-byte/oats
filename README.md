@@ -37,7 +37,7 @@ Notes and CI
 
 Design choices
 
-- Currently the project emits IR using `inkwell` and compiles IR with `clang`. The runtime helpers (strings) are provided by a Rust staticlib in `runtime/rust_rt` and linked in the AOT pipeline.
+- Currently the project emits IR using `inkwell` and compiles IR with `clang`. The runtime helpers (strings) are provided by a Rust staticlib in `crates/runtime` and linked in the AOT pipeline.
 - Next improvements: emit libc-only helpers in the IR so no in-repo runtime is required (see TODO list).
 # Oats (AOT compiler prototype)
 

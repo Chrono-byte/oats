@@ -351,7 +351,7 @@ impl<'a> super::CodeGen<'a> {
     // Emit rc_dec calls for any initialized pointer locals in the provided
     // locals stack. This is used at function exit or before early returns to
     // ensure pointer locals are decref'd so the runtime can free them.
-    pub(crate) fn emit_rc_dec_for_locals(&self, locals: &LocalsStackLocal<'a>) {
+    pub fn emit_rc_dec_for_locals(&self, locals: &LocalsStackLocal<'a>) {
         // Find the rc_dec declaration (declare if needed)
         let rc_dec = self.get_rc_dec();
         for scope in locals.iter().rev() {

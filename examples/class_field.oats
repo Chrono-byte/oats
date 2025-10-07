@@ -1,7 +1,5 @@
 export class Point {
-    constructor(x: number, y: number) {
-        this.x = x;
-        this.y = y;
+    constructor(public x: number, public y: number) {
     }
 
     sum(): number {
@@ -10,7 +8,7 @@ export class Point {
 }
 
 export function main(): void {
-    let p = Point_ctor(1.0, 2.0);
+    let p = new Point(1.0, 2.0);
     let v = 0.0;
     return;
 }

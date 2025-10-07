@@ -151,7 +151,7 @@ impl<'a> CodeGen<'a> {
         self.module.add_function("array_set_ptr", fn_type, None)
     }
 
-    fn lower_expr(
+    pub fn lower_expr(
         &self,
         expr: &deno_ast::swc::ast::Expr,
         function: FunctionValue<'a>,
@@ -943,7 +943,7 @@ impl<'a> CodeGen<'a> {
                                 // lookup field list for this class
                                 if let Some(fields) = self.class_fields.borrow().get(&class_name) {
                                     // find index of field
-                                    if let Some((field_idx, (_fname, _field_ty))) = fields
+                                    if let Some((field_idx, (_fname, field_ty))) = fields
                                         .iter()
                                         .enumerate()
                                         .find(|(_, (n, _))| n == &field_name)
@@ -990,23 +990,44 @@ impl<'a> CodeGen<'a> {
                                             Ok(pv) => pv,
                                             Err(_) => return None,
                                         };
-                                        // Cast the i8* pointer to pointer-to-i8* (i8**), so we can load a stored i8* slot
-                                        let slot_ptr_ty =
-                                            self.context.ptr_type(AddressSpace::default());
-                                        let slot_ptr = self
-                                            .builder
-                                            .build_pointer_cast(
-                                                gep_ptr,
-                                                slot_ptr_ty,
-                                                "slot_ptr_cast",
-                                            )
-                                            .expect("cast slot_ptr failed");
-                                        // load slot (an i8*)
-                                        let loaded = self
-                                            .builder
-                                            .build_load(self.i8ptr_t, slot_ptr, "field_load")
-                                            .expect("build_load failed");
-                                        return Some(loaded.as_basic_value_enum());
+                                        // Load based on field type
+                                        match field_ty {
+                                            crate::types::OatsType::Number => {
+                                                // Cast to f64* and load
+                                                let f64_ptr_ty = self.context.ptr_type(AddressSpace::default());
+                                                let f64_ptr = self
+                                                    .builder
+                                                    .build_pointer_cast(gep_ptr, f64_ptr_ty, "f64_ptr_cast")
+                                                    .expect("cast f64_ptr failed");
+                                                let loaded = self
+                                                    .builder
+                                                    .build_load(self.f64_t, f64_ptr, "field_f64_load")
+                                                    .expect("build_load failed");
+                                                return Some(loaded.as_basic_value_enum());
+                                            }
+                                            crate::types::OatsType::String | crate::types::OatsType::NominalStruct(_) | crate::types::OatsType::Array(_) => {
+                                                // Cast to pointer type and load
+                                                let slot_ptr_ty = self.context.ptr_type(AddressSpace::default());
+                                                let slot_ptr = self
+                                                    .builder
+                                                    .build_pointer_cast(
+                                                        gep_ptr,
+                                                        slot_ptr_ty,
+                                                        "slot_ptr_cast",
+                                                    )
+                                                    .expect("cast slot_ptr failed");
+                                                // load slot (an i8*)
+                                                let loaded = self
+                                                    .builder
+                                                    .build_load(self.i8ptr_t, slot_ptr, "field_load")
+                                                    .expect("build_load failed");
+                                                return Some(loaded.as_basic_value_enum());
+                                            }
+                                            _ => {
+                                                // Unsupported field type
+                                                return None;
+                                            }
+                                        }
                                     }
                                 }
                             }

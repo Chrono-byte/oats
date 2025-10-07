@@ -919,26 +919,40 @@ impl<'a> CodeGen<'a> {
                                 // If it's `this`, param_map contains "this" -> idx 0 typically.
                                 // Use fn_param_types map to get the nominal type for `this`.
                                 let mut class_name_opt: Option<String> = None;
-                                if let Some(_idx) = param_map.get("this") {
-                                    // if the current value is the param at that index, assume it's this
-                                    // fetch actual function param value and compare pointer equality is hard here
-                                    // instead assume semantics: lowering of `this` expressions will resolve via name
-                                    // so if member.obj is an Ident named "this", we can map directly by name
-                                    if let deno_ast::swc::ast::Expr::Ident(ident) = &*member.obj {
-                                        if ident.sym.to_string() == "this" {
-                                            // lookup function-level param types by function name (if available)
-                                            if let Some(param_types) = self
-                                                .fn_param_types
-                                                .borrow()
-                                                .get(function.get_name().to_str().unwrap_or(""))
-                                            {
-                                                if !param_types.is_empty() {
-                                                    if let crate::types::OatsType::NominalStruct(
-                                                        n,
-                                                    ) = &param_types[0]
-                                                    {
-                                                        class_name_opt = Some(n.clone());
-                                                    }
+                                // Prefer `this` receiver lookup, but also support parameters
+                                // that are nominal structs. If member.obj is an Ident and
+                                // matches a parameter name, use the declared param type
+                                // to infer the nominal class.
+                                if let deno_ast::swc::ast::Expr::Ident(ident) = &*member.obj {
+                                    let ident_name = ident.sym.to_string();
+                                    // If ident is `this` and function param types exist
+                                    if ident_name == "this" {
+                                        if let Some(param_types) = self
+                                            .fn_param_types
+                                            .borrow()
+                                            .get(function.get_name().to_str().unwrap_or(""))
+                                        {
+                                            if !param_types.is_empty() {
+                                                if let crate::types::OatsType::NominalStruct(n) =
+                                                    &param_types[0]
+                                                {
+                                                    class_name_opt = Some(n.clone());
+                                                }
+                                            }
+                                        }
+                                    } else if let Some(param_idx) = param_map.get(&ident_name) {
+                                        // param_map stores parameter name -> index (u32)
+                                        if let Some(param_types) = self
+                                            .fn_param_types
+                                            .borrow()
+                                            .get(function.get_name().to_str().unwrap_or(""))
+                                        {
+                                            let idx = *param_idx as usize;
+                                            if idx < param_types.len() {
+                                                if let crate::types::OatsType::NominalStruct(n) =
+                                                    &param_types[idx]
+                                                {
+                                                    class_name_opt = Some(n.clone());
                                                 }
                                             }
                                         }

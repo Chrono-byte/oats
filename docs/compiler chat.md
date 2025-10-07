@@ -1,4 +1,4 @@
- would there be any reason to build a typescript precompiler that targets LLVM
+would there be any reason to build a typescript precompiler that targets LLVM
 
 Yes, there would be several compelling reasons to build a TypeScript precompiler that targets LLVM, primarily centered on performance, portability, and interoperability. However, the project would face enormous challenges.
 
@@ -125,3 +125,7 @@ LLVM doesn't provide these high-level features, but it gives you all the necessa
     Data Structure Optimization: Yes, this is a compiler front-end task. LLVM optimizes the low-level structures you give it. The job of deciding that a TypeScript number[] should become a contiguous block of doubles in memory belongs to your compiler's front-end. Once you represent it that way in LLVM IR, LLVM will do a fantastic job of optimizing the code that accesses it.
 
 In short, LLVM gives you an incredible head start on code generation and optimization, but you are still responsible for building the language's runtime and high-level logic. 🛠️
+
+## Added
+
+I added a small GitHub Actions workflow at `.github/workflows/ci.yml` that installs LLVM-18, builds the workspace, and runs the `oats` crate tests. It's a minimal CI to help contributors verify LLVM-18 is available and that the project builds on Ubuntu runners. The workflow also generates an IR artifact (`out.ll`) from `examples/add.oats` when tests pass.

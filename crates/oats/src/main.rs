@@ -176,26 +176,19 @@ fn main() -> Result<()> {
                                         if let Stmt::Expr(expr_stmt) = stmt {
                                             if let Expr::Assign(assign) = &*expr_stmt.expr {
                                                 if let deno_ast::swc::ast::AssignTarget::Simple(
-                                                    expr,
+                                                    simple_target,
                                                 ) = &assign.left
                                                 {
-                                                    if let deno_ast::swc::ast::Expr::Member(mem) =
-                                                        expr
+                                                    // Match a simple member assignment like `this.x = ...`
+                                                    if let deno_ast::swc::ast::SimpleAssignTarget::Member(mem) =
+                                                        simple_target
                                                     {
-                                                        if let Expr::This(_) = &*mem.obj {
-                                                            if let MemberProp::Ident(ident) =
-                                                                &mem.prop
-                                                            {
+                                                        if matches!(&*mem.obj, Expr::This(_)) {
+                                                            if let MemberProp::Ident(ident) = &mem.prop {
                                                                 let name = ident.sym.to_string();
-                                                                let inferred =
-                                                                    infer_from_expr(&*assign.right)
-                                                                        .unwrap_or(
-                                                                            OatsType::Number,
-                                                                        );
-                                                                if !fields
-                                                                    .iter()
-                                                                    .any(|(n, _)| n == &name)
-                                                                {
+                                                                let inferred = infer_from_expr(&*assign.right)
+                                                                    .unwrap_or(OatsType::Number);
+                                                                if fields.iter().all(|(n, _)| n != &name) {
                                                                     fields.push((name, inferred));
                                                                 }
                                                             }

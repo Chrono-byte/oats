@@ -152,7 +152,11 @@ export function main(): number {
 "#;
     let ir = gen_ir_for_source(src)?;
     // Ensure IR was generated and contains a function definition and a return
-    assert!(ir.contains("define") && ir.contains("ret"), "unexpected IR: {}", ir);
+    assert!(
+        ir.contains("define") && ir.contains("ret"),
+        "unexpected IR: {}",
+        ir
+    );
     Ok(())
 }
 
@@ -164,6 +168,10 @@ export function main(p: Foo): number { return p.x; }
 "#;
     let ir = gen_ir_for_source(src)?;
     // Field access lowering uses a named load "field_load"
-    assert!(ir.contains("field_load"), "expected field_load in IR: {}", ir);
+    assert!(
+        ir.contains("field_load"),
+        "expected field_load in IR: {}",
+        ir
+    );
     Ok(())
 }

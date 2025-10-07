@@ -27,6 +27,15 @@ pub fn report_error(file: Option<&str>, source: Option<&str>, message: &str, not
         let blue = "\x1b[34m";
         eprintln!("{}note{}: {}", blue, reset, note);
     }
+
+    // If the message hints at a common fix, print a short help line.
+    if message.contains("missing semicolon") {
+        let green = "\x1b[32m";
+        eprintln!(
+            "{}help{}: try adding a trailing ';' to this statement",
+            green, reset
+        );
+    }
 }
 
 /// Convenience that prints an error then returns an anyhow::Error for callers
@@ -107,6 +116,14 @@ pub fn report_error_span(
         let blue = "\x1b[34m";
         eprintln!("{}note{}: {}", blue, reset, note);
     }
+
+    if message.contains("missing semicolon") {
+        let green = "\x1b[32m";
+        eprintln!(
+            "{}help{}: add a trailing ';' to the highlighted statement",
+            green, reset
+        );
+    }
 }
 
 /// Convenience that reports a span-aware error and returns anyhow::Error.
@@ -118,5 +135,10 @@ pub fn report_error_span_and_bail<T>(
     note: Option<&str>,
 ) -> anyhow::Result<T> {
     report_error_span(file, source, span_start, message, note);
-    Err(anyhow::anyhow!("{}", message))
+    // Include a short suggestion in the returned error string for tests to assert on.
+    let mut err_text = message.to_string();
+    if message.contains("missing semicolon") {
+        err_text.push_str(" -- hint: add a trailing ';' to this statement");
+    }
+    Err(anyhow::anyhow!("{}", err_text))
 }

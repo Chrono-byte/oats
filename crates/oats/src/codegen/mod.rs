@@ -7,7 +7,6 @@ use inkwell::types::BasicTypeEnum;
 use inkwell::values::{BasicValue, BasicValueEnum, CallSiteValue, FunctionValue, PointerValue};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
-// ...existing code...
 
 pub mod helpers;
 /// Mapping from function name -> param OatsTypes vector. Stored so
@@ -466,7 +465,7 @@ impl<'a> CodeGen<'a> {
                             return None;
                         }
                         if let Some(val) =
-                            self.lower_expr(&assign.right, function, param_map, locals)
+                            self.lower_expr(&*assign.right, function, param_map, locals)
                         {
                             // If the local is a pointer type, and previously initialized, decrement old refcount
                             if _ty == self.i8ptr_t.as_basic_type_enum() {
@@ -1206,106 +1205,108 @@ impl<'a> CodeGen<'a> {
                         use deno_ast::swc::ast;
                         // If this is an assignment statement and the LHS is a `this.field`
                         // pattern, lower it specially so we can compute the field slot and
-                        // perform refcount updates. Otherwise, fall back to expression
-                        // lowering for side-effects.
+                        // perform refcount updates. Prefer an AST-based check rather than
+                        // scanning the source text for `this.` which is brittle.
                         if let ast::Expr::Assign(assign) = &*expr_stmt.expr {
-                            // Try to detect `this.<ident> =` by scanning the source text
-                            // for the `this.` occurrence within the statement span.
-                            let start = expr_stmt.span.lo.0 as usize;
-                            let end = expr_stmt.span.hi.0 as usize;
-                            if end > start && end <= self.source.len() {
-                                let slice = &self.source[start..end];
-                                if let Some(pos) = slice.find("this.") {
-                                    let mut j = pos + "this.".len();
-                                    // read identifier
-                                    let mut ident = String::new();
-                                    while j < slice.len() {
-                                        let c = slice.as_bytes()[j] as char;
-                                        if ident.is_empty() {
-                                            if c.is_ascii_alphabetic() || c == '_' {
-                                                ident.push(c);
-                                            } else {
-                                                break;
-                                            }
-                                        } else {
-                                            if c.is_ascii_alphanumeric() || c == '_' {
-                                                ident.push(c);
-                                            } else {
-                                                break;
-                                            }
-                                        }
-                                        j += 1;
-                                    }
-                                    if !ident.is_empty() {
-                                        // Lower RHS value
-                                        if let Some(val) = self.lower_expr(
-                                            &assign.right,
-                                            function,
-                                            &param_map,
-                                            &mut locals_stack,
-                                        ) {
-                                            // If we have a `this` parameter, the function param map should
-                                            // contain its index (usually 0). Use the incoming parameter
-                                            // value rather than the alloca to obtain the object pointer.
-                                            if let Some(this_idx) = param_map.get("this") {
-                                                // fetch the `this` value from function params
-                                                if let Some(pv) = function.get_nth_param(*this_idx)
-                                                {
-                                                    // only handle pointer-like objects
-                                                    if let BasicValueEnum::PointerValue(obj_ptr) =
-                                                        pv.into()
-                                                    {
-                                                        // lookup class name via fn_param_types
-                                                        if let Some(param_types) =
-                                                            self.fn_param_types.borrow().get(
-                                                                function
-                                                                    .get_name()
-                                                                    .to_str()
-                                                                    .unwrap_or(""),
-                                                            )
+                            // Try AST-based LHS detection first: left.as_member() -> MemberExpr
+                            if let &deno_ast::swc::ast::AssignTarget::Simple(ref simple_target) =
+                                &assign.left
+                            {
+                                if let &deno_ast::swc::ast::SimpleAssignTarget::Member(ref member) =
+                                    simple_target
+                                {
+                                    if let deno_ast::swc::ast::MemberProp::Ident(prop_ident) =
+                                        &member.prop
+                                    {
+                                        // Ensure object is an identifier named `this` (or a param that maps to a nominal)
+                                        if let deno_ast::swc::ast::Expr::Ident(obj_ident) =
+                                            &*member.obj
+                                        {
+                                            let obj_name = obj_ident.sym.to_string();
+                                            if obj_name == "this" {
+                                                // Lower RHS value
+                                                if let Some(val) = self.lower_expr(
+                                                    &*assign.right,
+                                                    function,
+                                                    &param_map,
+                                                    &mut locals_stack,
+                                                ) {
+                                                    // If we have a `this` parameter, the function param map should
+                                                    // contain its index (usually 0). Use the incoming parameter
+                                                    // value rather than the alloca to obtain the object pointer.
+                                                    if let Some(this_idx) = param_map.get("this") {
+                                                        if let Some(pv) =
+                                                            function.get_nth_param(*this_idx)
                                                         {
-                                                            if !param_types.is_empty() {
-                                                                if let crate::types::OatsType::NominalStruct(n) = &param_types[0] {
-                                                                    let class_name = n.clone();
-                                                                    if let Some(fields) = self.class_fields.borrow().get(&class_name) {
-                                                                        if let Some((field_idx, (_fname, _))) = fields.iter().enumerate().find(|(_, (n, _))| n == &ident) {
-                                                                            // compute byte offset = hdr_size + idx * ptr_size
-                                                                            let hdr_size = self.i64_t.const_int(std::mem::size_of::<u64>() as u64, false);
-                                                                            let ptr_sz = self.i64_t.const_int(std::mem::size_of::<usize>() as u64, false);
-                                                                            let idx_const = self.i64_t.const_int(field_idx as u64, false);
-                                                                            let mul = self.builder.build_int_mul(idx_const, ptr_sz, "fld_off_mul").expect("mul failed");
-                                                                            let offset = self.builder.build_int_add(hdr_size, mul, "fld_off").expect("add failed");
-                                                                            let offset_i32 = self.builder.build_int_cast(offset, self.context.i32_type(), "off_i32").expect("cast off_i32");
-                                                                            // GEP from i8* by byte offset
-                                                                            let gep_res = unsafe { self.builder.build_gep(self.context.i8_type(), obj_ptr, &[offset_i32], "field_i8ptr") };
-                                                                            let gep_ptr = match gep_res { Ok(p) => p, Err(_) => { let _ = self.builder.build_unreachable(); continue; } };
-                                                                            // Cast to pointer slot and store appropriately
-                                                                            let slot_ptr_ty = self.context.ptr_type(AddressSpace::default());
-                                                                            let slot_ptr = self.builder.build_pointer_cast(gep_ptr, slot_ptr_ty, "slot_ptr_cast").expect("cast slot_ptr failed");
-                                                                            match val {
-                                                                                BasicValueEnum::PointerValue(newpv) => {
-                                                                                    // load old value
-                                                                                    let old = self.builder.build_load(self.i8ptr_t, slot_ptr, "old_field").expect("build_load failed");
-                                                                                    // call rc_dec on old (runtime should handle null)
-                                                                                    let rc_dec = self.get_rc_dec();
-                                                                                    let _ = self.builder.build_call(rc_dec, &[old.into()], "rc_dec_old_field").expect("build_call failed");
-                                                                                    // store new pointer
-                                                                                    let _ = self.builder.build_store(slot_ptr, newpv.as_basic_value_enum());
-                                                                                    // increment refcount of new value
-                                                                                    let rc_inc = self.get_rc_inc();
-                                                                                    let _ = self.builder.build_call(rc_inc, &[newpv.into()], "rc_inc_field").expect("build_call failed");
-                                                                                }
-                                                                                BasicValueEnum::FloatValue(fv) => {
-                                                                                    // cast slot to f64* and store
-                                                                                    let elem_ptr = self.builder.build_pointer_cast(gep_ptr, self.context.ptr_type(AddressSpace::default()), "elem_f64_ptr").expect("build_pointer_cast failed");
-                                                                                    let _ = self.builder.build_store(elem_ptr, fv);
-                                                                                }
-                                                                                _ => {
-                                                                                    // unsupported RHS type for member write
+                                                            if let BasicValueEnum::PointerValue(
+                                                                obj_ptr,
+                                                            ) = pv.into()
+                                                            {
+                                                                // lookup class name via fn_param_types
+                                                                if let Some(param_types) = self
+                                                                    .fn_param_types
+                                                                    .borrow()
+                                                                    .get(
+                                                                        function
+                                                                            .get_name()
+                                                                            .to_str()
+                                                                            .unwrap_or(""),
+                                                                    )
+                                                                {
+                                                                    if !param_types.is_empty() {
+                                                                        if let crate::types::OatsType::NominalStruct(n) = &param_types[0] {
+                                                                            let class_name = n.clone();
+                                                                            if let Some(fields) = self.class_fields.borrow().get(&class_name) {
+                                                                                let field_name = prop_ident.sym.to_string();
+                                                                                if let Some((field_idx, (_fname, _field_ty))) = fields.iter().enumerate().find(|(_, (n, _))| n == &field_name) {
+                                                                                    // compute byte offset = hdr_size + idx * ptr_size
+                                                                                    let hdr_size = self.i64_t.const_int(std::mem::size_of::<u64>() as u64, false);
+                                                                                    let ptr_sz = self.i64_t.const_int(std::mem::size_of::<usize>() as u64, false);
+                                                                                    let idx_const = self.i64_t.const_int(field_idx as u64, false);
+                                                                                    let mul = self.builder.build_int_mul(idx_const, ptr_sz, "fld_off_mul").expect("mul failed");
+                                                                                    let offset = self.builder.build_int_add(hdr_size, mul, "fld_off").expect("add failed");
+                                                                                    let offset_i32 = self.builder.build_int_cast(offset, self.context.i32_type(), "off_i32").expect("cast off_i32");
+                                                                                    // GEP from i8* by byte offset
+                                                                                    let gep_res = unsafe { self.builder.build_gep(self.context.i8_type(), obj_ptr, &[offset_i32], "field_i8ptr") };
+                                                                                    let gep_ptr = match gep_res {
+                                                                                        Ok(p) => p,
+                                                                                        Err(_) => {
+                                                                                            let _ = self.builder.build_unreachable();
+                                                                                            // fallback to normal lowering
+                                                                                            self.lower_expr(&expr_stmt.expr, function, &param_map, &mut locals_stack);
+                                                                                            continue;
+                                                                                        }
+                                                                                    };
+                                                                                    // Cast to pointer slot and store appropriately
+                                                                                    let slot_ptr_ty = self.context.ptr_type(AddressSpace::default());
+                                                                                    let slot_ptr = self.builder.build_pointer_cast(gep_ptr, slot_ptr_ty, "slot_ptr_cast").expect("cast slot_ptr failed");
+                                                                                    match val {
+                                                                                        BasicValueEnum::PointerValue(newpv) => {
+                                                                                            // load old value
+                                                                                            let old = self.builder.build_load(self.i8ptr_t, slot_ptr, "old_field").expect("build_load failed");
+                                                                                            // call rc_dec on old (runtime should handle null)
+                                                                                            let rc_dec = self.get_rc_dec();
+                                                                                            let _ = self.builder.build_call(rc_dec, &[old.into()], "rc_dec_old_field").expect("build_call failed");
+                                                                                            // store new pointer
+                                                                                            let _ = self.builder.build_store(slot_ptr, newpv.as_basic_value_enum());
+                                                                                            // increment refcount of new value
+                                                                                            let rc_inc = self.get_rc_inc();
+                                                                                            let _ = self.builder.build_call(rc_inc, &[newpv.into()], "rc_inc_field").expect("build_call failed");
+                                                                                        }
+                                                                                        BasicValueEnum::FloatValue(fv) => {
+                                                                                            // cast slot to f64* and store
+                                                                                            let elem_ptr = self.builder.build_pointer_cast(gep_ptr, self.context.ptr_type(AddressSpace::default()), "elem_f64_ptr").expect("build_pointer_cast failed");
+                                                                                            let _ = self.builder.build_store(elem_ptr, fv);
+                                                                                        }
+                                                                                        _ => {
+                                                                                            // unsupported RHS type for member write: fallback to normal lowering
+                                                                                            let _ = self.lower_expr(&expr_stmt.expr, function, &param_map, &mut locals_stack);
+                                                                                        }
+                                                                                    }
+                                                                                    // we've handled the assignment; skip default lowering
+                                                                                    continue;
                                                                                 }
                                                                             }
-                                                                            // we've handled the assignment; skip default lowering
-                                                                            continue;
                                                                         }
                                                                     }
                                                                 }
@@ -1318,9 +1319,7 @@ impl<'a> CodeGen<'a> {
                                     }
                                 }
                             }
-                        }
-
-                        // Fallback: Lower expression for side-effects (e.g., println calls)
+                        } // Fallback: Lower expression for side-effects (e.g., println calls)
                         let _ = self.lower_expr(
                             &expr_stmt.expr,
                             function,
@@ -1550,7 +1549,7 @@ impl<'a> CodeGen<'a> {
                                                                     BasicValueEnum::FloatValue(fv) => {
                                                                         let alloca = self.builder.build_alloca(self.context.f64_type(), &name).expect("build_alloca failed");
                                                                         let _ = self.builder.build_store(alloca, fv);
-                                                                        self.insert_local_current_scope(&mut locals_stack, name.clone(), alloca, self.context.f64_type().as_basic_type_enum(), true, false);
+                                                                        self.insert_local_current_scope(&mut locals_stack, name.clone(), alloca, self.f64_t.as_basic_type_enum(), true, false);
                                                                     }
                                                                     BasicValueEnum::PointerValue(pv) => {
                                                                         let ptr_ty = self.context.ptr_type(AddressSpace::default());

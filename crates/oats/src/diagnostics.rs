@@ -96,11 +96,11 @@ pub fn report_error_span(
     let lines: Vec<&str> = source.lines().collect();
     let total = lines.len();
     let idx = if line_no == 0 { 0 } else { line_no - 1 };
-    let start = if idx >= 1 { idx - 1 } else { 0 };
+    let start = idx.saturating_sub(1);
     let end = if idx + 1 < total { idx + 1 } else { total - 1 };
 
-    for i in start..=end {
-        eprintln!("{:4} | {}", i + 1, lines[i]);
+    for (i, line) in lines.iter().enumerate().take(end + 1).skip(start) {
+        eprintln!("{:4} | {}", i + 1, line);
         if i == idx {
             // caret under column
             let mut caret = String::new();

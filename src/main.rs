@@ -5,14 +5,23 @@ use oats::types::{check_function_strictness, SymbolTable};
 use oats::codegen::CodeGen;
 
 use inkwell::context::Context;
+use inkwell::targets::TargetMachine;
 
 fn main() -> Result<()> {
-    let source = r#"
-export function add_oats(a: number, b: number): number { return a + b; }
-"#;
+    // Read source from first CLI arg or OATS_SRC_FILE env var
+    let args: Vec<String> = std::env::args().collect();
+    let src_path = if args.len() > 1 {
+        args[1].clone()
+    } else if let Ok(p) = std::env::var("OATS_SRC_FILE") {
+        p
+    } else {
+        anyhow::bail!("No source file provided. Pass path as first arg or set OATS_SRC_FILE env var.");
+    };
+
+    let source = std::fs::read_to_string(&src_path)?;
 
     // Parse
-    let parsed = parser::parse_oats_module(source)?;
+    let parsed = parser::parse_oats_module(&source)?;
 
     // Find first exported function declaration using the ParsedSource API
     let mut func_decl_opt: Option<deno_ast::swc::ast::Function> = None;
@@ -37,6 +46,8 @@ export function add_oats(a: number, b: number): number { return a + b; }
     // LLVM setup
     let context = Context::create();
     let module = context.create_module("oats");
+    let triple = TargetMachine::get_default_triple();
+    module.set_triple(&triple);
     let builder = context.create_builder();
     let codegen = CodeGen { context: &context, module, builder };
 

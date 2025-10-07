@@ -38,7 +38,7 @@ fn gen_add_function_ir_contains_fadd() -> Result<()> {
     let triple = TargetMachine::get_default_triple();
     module.set_triple(&triple);
     let builder = context.create_builder();
-    let codegen = CodeGen { context: &context, module, builder, next_str_id: Cell::new(0) };
+    let codegen = CodeGen { context: &context, module, builder, next_str_id: Cell::new(0), string_literals: std::cell::RefCell::new(std::collections::HashMap::new()) };
 
     codegen.gen_function_ir(
         &func_name,

@@ -1,13 +1,13 @@
-use crate::types::OatsType;
 use inkwell::builder::Builder;
 use inkwell::context::Context;
 use inkwell::module::Module;
 use inkwell::types::BasicType;
 use inkwell::types::BasicTypeEnum;
-use inkwell::values::{BasicValue, BasicValueEnum, CallSiteValue, FunctionValue};
+use inkwell::values::{BasicValue, BasicValueEnum, CallSiteValue, FunctionValue, PointerValue};
 use inkwell::AddressSpace;
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
+// ...existing code...
 
 pub mod helpers;
 
@@ -19,6 +19,10 @@ pub struct CodeGen<'a> {
     // globals (e.g. `strlit.0`, `strlit.1`, ...). Using `Cell` lets us
     // mutate this counter from &self without requiring &mut.
     pub next_str_id: Cell<u32>,
+    // Cache string literal contents to their emitted global values so
+    // identical literals are emitted once and reused. Using `RefCell`
+    // lets us mutate this from `&self`.
+    pub string_literals: RefCell<HashMap<String, PointerValue<'a>>>,
 }
 
 impl<'a> CodeGen<'a> {
@@ -360,6 +364,12 @@ impl<'a> CodeGen<'a> {
                     }
                     Lit::Str(s) => {
                         let bytes = s.value.as_bytes();
+                        let key = String::from_utf8_lossy(bytes).into_owned();
+                        // Check cache first (cache stores the computed pointer)
+                        if let Some(ptr_val) = self.string_literals.borrow().get(&key) {
+                            return Some(ptr_val.as_basic_value_enum());
+                        }
+
                         let array_ty = self.context.i8_type().array_type((bytes.len() + 1) as u32);
                         // generate a unique global name for this string literal
                         let id = self.next_str_id.get();
@@ -368,22 +378,16 @@ impl<'a> CodeGen<'a> {
                         let gv = self.module.add_global(array_ty, None, &name);
                         let const_array = self.context.const_string(bytes, true);
                         gv.set_initializer(&const_array);
+
                         let zero = self.context.i32_type().const_int(0, false);
                         let indices = &[zero, zero];
-                        // build_gep is unsafe in inkwell; use the pointer value
-                        let gep = unsafe {
-                            self.builder.build_gep(
-                                array_ty,
-                                gv.as_pointer_value(),
-                                indices,
-                                "strptr",
-                            )
-                        };
+                        let gep = unsafe { self.builder.build_gep(array_ty, gv.as_pointer_value(), indices, "strptr") };
                         if let Ok(ptr) = gep {
-                            Some(ptr.as_basic_value_enum())
-                        } else {
-                            None
+                            // store pointer in cache for future reuse
+                            self.string_literals.borrow_mut().insert(key, ptr);
+                            return Some(ptr.as_basic_value_enum());
                         }
+                        None
                     }
                     _ => None,
                 }

@@ -164,7 +164,7 @@ fn main() -> Result<()> {
     let triple = TargetMachine::get_default_triple();
     module.set_triple(&triple);
     let builder = context.create_builder();
-    let codegen = CodeGen { context: &context, module, builder, next_str_id: std::cell::Cell::new(0) };
+    let codegen = CodeGen { context: &context, module, builder, next_str_id: std::cell::Cell::new(0), string_literals: std::cell::RefCell::new(std::collections::HashMap::new()) };
 
     // Emit top-level helper functions (non-exported) found in the module so
     // calls to them can be lowered. Skip exported `main` which we handle

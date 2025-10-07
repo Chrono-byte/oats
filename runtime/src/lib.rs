@@ -3,14 +3,17 @@ use libc::{c_char, c_void, size_t};
 use std::ptr;
 use std::io::{self, Write};
 
+#[unsafe(no_mangle)]
 pub extern "C" fn runtime_malloc(size: size_t) -> *mut c_void {
     unsafe { libc::malloc(size) }
 }
 
+#[unsafe(no_mangle)]
 pub extern "C" fn runtime_free(p: *mut c_void) {
     unsafe { libc::free(p) }
 }
 
+#[unsafe(no_mangle)]
 pub extern "C" fn runtime_strlen(s: *const c_char) -> size_t {
     if s.is_null() {
         return 0;
@@ -18,6 +21,7 @@ pub extern "C" fn runtime_strlen(s: *const c_char) -> size_t {
     unsafe { libc::strlen(s) }
 }
 
+#[unsafe(no_mangle)]
 pub extern "C" fn str_dup(s: *const c_char) -> *mut c_char {
     if s.is_null() {
         return ptr::null_mut();
@@ -33,6 +37,7 @@ pub extern "C" fn str_dup(s: *const c_char) -> *mut c_char {
     }
 }
 
+#[unsafe(no_mangle)]
 pub extern "C" fn str_concat(a: *const c_char, b: *const c_char) -> *mut c_char {
     if a.is_null() || b.is_null() {
         return ptr::null_mut();
@@ -52,6 +57,7 @@ pub extern "C" fn str_concat(a: *const c_char, b: *const c_char) -> *mut c_char 
     }
 }
 
+#[unsafe(no_mangle)]
 pub extern "C" fn print_f64(v: f64) {
     // simple printf wrapper
     unsafe {
@@ -59,6 +65,7 @@ pub extern "C" fn print_f64(v: f64) {
     }
 }
 
+#[unsafe(no_mangle)]
 pub extern "C" fn print_str(s: *const c_char) {
     if s.is_null() { return; }
     unsafe {

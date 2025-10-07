@@ -6,6 +6,7 @@ use anyhow::Result;
 pub enum OatsType {
     Number,
     Boolean,
+    Void,
     String,
     NominalStruct(String),
 }
@@ -57,6 +58,7 @@ pub fn check_function_strictness(
         match ty {
             ast::TsType::TsKeywordType(keyword) => match keyword.kind {
                 ast::TsKeywordTypeKind::TsNumberKeyword => Some(OatsType::Number),
+                ast::TsKeywordTypeKind::TsVoidKeyword => Some(OatsType::Void),
                 ast::TsKeywordTypeKind::TsBooleanKeyword => Some(OatsType::Boolean),
                 ast::TsKeywordTypeKind::TsStringKeyword => Some(OatsType::String),
                 _ => None,

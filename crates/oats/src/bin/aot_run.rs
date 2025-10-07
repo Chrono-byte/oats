@@ -51,24 +51,24 @@ fn main() -> Result<()> {
                 false
             }
             ast::Stmt::If(ifstmt) => {
-                if stmt_contains_var(&*ifstmt.cons) {
+                if stmt_contains_var(&ifstmt.cons) {
                     return true;
                 }
-                if let Some(alt) = &ifstmt.alt {
-                    if stmt_contains_var(&*alt) {
-                        return true;
-                    }
+                if let Some(alt) = &ifstmt.alt
+                    && stmt_contains_var(alt)
+                {
+                    return true;
                 }
                 false
             }
             ast::Stmt::For(forstmt) => {
-                if stmt_contains_var(&*forstmt.body) {
+                if stmt_contains_var(&forstmt.body) {
                     return true;
                 }
                 false
             }
-            ast::Stmt::While(ws) => stmt_contains_var(&*ws.body),
-            ast::Stmt::DoWhile(dws) => stmt_contains_var(&*dws.body),
+            ast::Stmt::While(ws) => stmt_contains_var(&ws.body),
+            ast::Stmt::DoWhile(dws) => stmt_contains_var(&dws.body),
             ast::Stmt::Switch(swt) => {
                 for case in &swt.cases {
                     for s in &case.cons {
@@ -121,51 +121,51 @@ fn main() -> Result<()> {
                 );
             }
             // If it's a function decl, also inspect its body for var
-            if let ast::Stmt::Decl(ast::Decl::Fn(fdecl)) = stmt {
-                if let Some(body) = &fdecl.function.body {
-                    for s in &body.stmts {
-                        if stmt_contains_var(s) {
-                            return diagnostics::report_error_and_bail(
-                                Some(&src_path),
-                                Some(&source),
-                                "`var` declarations are not supported. Use `let` or `const` instead.",
-                                Some(
-                                    "`var` has function-scoped semantics which we intentionally disallow; prefer `let` or `const`.",
-                                ),
-                            );
-                        }
-                    }
-                }
-            }
-        }
-        if let deno_ast::ModuleItemRef::ModuleDecl(module_decl) = item {
-            if let deno_ast::swc::ast::ModuleDecl::ExportDecl(decl) = module_decl {
-                if let deno_ast::swc::ast::Decl::Var(vdecl) = &decl.decl {
-                    if matches!(vdecl.kind, ast::VarDeclKind::Var) {
+            if let ast::Stmt::Decl(ast::Decl::Fn(fdecl)) = stmt
+                && let Some(body) = &fdecl.function.body
+            {
+                for s in &body.stmts {
+                    if stmt_contains_var(s) {
                         return diagnostics::report_error_and_bail(
                             Some(&src_path),
                             Some(&source),
                             "`var` declarations are not supported. Use `let` or `const` instead.",
                             Some(
-                                "`var` has function-scoped semantics which we intentionally disallow; prefer `let` or `const",
+                                "`var` has function-scoped semantics which we intentionally disallow; prefer `let` or `const`.",
                             ),
                         );
                     }
                 }
-                if let ast::Decl::Fn(fdecl) = &decl.decl {
-                    if let Some(body) = &fdecl.function.body {
-                        for s in &body.stmts {
-                            if stmt_contains_var(s) {
-                                return diagnostics::report_error_and_bail(
-                                    Some(&src_path),
-                                    Some(&source),
-                                    "`var` declarations are not supported. Use `let` or `const` instead.",
-                                    Some(
-                                        "`var` has function-scoped semantics which we intentionally disallow; prefer `let` or `const.",
-                                    ),
-                                );
-                            }
-                        }
+            }
+        }
+        if let deno_ast::ModuleItemRef::ModuleDecl(module_decl) = item
+            && let deno_ast::swc::ast::ModuleDecl::ExportDecl(decl) = module_decl
+        {
+            if let deno_ast::swc::ast::Decl::Var(vdecl) = &decl.decl
+                && matches!(vdecl.kind, ast::VarDeclKind::Var)
+            {
+                return diagnostics::report_error_and_bail(
+                    Some(&src_path),
+                    Some(&source),
+                    "`var` declarations are not supported. Use `let` or `const` instead.",
+                    Some(
+                        "`var` has function-scoped semantics which we intentionally disallow; prefer `let` or `const",
+                    ),
+                );
+            }
+            if let ast::Decl::Fn(fdecl) = &decl.decl
+                && let Some(body) = &fdecl.function.body
+            {
+                for s in &body.stmts {
+                    if stmt_contains_var(s) {
+                        return diagnostics::report_error_and_bail(
+                            Some(&src_path),
+                            Some(&source),
+                            "`var` declarations are not supported. Use `let` or `const` instead.",
+                            Some(
+                                "`var` has function-scoped semantics which we intentionally disallow; prefer `let` or `const.",
+                            ),
+                        );
                     }
                 }
             }
@@ -177,15 +177,14 @@ fn main() -> Result<()> {
     // Require the user script to export a `main` function as the program entrypoint
     let mut func_decl_opt: Option<deno_ast::swc::ast::Function> = None;
     for item_ref in parsed.program_ref().body() {
-        if let deno_ast::ModuleItemRef::ModuleDecl(module_decl) = item_ref {
-            if let deno_ast::swc::ast::ModuleDecl::ExportDecl(decl) = module_decl {
-                if let deno_ast::swc::ast::Decl::Fn(f) = &decl.decl {
-                    let name = f.ident.sym.to_string();
-                    if name == "main" {
-                        func_decl_opt = Some((*f.function).clone());
-                        break;
-                    }
-                }
+        if let deno_ast::ModuleItemRef::ModuleDecl(module_decl) = item_ref
+            && let deno_ast::swc::ast::ModuleDecl::ExportDecl(decl) = module_decl
+            && let deno_ast::swc::ast::Decl::Fn(f) = &decl.decl
+        {
+            let name = f.ident.sym.to_string();
+            if name == "main" {
+                func_decl_opt = Some((*f.function).clone());
+                break;
             }
         }
     }
@@ -237,31 +236,30 @@ fn main() -> Result<()> {
     for item in parsed.program_ref().body() {
         use deno_ast::swc::ast;
         // non-exported function declarations: `function foo() {}`
-        if let deno_ast::ModuleItemRef::Stmt(stmt) = item {
-            if let ast::Stmt::Decl(ast::Decl::Fn(fdecl)) = stmt {
-                let fname = fdecl.ident.sym.to_string();
-                let inner_func = (*fdecl.function).clone();
-                let mut inner_symbols = SymbolTable::new();
-                let fsig = check_function_strictness(&inner_func, &mut inner_symbols)?;
-                // skip exported `main` (we handle exported main separately later)
-                if fname != "main" {
-                    codegen.gen_function_ir(&fname, &inner_func, &fsig.params, &fsig.ret, None);
-                }
+        if let deno_ast::ModuleItemRef::Stmt(stmt) = item
+            && let ast::Stmt::Decl(ast::Decl::Fn(fdecl)) = stmt
+        {
+            let fname = fdecl.ident.sym.to_string();
+            let inner_func = (*fdecl.function).clone();
+            let mut inner_symbols = SymbolTable::new();
+            let fsig = check_function_strictness(&inner_func, &mut inner_symbols)?;
+            // skip exported `main` (we handle exported main separately later)
+            if fname != "main" {
+                codegen.gen_function_ir(&fname, &inner_func, &fsig.params, &fsig.ret, None);
             }
         }
 
         // exported declarations: `export function foo() {}` — emit these too
-        if let deno_ast::ModuleItemRef::ModuleDecl(module_decl) = item {
-            if let deno_ast::swc::ast::ModuleDecl::ExportDecl(decl) = module_decl {
-                if let ast::Decl::Fn(fdecl) = &decl.decl {
-                    let fname = fdecl.ident.sym.to_string();
-                    let inner_func = (*fdecl.function).clone();
-                    let mut inner_symbols = SymbolTable::new();
-                    let fsig = check_function_strictness(&inner_func, &mut inner_symbols)?;
-                    if fname != "main" {
-                        codegen.gen_function_ir(&fname, &inner_func, &fsig.params, &fsig.ret, None);
-                    }
-                }
+        if let deno_ast::ModuleItemRef::ModuleDecl(module_decl) = item
+            && let deno_ast::swc::ast::ModuleDecl::ExportDecl(decl) = module_decl
+            && let ast::Decl::Fn(fdecl) = &decl.decl
+        {
+            let fname = fdecl.ident.sym.to_string();
+            let inner_func = (*fdecl.function).clone();
+            let mut inner_symbols = SymbolTable::new();
+            let fsig = check_function_strictness(&inner_func, &mut inner_symbols)?;
+            if fname != "main" {
+                codegen.gen_function_ir(&fname, &inner_func, &fsig.params, &fsig.ret, None);
             }
         }
     }

@@ -4,6 +4,14 @@ use inkwell::types::BasicTypeEnum;
 use inkwell::values::{BasicValue, BasicValueEnum};
 use std::collections::HashMap;
 
+type LocalEntry<'a> = (
+    inkwell::values::PointerValue<'a>,
+    BasicTypeEnum<'a>,
+    bool,
+    bool,
+);
+type LocalsStackLocal<'a> = Vec<HashMap<String, LocalEntry<'a>>>;
+
 impl<'a> super::CodeGen<'a> {
     // Map our OatsType to an LLVM BasicTypeEnum for parameters/allocas.
     // Note: Void is not a valid parameter type; panic if encountered here.
@@ -159,49 +167,49 @@ impl<'a> super::CodeGen<'a> {
         let ev_ty = ev.get_type();
 
         // If either is float, coerce both to float
-        if let inkwell::types::BasicTypeEnum::FloatType(_) = tv_ty {
-            if let Some(ev_f) = self.coerce_to_f64(ev) {
-                let tv_f = match tv {
-                    BasicValueEnum::FloatValue(fv) => fv,
-                    BasicValueEnum::IntValue(iv) => self
-                        .builder
-                        .build_signed_int_to_float(iv, self.f64_t, "i2f")
-                        .expect("i2f failed"),
-                    _ => return None,
-                };
-                let ty = self.f64_t.as_basic_type_enum();
-                let phi_node = self
+        if let inkwell::types::BasicTypeEnum::FloatType(_) = tv_ty
+            && let Some(ev_f) = self.coerce_to_f64(ev)
+        {
+            let tv_f = match tv {
+                BasicValueEnum::FloatValue(fv) => fv,
+                BasicValueEnum::IntValue(iv) => self
                     .builder
-                    .build_phi(ty, "phi_tmp")
-                    .expect("build_phi failed");
-                phi_node.add_incoming(&[
-                    (&tv_f.as_basic_value_enum(), then_bb),
-                    (&ev_f.as_basic_value_enum(), else_bb),
-                ]);
-                return Some(phi_node.as_basic_value());
-            }
+                    .build_signed_int_to_float(iv, self.f64_t, "i2f")
+                    .expect("i2f failed"),
+                _ => return None,
+            };
+            let ty = self.f64_t.as_basic_type_enum();
+            let phi_node = self
+                .builder
+                .build_phi(ty, "phi_tmp")
+                .expect("build_phi failed");
+            phi_node.add_incoming(&[
+                (&tv_f.as_basic_value_enum(), then_bb),
+                (&ev_f.as_basic_value_enum(), else_bb),
+            ]);
+            return Some(phi_node.as_basic_value());
         }
-        if let inkwell::types::BasicTypeEnum::FloatType(_) = ev_ty {
-            if let Some(tv_f) = self.coerce_to_f64(tv) {
-                let ev_f = match ev {
-                    BasicValueEnum::FloatValue(fv) => fv,
-                    BasicValueEnum::IntValue(iv) => self
-                        .builder
-                        .build_signed_int_to_float(iv, self.f64_t, "i2f")
-                        .expect("i2f failed"),
-                    _ => return None,
-                };
-                let ty = self.f64_t.as_basic_type_enum();
-                let phi_node = self
+        if let inkwell::types::BasicTypeEnum::FloatType(_) = ev_ty
+            && let Some(tv_f) = self.coerce_to_f64(tv)
+        {
+            let ev_f = match ev {
+                BasicValueEnum::FloatValue(fv) => fv,
+                BasicValueEnum::IntValue(iv) => self
                     .builder
-                    .build_phi(ty, "phi_tmp")
-                    .expect("build_phi failed");
-                phi_node.add_incoming(&[
-                    (&tv_f.as_basic_value_enum(), then_bb),
-                    (&ev_f.as_basic_value_enum(), else_bb),
-                ]);
-                return Some(phi_node.as_basic_value());
-            }
+                    .build_signed_int_to_float(iv, self.f64_t, "i2f")
+                    .expect("i2f failed"),
+                _ => return None,
+            };
+            let ty = self.f64_t.as_basic_type_enum();
+            let phi_node = self
+                .builder
+                .build_phi(ty, "phi_tmp")
+                .expect("build_phi failed");
+            phi_node.add_incoming(&[
+                (&tv_f.as_basic_value_enum(), then_bb),
+                (&ev_f.as_basic_value_enum(), else_bb),
+            ]);
+            return Some(phi_node.as_basic_value());
         }
 
         // If both pointers, build pointer phi
@@ -243,24 +251,9 @@ impl<'a> super::CodeGen<'a> {
     // Lookup a local by name from the scope stack (searching innermost scope first)
     pub(crate) fn find_local(
         &self,
-        locals: &Vec<
-            HashMap<
-                String,
-                (
-                    inkwell::values::PointerValue<'a>,
-                    BasicTypeEnum<'a>,
-                    bool,
-                    bool,
-                ),
-            >,
-        >,
+        locals: &LocalsStackLocal<'a>,
         name: &str,
-    ) -> Option<(
-        inkwell::values::PointerValue<'a>,
-        BasicTypeEnum<'a>,
-        bool,
-        bool,
-    )> {
+    ) -> Option<LocalEntry<'a>> {
         for scope in locals.iter().rev() {
             if let Some((ptr, ty, init, is_const)) = scope.get(name) {
                 return Some((*ptr, *ty, *init, *is_const));
@@ -271,17 +264,7 @@ impl<'a> super::CodeGen<'a> {
 
     pub(crate) fn insert_local_current_scope(
         &self,
-        locals: &mut Vec<
-            HashMap<
-                String,
-                (
-                    inkwell::values::PointerValue<'a>,
-                    BasicTypeEnum<'a>,
-                    bool,
-                    bool,
-                ),
-            >,
-        >,
+        locals: &mut LocalsStackLocal<'a>,
         name: String,
         ptr: inkwell::values::PointerValue<'a>,
         ty: BasicTypeEnum<'a>,
@@ -300,17 +283,7 @@ impl<'a> super::CodeGen<'a> {
     #[allow(dead_code)]
     pub(crate) fn set_local_initialized(
         &self,
-        locals: &mut Vec<
-            HashMap<
-                String,
-                (
-                    inkwell::values::PointerValue<'a>,
-                    BasicTypeEnum<'a>,
-                    bool,
-                    bool,
-                ),
-            >,
-        >,
+        locals: &mut LocalsStackLocal<'a>,
         name: &str,
         initialized: bool,
     ) {
@@ -378,38 +351,20 @@ impl<'a> super::CodeGen<'a> {
     // Emit rc_dec calls for any initialized pointer locals in the provided
     // locals stack. This is used at function exit or before early returns to
     // ensure pointer locals are decref'd so the runtime can free them.
-    pub(crate) fn emit_rc_dec_for_locals(
-        &self,
-        locals: &Vec<
-            HashMap<
-                String,
-                (
-                    inkwell::values::PointerValue<'a>,
-                    BasicTypeEnum<'a>,
-                    bool,
-                    bool,
-                ),
-            >,
-        >,
-    ) {
+    pub(crate) fn emit_rc_dec_for_locals(&self, locals: &LocalsStackLocal<'a>) {
         // Find the rc_dec declaration (declare if needed)
         let rc_dec = self.get_rc_dec();
         for scope in locals.iter().rev() {
             for (_name, (ptr, ty, init, _is_const)) in scope.iter() {
-                if *init {
-                    if let inkwell::types::BasicTypeEnum::PointerType(_) = ty {
-                        // load current pointer value and call rc_dec
-                        if let Ok(loaded) = self.builder.build_load(*ty, *ptr, "drop_load") {
-                            match loaded {
-                                BasicValueEnum::PointerValue(pv) => {
-                                    let _ = self
-                                        .builder
-                                        .build_call(rc_dec, &[pv.into()], "rc_dec_local")
-                                        .expect("build_call failed");
-                                }
-                                _ => {}
-                            }
-                        }
+                if *init && let inkwell::types::BasicTypeEnum::PointerType(_) = ty {
+                    // load current pointer value and call rc_dec
+                    if let Ok(loaded) = self.builder.build_load(*ty, *ptr, "drop_load")
+                        && let BasicValueEnum::PointerValue(pv) = loaded
+                    {
+                        let _ = self
+                            .builder
+                            .build_call(rc_dec, &[pv.into()], "rc_dec_local")
+                            .expect("build_call failed");
                     }
                 }
             }
@@ -421,17 +376,7 @@ impl<'a> super::CodeGen<'a> {
     // `break`/`continue` where only the inner scopes should be decref'd.
     pub(crate) fn _emit_rc_dec_for_locals_from(
         &self,
-        locals: &Vec<
-            HashMap<
-                String,
-                (
-                    inkwell::values::PointerValue<'a>,
-                    BasicTypeEnum<'a>,
-                    bool,
-                    bool,
-                ),
-            >,
-        >,
+        locals: &LocalsStackLocal<'a>,
         start_index: usize,
     ) {
         let rc_dec = self.get_rc_dec();
@@ -441,20 +386,15 @@ impl<'a> super::CodeGen<'a> {
         // iterate from innermost scope down to start_index
         for scope in locals.iter().rev().take(locals.len() - start_index) {
             for (_name, (ptr, ty, init, _is_const)) in scope.iter() {
-                if *init {
-                    if let inkwell::types::BasicTypeEnum::PointerType(_) = ty {
-                        if let Ok(loaded) = self.builder.build_load(*ty, *ptr, "drop_load") {
-                            match loaded {
-                                BasicValueEnum::PointerValue(pv) => {
-                                    let _ = self
-                                        .builder
-                                        .build_call(rc_dec, &[pv.into()], "rc_dec_local")
-                                        .expect("build_call failed");
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
+                if *init
+                    && let inkwell::types::BasicTypeEnum::PointerType(_) = ty
+                    && let Ok(loaded) = self.builder.build_load(*ty, *ptr, "drop_load")
+                    && let BasicValueEnum::PointerValue(pv) = loaded
+                {
+                    let _ = self
+                        .builder
+                        .build_call(rc_dec, &[pv.into()], "rc_dec_local")
+                        .expect("build_call failed");
                 }
             }
         }

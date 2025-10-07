@@ -3,7 +3,6 @@ use anyhow::Result;
 use deno_ast::swc::ast;
 use deno_ast::{MediaType, ParseParams, ParsedSource, SourceTextInfo, parse_module};
 use std::collections::HashSet;
-use std::sync::Arc;
 use url::Url;
 
 pub struct ParsedModule {
@@ -68,7 +67,7 @@ pub fn parse_oats_module(source_code: &str, file_path: Option<&str>) -> Result<P
     let sti = SourceTextInfo::from_string(preprocessed.clone());
     let params = ParseParams {
         specifier: Url::parse("file:///file.ts")?,
-        text: Arc::from(sti.text().clone()),
+        text: sti.text().clone(),
         media_type: MediaType::TypeScript,
         // Capture tokens so we can validate semicolon presence if needed.
         capture_tokens: true,
@@ -115,7 +114,7 @@ pub fn parse_oats_module(source_code: &str, file_path: Option<&str>) -> Result<P
         // If a semicolon appears anywhere inside the span, consider it present.
         if lo < len {
             let end = if hi > len { len } else { hi };
-            if lo < end && bytes[lo..end].iter().any(|&b| b == b';') {
+            if lo < end && bytes[lo..end].contains(&b';') {
                 return true;
             }
         }
@@ -209,7 +208,74 @@ pub fn parse_oats_module(source_code: &str, file_path: Option<&str>) -> Result<P
                 }
             }
             // Reject usage of the legacy `var` keyword: require `let` or `let mut`/`const`.
-            if let ast::Stmt::Decl(ast::Decl::Var(vdecl)) = stmt {
+            if let ast::Stmt::Decl(ast::Decl::Var(vdecl)) = stmt
+                && matches!(vdecl.kind, deno_ast::swc::ast::VarDeclKind::Var)
+            {
+                let start = vdecl.span.lo.0 as usize;
+                return diagnostics::report_error_span_and_bail(
+                    file_path,
+                    source_code,
+                    start,
+                    "the `var` keyword is not allowed; use `let` or `let mut` instead",
+                    Some(
+                        "`var` is disallowed in this project to encourage Rust-like immutability; use `let mut` to declare mutable variables.",
+                    ),
+                );
+            }
+            // If it's a function decl, also inspect its body
+            if let ast::Stmt::Decl(ast::Decl::Fn(fdecl)) = stmt
+                && let Some(body) = &fdecl.function.body
+            {
+                for s in &body.stmts {
+                    if stmt_requires_semicolon(s) {
+                        let span = match s {
+                            ast::Stmt::Expr(es) => es.span,
+                            ast::Stmt::Decl(ast::Decl::Var(v)) => v.span,
+                            ast::Stmt::Return(r) => r.span,
+                            ast::Stmt::Break(b) => b.span,
+                            ast::Stmt::Continue(c) => c.span,
+                            ast::Stmt::Throw(t) => t.span,
+                            ast::Stmt::Debugger(d) => d.span,
+                            _ => continue,
+                        };
+                        if !has_trailing_semicolon(&span, source_code, &parsed) {
+                            let start = span.lo.0 as usize;
+                            return diagnostics::report_error_span_and_bail(
+                                file_path,
+                                source_code,
+                                start,
+                                "missing semicolon: statements must end with ';'",
+                                Some(
+                                    "oats requires semicolons like Rust/C++: add a trailing ';' to this statement.",
+                                ),
+                            );
+                        }
+                        // Reject `var` inside function bodies as well
+                        if let ast::Stmt::Decl(ast::Decl::Var(vdecl)) = s
+                            && matches!(vdecl.kind, deno_ast::swc::ast::VarDeclKind::Var)
+                        {
+                            let start = vdecl.span.lo.0 as usize;
+                            return diagnostics::report_error_span_and_bail(
+                                file_path,
+                                source_code,
+                                start,
+                                "the `var` keyword is not allowed; use `let` or `let mut` instead",
+                                Some(
+                                    "`var` is disallowed in this project to encourage Rust-like immutability; use `let mut` to declare mutable variables.",
+                                ),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        if let deno_ast::ModuleItemRef::ModuleDecl(deno_ast::swc::ast::ModuleDecl::ExportDecl(
+            decl,
+        )) = item
+        {
+            // export declarations that are vars should also be terminated
+            if let ast::Decl::Var(vdecl) = &decl.decl {
+                // Reject var in export decls as well
                 if matches!(vdecl.kind, deno_ast::swc::ast::VarDeclKind::Var) {
                     let start = vdecl.span.lo.0 as usize;
                     return diagnostics::report_error_span_and_bail(
@@ -222,118 +288,51 @@ pub fn parse_oats_module(source_code: &str, file_path: Option<&str>) -> Result<P
                         ),
                     );
                 }
-            }
-            // If it's a function decl, also inspect its body
-            if let ast::Stmt::Decl(ast::Decl::Fn(fdecl)) = stmt {
-                if let Some(body) = &fdecl.function.body {
-                    for s in &body.stmts {
-                        if stmt_requires_semicolon(s) {
-                            let span = match s {
-                                ast::Stmt::Expr(es) => es.span,
-                                ast::Stmt::Decl(ast::Decl::Var(v)) => v.span,
-                                ast::Stmt::Return(r) => r.span,
-                                ast::Stmt::Break(b) => b.span,
-                                ast::Stmt::Continue(c) => c.span,
-                                ast::Stmt::Throw(t) => t.span,
-                                ast::Stmt::Debugger(d) => d.span,
-                                _ => continue,
-                            };
-                            if !has_trailing_semicolon(&span, source_code, &parsed) {
-                                let start = span.lo.0 as usize;
-                                return diagnostics::report_error_span_and_bail(
-                                    file_path,
-                                    source_code,
-                                    start,
-                                    "missing semicolon: statements must end with ';'",
-                                    Some(
-                                        "oats requires semicolons like Rust/C++: add a trailing ';' to this statement.",
-                                    ),
-                                );
-                            }
-                            // Reject `var` inside function bodies as well
-                            if let ast::Stmt::Decl(ast::Decl::Var(vdecl)) = s {
-                                if matches!(vdecl.kind, deno_ast::swc::ast::VarDeclKind::Var) {
-                                    let start = vdecl.span.lo.0 as usize;
-                                    return diagnostics::report_error_span_and_bail(
-                                        file_path,
-                                        source_code,
-                                        start,
-                                        "the `var` keyword is not allowed; use `let` or `let mut` instead",
-                                        Some(
-                                            "`var` is disallowed in this project to encourage Rust-like immutability; use `let mut` to declare mutable variables.",
-                                        ),
-                                    );
-                                }
-                            }
-                        }
-                    }
+                if !has_trailing_semicolon(&vdecl.span, source_code, &parsed) {
+                    let start = vdecl.span.lo.0 as usize;
+                    return diagnostics::report_error_span_and_bail(
+                        file_path,
+                        source_code,
+                        start,
+                        "missing semicolon after export declaration",
+                        Some(
+                            "oats requires semicolons like Rust/C++: add a trailing ';' to this export declaration.",
+                        ),
+                    );
                 }
             }
-        }
-        if let deno_ast::ModuleItemRef::ModuleDecl(module_decl) = item {
-            // export declarations that are vars should also be terminated
-            if let deno_ast::swc::ast::ModuleDecl::ExportDecl(decl) = module_decl {
-                if let ast::Decl::Var(vdecl) = &decl.decl {
-                    // Reject var in export decls as well
-                    if matches!(vdecl.kind, deno_ast::swc::ast::VarDeclKind::Var) {
-                        let start = vdecl.span.lo.0 as usize;
-                        return diagnostics::report_error_span_and_bail(
-                            file_path,
-                            source_code,
-                            start,
-                            "the `var` keyword is not allowed; use `let` or `let mut` instead",
-                            Some(
-                                "`var` is disallowed in this project to encourage Rust-like immutability; use `let mut` to declare mutable variables.",
-                            ),
-                        );
-                    }
-                    if !has_trailing_semicolon(&vdecl.span, source_code, &parsed) {
-                        let start = vdecl.span.lo.0 as usize;
-                        return diagnostics::report_error_span_and_bail(
-                            file_path,
-                            source_code,
-                            start,
-                            "missing semicolon after export declaration",
-                            Some(
-                                "oats requires semicolons like Rust/C++: add a trailing ';' to this export declaration.",
-                            ),
-                        );
-                    }
-                }
-                if let ast::Decl::Fn(fdecl) = &decl.decl {
-                    if let Some(body) = &fdecl.function.body {
-                        for s in &body.stmts {
-                            if stmt_requires_semicolon(s) {
-                                let span = match s {
-                                    ast::Stmt::Expr(es) => es.span,
-                                    ast::Stmt::Decl(ast::Decl::Var(v)) => v.span,
-                                    ast::Stmt::Return(r) => r.span,
-                                    ast::Stmt::Break(b) => b.span,
-                                    ast::Stmt::Continue(c) => c.span,
-                                    ast::Stmt::Throw(t) => t.span,
-                                    ast::Stmt::Debugger(d) => d.span,
-                                    _ => continue,
-                                };
-                                if !has_trailing_semicolon(&span, source_code, &parsed) {
-                                    let start = span.lo.0 as usize;
-                                    return diagnostics::report_error_span_and_bail(
-                                        file_path,
-                                        source_code,
-                                        start,
-                                        "missing semicolon: statements must end with ';'",
-                                        Some(
-                                            "oats requires semicolons like Rust/C++: add a trailing ';' to this statement.",
-                                        ),
-                                    );
-                                }
-                            }
+            if let ast::Decl::Fn(fdecl) = &decl.decl
+                && let Some(body) = &fdecl.function.body
+            {
+                for s in &body.stmts {
+                    if stmt_requires_semicolon(s) {
+                        let span = match s {
+                            ast::Stmt::Expr(es) => es.span,
+                            ast::Stmt::Decl(ast::Decl::Var(v)) => v.span,
+                            ast::Stmt::Return(r) => r.span,
+                            ast::Stmt::Break(b) => b.span,
+                            ast::Stmt::Continue(c) => c.span,
+                            ast::Stmt::Throw(t) => t.span,
+                            ast::Stmt::Debugger(d) => d.span,
+                            _ => continue,
+                        };
+                        if !has_trailing_semicolon(&span, source_code, &parsed) {
+                            let start = span.lo.0 as usize;
+                            return diagnostics::report_error_span_and_bail(
+                                file_path,
+                                source_code,
+                                start,
+                                "missing semicolon: statements must end with ';'",
+                                Some(
+                                    "oats requires semicolons like Rust/C++: add a trailing ';' to this statement.",
+                                ),
+                            );
                         }
                     }
                 }
             }
         }
     }
-
     Ok(ParsedModule {
         parsed,
         preprocessed,

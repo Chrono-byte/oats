@@ -2,6 +2,9 @@ use anyhow::Result;
 use deno_ast::swc::ast;
 use std::collections::HashMap;
 
+/// Type alias for the locals stack used in codegen
+pub type LocalsStack = Vec<HashMap<String, OatsType>>;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OatsType {
     Number,
@@ -21,6 +24,12 @@ pub struct FunctionSig {
 
 pub struct SymbolTable {
     scopes: Vec<HashMap<String, OatsType>>,
+}
+
+impl Default for SymbolTable {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl SymbolTable {
@@ -67,19 +76,14 @@ pub fn check_function_strictness(
             },
             ast::TsType::TsTypeRef(type_ref) => {
                 // e.g., nominal type like Foo -> map to NominalStruct("Foo")
-                if let Some(type_name) = type_ref.type_name.as_ident() {
-                    Some(OatsType::NominalStruct(type_name.sym.to_string()))
-                } else {
-                    None
-                }
+                type_ref
+                    .type_name
+                    .as_ident()
+                    .map(|type_name| OatsType::NominalStruct(type_name.sym.to_string()))
             }
             ast::TsType::TsArrayType(arr) => {
                 // element type
-                if let Some(elem) = map_ts_type(&arr.elem_type) {
-                    Some(OatsType::Array(Box::new(elem)))
-                } else {
-                    None
-                }
+                map_ts_type(&arr.elem_type).map(|elem| OatsType::Array(Box::new(elem)))
             }
             _ => None,
         }
@@ -94,7 +98,7 @@ pub fn check_function_strictness(
                     let ast::TsTypeAnn {
                         type_ann: ts_type, ..
                     } = &**type_ann;
-                    if let Some(mapped) = map_ts_type(&ts_type) {
+                    if let Some(mapped) = map_ts_type(ts_type) {
                         param_types.push(mapped);
                         continue;
                     }
@@ -116,7 +120,7 @@ pub fn check_function_strictness(
         let ast::TsTypeAnn {
             type_ann: ts_type, ..
         } = &**rt;
-        if let Some(mapped) = map_ts_type(&ts_type) {
+        if let Some(mapped) = map_ts_type(ts_type) {
             mapped
         } else {
             return Err(anyhow::anyhow!("Unsupported return type annotation"));

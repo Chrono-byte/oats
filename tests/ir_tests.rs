@@ -3,6 +3,7 @@ use anyhow::Result;
 use oats::parser;
 use oats::types::{check_function_strictness, SymbolTable};
 use oats::codegen::CodeGen;
+use std::cell::Cell;
 
 use inkwell::context::Context;
 use inkwell::targets::TargetMachine;
@@ -11,7 +12,7 @@ use inkwell::targets::TargetMachine;
 fn gen_add_function_ir_contains_fadd() -> Result<()> {
     let source = r#"export function main(a: number, b: number): number { return a + b; }"#;
 
-    let parsed = parser::parse_oats_module(source)?;
+    let parsed = parser::parse_oats_module(source, None)?;
 
     // extract exported function and name
     let mut func_decl_opt: Option<(String, deno_ast::swc::ast::Function)> = None;
@@ -37,7 +38,7 @@ fn gen_add_function_ir_contains_fadd() -> Result<()> {
     let triple = TargetMachine::get_default_triple();
     module.set_triple(&triple);
     let builder = context.create_builder();
-    let codegen = CodeGen { context: &context, module, builder };
+    let codegen = CodeGen { context: &context, module, builder, next_str_id: Cell::new(0) };
 
     codegen.gen_function_ir(
         &func_name,
@@ -48,7 +49,7 @@ fn gen_add_function_ir_contains_fadd() -> Result<()> {
 
     let ir = codegen.module.print_to_string().to_string();
 
-    let expected_sig = format!("define double @oats_main(double");
+    let expected_sig = format!("define double @{}(double", func_name);
     assert!(ir.contains(&expected_sig), "unexpected function signature: {}", ir);
     assert!(ir.contains("fadd double"), "expected fadd in IR: {}", ir);
 

@@ -1,0 +1,4 @@
+export function main(): void {
+  println(3 + 4);
+  println("hello from oats");
+}

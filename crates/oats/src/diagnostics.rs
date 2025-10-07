@@ -45,7 +45,13 @@ pub fn report_error_and_bail<T>(
 /// pointing at the column. `span_start` and `span_end` are byte indices
 /// into `source` (0-based). If `file` is provided, it is printed in the
 /// header.
-pub fn report_error_span(file: Option<&str>, source: &str, span_start: usize, message: &str, note: Option<&str>) {
+pub fn report_error_span(
+    file: Option<&str>,
+    source: &str,
+    span_start: usize,
+    message: &str,
+    note: Option<&str>,
+) {
     let red = "\x1b[31m";
     let reset = "\x1b[0m";
 
@@ -89,7 +95,9 @@ pub fn report_error_span(file: Option<&str>, source: &str, span_start: usize, me
         if i == idx {
             // caret under column
             let mut caret = String::new();
-            for _ in 0..col { caret.push(' '); }
+            for _ in 0..col {
+                caret.push(' ');
+            }
             caret.push('^');
             eprintln!("     | {}", caret);
         }
@@ -102,7 +110,13 @@ pub fn report_error_span(file: Option<&str>, source: &str, span_start: usize, me
 }
 
 /// Convenience that reports a span-aware error and returns anyhow::Error.
-pub fn report_error_span_and_bail<T>(file: Option<&str>, source: &str, span_start: usize, message: &str, note: Option<&str>) -> anyhow::Result<T> {
+pub fn report_error_span_and_bail<T>(
+    file: Option<&str>,
+    source: &str,
+    span_start: usize,
+    message: &str,
+    note: Option<&str>,
+) -> anyhow::Result<T> {
     report_error_span(file, source, span_start, message, note);
     Err(anyhow::anyhow!("{}", message))
 }

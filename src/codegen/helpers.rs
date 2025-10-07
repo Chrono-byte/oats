@@ -1,12 +1,8 @@
 use crate::types::OatsType;
-use inkwell::builder::Builder;
-use inkwell::context::Context;
-use inkwell::module::Module;
 use inkwell::types::BasicType;
 use inkwell::types::BasicTypeEnum;
-use inkwell::values::{BasicValue, BasicValueEnum, CallSiteValue, FunctionValue};
+use inkwell::values::{BasicValue, BasicValueEnum};
 use inkwell::AddressSpace;
-use std::cell::Cell;
 use std::collections::HashMap;
 
 impl<'a> super::CodeGen<'a> {
@@ -22,6 +18,7 @@ impl<'a> super::CodeGen<'a> {
             OatsType::Void => panic!("Void cannot be mapped to a BasicTypeEnum for params"),
         }
     }
+
     // Try to coerce a BasicValueEnum into an f64 FloatValue.
     // Supports FloatValue and IntValue (including i1/bool).
     pub(crate) fn coerce_to_f64(&self, val: BasicValueEnum<'a>) -> Option<inkwell::values::FloatValue<'a>> {

@@ -1,6 +1,7 @@
 use std::process::Command;
 use std::fs::File;
 use std::io::Write;
+use std::path::Path;
 use anyhow::Result;
 
 use oats::parser;
@@ -8,11 +9,22 @@ use oats::types::{check_function_strictness, SymbolTable};
 use oats::codegen::CodeGen;
 
 use inkwell::context::Context;
+use inkwell::targets::TargetMachine;
 
 fn main() -> Result<()> {
-    let source = r#"export function add_oats(a: number, b: number): number { return a + b; }"#;
+    // Read source from first CLI arg or from OATS_SRC_FILE env var.
+    let args: Vec<String> = std::env::args().collect();
+    let src_path = if args.len() > 1 {
+        args[1].clone()
+    } else if let Ok(p) = std::env::var("OATS_SRC_FILE") {
+        p
+    } else {
+        anyhow::bail!("No source file provided. Pass path as first arg or set OATS_SRC_FILE env var.");
+    };
 
-    let parsed = parser::parse_oats_module(source)?;
+    let source = std::fs::read_to_string(&src_path)?;
+
+    let parsed = parser::parse_oats_module(&source)?;
 
     // extract exported function
     let mut func_decl_opt: Option<deno_ast::swc::ast::Function> = None;
@@ -34,6 +46,9 @@ fn main() -> Result<()> {
 
     let context = Context::create();
     let module = context.create_module("oats_aot");
+    // Set the module target triple to the host default so clang doesn't warn
+    let triple = TargetMachine::get_default_triple();
+    module.set_triple(&triple);
     let builder = context.create_builder();
     let codegen = CodeGen { context: &context, module, builder };
 
@@ -57,7 +72,7 @@ fn main() -> Result<()> {
     let status = Command::new("cargo")
         .arg("build")
         .arg("--manifest-path")
-        .arg("runtime/rust_rt/Cargo.toml")
+        .arg("runtime/Cargo.toml")
         .arg("--release")
         .status()?;
     if !status.success() {
@@ -65,7 +80,7 @@ fn main() -> Result<()> {
     }
 
     // locate the produced staticlib
-    let rust_lib = "runtime/rust_rt/target/release/librust_rt.a";
+    let rust_lib = "runtime/target/release/libruntime.a";
 
     // Compile IR to object file using clang
     let out_obj = format!("{}/out.o", out_dir);
@@ -80,21 +95,47 @@ fn main() -> Result<()> {
         anyhow::bail!("clang failed to compile IR to object");
     }
 
-    // Compile rt_main to an object file with rustc
-    let rt_main_src = "runtime/rt_main/src/main.rs";
-    let rt_main_obj = format!("{}/rt_main.o", out_dir);
-    let status = Command::new("rustc")
-        .arg("--crate-type")
-        .arg("bin")
-        .arg("--emit=obj")
-        .arg(rt_main_src)
-        .arg("-O")
-        .arg("-o")
-        .arg(&rt_main_obj)
-        .status()?;
-    if !status.success() {
-        anyhow::bail!("rustc failed to compile rt_main to object");
-    }
+    // Locate or produce rt_main object. Prefer an existing top-level `rt_main.o` so
+    // the repo can ship a prebuilt small host object. Otherwise try to compile
+    // `runtime/rt_main/src/main.rs` if it exists.
+    let rt_main_obj = if Path::new("rt_main.o").exists() {
+        // Use the repo-provided object file
+        String::from("rt_main.o")
+    } else if Path::new("runtime/rt_main/src/main.rs").exists() {
+        let rt_main_obj = format!("{}/rt_main.o", out_dir);
+        let status = Command::new("rustc")
+            .arg("--crate-type")
+            .arg("bin")
+            .arg("--emit=obj")
+            .arg("runtime/rt_main/src/main.rs")
+            .arg("-O")
+            .arg("-o")
+            .arg(&rt_main_obj)
+            .status()?;
+        if !status.success() {
+            anyhow::bail!("rustc failed to compile rt_main to object");
+        }
+        rt_main_obj
+    } else {
+        // As a fallback, generate a tiny C main that calls the exported function
+        // (assumes the function has signature double add_oats(double,double)).
+        let rt_main_c = format!("{}/rt_main.c", out_dir);
+        let rt_main_obj = format!("{}/rt_main.o", out_dir);
+        let mut cf = File::create(&rt_main_c)?;
+        cf.write_all(b"#include <stdio.h>\n\nextern double add_oats(double,double);\n\nint main(){ double r = add_oats(1.5, 2.25); printf(\"result: %f\\n\", r); return 0; }\n")?;
+        cf.sync_all()?;
+        let status = Command::new("clang")
+            .arg("-O2")
+            .arg("-c")
+            .arg(&rt_main_c)
+            .arg("-o")
+            .arg(&rt_main_obj)
+            .status()?;
+        if !status.success() {
+            anyhow::bail!("clang failed to compile generated rt_main.c");
+        }
+        rt_main_obj
+    };
 
     // Link final binary with clang: rt_main.o + out.o + rust runtime staticlib
     let out_bin = format!("{}/out", out_dir);

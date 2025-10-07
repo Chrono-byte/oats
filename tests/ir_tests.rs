@@ -5,6 +5,7 @@ use oats::types::{check_function_strictness, SymbolTable};
 use oats::codegen::CodeGen;
 
 use inkwell::context::Context;
+use inkwell::targets::TargetMachine;
 
 #[test]
 fn gen_add_function_ir_contains_fadd() -> Result<()> {
@@ -32,6 +33,8 @@ fn gen_add_function_ir_contains_fadd() -> Result<()> {
 
     let context = Context::create();
     let module = context.create_module("oats_test");
+    let triple = TargetMachine::get_default_triple();
+    module.set_triple(&triple);
     let builder = context.create_builder();
     let codegen = CodeGen { context: &context, module, builder };
 

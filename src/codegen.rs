@@ -54,13 +54,16 @@ impl<'a> CodeGen<'a> {
             return;
         }
 
-        self.declare_libc();
-
-        // define i8* @str_concat(i8* %a, i8* %b)
+        // Always emit the IR function body for str_concat so generated IR is
+        // self-contained and can be compiled with clang without needing the
+        // repository runtime.
         let i8ptr = self.context.ptr_type(AddressSpace::default());
         let fn_type = i8ptr.fn_type(&[i8ptr.into(), i8ptr.into()], false);
-        let function = self.module.add_function("str_concat", fn_type, None);
 
+        // Emit the IR function body
+        self.declare_libc();
+
+        let function = self.module.add_function("str_concat", fn_type, None);
         let entry = self.context.append_basic_block(function, "entry");
         self.builder.position_at_end(entry);
 

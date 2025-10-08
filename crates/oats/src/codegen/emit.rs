@@ -63,9 +63,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 .is_none_or(|b| b.get_terminator().is_none())
         {
             self.emit_rc_dec_for_locals(&locals_stack);
-            self.builder
-                .build_return(None)
-                .map_err(|_| crate::diagnostics::Diagnostic::simple("Failed to build implicit return"))?;
+            self.builder.build_return(None).map_err(|_| {
+                crate::diagnostics::Diagnostic::simple("Failed to build implicit return")
+            })?;
         }
 
         Ok(function)
@@ -129,7 +129,15 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 | OatsType::Promise(_) => self.i8ptr_t.into(),
                 OatsType::Boolean => self.bool_t.into(),
                 OatsType::Union(parts) => {
-                    let any_ptr = parts.iter().any(|p| matches!(p, OatsType::String | OatsType::NominalStruct(_) | OatsType::Array(_) | OatsType::Promise(_)));
+                    let any_ptr = parts.iter().any(|p| {
+                        matches!(
+                            p,
+                            OatsType::String
+                                | OatsType::NominalStruct(_)
+                                | OatsType::Array(_)
+                                | OatsType::Promise(_)
+                        )
+                    });
                     if any_ptr {
                         self.i8ptr_t.into()
                     } else {
@@ -160,7 +168,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
         let malloc_ret = call_site
             .try_as_basic_value()
             .left()
-            .ok_or_else(|| crate::diagnostics::Diagnostic::simple("malloc call did not return a value"))?
+            .ok_or_else(|| {
+                crate::diagnostics::Diagnostic::simple("malloc call did not return a value")
+            })?
             .into_pointer_value();
 
         let header_ptr = self
@@ -168,7 +178,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             .build_pointer_cast(malloc_ret, self.i8ptr_t, "hdr_ptr")
             .map_err(|_| crate::diagnostics::Diagnostic::simple("pointer cast failed"))?;
         let header_val = self.i64_t.const_int(1u64, false);
-    let _ = self.builder.build_store(header_ptr, header_val);
+        let _ = self.builder.build_store(header_ptr, header_val);
 
         let mut locals: LocalsStackLocal = vec![];
         let mut scope = HashMap::new();
@@ -238,29 +248,47 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         if param_val.get_type().is_float_type() {
                             let unboxed_f = param_val.into_float_value();
                             let box_fn = self.get_union_box_f64();
-                            let cs = self
-                                .builder
-                                .build_call(box_fn, &[unboxed_f.into()], "union_box_f64_ctor");
+                            let cs = self.builder.build_call(
+                                box_fn,
+                                &[unboxed_f.into()],
+                                "union_box_f64_ctor",
+                            );
                             if let Ok(cs) = cs
-                                    && let inkwell::Either::Left(bv) = cs.try_as_basic_value() {
-                                    let boxed_ptr = bv.into_pointer_value();
-                                    let boxed_bv = inkwell::values::BasicValueEnum::PointerValue(boxed_ptr);
-                                    let _ = self.builder.build_store(field_ptr_cast, boxed_bv);
-                                    let rc_inc_fn = self.get_rc_inc();
-                                    let _ = self.builder.build_call(rc_inc_fn, &[boxed_ptr.into()], "rc_inc_field");
-                                }
+                                && let inkwell::Either::Left(bv) = cs.try_as_basic_value()
+                            {
+                                let boxed_ptr = bv.into_pointer_value();
+                                let boxed_bv =
+                                    inkwell::values::BasicValueEnum::PointerValue(boxed_ptr);
+                                let _ = self.builder.build_store(field_ptr_cast, boxed_bv);
+                                let rc_inc_fn = self.get_rc_inc();
+                                let _ = self.builder.build_call(
+                                    rc_inc_fn,
+                                    &[boxed_ptr.into()],
+                                    "rc_inc_field",
+                                );
+                            }
                         } else if param_val.get_type().is_pointer_type() {
                             // box the pointer payload
                             let box_fn = self.get_union_box_ptr();
-                            let cs = self.builder.build_call(box_fn, &[param_val.into()], "union_box_ptr_ctor");
+                            let cs = self.builder.build_call(
+                                box_fn,
+                                &[param_val.into()],
+                                "union_box_ptr_ctor",
+                            );
                             if let Ok(cs) = cs
-                                && let inkwell::Either::Left(bv) = cs.try_as_basic_value() {
-                                    let boxed_ptr = bv.into_pointer_value();
-                                    let boxed_bv = inkwell::values::BasicValueEnum::PointerValue(boxed_ptr);
-                                    let _ = self.builder.build_store(field_ptr_cast, boxed_bv);
-                                    let rc_inc_fn = self.get_rc_inc();
-                                    let _ = self.builder.build_call(rc_inc_fn, &[boxed_ptr.into()], "rc_inc_field");
-                                }
+                                && let inkwell::Either::Left(bv) = cs.try_as_basic_value()
+                            {
+                                let boxed_ptr = bv.into_pointer_value();
+                                let boxed_bv =
+                                    inkwell::values::BasicValueEnum::PointerValue(boxed_ptr);
+                                let _ = self.builder.build_store(field_ptr_cast, boxed_bv);
+                                let rc_inc_fn = self.get_rc_inc();
+                                let _ = self.builder.build_call(
+                                    rc_inc_fn,
+                                    &[boxed_ptr.into()],
+                                    "rc_inc_field",
+                                );
+                            }
                         } else {
                             // other param ABI not expected for unions
                             let _ = self.builder.build_store(field_ptr_cast, param_val);
@@ -271,9 +299,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
                         if param_val.get_type().is_pointer_type() {
                             let rc_inc_fn = self.get_rc_inc();
-                            let _ = self
-                                .builder
-                                .build_call(rc_inc_fn, &[param_val.into()], "rc_inc_field");
+                            let _ = self.builder.build_call(
+                                rc_inc_fn,
+                                &[param_val.into()],
+                                "rc_inc_field",
+                            );
                         }
                     }
                 }

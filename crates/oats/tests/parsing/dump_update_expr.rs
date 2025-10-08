@@ -15,7 +15,7 @@ export function main(): number {
 "#;
 
     let parsed = parse_module(ParseParams {
-        specifier: deno_ast::ModuleSpecifier::parse("file:///test.ts").unwrap(),
+        specifier: deno_ast::ModuleSpecifier::parse("file://test.ts").unwrap(),
         text: source.into(),
         media_type: MediaType::TypeScript,
         capture_tokens: false,

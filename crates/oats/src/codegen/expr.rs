@@ -12,6 +12,7 @@ type LocalEntry<'a> = (PointerValue<'a>, BasicTypeEnum<'a>, bool, bool);
 type LocalsStackLocal<'a> = Vec<HashMap<String, LocalEntry<'a>>>;
 
 impl<'a> crate::codegen::CodeGen<'a> {
+    // Return true if the given OatsType contains or is a pointer-like type.
     /// Main expression lowering function. Returns Result to provide better error messages
     /// when lowering fails (instead of just returning None).
     pub fn lower_expr(
@@ -335,44 +336,79 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 if method_name == "random" {
                                     // If the object expression is the identifier `Math` and there are no args
                                     if call.args.is_empty() {
-                                        if let deno_ast::swc::ast::Expr::Ident(ident) = &*member.obj {
+                                        if let deno_ast::swc::ast::Expr::Ident(ident) = &*member.obj
+                                        {
                                             if ident.sym.to_string() == "Math" {
                                                 let f = self.get_math_random();
-                                                let cs = match self.builder.build_call(f, &[], "math_random_call") {
+                                                let cs = match self.builder.build_call(
+                                                    f,
+                                                    &[],
+                                                    "math_random_call",
+                                                ) {
                                                     Ok(cs) => cs,
-                                                    Err(_) => return Err(Diagnostic::simple("operation failed")),
+                                                    Err(_) => {
+                                                        return Err(Diagnostic::simple(
+                                                            "operation failed",
+                                                        ));
+                                                    }
                                                 };
                                                 let either = cs.try_as_basic_value();
                                                 if let inkwell::Either::Left(bv) = either {
                                                     return Ok(bv);
                                                 } else {
-                                                    return Err(Diagnostic::simple("operation failed"));
+                                                    return Err(Diagnostic::simple(
+                                                        "operation failed",
+                                                    ));
                                                 }
                                             }
                                         }
                                     }
                                 }
 
-                                if let Ok(obj_val) = self.lower_expr(&member.obj, function, param_map, locals) {
+                                if let Ok(obj_val) =
+                                    self.lower_expr(&member.obj, function, param_map, locals)
+                                {
                                     // Special-case: arr.push(x) / arr.pop()
                                     if method_name == "push" {
                                         // Expect one argument
                                         if call.args.len() == 1 {
                                             let arg = &call.args[0];
-                                            if let Ok(arg_val) = self.lower_expr(&arg.expr, function, param_map, locals) {
+                                            if let Ok(arg_val) = self
+                                                .lower_expr(&arg.expr, function, param_map, locals)
+                                            {
                                                 // Dispatch based on arg type: f64 vs pointer
                                                 match arg_val {
                                                     BasicValueEnum::FloatValue(fv) => {
                                                         let f = self.get_array_push_f64();
-                                                        let _ = self.builder.build_call(f, &[obj_val.into(), fv.into()], "arr_push_f64");
-                                                        return Ok(self.context.i64_type().const_int(0, false).as_basic_value_enum());
+                                                        let _ = self.builder.build_call(
+                                                            f,
+                                                            &[obj_val.into(), fv.into()],
+                                                            "arr_push_f64",
+                                                        );
+                                                        return Ok(self
+                                                            .context
+                                                            .i64_type()
+                                                            .const_int(0, false)
+                                                            .as_basic_value_enum());
                                                     }
                                                     BasicValueEnum::PointerValue(pv) => {
                                                         let f = self.get_array_push_ptr();
-                                                        let _ = self.builder.build_call(f, &[obj_val.into(), pv.into()], "arr_push_ptr");
-                                                        return Ok(self.context.i64_type().const_int(0, false).as_basic_value_enum());
+                                                        let _ = self.builder.build_call(
+                                                            f,
+                                                            &[obj_val.into(), pv.into()],
+                                                            "arr_push_ptr",
+                                                        );
+                                                        return Ok(self
+                                                            .context
+                                                            .i64_type()
+                                                            .const_int(0, false)
+                                                            .as_basic_value_enum());
                                                     }
-                                                    _ => return Err(Diagnostic::simple("unsupported argument type for push"))
+                                                    _ => {
+                                                        return Err(Diagnostic::simple(
+                                                            "unsupported argument type for push",
+                                                        ));
+                                                    }
                                                 }
                                             }
                                         }
@@ -383,9 +419,17 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             // We'll try number pop first, then pointer pop.
                                             // Call array_pop_f64
                                             let fnum = self.get_array_pop_f64();
-                                            let cs = match self.builder.build_call(fnum, &[obj_val.into()], "arr_pop_f64") {
+                                            let cs = match self.builder.build_call(
+                                                fnum,
+                                                &[obj_val.into()],
+                                                "arr_pop_f64",
+                                            ) {
                                                 Ok(cs) => cs,
-                                                Err(_) => return Err(Diagnostic::simple("operation failed")),
+                                                Err(_) => {
+                                                    return Err(Diagnostic::simple(
+                                                        "operation failed",
+                                                    ));
+                                                }
                                             };
                                             let either = cs.try_as_basic_value();
                                             if let inkwell::Either::Left(bv) = either {
@@ -393,9 +437,17 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             }
                                             // Fallback to pointer pop
                                             let fptr = self.get_array_pop_ptr();
-                                            let cs2 = match self.builder.build_call(fptr, &[obj_val.into()], "arr_pop_ptr") {
+                                            let cs2 = match self.builder.build_call(
+                                                fptr,
+                                                &[obj_val.into()],
+                                                "arr_pop_ptr",
+                                            ) {
                                                 Ok(cs2) => cs2,
-                                                Err(_) => return Err(Diagnostic::simple("operation failed")),
+                                                Err(_) => {
+                                                    return Err(Diagnostic::simple(
+                                                        "operation failed",
+                                                    ));
+                                                }
                                             };
                                             let either2 = cs2.try_as_basic_value();
                                             if let inkwell::Either::Left(bv2) = either2 {
@@ -680,6 +732,146 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                     let _ =
                                                         self.builder.build_store(f64_ptr, new_val);
                                                     return Ok(new_val);
+                                                }
+                                                crate::types::OatsType::Union(_) => {
+                                                    // Use boxed pointer representation for unions.
+                                                    // Always store an i8* pointing to a small heap object produced by union_box_*.
+                                                    let slot_ptr_ty = self
+                                                        .context
+                                                        .ptr_type(AddressSpace::default());
+                                                    let slot_ptr =
+                                                        match self.builder.build_pointer_cast(
+                                                            gep_ptr,
+                                                            slot_ptr_ty,
+                                                            "slot_ptr_cast_store",
+                                                        ) {
+                                                            Ok(p) => p,
+                                                            Err(_) => {
+                                                                return Err(Diagnostic::simple(
+                                                                    "operation failed",
+                                                                ));
+                                                            }
+                                                        };
+
+                                                    // Load old boxed union pointer and rc_dec if present
+                                                    let old_val = match self.builder.build_load(
+                                                        self.i8ptr_t,
+                                                        slot_ptr,
+                                                        "old_field_val",
+                                                    ) {
+                                                        Ok(v) => v,
+                                                        Err(_) => {
+                                                            return Err(Diagnostic::simple(
+                                                                "operation failed",
+                                                            ));
+                                                        }
+                                                    };
+                                                    if let BasicValueEnum::PointerValue(old_pv) =
+                                                        old_val
+                                                    {
+                                                        let rc_dec = self.get_rc_dec();
+                                                        let _ = match self.builder.build_call(
+                                                            rc_dec,
+                                                            &[old_pv.into()],
+                                                            "rc_dec_old_field",
+                                                        ) {
+                                                            Ok(cs) => cs,
+                                                            Err(_) => {
+                                                                return Err(Diagnostic::simple(
+                                                                    "operation failed",
+                                                                ));
+                                                            }
+                                                        };
+                                                    }
+
+                                                    // If new_val is a number, box it with union_box_f64; if pointer, box with union_box_ptr.
+                                                    let boxed_new =
+                                                        if let BasicValueEnum::FloatValue(fv) =
+                                                            new_val
+                                                        {
+                                                            let box_fn = self.get_union_box_f64();
+                                                            let cs = match self.builder.build_call(
+                                                                box_fn,
+                                                                &[fv.into()],
+                                                                "union_box_f64_call",
+                                                            ) {
+                                                                Ok(cs) => cs,
+                                                                Err(_) => {
+                                                                    return Err(
+                                                                        Diagnostic::simple(
+                                                                            "operation failed",
+                                                                        ),
+                                                                    );
+                                                                }
+                                                            };
+                                                            match cs.try_as_basic_value() {
+                                                                inkwell::Either::Left(bv) => bv,
+                                                                _ => {
+                                                                    return Err(
+                                                                        Diagnostic::simple(
+                                                                            "operation failed",
+                                                                        ),
+                                                                    );
+                                                                }
+                                                            }
+                                                        } else if let BasicValueEnum::PointerValue(
+                                                            pv,
+                                                        ) = new_val
+                                                        {
+                                                            let box_fn = self.get_union_box_ptr();
+                                                            let cs = match self.builder.build_call(
+                                                                box_fn,
+                                                                &[pv.into()],
+                                                                "union_box_ptr_call",
+                                                            ) {
+                                                                Ok(cs) => cs,
+                                                                Err(_) => {
+                                                                    return Err(
+                                                                        Diagnostic::simple(
+                                                                            "operation failed",
+                                                                        ),
+                                                                    );
+                                                                }
+                                                            };
+                                                            match cs.try_as_basic_value() {
+                                                                inkwell::Either::Left(bv) => bv,
+                                                                _ => {
+                                                                    return Err(
+                                                                        Diagnostic::simple(
+                                                                            "operation failed",
+                                                                        ),
+                                                                    );
+                                                                }
+                                                            }
+                                                        } else {
+                                                            return Err(Diagnostic::simple(
+                                                                "unsupported union payload type",
+                                                            ));
+                                                        };
+
+                                                    // Store the boxed pointer into the field slot
+                                                    let _ = self
+                                                        .builder
+                                                        .build_store(slot_ptr, boxed_new);
+                                                    // Increment refcount of the boxed union object
+                                                    if let BasicValueEnum::PointerValue(new_pv) =
+                                                        boxed_new
+                                                    {
+                                                        let rc_inc = self.get_rc_inc();
+                                                        let _ = match self.builder.build_call(
+                                                            rc_inc,
+                                                            &[new_pv.into()],
+                                                            "rc_inc_new_field",
+                                                        ) {
+                                                            Ok(cs) => cs,
+                                                            Err(_) => {
+                                                                return Err(Diagnostic::simple(
+                                                                    "operation failed",
+                                                                ));
+                                                            }
+                                                        };
+                                                    }
+                                                    return Ok(boxed_new);
                                                 }
                                                 crate::types::OatsType::String
                                                 | crate::types::OatsType::NominalStruct(_)
@@ -1416,6 +1608,78 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                     }
                                                 };
                                                 return Ok(loaded.as_basic_value_enum());
+                                            }
+                                            crate::types::OatsType::Union(_) => {
+                                                // Unions are stored boxed as i8*; load boxed pointer and unbox to requested payload.
+                                                let slot_ptr_ty =
+                                                    self.context.ptr_type(AddressSpace::default());
+                                                let slot_ptr =
+                                                    match self.builder.build_pointer_cast(
+                                                        gep_ptr,
+                                                        slot_ptr_ty,
+                                                        "slot_ptr_cast",
+                                                    ) {
+                                                        Ok(p) => p,
+                                                        Err(_) => {
+                                                            return Err(Diagnostic::simple(
+                                                                "operation failed",
+                                                            ));
+                                                        }
+                                                    };
+                                                let boxed = match self.builder.build_load(
+                                                    self.i8ptr_t,
+                                                    slot_ptr,
+                                                    "union_boxed_load",
+                                                ) {
+                                                    Ok(v) => v,
+                                                    Err(_) => {
+                                                        return Err(Diagnostic::simple(
+                                                            "operation failed",
+                                                        ));
+                                                    }
+                                                };
+                                                // Try to unbox as f64 first
+                                                if let BasicValueEnum::PointerValue(boxed_ptr) =
+                                                    boxed
+                                                {
+                                                    let unbox_f = self.get_union_unbox_f64();
+                                                    let cs = match self.builder.build_call(
+                                                        unbox_f,
+                                                        &[boxed_ptr.into()],
+                                                        "union_unbox_f64_call",
+                                                    ) {
+                                                        Ok(cs) => cs,
+                                                        Err(_) => {
+                                                            return Err(Diagnostic::simple(
+                                                                "operation failed",
+                                                            ));
+                                                        }
+                                                    };
+                                                    let either = cs.try_as_basic_value();
+                                                    if let inkwell::Either::Left(bv) = either {
+                                                        return Ok(bv);
+                                                    }
+
+                                                    // Fallback to unbox_ptr
+                                                    let unbox_p = self.get_union_unbox_ptr();
+                                                    let cs2 = match self.builder.build_call(
+                                                        unbox_p,
+                                                        &[boxed_ptr.into()],
+                                                        "union_unbox_ptr_call",
+                                                    ) {
+                                                        Ok(cs2) => cs2,
+                                                        Err(_) => {
+                                                            return Err(Diagnostic::simple(
+                                                                "operation failed",
+                                                            ));
+                                                        }
+                                                    };
+                                                    let either2 = cs2.try_as_basic_value();
+                                                    if let inkwell::Either::Left(bv2) = either2 {
+                                                        return Ok(bv2);
+                                                    }
+                                                }
+                                                return Err(Diagnostic::simple("operation failed"));
                                             }
                                             _ => {
                                                 // Unsupported field type

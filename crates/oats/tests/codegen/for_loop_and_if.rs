@@ -1,4 +1,4 @@
-/// Test for-loop and if statement lowering
+// Test for-loop and if statement lowering
 use anyhow::Result;
 
 #[test]

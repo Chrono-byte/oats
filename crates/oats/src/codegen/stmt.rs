@@ -14,7 +14,7 @@ type LocalEntry<'a> = (
 type LocalsStackLocal<'a> = Vec<HashMap<String, LocalEntry<'a>>>;
 
 impl<'a> crate::codegen::CodeGen<'a> {
-    /// Returns `true` if a terminator instruction (e.g., return) was emitted.
+    // Returns `true` if a terminator instruction (e.g., return) was emitted.
     pub(crate) fn lower_stmts(
         &self,
         stmts: &[deno_ast::swc::ast::Stmt],

@@ -18,8 +18,8 @@ type LocalsStackLocal<'a> = Vec<
 >;
 
 impl<'a> crate::codegen::CodeGen<'a> {
-    /// Generates LLVM IR for a function declaration.
-    /// This is the main entry point for function compilation.
+    // Generates LLVM IR for a function declaration.
+    // This is the main entry point for function compilation.
     pub fn gen_function_ir(
         &self,
         func_name: &str,
@@ -71,7 +71,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         Ok(function)
     }
 
-    /// Generate a complete constructor function for a class.
+    // Generate a complete constructor function for a class.
     pub fn gen_constructor_ir(
         &self,
         class_name: &str,
@@ -128,6 +128,14 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 | OatsType::Array(_)
                 | OatsType::Promise(_) => self.i8ptr_t.into(),
                 OatsType::Boolean => self.bool_t.into(),
+                OatsType::Union(parts) => {
+                    let any_ptr = parts.iter().any(|p| matches!(p, OatsType::String | OatsType::NominalStruct(_) | OatsType::Array(_) | OatsType::Promise(_)));
+                    if any_ptr {
+                        self.i8ptr_t.into()
+                    } else {
+                        self.f64_t.into()
+                    }
+                }
                 OatsType::Void => continue,
             };
             llvm_param_types.push(llvm_ty);
@@ -223,13 +231,53 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     .builder
                     .build_int_to_ptr(field_addr, self.i8ptr_t, "field_ptr")
                     .map_err(|_| crate::diagnostics::Diagnostic::simple("int_to_ptr failed"))?;
-                let _ = self.builder.build_store(field_ptr_cast, param_val);
+                // If the field type is a union, we expect to store a boxed union object.
+                match _field_type {
+                    OatsType::Union(_) => {
+                        // If the incoming param is a float, box it; if it's already a pointer, box via union_box_ptr.
+                        if param_val.get_type().is_float_type() {
+                            let unboxed_f = param_val.into_float_value();
+                            let box_fn = self.get_union_box_f64();
+                            let cs = self
+                                .builder
+                                .build_call(box_fn, &[unboxed_f.into()], "union_box_f64_ctor");
+                            if let Ok(cs) = cs {
+                                    if let inkwell::Either::Left(bv) = cs.try_as_basic_value() {
+                                    let boxed_ptr = bv.into_pointer_value();
+                                    let boxed_bv = inkwell::values::BasicValueEnum::PointerValue(boxed_ptr);
+                                    let _ = self.builder.build_store(field_ptr_cast, boxed_bv);
+                                    let rc_inc_fn = self.get_rc_inc();
+                                    let _ = self.builder.build_call(rc_inc_fn, &[boxed_ptr.into()], "rc_inc_field");
+                                }
+                            }
+                        } else if param_val.get_type().is_pointer_type() {
+                            // box the pointer payload
+                            let box_fn = self.get_union_box_ptr();
+                            let cs = self.builder.build_call(box_fn, &[param_val.into()], "union_box_ptr_ctor");
+                            if let Ok(cs) = cs {
+                                if let inkwell::Either::Left(bv) = cs.try_as_basic_value() {
+                                    let boxed_ptr = bv.into_pointer_value();
+                                    let boxed_bv = inkwell::values::BasicValueEnum::PointerValue(boxed_ptr);
+                                    let _ = self.builder.build_store(field_ptr_cast, boxed_bv);
+                                    let rc_inc_fn = self.get_rc_inc();
+                                    let _ = self.builder.build_call(rc_inc_fn, &[boxed_ptr.into()], "rc_inc_field");
+                                }
+                            }
+                        } else {
+                            // other param ABI not expected for unions
+                            let _ = self.builder.build_store(field_ptr_cast, param_val);
+                        }
+                    }
+                    _ => {
+                        let _ = self.builder.build_store(field_ptr_cast, param_val);
 
-                if param_val.get_type().is_pointer_type() {
-                    let rc_inc_fn = self.get_rc_inc();
-                    let _ = self
-                        .builder
-                        .build_call(rc_inc_fn, &[param_val.into()], "rc_inc_field");
+                        if param_val.get_type().is_pointer_type() {
+                            let rc_inc_fn = self.get_rc_inc();
+                            let _ = self
+                                .builder
+                                .build_call(rc_inc_fn, &[param_val.into()], "rc_inc_field");
+                        }
+                    }
                 }
             }
         }

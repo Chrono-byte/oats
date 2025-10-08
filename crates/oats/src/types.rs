@@ -2,19 +2,21 @@ use anyhow::Result;
 use deno_ast::swc::ast;
 use std::collections::HashMap;
 
-/// Type alias for the locals stack used in codegen
+// Type alias for the locals stack used in codegen
 pub type LocalsStack = Vec<HashMap<String, OatsType>>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OatsType {
     Number,
     Boolean,
-    /// Array of element type (e.g. number[])
+    // Union of multiple possible types (e.g. number | string)
+    Union(Vec<OatsType>),
+    // Array of element type (e.g. number[])
     Array(Box<OatsType>),
     Void,
     String,
     NominalStruct(String),
-    /// Promise type wrapping a result type (e.g. Promise<number>)
+    // Promise type wrapping a result type (e.g. Promise<number>)
     Promise(Box<OatsType>),
 }
 
@@ -57,8 +59,8 @@ impl SymbolTable {
     }
 }
 
-/// Map a TypeScript AST type to an OatsType.
-/// Returns None if the type is not supported.
+// Map a TypeScript AST type to an OatsType.
+// Returns None if the type is not supported.
 pub fn map_ts_type(ty: &ast::TsType) -> Option<OatsType> {
     match ty {
         ast::TsType::TsKeywordType(keyword) => match keyword.kind {
@@ -83,7 +85,34 @@ pub fn map_ts_type(ty: &ast::TsType) -> Option<OatsType> {
                     return Some(OatsType::Promise(Box::new(OatsType::Void)));
                 }
                 // Otherwise, it's a nominal type like Foo -> map to NominalStruct("Foo")
+                // Support generic Array<T> written as Array<T>
+                if ident.sym.as_ref() == "Array" {
+                    if let Some(type_params) = &type_ref.type_params
+                        && let Some(first_param) = type_params.params.first()
+                    {
+                        return map_ts_type(first_param)
+                            .map(|inner| OatsType::Array(Box::new(inner)));
+                    }
+                    // No type param -> default to Array<number>
+                    return Some(OatsType::Array(Box::new(OatsType::Number)));
+                }
                 return Some(OatsType::NominalStruct(ident.sym.to_string()));
+            }
+            None
+        }
+        ast::TsType::TsUnionOrIntersectionType(ut) => {
+            // SWC wraps unions and intersections in TsUnionOrIntersectionType;
+            // try to extract union types specifically.
+            if let ast::TsUnionOrIntersectionType::TsUnionType(un) = ut {
+                let mut parts = Vec::new();
+                for t in &un.types {
+                    if let Some(mapped) = map_ts_type(t) {
+                        parts.push(mapped);
+                    } else {
+                        return None;
+                    }
+                }
+                return Some(OatsType::Union(parts));
             }
             None
         }
@@ -150,8 +179,8 @@ pub fn check_function_strictness(
     })
 }
 
-/// Infer an OatsType from an AST expression (literals, arrays, etc.)
-/// Returns None if the expression type cannot be inferred.
+// Infer an OatsType from an AST expression (literals, arrays, etc.)
+// Returns None if the expression type cannot be inferred.
 pub fn infer_type_from_expr(expr: &ast::Expr) -> Option<OatsType> {
     match expr {
         ast::Expr::Lit(lit) => match lit {
@@ -173,10 +202,10 @@ pub fn infer_type_from_expr(expr: &ast::Expr) -> Option<OatsType> {
     }
 }
 
-/// Comprehensive type inference that tries multiple sources:
-/// 1. TypeScript type annotations
-/// 2. Expression-based inference
-/// 3. Fallback to default
+// Comprehensive type inference that tries multiple sources:
+// 1. TypeScript type annotations
+// 2. Expression-based inference
+// 3. Fallback to default
 pub fn infer_type(ts_type: Option<&ast::TsType>, expr: Option<&ast::Expr>) -> OatsType {
     // First priority: explicit TypeScript type annotation
     if let Some(ts_ty) = ts_type
@@ -195,12 +224,12 @@ pub fn infer_type(ts_type: Option<&ast::TsType>, expr: Option<&ast::Expr>) -> Oa
 }
 
 impl OatsType {
-    /// Check if this type is a Promise
+    // Check if this type is a Promise
     pub fn is_promise(&self) -> bool {
         matches!(self, OatsType::Promise(_))
     }
 
-    /// Unwrap the inner type of a Promise, if this is a Promise type
+    // Unwrap the inner type of a Promise, if this is a Promise type
     pub fn unwrap_promise_inner(&self) -> Option<&OatsType> {
         match self {
             OatsType::Promise(inner) => Some(inner),
@@ -208,7 +237,7 @@ impl OatsType {
         }
     }
 
-    /// Create a Promise wrapping the given type
+    // Create a Promise wrapping the given type
     pub fn wrap_in_promise(inner: OatsType) -> Self {
         OatsType::Promise(Box::new(inner))
     }

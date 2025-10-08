@@ -1,8 +1,8 @@
-/// Print a compact, rustc-like diagnostic to stderr.
-///
-/// This is intentionally lightweight: it prints an "error:" header in red,
-/// the file path, and up to a few source lines as context. We can expand
-/// this later with real spans and caret markers.
+// Print a compact, rustc-like diagnostic to stderr.
+//
+// This is intentionally lightweight: it prints an "error:" header in red,
+// the file path, and up to a few source lines as context. We can expand
+// this later with real spans and caret markers.
 pub fn report_error(file: Option<&str>, source: Option<&str>, message: &str, note: Option<&str>) {
     // ANSI red for "error"
     let red = "\x1b[31m";
@@ -38,8 +38,8 @@ pub fn report_error(file: Option<&str>, source: Option<&str>, message: &str, not
     }
 }
 
-/// Convenience that prints an error then returns an anyhow::Error for callers
-/// who want to terminate via `?`.
+// Convenience that prints an error then returns an anyhow::Error for callers
+// who want to terminate via `?`.
 pub fn report_error_and_bail<T>(
     file: Option<&str>,
     source: Option<&str>,
@@ -50,10 +50,10 @@ pub fn report_error_and_bail<T>(
     Err(anyhow::anyhow!("{}", message))
 }
 
-/// Print an error for a specific byte-span within `source` with a caret
-/// pointing at the column. `span_start` and `span_end` are byte indices
-/// into `source` (0-based). If `file` is provided, it is printed in the
-/// header.
+// Print an error for a specific byte-span within `source` with a caret
+// pointing at the column. `span_start` and `span_end` are byte indices
+// into `source` (0-based). If `file` is provided, it is printed in the
+// header.
 pub fn report_error_span(
     file: Option<&str>,
     source: &str,
@@ -126,7 +126,7 @@ pub fn report_error_span(
     }
 }
 
-/// Convenience that reports a span-aware error and returns anyhow::Error.
+// Convenience that reports a span-aware error and returns anyhow::Error.
 pub fn report_error_span_and_bail<T>(
     file: Option<&str>,
     source: &str,
@@ -143,8 +143,8 @@ pub fn report_error_span_and_bail<T>(
     Err(anyhow::anyhow!("{}", err_text))
 }
 
-/// Simple Diagnostic container used by lowering to propagate structured
-/// errors up to a single emission site.
+// Simple Diagnostic container used by lowering to propagate structured
+// errors up to a single emission site.
 #[derive(Debug, Clone)]
 pub struct Diagnostic {
     pub message: String,
@@ -162,7 +162,7 @@ impl Diagnostic {
     }
 }
 
-/// Emit the diagnostic via the existing lightweight printer.
+// Emit the diagnostic via the existing lightweight printer.
 pub fn emit_diagnostic(d: &Diagnostic, source: Option<&str>) {
     report_error(d.file.as_deref(), source, &d.message, d.note.as_deref());
 }

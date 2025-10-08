@@ -1,4 +1,4 @@
-/// Test template literal parsing and lowering
+// Test template literal parsing and lowering
 use anyhow::Result;
 
 #[test]

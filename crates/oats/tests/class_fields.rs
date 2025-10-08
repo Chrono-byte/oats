@@ -65,8 +65,7 @@ fn class_fields_lowering_emits_field_access() -> Result<()> {
         fn_rc_dec: std::cell::RefCell::new(None),
         class_fields: std::cell::RefCell::new(std::collections::HashMap::new()),
         fn_param_types: std::cell::RefCell::new(std::collections::HashMap::new()),
-        mut_decls: &parsed_mod.mut_decls,
-        source: &parsed_mod.preprocessed,
+        source: &parsed_mod.source,
     };
 
     // Emit class symbols by scanning module items and invoking main's codegen
@@ -175,6 +174,16 @@ fn class_fields_lowering_emits_field_access() -> Result<()> {
     assert!(
         ir.contains("Point_sum"),
         "expected generated IR to contain `Point_sum`: {}",
+        ir
+    );
+
+    // Ensure the method call used in `main` was actually lowered/used.
+    // If the lowering rejected the call expression (returned None) it may
+    // result in the call not being present in the emitted IR. Detect that
+    // by asserting we actually call the generated `Point_sum` from `oats_main`.
+    assert!(
+        ir.contains("call double @Point_sum"),
+        "expected generated IR to call `Point_sum` from `oats_main`, got IR: {}",
         ir
     );
 

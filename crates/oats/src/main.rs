@@ -22,7 +22,7 @@ fn main() -> Result<()> {
 
     let source = std::fs::read_to_string(&src_path)?;
 
-    // Parse (supports preprocessor for `let mut` annotations)
+    // Parse the module and capture the AST for further processing
     let parsed_mod = parser::parse_oats_module(&source, None)?;
     let parsed = &parsed_mod.parsed;
 
@@ -115,8 +115,7 @@ fn main() -> Result<()> {
         fn_rc_dec: std::cell::RefCell::new(None),
         class_fields: std::cell::RefCell::new(std::collections::HashMap::new()),
         fn_param_types: std::cell::RefCell::new(std::collections::HashMap::new()),
-        mut_decls: &parsed_mod.mut_decls,
-        source: &parsed_mod.preprocessed,
+        source: &parsed_mod.source,
     };
 
     // Helper: map a TypeScript type annotation to an OatsType

@@ -288,8 +288,7 @@ fn main() -> Result<()> {
         fn_rc_dec: std::cell::RefCell::new(None),
         class_fields: std::cell::RefCell::new(std::collections::HashMap::new()),
         fn_param_types: std::cell::RefCell::new(std::collections::HashMap::new()),
-        mut_decls: &parsed_mod.mut_decls,
-        source: &parsed_mod.preprocessed,
+        source: &parsed_mod.source,
     };
 
     // Populate class_fields for exported classes by examining ClassProp

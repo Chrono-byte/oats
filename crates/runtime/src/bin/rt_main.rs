@@ -25,18 +25,34 @@ fn main() {
     {
         // Look up "oats_entry" dynamically so this host binary can be built
         // and linked even if no AOT module (providing oats_entry) is present.
-        // If the symbol is present, call it and exit with its returned code.
-        // Otherwise exit 0.
-        let name = CString::new("oats_entry").expect("CString::new failed");
-        unsafe {
-            let sym = libc::dlsym(libc::RTLD_DEFAULT, name.as_ptr()) as *mut c_void;
-            if sym.is_null() {
-                std::process::exit(0);
+        // The unsafe operations (dlsym + transmute) are isolated to a
+        // single helper below which returns an Option containing the
+        // exit code if the symbol is present.
+
+        // Helper: attempt to locate and call `oats_entry`. All unsafe
+        // interaction with the dynamic loader is contained here.
+        fn try_call_oats_entry() -> Option<i32> {
+            let name = CString::new("oats_entry").expect("CString::new failed");
+            unsafe {
+                // Clear any existing dlerror state before lookup.
+                libc::dlerror();
+                let sym = libc::dlsym(libc::RTLD_DEFAULT, name.as_ptr()) as *mut c_void;
+                if sym.is_null() {
+                    return None;
+                }
+                // SAFETY: `sym` is non-null and (if provided) should point to a
+                // function with the signature `extern "C" fn() -> i32`.
+                // We perform the minimal unsafe transmute here and call the
+                // function immediately.
+                let f = std::mem::transmute::<*mut c_void, extern "C" fn() -> i32>(sym);
+                Some(f())
             }
-            // Cast to function pointer and call
-            let f: extern "C" fn() -> i32 = std::mem::transmute(sym);
-            let code = f();
+        }
+
+        if let Some(code) = try_call_oats_entry() {
             std::process::exit(code);
         }
+        // No symbol found -> exit 0
+        std::process::exit(0);
     }
 }

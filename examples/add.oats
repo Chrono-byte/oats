@@ -1,9 +1,9 @@
-function addAndPrint(a: number, b: number): number {
+function add(a: number, b: number): number {
     return a + b;
 }
 
 export function main(): number {
-    let num = addAndPrint(3, 5);
+    let num = add(3, 5);
 
     println(num);
 

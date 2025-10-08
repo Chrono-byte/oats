@@ -90,6 +90,13 @@ pub extern "C" fn print_str(s: *const c_char) {
     let _ = io::stdout().write_all(b"\n");
 }
 
+#[unsafe(no_mangle)]
+pub extern "C" fn print_i32(v: i32) {
+    unsafe {
+        libc::printf(b"%d\n\0".as_ptr() as *const c_char, v);
+    }
+}
+
 // --- Array Operations ---
 //
 // Array Layout: [header: u64][len: u64][data...]

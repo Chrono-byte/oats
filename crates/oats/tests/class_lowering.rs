@@ -65,8 +65,7 @@ fn class_simple_emits_ctor_and_method() -> Result<()> {
         fn_rc_dec: std::cell::RefCell::new(None),
         class_fields: std::cell::RefCell::new(std::collections::HashMap::new()),
         fn_param_types: std::cell::RefCell::new(std::collections::HashMap::new()),
-        mut_decls: &parsed_mod.mut_decls,
-        source: &parsed_mod.preprocessed,
+        source: &parsed_mod.source,
     };
 
     // Emit class symbols by scanning module items and invoking main's codegen

@@ -50,8 +50,6 @@ pub struct CodeGen<'a> {
     /// lowering can inspect the declared nominal type of `this` parameters
     /// (e.g. to resolve a `this.field` access to a concrete class name).
     pub fn_param_types: RefCell<HashMap<String, Vec<crate::types::OatsType>>>,
-    /// Set of identifier names that were annotated `mut` by the preprocessor
-    pub mut_decls: &'a std::collections::HashSet<String>,
     /// Preprocessed source text used to map spans for diagnostics
     pub source: &'a str,
 }
@@ -362,74 +360,120 @@ impl<'a> CodeGen<'a> {
                 None
             }
             ast::Expr::Call(call) => {
-                // Support simple identifier callees (calls to nested or module-level functions)
+                // Support simple identifier callees and member-callee method calls
                 if let ast::Callee::Expr(boxed_expr) = &call.callee {
-                    if let ast::Expr::Ident(ident) = &**boxed_expr {
-                        let fname = ident.sym.to_string();
+                    match &**boxed_expr {
+                        ast::Expr::Ident(ident) => {
+                            let fname = ident.sym.to_string();
 
-                        // Special-case: println(x) -> call runtime print helpers
-                        if fname == "println" {
-                            // expect exactly one arg
-                            if call.args.len() != 1 {
-                                return None;
-                            }
-                            let a = &call.args[0];
-                            if let Some(val) = self.lower_expr(&a.expr, function, param_map, locals)
-                            {
-                                match val {
-                                    BasicValueEnum::FloatValue(fv) => {
-                                        let print_fn =
-                                            self.module.get_function("print_f64").unwrap();
-                                        let _ = self
-                                            .builder
-                                            .build_call(print_fn, &[fv.into()], "print_f64_call")
-                                            .expect("build_call failed");
-                                        return None;
-                                    }
-                                    BasicValueEnum::PointerValue(pv) => {
-                                        let print_fn =
-                                            self.module.get_function("print_str").unwrap();
-                                        let _ = self
-                                            .builder
-                                            .build_call(print_fn, &[pv.into()], "print_str_call")
-                                            .expect("build_call failed");
-                                        return None;
-                                    }
-                                    _ => return None,
+                            // Special-case: println(x) -> call runtime print helpers
+                            if fname == "println" {
+                                if call.args.len() != 1 {
+                                    return None;
                                 }
-                            } else {
-                                return None;
-                            }
-                        }
-
-                        if let Some(fv) = self.module.get_function(&fname) {
-                            // Lower args
-                            let mut lowered_args: Vec<inkwell::values::BasicMetadataValueEnum> =
-                                Vec::new();
-                            for a in &call.args {
-                                if let Some(val) =
-                                    self.lower_expr(&a.expr, function, param_map, locals)
+                                let a = &call.args[0];
+                                if let Some(val) = self.lower_expr(&a.expr, function, param_map, locals)
                                 {
-                                    lowered_args.push(val.into());
+                                    match val {
+                                        BasicValueEnum::FloatValue(fv) => {
+                                            let print_fn =
+                                                self.module.get_function("print_f64").unwrap();
+                                            let _ = self
+                                                .builder
+                                                .build_call(print_fn, &[fv.into()], "print_f64_call")
+                                                .expect("build_call failed");
+                                            return None;
+                                        }
+                                        BasicValueEnum::PointerValue(pv) => {
+                                            let print_fn =
+                                                self.module.get_function("print_str").unwrap();
+                                            let _ = self
+                                                .builder
+                                                .build_call(print_fn, &[pv.into()], "print_str_call")
+                                                .expect("build_call failed");
+                                            return None;
+                                        }
+                                        _ => return None,
+                                    }
                                 } else {
-                                    // unsupported arg lowering
                                     return None;
                                 }
                             }
-                            let cs = self
-                                .builder
-                                .build_call(fv, &lowered_args, "call_internal")
-                                .expect("build_call failed");
-                            let either = cs.try_as_basic_value();
-                            match either {
-                                inkwell::Either::Left(bv) => Some(bv),
-                                _ => None,
+
+                            if let Some(fv) = self.module.get_function(&fname) {
+                                // Lower args
+                                let mut lowered_args: Vec<inkwell::values::BasicMetadataValueEnum> =
+                                    Vec::new();
+                                for a in &call.args {
+                                    if let Some(val) =
+                                        self.lower_expr(&a.expr, function, param_map, locals)
+                                    {
+                                        lowered_args.push(val.into());
+                                    } else {
+                                        return None;
+                                    }
+                                }
+                                let cs = self
+                                    .builder
+                                    .build_call(fv, &lowered_args, "call_internal")
+                                    .expect("build_call failed");
+                                let either = cs.try_as_basic_value();
+                                match either {
+                                    inkwell::Either::Left(bv) => Some(bv),
+                                    _ => None,
+                                }
+                            } else {
+                                None
                             }
-                        } else {
+                        }
+                        ast::Expr::Member(member) => {
+                            use deno_ast::swc::ast::MemberProp;
+                            if let MemberProp::Ident(prop_ident) = &member.prop {
+                                let method_name = prop_ident.sym.to_string();
+                                if let Some(obj_val) =
+                                    self.lower_expr(&member.obj, function, param_map, locals)
+                                {
+                                    // try to find a function named `<Class>_<method>`
+                                    for class_name in self.class_fields.borrow().keys() {
+                                        let cand = format!("{}_{}", class_name, method_name);
+                                        if let Some(method_f) = self.module.get_function(&cand) {
+                                            // lower user args
+                                            let mut user_args: Vec<inkwell::values::BasicMetadataValueEnum> = Vec::new();
+                                            for a in &call.args {
+                                                if let Some(v) = self.lower_expr(&a.expr, function, param_map, locals) {
+                                                    user_args.push(v.into());
+                                                } else {
+                                                    return None;
+                                                }
+                                            }
+
+                                            // if the method expects an extra param (likely `this`), prepend obj_val
+                                            let param_count = method_f.count_params() as usize;
+                                            let mut args: Vec<inkwell::values::BasicMetadataValueEnum> = Vec::new();
+                                            if param_count > user_args.len() {
+                                                args.push(obj_val.into());
+                                                args.extend(user_args.into_iter());
+                                            } else {
+                                                args = user_args;
+                                            }
+
+                                            let cs = self
+                                                .builder
+                                                .build_call(method_f, &args, "call_method")
+                                                .expect("build_call failed");
+                                            let either = cs.try_as_basic_value();
+                                            if let inkwell::Either::Left(bv) = either {
+                                                return Some(bv);
+                                            } else {
+                                                return None;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                             None
                         }
-                    } else {
-                        None
+                        _ => None,
                     }
                 } else {
                     None
@@ -1492,11 +1536,10 @@ impl<'a> CodeGen<'a> {
                         // Decide const-ness for the whole declaration.
                         // Use `let` as the mutable option; `const` is immutable.
                         // Parser enforces that `var` is disallowed; codegen no longer emits a diagnostic here.
-                        for decl in &vdecl.decls {
-                            if let Pat::Ident(ident) = &decl.name {
-                                let name = ident.id.sym.to_string();
-                                // Determine mutability from preprocessor-provided set
-                                let is_const_decl = !self.mut_decls.contains(&name);
+                                for decl in &vdecl.decls {
+                                    if let Pat::Ident(ident) = &decl.name {
+                                        let name = ident.id.sym.to_string();
+                                        let is_const_decl = matches!(vdecl.kind, deno_ast::swc::ast::VarDeclKind::Const);
                                 // Create an alloca for this local at function entry
                                 // and insert it into the current scope as uninitialized
                                 if let Some(init) = &decl.init {
@@ -1694,8 +1737,9 @@ impl<'a> CodeGen<'a> {
                                             ast::Stmt::Decl(ast::Decl::Var(vdecl)) => {
                                                 use deno_ast::swc::ast::Pat;
                                                 for decl in &vdecl.decls {
-                                                    if let Pat::Ident(ident) = &decl.name {
-                                                        let name = ident.id.sym.to_string();
+                                                            if let Pat::Ident(ident) = &decl.name {
+                                                                let name = ident.id.sym.to_string();
+                                                                let is_const_decl = matches!(vdecl.kind, deno_ast::swc::ast::VarDeclKind::Const);
                                                         if let Some(init) = &decl.init
                                                             && let Some(val) = self.lower_expr(
                                                                 init,
@@ -1718,7 +1762,7 @@ impl<'a> CodeGen<'a> {
                                                                     let _ = self
                                                                         .builder
                                                                         .build_store(alloca, fv);
-                                                                    self.insert_local_current_scope(&mut locals_stack, name.clone(), alloca, self.f64_t.as_basic_type_enum(), true, false);
+                                                                    self.insert_local_current_scope(&mut locals_stack, name.clone(), alloca, self.f64_t.as_basic_type_enum(), true, is_const_decl);
                                                                 }
                                                                 BasicValueEnum::PointerValue(
                                                                     pv,
@@ -1736,7 +1780,7 @@ impl<'a> CodeGen<'a> {
                                                                     let _ = self
                                                                         .builder
                                                                         .build_store(alloca, pv);
-                                                                    self.insert_local_current_scope(&mut locals_stack, name.clone(), alloca, ptr_ty.as_basic_type_enum(), true, false);
+                                                                    self.insert_local_current_scope(&mut locals_stack, name.clone(), alloca, ptr_ty.as_basic_type_enum(), true, is_const_decl);
                                                                 }
                                                                 BasicValueEnum::IntValue(iv) => {
                                                                     let boolt = self.bool_t;
@@ -1749,7 +1793,7 @@ impl<'a> CodeGen<'a> {
                                                                     let _ = self
                                                                         .builder
                                                                         .build_store(alloca, iv);
-                                                                    self.insert_local_current_scope(&mut locals_stack, name.clone(), alloca, boolt.as_basic_type_enum(), true, false);
+                                                                    self.insert_local_current_scope(&mut locals_stack, name.clone(), alloca, boolt.as_basic_type_enum(), true, is_const_decl);
                                                                 }
                                                                 _ => {}
                                                             }
@@ -1790,9 +1834,10 @@ impl<'a> CodeGen<'a> {
                                 }
                                 ast::Stmt::Decl(ast::Decl::Var(vdecl)) => {
                                     use deno_ast::swc::ast::Pat;
-                                    for decl in &vdecl.decls {
+                                                for decl in &vdecl.decls {
                                         if let Pat::Ident(ident) = &decl.name {
                                             let name = ident.id.sym.to_string();
+                                            let _is_const_decl = matches!(vdecl.kind, deno_ast::swc::ast::VarDeclKind::Const);
                                             if let Some(init) = &decl.init
                                                 && let Some(val) = self.lower_expr(
                                                     init,
@@ -1912,6 +1957,7 @@ impl<'a> CodeGen<'a> {
                                                     for decl in &vdecl.decls {
                                                         if let Pat::Ident(ident) = &decl.name {
                                                             let name = ident.id.sym.to_string();
+                                                            let is_const_decl = matches!(vdecl.kind, deno_ast::swc::ast::VarDeclKind::Const);
                                                             if let Some(init) = &decl.init
                                                                 && let Some(val) = self.lower_expr(
                                                                     init,
@@ -1924,19 +1970,19 @@ impl<'a> CodeGen<'a> {
                                                                         BasicValueEnum::FloatValue(fv) => {
                                                                             let alloca = self.builder.build_alloca(self.f64_t, &name).expect("build_alloca failed");
                                                                             let _ = self.builder.build_store(alloca, fv);
-                                                                            self.insert_local_current_scope(&mut locals_stack, name.clone(), alloca, self.f64_t.as_basic_type_enum(), true, false);
+                                                                            self.insert_local_current_scope(&mut locals_stack, name.clone(), alloca, self.f64_t.as_basic_type_enum(), true, is_const_decl);
                                                                         }
                                                                         BasicValueEnum::PointerValue(pv) => {
                                                                             let ptr_ty = self.context.ptr_type(AddressSpace::default());
                                                                             let alloca = self.builder.build_alloca(ptr_ty, &name).expect("build_alloca failed");
                                                                             let _ = self.builder.build_store(alloca, pv);
-                                                                            self.insert_local_current_scope(&mut locals_stack, name.clone(), alloca, ptr_ty.as_basic_type_enum(), true, false);
+                                                                            self.insert_local_current_scope(&mut locals_stack, name.clone(), alloca, ptr_ty.as_basic_type_enum(), true, is_const_decl);
                                                                         }
                                                                         BasicValueEnum::IntValue(iv) => {
                                                                             let boolt = self.bool_t;
                                                                             let alloca = self.builder.build_alloca(boolt, &name).expect("build_alloca failed");
                                                                             let _ = self.builder.build_store(alloca, iv);
-                                                                            self.insert_local_current_scope(&mut locals_stack, name.clone(), alloca, boolt.as_basic_type_enum(), true, false);
+                                                                            self.insert_local_current_scope(&mut locals_stack, name.clone(), alloca, boolt.as_basic_type_enum(), true, is_const_decl);
                                                                         }
                                                                         _ => {}
                                                                     }
@@ -1978,6 +2024,7 @@ impl<'a> CodeGen<'a> {
                                         for decl in &vdecl.decls {
                                             if let Pat::Ident(ident) = &decl.name {
                                                 let name = ident.id.sym.to_string();
+                                                let _is_const_decl = matches!(vdecl.kind, deno_ast::swc::ast::VarDeclKind::Const);
                                                 if let Some(init) = &decl.init
                                                     && let Some(val) = self.lower_expr(
                                                         init,
@@ -2080,7 +2127,7 @@ impl<'a> CodeGen<'a> {
                                         use deno_ast::swc::ast::Pat;
                                         if let Pat::Ident(ident) = &decl.name {
                                             let name = ident.id.sym.to_string();
-                                            let is_const_decl = !self.mut_decls.contains(&name);
+                                            let is_const_decl = matches!(vdecl.kind, deno_ast::swc::ast::VarDeclKind::Const);
                                             if let Some(init_expr) = &decl.init {
                                                 if let Some(val) = self.lower_expr(
                                                     init_expr,
@@ -2267,6 +2314,7 @@ impl<'a> CodeGen<'a> {
                                             for decl in &vdecl.decls {
                                                 if let Pat::Ident(ident) = &decl.name {
                                                     let name = ident.id.sym.to_string();
+                                                    let _is_const_decl = matches!(vdecl.kind, deno_ast::swc::ast::VarDeclKind::Const);
                                                     if let Some(init) = &decl.init
                                                         && let Some(val) = self.lower_expr(
                                                             init,
@@ -2703,6 +2751,7 @@ impl<'a> CodeGen<'a> {
                                                 for decl in &vdecl.decls {
                                                     if let Pat::Ident(ident) = &decl.name {
                                                         let name = ident.id.sym.to_string();
+                                                        let is_const_decl = matches!(vdecl.kind, deno_ast::swc::ast::VarDeclKind::Const);
                                                         if let Some(init) = &decl.init
                                                             && let Some(val) = self.lower_expr(
                                                                 init,
@@ -2724,7 +2773,7 @@ impl<'a> CodeGen<'a> {
                                                                     let _ = self
                                                                         .builder
                                                                         .build_store(alloca, fv);
-                                                                    self.insert_local_current_scope(&mut locals_stack, name.clone(), alloca, self.f64_t.as_basic_type_enum(), true, false);
+                                                                    self.insert_local_current_scope(&mut locals_stack, name.clone(), alloca, self.f64_t.as_basic_type_enum(), true, is_const_decl);
                                                                 }
                                                                 BasicValueEnum::PointerValue(
                                                                     pv,
@@ -2742,7 +2791,7 @@ impl<'a> CodeGen<'a> {
                                                                     let _ = self
                                                                         .builder
                                                                         .build_store(alloca, pv);
-                                                                    self.insert_local_current_scope(&mut locals_stack, name.clone(), alloca, ptr_ty.as_basic_type_enum(), true, false);
+                                                                    self.insert_local_current_scope(&mut locals_stack, name.clone(), alloca, ptr_ty.as_basic_type_enum(), true, is_const_decl);
                                                                 }
                                                                 BasicValueEnum::IntValue(iv) => {
                                                                     let boolt = self.bool_t;
@@ -2755,7 +2804,7 @@ impl<'a> CodeGen<'a> {
                                                                     let _ = self
                                                                         .builder
                                                                         .build_store(alloca, iv);
-                                                                    self.insert_local_current_scope(&mut locals_stack, name.clone(), alloca, boolt.as_basic_type_enum(), true, false);
+                                                                    self.insert_local_current_scope(&mut locals_stack, name.clone(), alloca, boolt.as_basic_type_enum(), true, is_const_decl);
                                                                 }
                                                                 _ => {}
                                                             }

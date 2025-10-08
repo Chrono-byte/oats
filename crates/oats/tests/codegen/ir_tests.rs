@@ -64,6 +64,7 @@ fn gen_add_function_ir_contains_fadd() -> Result<()> {
         fn_union_box_ptr: std::cell::RefCell::new(None),
         fn_union_unbox_f64: std::cell::RefCell::new(None),
         fn_union_unbox_ptr: std::cell::RefCell::new(None),
+        fn_union_get_discriminant: std::cell::RefCell::new(None),
         class_fields: std::cell::RefCell::new(std::collections::HashMap::new()),
         fn_param_types: std::cell::RefCell::new(std::collections::HashMap::new()),
         source: &parsed_mod.source,

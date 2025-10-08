@@ -50,48 +50,99 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             let name = ident.id.sym.to_string();
 
                             // If there is an initializer, lower it and allocate a
-                            // matching alloca for its type.
+                            // matching alloca for its type. If the declared identifier
+                            // has a TypeScript type annotation that maps to a union,
+                            // allocate the ABI slot accordingly and box numeric
+                            // payloads into union objects.
                             if let Some(init) = &decl.init {
                                 // `init` is an Option<Box<Expr>> (deno_ast wrapper); use `.as_ref()`
-                                if let Ok(val) =
-                                    self.lower_expr(init, _function, _param_map, _locals_stack)
-                                {
-                                    let ty = val.get_type().as_basic_type_enum();
-                                    let alloca = match self.builder.build_alloca(ty, &name) {
-                                        Ok(a) => a,
-                                        Err(_) => {
-                                            crate::diagnostics::emit_diagnostic(
-                                                &crate::diagnostics::Diagnostic::simple(
-                                                    "alloca failed for local variable",
-                                                ),
-                                                Some(self.source),
-                                            );
-                                            return Ok(false);
-                                        }
-                                    };
-                                    // store lowered value
-                                    let _ = self.builder.build_store(alloca, val);
-                                    // If pointer type, increment RC for stored pointer
-                                    if let inkwell::types::BasicTypeEnum::PointerType(_) = ty
-                                        && let BasicValueEnum::PointerValue(pv) = val
+                                    if let Ok(mut val) =
+                                        self.lower_expr(init, _function, _param_map, _locals_stack)
                                     {
-                                        let rc_inc = self.get_rc_inc();
-                                        let _ = self.builder.build_call(
-                                            rc_inc,
-                                            &[pv.into()],
-                                            "rc_inc_local",
+                                        // Determine if the identifier has an explicit type annotation
+                                        let mut declared_union: Option<crate::types::OatsType> = None;
+                                        if let Some(type_ann) = &ident.type_ann {
+                                            if let Some(mapped) =
+                                                crate::types::map_ts_type(&type_ann.type_ann)
+                                            {
+                                                if let crate::types::OatsType::Union(_) = &mapped {
+                                                    declared_union = Some(mapped);
+                                                }
+                                            }
+                                        }
+
+                                        // If declared as a Union that includes pointer-like parts,
+                                        // we store an i8* slot and box numeric initializers.
+                                        let mut allocated_ty = val.get_type().as_basic_type_enum();
+                                        if let Some(crate::types::OatsType::Union(parts)) = &declared_union {
+                                            let any_ptr = parts.iter().any(|p| matches!(p, crate::types::OatsType::String | crate::types::OatsType::NominalStruct(_) | crate::types::OatsType::Array(_) | crate::types::OatsType::Promise(_)));
+                                            if any_ptr {
+                                                // Ensure val is boxed pointer (union_box_f64 or union_box_ptr)
+                                                if val.get_type().is_float_type() {
+                                                    let box_fn = self.get_union_box_f64();
+                                                    let cs = self.builder.build_call(box_fn, &[val.into()], "union_box_f64_ctor");
+                                                    if let Ok(cs) = cs
+                                                        && let inkwell::Either::Left(bv) = cs.try_as_basic_value() {
+                                                        val = bv;
+                                                    }
+                                                } else if let BasicValueEnum::PointerValue(pv) = val {
+                                                    let box_fn = self.get_union_box_ptr();
+                                                    let cs = self.builder.build_call(box_fn, &[pv.into()], "union_box_ptr_ctor");
+                                                    if let Ok(cs) = cs
+                                                        && let inkwell::Either::Left(bv) = cs.try_as_basic_value() {
+                                                        val = bv;
+                                                    }
+                                                }
+                                                allocated_ty = self.i8ptr_t.as_basic_type_enum();
+                                            } else {
+                                                // union of only numbers -> use f64 slot
+                                                allocated_ty = self.f64_t.as_basic_type_enum();
+                                                if val.get_type().is_int_type() {
+                                                    // coerce int to float
+                                                    if let BasicValueEnum::IntValue(iv) = val {
+                                                        if let Ok(fv_val) = self.builder.build_signed_int_to_float(iv, self.f64_t, "i2f") {
+                                                            val = inkwell::values::BasicValueEnum::FloatValue(fv_val);
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        let alloca = match self.builder.build_alloca(allocated_ty, &name) {
+                                            Ok(a) => a,
+                                            Err(_) => {
+                                                crate::diagnostics::emit_diagnostic(
+                                                    &crate::diagnostics::Diagnostic::simple(
+                                                        "alloca failed for local variable",
+                                                    ),
+                                                    Some(self.source),
+                                                );
+                                                return Ok(false);
+                                            }
+                                        };
+                                        // store lowered (possibly boxed) value
+                                        let _ = self.builder.build_store(alloca, val);
+                                        // If pointer type, increment RC for stored pointer
+                                        if let inkwell::types::BasicTypeEnum::PointerType(_) = allocated_ty
+                                            && let BasicValueEnum::PointerValue(pv) = val
+                                        {
+                                            let rc_inc = self.get_rc_inc();
+                                            let _ = self.builder.build_call(
+                                                rc_inc,
+                                                &[pv.into()],
+                                                "rc_inc_local",
+                                            );
+                                        }
+                                        // mark initialized in locals; is_const=false for now
+                                        self.insert_local_current_scope(
+                                            _locals_stack,
+                                            name,
+                                            alloca,
+                                            allocated_ty,
+                                            true,
+                                            false,
                                         );
                                     }
-                                    // mark initialized in locals; is_const=false for now
-                                    self.insert_local_current_scope(
-                                        _locals_stack,
-                                        name,
-                                        alloca,
-                                        ty,
-                                        true,
-                                        false,
-                                    );
-                                }
                             } else {
                                 // No initializer: create an uninitialized slot with i64 as default
                                 let ty = self.i64_t.as_basic_type_enum();

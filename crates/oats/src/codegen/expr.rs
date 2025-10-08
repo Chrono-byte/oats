@@ -330,9 +330,80 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             use deno_ast::swc::ast::MemberProp;
                             if let MemberProp::Ident(prop_ident) = &member.prop {
                                 let method_name = prop_ident.sym.to_string();
-                                if let Ok(obj_val) =
-                                    self.lower_expr(&member.obj, function, param_map, locals)
-                                {
+
+                                // Special-case Math.random() -> call runtime math_random()
+                                if method_name == "random" {
+                                    // If the object expression is the identifier `Math` and there are no args
+                                    if call.args.is_empty() {
+                                        if let deno_ast::swc::ast::Expr::Ident(ident) = &*member.obj {
+                                            if ident.sym.to_string() == "Math" {
+                                                let f = self.get_math_random();
+                                                let cs = match self.builder.build_call(f, &[], "math_random_call") {
+                                                    Ok(cs) => cs,
+                                                    Err(_) => return Err(Diagnostic::simple("operation failed")),
+                                                };
+                                                let either = cs.try_as_basic_value();
+                                                if let inkwell::Either::Left(bv) = either {
+                                                    return Ok(bv);
+                                                } else {
+                                                    return Err(Diagnostic::simple("operation failed"));
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                if let Ok(obj_val) = self.lower_expr(&member.obj, function, param_map, locals) {
+                                    // Special-case: arr.push(x) / arr.pop()
+                                    if method_name == "push" {
+                                        // Expect one argument
+                                        if call.args.len() == 1 {
+                                            let arg = &call.args[0];
+                                            if let Ok(arg_val) = self.lower_expr(&arg.expr, function, param_map, locals) {
+                                                // Dispatch based on arg type: f64 vs pointer
+                                                match arg_val {
+                                                    BasicValueEnum::FloatValue(fv) => {
+                                                        let f = self.get_array_push_f64();
+                                                        let _ = self.builder.build_call(f, &[obj_val.into(), fv.into()], "arr_push_f64");
+                                                        return Ok(self.context.i64_type().const_int(0, false).as_basic_value_enum());
+                                                    }
+                                                    BasicValueEnum::PointerValue(pv) => {
+                                                        let f = self.get_array_push_ptr();
+                                                        let _ = self.builder.build_call(f, &[obj_val.into(), pv.into()], "arr_push_ptr");
+                                                        return Ok(self.context.i64_type().const_int(0, false).as_basic_value_enum());
+                                                    }
+                                                    _ => return Err(Diagnostic::simple("unsupported argument type for push"))
+                                                }
+                                            }
+                                        }
+                                    }
+                                    if method_name == "pop" {
+                                        // Expect no args
+                                        if call.args.is_empty() {
+                                            // We'll try number pop first, then pointer pop.
+                                            // Call array_pop_f64
+                                            let fnum = self.get_array_pop_f64();
+                                            let cs = match self.builder.build_call(fnum, &[obj_val.into()], "arr_pop_f64") {
+                                                Ok(cs) => cs,
+                                                Err(_) => return Err(Diagnostic::simple("operation failed")),
+                                            };
+                                            let either = cs.try_as_basic_value();
+                                            if let inkwell::Either::Left(bv) = either {
+                                                return Ok(bv);
+                                            }
+                                            // Fallback to pointer pop
+                                            let fptr = self.get_array_pop_ptr();
+                                            let cs2 = match self.builder.build_call(fptr, &[obj_val.into()], "arr_pop_ptr") {
+                                                Ok(cs2) => cs2,
+                                                Err(_) => return Err(Diagnostic::simple("operation failed")),
+                                            };
+                                            let either2 = cs2.try_as_basic_value();
+                                            if let inkwell::Either::Left(bv2) = either2 {
+                                                return Ok(bv2);
+                                            }
+                                            return Err(Diagnostic::simple("operation failed"));
+                                        }
+                                    }
                                     // try to find a function named `<Class>_<method>`
                                     for class_name in self.class_fields.borrow().keys() {
                                         let cand = format!("{}_{}", class_name, method_name);

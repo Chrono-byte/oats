@@ -84,6 +84,13 @@ impl<'a> CodeGen<'a> {
         f
     }
 
+    fn get_math_random(&self) -> FunctionValue<'a> {
+        self.module.get_function("math_random").unwrap_or_else(|| {
+            let fn_type = self.f64_t.fn_type(&[], false);
+            self.module.add_function("math_random", fn_type, None)
+        })
+    }
+
     fn get_rc_dec(&self) -> FunctionValue<'a> {
         if let Some(f) = *self.fn_rc_dec.borrow() {
             return f;

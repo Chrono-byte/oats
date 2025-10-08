@@ -277,7 +277,7 @@ impl<'a> CodeGen<'a> {
                             // matching alloca for its type.
                             if let Some(init) = &decl.init {
                                 // `init` is an Option<Box<Expr>> (deno_ast wrapper); use `.as_ref()`
-                                if let Some(val) =
+                                if let Ok(val) =
                                     self.lower_expr(init, _function, _param_map, _locals_stack)
                                 {
                                     let ty = val.get_type().as_basic_type_enum();
@@ -336,7 +336,7 @@ impl<'a> CodeGen<'a> {
             ast::Stmt::Return(ret) => {
                 // Lower return expression, emit rc_decs for locals then return
                 if let Some(arg) = &ret.arg {
-                    if let Some(val) = self.lower_expr(arg, _function, _param_map, _locals_stack)
+                    if let Ok(val) = self.lower_expr(arg, _function, _param_map, _locals_stack)
                     {
                         // emit rc decs for locals
                         self.emit_rc_dec_for_locals(_locals_stack);
@@ -370,7 +370,7 @@ impl<'a> CodeGen<'a> {
                         if let ast::Pat::Ident(ident) = &decl.name {
                             let loop_var_name = ident.id.sym.to_string();
                             // Lower RHS (iterable)
-                            if let Some(iter_val) =
+                            if let Ok(iter_val) =
                                 self.lower_expr(&forof.right, _function, _param_map, _locals_stack)
                                 && let BasicValueEnum::PointerValue(arr_ptr) = iter_val {
                                     // create index

@@ -383,11 +383,11 @@ impl<'a> CodeGen<'a> {
                     // Branch to break block
                     let _ = self.builder.build_unconditional_branch(loop_ctx.break_block);
                     
-                    return true; // break terminates the current block
+                    true// break terminates the current block
                 } else {
                     // Break outside of loop - this is a semantic error
                     // For now, just ignore it (ideally should emit diagnostic)
-                    return false;
+                    false
                 }
             }
             ast::Stmt::Continue(_continue_stmt) => {
@@ -402,11 +402,11 @@ impl<'a> CodeGen<'a> {
                     // Branch to continue block
                     let _ = self.builder.build_unconditional_branch(loop_ctx.continue_block);
                     
-                    return true; // continue terminates the current block
+                    true// continue terminates the current block
                 } else {
                     // Continue outside of loop - this is a semantic error
                     // For now, just ignore it (ideally should emit diagnostic)
-                    return false;
+                    false
                 }
             }
             ast::Stmt::Block(block) => {

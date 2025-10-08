@@ -60,6 +60,10 @@ pub extern "C" fn heap_str_alloc(str_len: size_t) -> *mut c_void {
 
 /// Copy a C string into a heap-allocated string with RC header.
 /// Returns pointer to the data section (offset +16 from header) for C compatibility.
+///
+/// # Safety
+/// The argument `s` must be a valid, nul-terminated C string pointer. Passing
+/// an invalid or non-nul-terminated pointer is undefined behavior.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn heap_str_from_cstr(s: *const c_char) -> *mut c_char {
     if s.is_null() {
@@ -94,6 +98,11 @@ unsafe fn heap_str_to_obj(data: *const c_char) -> *mut c_void {
 
 /// RC increment for string pointers (handles both static and heap strings)
 /// For heap strings, the data pointer is at offset +16 from the object header.
+///
+/// # Safety
+/// `data` must be a pointer previously returned by the runtime for a string
+/// (either a static literal or a heap-allocated string). Passing arbitrary
+/// pointers is undefined behavior.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rc_inc_str(data: *mut c_char) {
     if data.is_null() {
@@ -108,6 +117,11 @@ pub unsafe extern "C" fn rc_inc_str(data: *mut c_char) {
 }
 
 /// RC decrement for string pointers (handles both static and heap strings)
+///
+/// # Safety
+/// `data` must be a pointer previously returned by the runtime for a string
+/// (either a static literal or a heap-allocated string). Passing arbitrary
+/// pointers or double-dropping a pointer is undefined behavior.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rc_dec_str(data: *mut c_char) {
     if data.is_null() {
@@ -126,6 +140,11 @@ pub extern "C" fn runtime_malloc(size: size_t) -> *mut c_void {
     unsafe { libc::malloc(size) }
 }
 
+/// Free memory previously allocated by the runtime (or compatible allocator).
+///
+/// # Safety
+/// The pointer `p` must have been allocated by the runtime allocator and not
+/// already freed. Freeing invalid or non-owned pointers is undefined behavior.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn runtime_free(p: *mut c_void) {
     unsafe { libc::free(p) }
@@ -133,6 +152,11 @@ pub unsafe extern "C" fn runtime_free(p: *mut c_void) {
 
 // --- String Operations ---
 
+/// Compute the length of a nul-terminated C string.
+///
+/// # Safety
+/// `s` must be a valid pointer to a nul-terminated C string. Passing an
+/// invalid pointer or non-nul-terminated memory is undefined behavior.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn runtime_strlen(s: *const c_char) -> size_t {
     if s.is_null() {
@@ -141,6 +165,11 @@ pub unsafe extern "C" fn runtime_strlen(s: *const c_char) -> size_t {
     unsafe { libc::strlen(s) }
 }
 
+/// Duplicate a nul-terminated C string into a newly allocated buffer.
+///
+/// # Safety
+/// `s` must point to a valid nul-terminated C string. The caller is
+/// responsible for freeing the returned buffer when no longer needed.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn str_dup(s: *const c_char) -> *mut c_char {
     if s.is_null() {
@@ -157,6 +186,11 @@ pub unsafe extern "C" fn str_dup(s: *const c_char) -> *mut c_char {
     }
 }
 
+/// Concatenate two nul-terminated C strings into a newly allocated runtime string.
+///
+/// # Safety
+/// Both `a` and `b` must be valid pointers to nul-terminated C strings. The
+/// caller is responsible for freeing the returned buffer.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn str_concat(a: *const c_char, b: *const c_char) -> *mut c_char {
     if a.is_null() || b.is_null() {
@@ -199,6 +233,11 @@ pub extern "C" fn print_f64(v: f64) {
     }
 }
 
+/// Print a nul-terminated C string to stdout (with newline).
+///
+/// # Safety
+/// `s` must be a valid pointer to a nul-terminated C string. Passing an
+/// invalid pointer is undefined behavior.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn print_str(s: *const c_char) {
     if s.is_null() {

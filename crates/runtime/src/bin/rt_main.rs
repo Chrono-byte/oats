@@ -31,7 +31,7 @@ fn main() {
         // Helper: attempt to locate and call `oats_entry`. All unsafe
         // interaction with the dynamic loader is contained here.
         fn try_call_oats_entry() -> Option<i32> {
-            let name = CString::new("oats_entry").expect("CString::new failed");
+            let name = CString::new("oats_entry").unwrap();
             unsafe {
                 // Clear any existing dlerror state before lookup.
 

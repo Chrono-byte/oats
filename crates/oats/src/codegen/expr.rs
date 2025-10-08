@@ -337,29 +337,26 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     // If the object expression is the identifier `Math` and there are no args
                                     if call.args.is_empty()
                                         && let deno_ast::swc::ast::Expr::Ident(ident) = &*member.obj
-                                            && ident.sym == "Math" {
-                                                let f = self.get_math_random();
-                                                let cs = match self.builder.build_call(
-                                                    f,
-                                                    &[],
-                                                    "math_random_call",
-                                                ) {
-                                                    Ok(cs) => cs,
-                                                    Err(_) => {
-                                                        return Err(Diagnostic::simple(
-                                                            "operation failed",
-                                                        ));
-                                                    }
-                                                };
-                                                let either = cs.try_as_basic_value();
-                                                if let inkwell::Either::Left(bv) = either {
-                                                    return Ok(bv);
-                                                } else {
-                                                    return Err(Diagnostic::simple(
-                                                        "operation failed",
-                                                    ));
-                                                }
+                                        && ident.sym == "Math"
+                                    {
+                                        let f = self.get_math_random();
+                                        let cs = match self.builder.build_call(
+                                            f,
+                                            &[],
+                                            "math_random_call",
+                                        ) {
+                                            Ok(cs) => cs,
+                                            Err(_) => {
+                                                return Err(Diagnostic::simple("operation failed"));
                                             }
+                                        };
+                                        let either = cs.try_as_basic_value();
+                                        if let inkwell::Either::Left(bv) = either {
+                                            return Ok(bv);
+                                        } else {
+                                            return Err(Diagnostic::simple("operation failed"));
+                                        }
+                                    }
                                 }
 
                                 if let Ok(obj_val) =
@@ -1870,6 +1867,182 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     .as_pointer_value()
                     .as_basic_value_enum())
             }
+            ast::Expr::Object(obj_lit) => {
+                // Lower an object literal to a simple heap-allocated struct.
+                // We'll allocate header + N fields (8 bytes each) and store
+                // each property value in order. Property names are not stored
+                // in the runtime representation (they're positional).
+
+                // Collect lowered values for properties. Support only simple key: expr props.
+                let mut field_values: Vec<inkwell::values::BasicValueEnum> = Vec::new();
+
+                for prop in &obj_lit.props {
+                    match prop {
+                        ast::PropOrSpread::Prop(prop_box) => match &**prop_box {
+                            ast::Prop::KeyValue(kv) => {
+                                // Only support identifier keys for now
+                                if let ast::PropName::Ident(_ident) = &kv.key {
+                                    // Lower the value expression
+                                    let val =
+                                        self.lower_expr(&kv.value, function, param_map, locals)?;
+                                    field_values.push(val);
+                                } else {
+                                    return Err(Diagnostic::simple(
+                                        "unsupported object literal key",
+                                    ));
+                                }
+                            }
+                            ast::Prop::Assign(assign) => {
+                                // shorthand property `{ x }` - lower the identifier value
+                                let name = assign.key.sym.to_string();
+                                // First check parameters
+                                if let Some(idx) = param_map.get(&name) {
+                                    if let Some(pv) = function.get_nth_param(*idx) {
+                                        let bv = pv.as_basic_value_enum();
+                                        field_values.push(bv);
+                                    } else {
+                                        return Err(Diagnostic::simple(
+                                            "failed to find shorthand param",
+                                        ));
+                                    }
+                                } else if let Some((ptr, ty, _, _)) = self.find_local(locals, &name)
+                                {
+                                    // load local value
+                                    let loaded = match self.builder.build_load(
+                                        ty,
+                                        ptr,
+                                        &format!("shorthand_{}", name),
+                                    ) {
+                                        Ok(v) => v,
+                                        Err(_) => {
+                                            return Err(Diagnostic::simple(
+                                                "failed to load shorthand local value",
+                                            ));
+                                        }
+                                    };
+                                    field_values.push(loaded);
+                                } else {
+                                    return Err(Diagnostic::simple(
+                                        "shorthand property not found in params or locals",
+                                    ));
+                                }
+                            }
+                            _ => {
+                                return Err(Diagnostic::simple(
+                                    "unsupported object literal property",
+                                ));
+                            }
+                        },
+                        ast::PropOrSpread::Spread(_) => {
+                            return Err(Diagnostic::simple(
+                                "spread properties not supported in object literal",
+                            ));
+                        }
+                    }
+                }
+
+                // Allocate object: header (8) + N * 8 bytes
+                let header_size = 8u64;
+                let field_count = field_values.len();
+                let total_size = header_size + (field_count as u64 * 8);
+
+                let malloc_fn = self.get_malloc();
+                let size_const = self.i64_t.const_int(total_size, false);
+                let call_site = self
+                    .builder
+                    .build_call(malloc_fn, &[size_const.into()], "obj_malloc")
+                    .map_err(|_| Diagnostic::simple("build_call failed"))?;
+                let malloc_ret = call_site
+                    .try_as_basic_value()
+                    .left()
+                    .ok_or_else(|| Diagnostic::simple("malloc did not return value"))?
+                    .into_pointer_value();
+
+                // Initialize header (refcount=1, no flags)
+                let header_ptr = self
+                    .builder
+                    .build_pointer_cast(malloc_ret, self.i8ptr_t, "hdr_ptr")
+                    .map_err(|_| Diagnostic::simple("pointer cast failed"))?;
+                let header_val = self.i64_t.const_int(1u64, false);
+                let _ = self.builder.build_store(header_ptr, header_val);
+
+                // Store fields sequentially
+                for (idx, fv) in field_values.into_iter().enumerate() {
+                    let offset = header_size + (idx as u64 * 8);
+                    let obj_addr = self
+                        .builder
+                        .build_ptr_to_int(malloc_ret, self.i64_t, "obj_addr")
+                        .map_err(|_| Diagnostic::simple("ptr_to_int failed"))?;
+                    let offset_const = self.i64_t.const_int(offset, false);
+                    let field_addr = self
+                        .builder
+                        .build_int_add(obj_addr, offset_const, "field_addr")
+                        .map_err(|_| Diagnostic::simple("int_add failed"))?;
+                    let field_ptr = self
+                        .builder
+                        .build_int_to_ptr(field_addr, self.i8ptr_t, "field_ptr")
+                        .map_err(|_| Diagnostic::simple("int_to_ptr failed"))?;
+
+                    // If it's a float, box it into a pointer; if pointer already, store it and rc_inc.
+                    if fv.get_type().is_float_type() {
+                        let box_fn = self.get_union_box_f64();
+                        let cs = self
+                            .builder
+                            .build_call(box_fn, &[fv.into()], "union_box_f64_ctor")
+                            .map_err(|_| Diagnostic::simple("box call failed"))?;
+                        if let inkwell::Either::Left(bv) = cs.try_as_basic_value() {
+                            let boxed_ptr = bv.into_pointer_value();
+                            let boxed_bv = inkwell::values::BasicValueEnum::PointerValue(boxed_ptr);
+                            let _ = self.builder.build_store(field_ptr, boxed_bv);
+                            let rc_inc = self.get_rc_inc();
+                            let _ = self.builder.build_call(
+                                rc_inc,
+                                &[boxed_ptr.into()],
+                                "rc_inc_field",
+                            );
+                        }
+                    } else if fv.get_type().is_pointer_type() {
+                        let _ = self.builder.build_store(field_ptr, fv);
+                        let rc_inc = self.get_rc_inc();
+                        let ptr = match fv {
+                            inkwell::values::BasicValueEnum::PointerValue(p) => p,
+                            _ => unreachable!(),
+                        };
+                        let _ = self
+                            .builder
+                            .build_call(rc_inc, &[ptr.into()], "rc_inc_field");
+                    } else if fv.get_type().is_int_type() {
+                        // Treat integers as numbers (f64) for now: convert to f64 then box
+                        let intv = fv.into_int_value();
+                        let fconv = self
+                            .builder
+                            .build_signed_int_to_float(intv, self.f64_t, "i_to_f")
+                            .map_err(|_| Diagnostic::simple("int->float cast failed"))?;
+                        let box_fn = self.get_union_box_f64();
+                        let cs = self
+                            .builder
+                            .build_call(box_fn, &[fconv.into()], "union_box_f64_ctor")
+                            .map_err(|_| Diagnostic::simple("box call failed"))?;
+                        if let inkwell::Either::Left(bv) = cs.try_as_basic_value() {
+                            let boxed_ptr = bv.into_pointer_value();
+                            let boxed_bv = inkwell::values::BasicValueEnum::PointerValue(boxed_ptr);
+                            let _ = self.builder.build_store(field_ptr, boxed_bv);
+                            let rc_inc = self.get_rc_inc();
+                            let _ = self.builder.build_call(
+                                rc_inc,
+                                &[boxed_ptr.into()],
+                                "rc_inc_field",
+                            );
+                        }
+                    } else {
+                        // Fallback: attempt to store as is (may fail at runtime)
+                        let _ = self.builder.build_store(field_ptr, fv);
+                    }
+                }
+
+                // Return the base pointer
+                Ok(malloc_ret.as_basic_value_enum())
+            }
             ast::Expr::Tpl(tpl) => {
                 // Template literal: `hello ${name}!`
                 // Structure: quasis (string parts) and exprs (interpolated expressions)
@@ -2034,8 +2207,30 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     .as_basic_value_enum())
             }
             ast::Expr::Unary(unary) => {
-                // Handle unary operators: -, +, !, ~
+                // Handle unary operators: -, +, !, ~, typeof
                 use deno_ast::swc::ast::UnaryOp;
+
+                // Short-circuit typeof since it returns a string literal based on runtime kind
+                if matches!(unary.op, UnaryOp::TypeOf) {
+                    let inner = self.lower_expr(&unary.arg, function, param_map, locals)?;
+                    // number -> "number"
+                    if self.coerce_to_f64(inner).is_some() {
+                        let ptr = self.intern_string_literal("number");
+                        return Ok(ptr.as_basic_value_enum());
+                    }
+                    // pointer values -> "string" (simplified)
+                    if let BasicValueEnum::PointerValue(_pv) = inner {
+                        let ptr = self.intern_string_literal("string");
+                        return Ok(ptr.as_basic_value_enum());
+                    }
+                    // ints -> boolean
+                    if let BasicValueEnum::IntValue(_iv) = inner {
+                        let ptr = self.intern_string_literal("boolean");
+                        return Ok(ptr.as_basic_value_enum());
+                    }
+                    let ptr = self.intern_string_literal("object");
+                    return Ok(ptr.as_basic_value_enum());
+                }
 
                 let arg_val = self.lower_expr(&unary.arg, function, param_map, locals)?;
 
@@ -2097,6 +2292,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     _ => Err(Diagnostic::simple("unsupported unary operator")),
                 }
             }
+
             ast::Expr::Update(update) => {
                 // Handle update operators: ++, --
                 // These modify the variable and return the old (postfix) or new (prefix) value

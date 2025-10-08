@@ -259,6 +259,60 @@ impl<'a> CodeGen<'a> {
         }
     }
 
+    // Intern a string literal in the module and return a pointer to the data
+    // section (same layout as Lit::Str handling in expression lowering). This
+    // reuses the `string_literals` cache so identical literals share the same
+    // global and pointer value.
+    pub fn intern_string_literal(&self, s: &str) -> inkwell::values::PointerValue<'a> {
+        // Check cache first
+        if let Some(ptr) = self.string_literals.borrow().get(s) {
+            return *ptr;
+        }
+
+        let bytes = s.as_bytes();
+        let str_len = bytes.len();
+        let header_ty = self.i64_t;
+        let len_ty = self.i64_t;
+        let data_ty = self.context.i8_type().array_type((str_len + 1) as u32);
+        let struct_ty = self
+            .context
+            .struct_type(&[header_ty.into(), len_ty.into(), data_ty.into()], false);
+
+        let id = self.next_str_id.get();
+        let name = format!("strlit.{}", id);
+        self.next_str_id.set(id.wrapping_add(1));
+        let gv = self.module.add_global(struct_ty, None, &name);
+
+        // static header bit set at bit 32
+        let static_header = self.i64_t.const_int(1u64 << 32, false);
+        let length_val = self.i64_t.const_int(str_len as u64, false);
+        let data_val = self.context.const_string(bytes, true);
+
+        let initializer = self.context.const_struct(
+            &[static_header.into(), length_val.into(), data_val.into()],
+            false,
+        );
+        gv.set_initializer(&initializer);
+
+        // Return pointer to data section (field index 2)
+        let zero = self.i32_t.const_int(0, false);
+        let two = self.i32_t.const_int(2, false);
+        let indices = &[zero, two];
+        let gep = unsafe {
+            self.builder
+                .build_gep(struct_ty, gv.as_pointer_value(), indices, "strptr")
+        };
+        if let Ok(ptr) = gep {
+            self.string_literals.borrow_mut().insert(s.to_string(), ptr);
+            return ptr;
+        }
+
+        // Fallback: null pointer (shouldn't happen)
+        self.context
+            .ptr_type(inkwell::AddressSpace::default())
+            .const_null()
+    }
+
     // Creates stack allocations (`alloca`) for all function parameters, making them
     // accessible like local variables and handling initial reference counting.
     fn create_param_allocas(

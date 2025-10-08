@@ -95,7 +95,7 @@ This document provides a comprehensive roadmap for the Oats TypeScript-to-LLVM A
 
 ### Priority 0 (Critical Blockers)
 
-#### 1. Arrow Functions (Non-closing) 🔴
+#### 1. Arrow Functions (non-capturing) 🔴
 **Effort:** 1-2 weeks | **Complexity:** Low
 
 ```typescript
@@ -112,7 +112,7 @@ arr.forEach((x) => print_f64(x));
 - Store arrow function as callable value (function pointer)
 - Start with non-capturing arrows (defer closures to Phase 2)
 
-#### 2. Module Resolution & Multi-file Compilation 🔴
+#### 2. Module Resolution and Multi-file Compilation 🔴
 **Effort:** 4-6 weeks | **Complexity:** High
 
 ```typescript
@@ -131,7 +131,7 @@ export { helper } from './lib';
 - Cross-module symbol resolution
 - This is the biggest architectural change
 
-#### 3. Interfaces & Type Aliases 🔴
+#### 3. Interfaces and Type Aliases 🔴
 **Effort:** 2-3 weeks | **Complexity:** Medium
 
 ```typescript

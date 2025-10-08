@@ -19,7 +19,10 @@ fn field_write_emits_gep_store_and_rc_calls() -> Result<()> {
     );
 
     // 2. Should have store instruction
-    assert!(ir_string.contains("store"), "IR should contain store instruction");
+    assert!(
+        ir_string.contains("store"),
+        "IR should contain store instruction"
+    );
 
     // 3. Check that the function structure is correct
     assert!(
@@ -60,7 +63,10 @@ fn field_write_with_pointer_type_uses_rc() -> Result<()> {
         "IR should contain rc_inc call for new field value"
     );
 
-    assert!(ir_string.contains("store"), "IR should contain store instruction");
+    assert!(
+        ir_string.contains("store"),
+        "IR should contain store instruction"
+    );
 
     Ok(())
 }

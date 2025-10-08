@@ -312,11 +312,7 @@ pub extern "C" fn math_random() -> f64 {
     unsafe {
         let r = libc::rand() as f64;
         let m = libc::RAND_MAX as f64;
-        if m <= 0.0 {
-            0.0
-        } else {
-            r / (m + 1.0)
-        }
+        if m <= 0.0 { 0.0 } else { r / (m + 1.0) }
     }
 }
 

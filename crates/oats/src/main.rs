@@ -77,12 +77,18 @@ fn main() -> Result<()> {
         // Also handle top-level statements that declare TS-only constructs
         if let deno_ast::ModuleItemRef::Stmt(stmt) = item_ref {
             // Interfaces: `interface Name { ... }` -> register as nominal struct placeholder
-            if let deno_ast::swc::ast::Stmt::Decl(deno_ast::swc::ast::Decl::TsInterface(interface_decl)) = stmt {
+            if let deno_ast::swc::ast::Stmt::Decl(deno_ast::swc::ast::Decl::TsInterface(
+                interface_decl,
+            )) = stmt
+            {
                 let name = interface_decl.id.sym.to_string();
                 pre_symbols.insert(name.clone(), OatsType::NominalStruct(name));
             }
             // Type aliases: `type Alias = ...` -> try to map RHS to an OatsType and insert
-            if let deno_ast::swc::ast::Stmt::Decl(deno_ast::swc::ast::Decl::TsTypeAlias(type_alias)) = stmt {
+            if let deno_ast::swc::ast::Stmt::Decl(deno_ast::swc::ast::Decl::TsTypeAlias(
+                type_alias,
+            )) = stmt
+            {
                 let name = type_alias.id.sym.to_string();
                 // Attempt to map the aliased type to an OatsType
                 if let Some(mapped) = oats::types::map_ts_type(&type_alias.type_ann) {
@@ -129,10 +135,10 @@ fn main() -> Result<()> {
         fn_rc_inc: std::cell::RefCell::new(None),
         fn_rc_dec: std::cell::RefCell::new(None),
         fn_number_to_string: std::cell::RefCell::new(None),
-    fn_union_box_f64: std::cell::RefCell::new(None),
-    fn_union_box_ptr: std::cell::RefCell::new(None),
-    fn_union_unbox_f64: std::cell::RefCell::new(None),
-    fn_union_unbox_ptr: std::cell::RefCell::new(None),
+        fn_union_box_f64: std::cell::RefCell::new(None),
+        fn_union_box_ptr: std::cell::RefCell::new(None),
+        fn_union_unbox_f64: std::cell::RefCell::new(None),
+        fn_union_unbox_ptr: std::cell::RefCell::new(None),
         class_fields: std::cell::RefCell::new(std::collections::HashMap::new()),
         fn_param_types: std::cell::RefCell::new(std::collections::HashMap::new()),
         loop_context_stack: std::cell::RefCell::new(Vec::new()),
@@ -252,10 +258,11 @@ fn main() -> Result<()> {
                     if let deno_ast::swc::ast::Expr::Ident(id) = &*prop.key {
                         let fname = id.sym.to_string();
                         if let Some(type_ann) = &prop.type_ann
-                            && let Some(mapped) = oats::types::map_ts_type(&type_ann.type_ann) {
-                                fields.push((fname, mapped));
-                                continue;
-                            }
+                            && let Some(mapped) = oats::types::map_ts_type(&type_ann.type_ann)
+                        {
+                            fields.push((fname, mapped));
+                            continue;
+                        }
                         // default to Number when type not specified or not mappable
                         fields.push((fname, OatsType::Number));
                     }

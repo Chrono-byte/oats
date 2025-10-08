@@ -1,27 +1,27 @@
-## Oats — quick agent guide
+# Oats — quick agent guide (root copy)
 
-This repository is a small Rust prototype AOT compiler (workspace with `crates/oats` and `crates/runtime`). The goal of these notes is to help an AI coding agent become productive quickly by highlighting the project's structure, key files, workflows, and gotchas.
+This is a compact, actionable copy of the repository guidance for AI assistants and contributors. You can move this into `.github/` or keep it here for quick edits.
 
-### Big picture
-- `crates/oats` — the compiler front-end and IR emission (parsing, type checking, codegen using `inkwell`). See `crates/oats/src/*`.
-- `crates/runtime` — helpers compiled as a staticlib and linked into the AOT output.
-- Top-level `examples/` contains sample `.oats` sources (e.g. `examples/add.oats`).
-- Build/run helpers live in `scripts/` (`setup_env.sh`, `run_aot_tempdir.sh`, `setup_env.zsh`).
+## Big picture
+- `crates/oats` — compiler front-end and IR emission (parsing, type checking, codegen using `inkwell`). See `crates/oats/src/*`.
+- `crates/runtime` — runtime helpers compiled as a staticlib and linked into AOT outputs.
+- `examples/` — sample `.oats` sources for quick tests.
+- `scripts/` — helpers for building & running (e.g. `setup_env.sh`, `run_aot_tempdir.sh`).
 
-Key integration points: `deno_ast` is used for parsing; `inkwell` + LLVM 18 for IR; emitted IR is compiled with `clang`/system toolchain and linked with `crates/runtime` artifacts.
+Key integration points: `deno_ast` for parsing; `inkwell` + LLVM 18 for IR; emitted IR is compiled/linked with system toolchain and `crates/runtime`.
 
-### Files to read first (quick tour)
-- `crates/oats/src/main.rs` — runner that parses a source, finds an exported `main`, typechecks, and emits IR (it generates `oats_main`).
-- `crates/oats/src/parser.rs`, `types.rs`, `codegen.rs` — parse/check/codegen core.
-- `crates/oats/src/diagnostics.rs` — diagnostic formatting helpers (simple rustc-like messages; span helpers take byte indices).
-- `scripts/setup_env.sh` — how LLVM 18 is detected and `LLVM_SYS_181_PREFIX` / `LD_LIBRARY_PATH` are set when you source the script.
-- `scripts/run_aot_tempdir.sh` — example workflow that builds and runs the AOT runner with `OATS_SRC_FILE` and `OATS_OUT_DIR` env vars.
+## Files to read first
+- `crates/oats/src/main.rs` — runner: parse, find exported `main`, typecheck, emit IR (`oats_main`).
+- `crates/oats/src/parser.rs`, `types.rs`, `codegen/` — core parse/check/codegen.
+- `crates/oats/src/diagnostics.rs` — diagnostic helpers (span-based, byte offsets).
+- `scripts/setup_env.sh` / `scripts/setup_env.zsh` — how LLVM 18 is detected and env vars set.
+- `scripts/run_aot_tempdir.sh` — example build/run workflow.
 
-### Important workflows & commands
-- Local dev (Linux): source env then run the helper
+## How to build/run (quick)
+- Dev helper (Linux):
 
   . ./scripts/setup_env.sh
-  ./scripts/run_aot_tempdir.sh    # writes artifacts to ./aot_out
+  ./scripts/run_aot_tempdir.sh
 
 - Direct run (explicit):
 
@@ -29,289 +29,66 @@ Key integration points: `deno_ast` is used for parsing; `inkwell` + LLVM 18 for 
   LLVM_SYS_181_PREFIX="/path/to/llvm18" OATS_SRC_FILE="examples/add.oats" OATS_OUT_DIR="./aot_out" \
     cargo run -p oats --bin aot_run -- examples/add.oats
 
-- **Recommended workflow for testing** (simpler, works on most systems):
+- Simple recommended test workflow (no env sourcing usually required):
 
   cd /home/ellie/Dev/oats && OATS_OUT_DIR=./test_out cargo run -p oats --bin aot_run -- examples/YOURFILE.oats
   ./test_out/YOURFILE
 
-  This compiles the .oats file to LLVM IR, links it with the runtime, and produces an executable in `./test_out/`. 
-  No need to source environment scripts - cargo handles LLVM detection automatically.
+- CI: LLVM 18 must be installed and `LLVM_SYS_181_PREFIX` set before `cargo build`.
 
-- CI requirement: ensure LLVM 18 is installed and `LLVM_SYS_181_PREFIX` is set before `cargo build`.
+## Heap object system (CRITICAL)
+The runtime uses a unified 64-bit header for heap objects. This is central for correct memory/RC behavior. Keep these rules in your head when editing codegen or runtime.
 
-### Project-specific conventions & patterns
-- The user script must `export` a `main` function in the AST; the runner finds it and the generator emits a symbol named `oats_main` to avoid collision with the C runtime. When modifying function emission, keep this mapping in mind.
-- `diagnostics::report_error_span` expects byte offsets into the source (0-based). Use it for span-aware errors.
-- Codegen stores runtime function hooks (malloc, free, print helpers) as `RefCell<Option<_>>` fields on `CodeGen`. If you add or rename runtime helpers, update both `codegen.rs` and the runtime crate.
-- `inkwell` is pinned to LLVM 18 (feature `llvm18-1`). Builds will fail without a matching `llvm-config`/libs.
+Header layout (8 bytes at offset 0):
+- Bits 0-31: Reference count (atomic, u32)
+- Bit 32: Static flag (1 = immortal/don't modify RC, 0 = heap-allocated)
+- Bits 33-63: Reserved for future flags/type tags
 
-### Heap Object System (CRITICAL - Read This!)
-The compiler uses a **unified 64-bit header** for all heap-allocated objects (strings, arrays, classes). Understanding this system is essential for working with memory, RC, and string/object operations.
+Constants: `crates/runtime/src/lib.rs` defines the masks and static bit: `HEADER_RC_MASK`, `HEADER_STATIC_BIT`, `HEADER_FLAGS_MASK`.
 
-#### Header Layout (8 bytes at offset 0)
-```
-Bits 0-31:   Reference count (atomic, u32)
-Bit 32:      Static flag (1 = immortal/don't modify RC, 0 = heap-allocated)
-Bits 33-63:  Reserved for future type tags/flags
-```
+Object layouts (codegen expectations):
+- Static string literals (in `.rodata`): layout = [header (static bit set)][length i64][data bytes + NUL]. Codegen/runtime return a pointer to the data field (offset 16).
+- Heap strings: runtime allocates header (RC=1) + length + data; runtime returns pointer to data (offset 16).
+- Arrays: layout starts at base (offset 0): [header][length i64][elements...]. Allocators return the base pointer.
+- Classes/objects: layout starts at base (offset 0): [header][field0 (8)][field1 (8)]... Constructors return the base pointer.
 
-Constants in `crates/runtime/src/lib.rs`:
-- `HEADER_RC_MASK = 0xffffffff` (low 32 bits)
-- `HEADER_STATIC_BIT = 1u64 << 32` (bit 32)
-- `HEADER_FLAGS_MASK = 0xffffffff00000000` (high 32 bits)
+Pointer rules & RC operations:
+- The system accepts two pointer kinds: object base pointers (offset 0) and string data pointers (offset 16). All RC helpers accept either.
+- Runtime provides `get_object_base(p)` which heuristically tests header validity at offset 0 and p-16 to find the real base for RC ops.
+- `rc_inc` / `rc_dec`:
+  - Resolve base via `get_object_base`.
+  - If static bit set, skip mutation.
+  - Atomically modify low-32-bit RC.
+  - `rc_dec` calls destructor and frees when RC reaches 0.
 
-#### Object Types and Memory Layouts
+Codegen must follow these rules:
+1. Emit static string literals with the static bit set; return data pointer (offset 16).
+2. Heap strings/arrays/classes are allocated with RC=1 by runtime helpers; codegen should use those helpers.
+3. When storing pointers into locals or object fields, call `rc_inc`.
+4. Before returning from a function, emit RC decrements for locals (there is a helper path for this).
+5. Passing any pointer to `rc_inc` / `rc_dec` is safe; the runtime resolves data vs base.
 
-**1. Static String Literals** (embedded in .rodata section)
-```
-Offset 0:  i64 header (value: 0x100000000 = static bit set, RC=0)
-Offset 8:  i64 length (number of bytes, not including null terminator)
-Offset 16: [N x i8] data (UTF-8 bytes, null-terminated for C compatibility)
-```
-Codegen returns pointer to offset 16 (data field) for C string compatibility.
-Generated in `crates/oats/src/codegen/expr.rs` for `Lit::Str` and template literals.
+## Common pitfalls & gotchas
+- `inkwell` is pinned to LLVM 18 (feature `llvm18-1`). Mismatched `llvm-config` or libs will cause build failures.
+- `diagnostics::report_error_span` expects 0-based byte offsets.
+- Codegen stores runtime function hooks (malloc, free, print helpers) on `CodeGen`; if you rename runtime helpers, update both crates.
+- Constructors must initialize parameter-property fields (e.g., `constructor(public name: string)`) — see `gen_constructor_ir` in codegen for the pattern.
 
-**2. Heap-Allocated Strings** (from str_concat, number_to_string, etc.)
-```
-Offset 0:  i64 header (RC initialized to 1, static bit = 0)
-Offset 8:  i64 length
-Offset 16: [N x i8] data (null-terminated)
-```
-Allocated by `heap_str_alloc()`, `heap_str_from_cstr()`, `str_concat()`, `number_to_string()`.
-Runtime functions return pointer to offset 16 (data).
+## Short development notes (from docs/DEVELOPMENT.md)
+- High priority: Remove panics from lowering paths (`.unwrap()`/`.expect()`): migrate helpers to return `Result<_, Diagnostic>` and propagate diagnostics.
+- Quick wins: consolidate `map_ts_type` duplication (use `crates/oats/src/types.rs::map_ts_type()` across tools), add labeled break/continue support, fix remaining panic sites.
+- Testing: use `cargo test -p oats` and the example scripts; add regression tests when touching lowering logic.
 
-**3. Arrays**
-```
-Offset 0:  i64 header (RC initialized to 1, static bit = 0)
-Offset 8:  i64 length (number of elements)
-Offset 16: data (element size * length bytes)
-```
-Allocated by `array_alloc(len, elem_size, elem_kind)` in `crates/runtime/src/lib.rs`.
-Returns pointer to offset 0 (base of object, not data).
+## Roadmap highlights (short)
+- Phase 0 (current): Automatic reference counting, deterministic destruction, core language features (classes, arrays, loops, unary ops).
+- Phase 1 (short-term): Arrow functions (non-capturing), module resolution & multi-file compilation, object literals, union types, basic stdlib (console, Math, Array methods).
+- Phase 2 (medium): Closures with capture, generics (monomorphization), try/catch, destructuring, tuples, spread/rest.
+- Phase 3 (long-term): Full TS type-system features, module ecosystem/`node_modules`, performance optimizations, async/await state-machine.
 
-**4. Classes/Objects**
-```
-Offset 0:  i64 header (RC initialized to 1, static bit = 0)
-Offset 8:  field 0 (8 bytes)
-Offset 16: field 1 (8 bytes)
-...
-```
-Allocated in constructor codegen (`crates/oats/src/codegen/mod.rs`).
-Returns pointer to offset 0 (base of object).
+## Quick checklist for code changes
+- If adding a pointer field or storing pointers: update RC calls (rc_inc on store, rc_dec on drop).
+- When adding runtime helpers: update both `crates/runtime` and codegen registration in `CodeGen`.
+- When changing lowering to return `Result`: update callers to propagate or emit diagnostics and add tests.
 
-#### Reference Counting - The Pointer Problem
-The RC system must handle **two kinds of pointers**:
-1. **Object base pointers** (point to offset 0 where header lives)
-2. **String data pointers** (point to offset 16, after header+length)
-
-Runtime function `get_object_base(p)` (`crates/runtime/src/lib.rs`, lines 497-535):
-- Heuristically determines if pointer is object base or string data pointer
-- Checks header validity at offset 0 (if RC looks reasonable, it's an object base)
-- If not, checks offset -16 (if valid header there, it's a string data pointer)
-- Returns actual object base pointer for RC operations
-
-**RC Operations** (`rc_inc`, `rc_dec` in `crates/runtime/src/lib.rs`):
-1. Call `get_object_base(p)` to find actual object base
-2. Read header at offset 0
-3. Check static bit - if set, return early (don't modify immortal objects)
-4. Atomically increment/decrement RC in low 32 bits
-5. For `rc_dec`, if RC reaches 0, call destructor (if present) and free
-
-#### Critical Rules for Codegen
-1. **String literals**: Always emit with static bit set (`0x100000000`), return pointer to data field (index 2)
-2. **Heap strings**: Runtime allocates with RC=1, returns pointer to data field
-3. **Arrays/Classes**: Runtime allocates with RC=1, returns pointer to base (offset 0)
-4. **Parameters/stores**: Call `rc_inc()` when storing pointer to local/field
-5. **Returns**: Call `emit_rc_dec_for_locals()` before return to clean up function locals
-6. **All pointers**: Safe to pass to `rc_inc`/`rc_dec` - they handle both base and data pointers
-
-#### Common Patterns in Codegen
-
-**Creating string literal** (`crates/oats/src/codegen/expr.rs`):
-```rust
-let header = context.i64_type().const_int(HEADER_STATIC_BIT, false); // 0x100000000
-let struct_type = context.struct_type(&[i64_type, i64_type, array_type], false);
-let global = module.add_global(struct_type, None, &name);
-global.set_constant(true);
-global.set_initializer(&const_struct);
-// Return GEP to field 2 (data pointer)
-builder.build_struct_gep(struct_type, global.as_pointer_value(), 2, "str_data")
-```
-
-**Calling runtime string function**:
-```rust
-let result = builder.build_call(str_concat_fn, &[left, right], "concat");
-let str_ptr = result.try_as_basic_value().left().unwrap().into_pointer_value();
-// str_ptr points to data field (offset 16), safe to use as C string
-// rc_inc/rc_dec will find base at offset -16
-```
-
-**Storing pointer to local**:
-```rust
-builder.build_store(alloca, value_ptr);
-// Increment RC for the stored pointer
-let rc_inc_fn = codegen.get_rc_inc();
-builder.build_call(rc_inc_fn, &[value_ptr.into()], "rc_inc");
-```
-
-#### Where Things Are Implemented
-- **Runtime functions**: `crates/runtime/src/lib.rs` (664 lines)
-  - Header constants: lines 15-17
-  - `get_object_base()`: lines 497-535
-  - `rc_inc()`: lines 455-488
-  - `rc_dec()`: lines 543-620
-  - `heap_str_alloc()`: lines 67-87
-  - `str_concat()`: lines 157-181
-  - `number_to_string()`: lines 214-246
-  - `array_alloc()`: lines 315-338
-
-- **String literal codegen**: `crates/oats/src/codegen/expr.rs`
-  - `Lit::Str` handling: lines 783-827
-  - Template literals: lines 1436-1476
-
-- **Class allocation**: `crates/oats/src/codegen/mod.rs`
-  - Constructor codegen: lines 880-900
-
-#### Testing
-All heap object system features verified with 40+ passing tests:
-- `crates/oats/tests/template_literals.rs` - 4/4 tests (strings, interpolation, no corruption)
-- `crates/oats/tests/arrays_and_loops.rs` - 2/2 tests (arrays with RC)
-- `crates/oats/tests/class_lowering.rs` - 1/1 test (class structure)
-- `crates/oats/tests/field_write.rs` - 2/2 tests (field access with RC)
-
-Run `cargo test -p oats` to verify heap system integrity after changes.
-
-### Testing & targets
-- Unit tests exist under `tests/` (Rust test files). Run `cargo test` in the workspace root to run all tests.
-- When editing codegen or runtime linkage, add a small integration test that runs `aot_run` on a short example and verifies the produced artifacts or IR contains expected symbols.
-
-### Common pitfalls for agents
-- Do not assume LLVM is available; prefer adding guards or clear error messages and reference `scripts/setup_env.sh` for how maintainers expect env vars to be set.
-- When manipulating source spans, prefer using byte indices consistently (the repo's diagnostics use bytes, not codepoints).
-- Keep changes localized: many inkwell types and the `CodeGen` API are shared; renames in `codegen.rs` commonly require updates in `main.rs` test runner and runtime glue.
-
-If anything here is ambiguous or you'd like more examples (small test to run, or the typical CI config), tell me which area to expand and I'll iterate.
-### Quick IR example (what to expect)
-If you run the aot runner on `examples/add.oats` the generator emits an internal function named `oats_main`. The IR will contain a function signature similar to:
-
-    define double @oats_main(double %arg0, double %arg1) {
-      ; ... fadd or other instructions ...
-    }
-
-You can generate and inspect the IR locally by running:
-
-```sh
-. ./scripts/setup_env.sh
-cargo run -p oats --bin aot_run -- examples/add.oats > out.ll
-sed -n '1,120p' out.ll
-```
-
-### CI / environment notes
-- This project requires LLVM 18 for `inkwell`/`llvm-sys`. In CI you must install a matching LLVM and set `LLVM_SYS_181_PREFIX` to the LLVM prefix before invoking `cargo build` or `cargo test`.
-- Example GitHub Actions fragment (Ubuntu) you can adapt for the repo:
-
-```yaml
-- name: Install LLVM-18
-  run: |
-    sudo apt-get update
-    sudo apt-get install -y llvm-18 llvm-18-dev clang-18
-    echo "LLVM_SYS_181_PREFIX=/usr/lib/llvm-18" >> $GITHUB_ENV
-    echo "/usr/lib/llvm-18/lib" >> $GITHUB_PATH
-```
-
-### Debugging common build/runtime issues
-- inkell/llvm errors: when `inkwell` fails to build, confirm `llvm-config` for LLVM 18 is on PATH and `LLVM_SYS_181_PREFIX` points to the correct prefix. The project's `scripts/setup_env.sh` shows how maintainers expect to set this.
-- Undefined symbols when linking AOT outputs: check that `crates/runtime` exposes the runtime helpers (malloc/free/print). The `CodeGen` struct in `crates/oats/src/codegen.rs` stores these as `RefCell<Option<FunctionType>>` fields; ensure names and prototypes match the runtime crate.
-- Diagnostic spans look wrong: `diagnostics::report_error_span` expects byte offsets (0-based) into the original source; use the parser's span byte offsets rather than character counts.
-
-### Where to change runtime hooks
-- `crates/oats/src/codegen.rs` — look for fields on `CodeGen`: `fn_malloc`, `fn_free`, `fn_print_str`, `fn_print_f64`, `fn_memcpy`, `fn_strlen`.
-- `crates/runtime/src/lib.rs` — runtime implementations and exported symbol names. If you rename or change prototypes, update both places and add a small test that links the emitted object with `libruntime.a`.
-
-### Minimal test pattern for future changes
-- For modifications to codegen or runtime linkage, add a crate-level test under `crates/oats/tests/` that parses `examples/add.oats`, generates IR, and asserts the IR contains expected symbols (we added `aot_runner_integration.rs` as an example).
-
----
-
-If you'd like, I can also:
-
-- Add the generated IR sample produced by the test into this doc.
-- Add a GitHub Actions workflow file that installs LLVM-18 and runs `cargo test`.
-
-Tell me which and I'll add it.
-
-### Roadmap — current status (updated)
-This section replaces the previous TODO list with an accurate snapshot of what the compiler already supports and what remains. It highlights concrete next steps you can pick up.
-
-What is implemented (key items)
-- **Control flow**: C-style for-loops (`for (init; test; update)`), if statements (`if/else`), and for-of loops are fully implemented with proper basic block structure (condition, body, increment/merge blocks).
-- **Classes and objects**: Full class support including constructors, methods, field access (both dot-notation `obj.field` and computed `obj[expr]`), and proper `this` binding.
-- Arrays and array literals: array literal lowering and calls into a small set of runtime helpers are implemented; `array_alloc`, `array_set_ptr`, `array_get_ptr`, and `array_get_f64` are declared/used by the codegen (see `crates/oats/src/codegen/mod.rs`).
-- Computed indexing (bracket form): `MemberExpr` with computed property (e.g. `a[2]`) is lowered; integer and float indices are coerced to i64 and routed to `array_get_f64` / `array_get_ptr` as appropriate.
-- Runtime helpers and libc declarations: `malloc`, `free`, `memcpy`, `strlen`, `print_f64`, `print_str`, `str_concat` are declared so emitted IR links to `crates/runtime` or system libc.
-- Reference-count helpers: `rc_inc` and `rc_dec` helpers are declared and used — parameters and pointer locals get `rc_inc` on store and `emit_rc_dec_for_locals` is called on returns to drop locals.
-- TDZ and locals model: function params/locals are lowered to entry allocas with initialization flags; uninitialized reads emit traps/`unreachable` to model TDZ semantics.
-- Expression lowering features: binary numeric ops, comparisons, logical short-circuiting, phi merges with coercion (float/int/pointer) are implemented.
-- Tests: Comprehensive test suite with 24+ tests covering arrays, loops, classes, field access, and control flow in `crates/oats/tests/`.
-
-What is not yet implemented / remaining high-value work
-- **While/do-while loops**: Regular for-loops and for-of are implemented, but `while` and `do-while` are not yet supported.
-- **Break/continue statements**: Loop control flow statements are not yet implemented (loops will always run to completion or return).
-- **Switch statements**: Not implemented; only if/else is supported for conditional logic.
-- Type system extensions: `TsArrayType` mapping has been implemented in `crates/oats/src/types.rs` and the codegen now treats arrays as opaque runtime pointers (mapped to `i8*` in LLVM). Unions, tuples, generics, interfaces, and type aliases are still not supported.
-- Module system (imports/exports): the runner collects and emits exported functions but a full import/link model for modules (separate files, default exports) is not implemented.
-- Closures and advanced function features: arrow functions, default/optional/rest params, destructured params and closure capture/boxing are not implemented.
-- Async/await & Promises: not supported — would require lowering to a state machine or runtime.
-
-Concrete next steps (short / medium / long)
-- Short (high-impact, small scope):
-  - Implement `while` and `do-while` loops (similar structure to for-loops, simpler without init/increment).
-  - Add `break` and `continue` statement support with proper loop exit and RC cleanup.
-  - Implement `switch` statements with case fall-through and default handling.
-  - Add more expression operators (unary ops: `!`, `-`, `+`, `++`, `--`).
-
-- Medium (design+implementation):
-  - Module import/export model: design how multi-file modules are resolved, how symbols are emitted/linked, and update `crates/oats/src/bin/aot_run.rs` to support multi-file builds or import resolution.
-  - Arrow functions and closures: design environment capture and closure representation.
-  - Interface types and structural typing for better TypeScript compatibility.
-
-- Long-term (harder):
-  - Generics (monomorphization or erasure).
-  - Async/await with state machines.
-  - Object literals (plain objects like `{x: 1, y: 2}`).
-  - Advanced GC strategies (current RC system is production-ready for most use cases but doesn't handle cycles).
-
-### Memory Management - Current State
-**✅ IMPLEMENTED**: Unified heap object system with reference counting
-- All heap objects (strings, arrays, classes) use 64-bit headers with RC + flags
-- Static string literals are immortal (static bit prevents RC modifications)
-- Heap strings, arrays, and classes properly initialized with RC=1
-- `rc_inc`/`rc_dec` handle both object base pointers and string data pointers
-- No memory corruption, all RC operations tested and verified
-- Template literals fully functional with proper RC handling
-- 40+ tests passing, zero memory safety issues
-
-**Note for future work**: The current RC implementation doesn't detect or handle reference cycles. For most TypeScript-style code this is fine, but circular data structures will leak. Consider implementing cycle detection or switching to a tracing GC if this becomes a priority.
-
-Files to edit / mappings
-- `crates/oats/src/types.rs` — add `TsArrayType` mapping, extend `map_ts_type` for arrays/tuples/unions and represent basic field layouts for nominal structs.
-- `crates/oats/src/codegen/mod.rs` — implement loop lowering, extend member lowering for dot-access, and refine array literal lowering if needed.
-- `crates/oats/src/codegen/helpers.rs` — extend helpers for element-size / element-type selection and any small layout helpers.
-- `crates/runtime/src/lib.rs` — confirm or add runtime helpers (`array_alloc`, `array_get_ptr`, `array_get_f64`, `array_set_ptr`, `rc_inc`, `rc_dec`, `str_concat`, `print_f64`, `print_str`) and keep signatures in sync with codegen.
-
-Notes and quick pointers
-- The workspace already contains `crates/oats/tests/arrays_and_loops.rs` which validates many array-paths in IR; use it as a starting integration test when changing array/rc/strlen behavior.
-- `codegen::gen_str_concat` currently only declares `str_concat` (runtime provides the definition) to avoid duplicate-symbol issues when linking with the runtime staticlib.
-- When adding features that change emitted runtime symbols, update both `codegen/mod.rs` (declarations/usages) and `crates/runtime/src/lib.rs` (definitions) and add a small test that compiles and links the emitted object with `libruntime.a`.
-
-Verification performed
-- Implemented regular for-loops (`for (init; test; update)`) with proper basic block structure (for.cond, for.body, for.incr, for.after).
-- Implemented if statements (`if/else`) with conditional branching and merge blocks.
-- Implemented `TsArrayType` mapping and lightweight codegen mapping for arrays (arrays -> `i8*`).
-- Implemented `for-of` lowering (iterates runtime arrays and handles numeric vs pointer element kinds with proper rc_inc/rc_dec behavior).
-- Implemented full class support (constructors, methods, field access, this binding).
-- Ran `cargo test -p oats` locally after changes; all 24+ tests passed.
-- Verified fibonacci example (recursive function with if statement + for-loop) compiles and executes correctly, producing the first 20 Fibonacci numbers.
-
-
-If you want, I can implement the short/low-effort items (loops + TsArrayType mapping + dot-member lowering) and wire tests now — tell me which short item to start with and I'll update code and tests, run the relevant unit tests, and iterate until green.
+## Where to add further guidance
+- If you expand this document, prefer short bullet points and link back to the canonical docs in `docs/` (ARCHITECTURE.md, DEVELOPMENT.md, ROADMAP.md).

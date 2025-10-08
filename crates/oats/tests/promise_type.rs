@@ -77,9 +77,9 @@ fn parse_promise_number_type() -> Result<()> {
     
     // Find the function
     for item_ref in parsed.program_ref().body() {
-        if let deno_ast::ModuleItemRef::Stmt(stmt) = item_ref {
-            if let deno_ast::swc::ast::Stmt::Decl(decl) = stmt {
-                if let deno_ast::swc::ast::Decl::Fn(fn_decl) = decl {
+        if let deno_ast::ModuleItemRef::Stmt(stmt) = item_ref
+            && let deno_ast::swc::ast::Stmt::Decl(decl) = stmt
+                && let deno_ast::swc::ast::Decl::Fn(fn_decl) = decl {
                     // Check if it has a return type annotation
                     if let Some(return_type) = &fn_decl.function.return_type {
                         let ts_type = &return_type.type_ann;
@@ -96,8 +96,6 @@ fn parse_promise_number_type() -> Result<()> {
                         return Ok(());
                     }
                 }
-            }
-        }
     }
     
     panic!("Should have found function with Promise return type");
@@ -117,10 +115,10 @@ fn parse_promise_string_type() -> Result<()> {
     
     // Find the function
     for item_ref in parsed.program_ref().body() {
-        if let deno_ast::ModuleItemRef::Stmt(stmt) = item_ref {
-            if let deno_ast::swc::ast::Stmt::Decl(decl) = stmt {
-                if let deno_ast::swc::ast::Decl::Fn(fn_decl) = decl {
-                    if let Some(return_type) = &fn_decl.function.return_type {
+        if let deno_ast::ModuleItemRef::Stmt(stmt) = item_ref
+            && let deno_ast::swc::ast::Stmt::Decl(decl) = stmt
+                && let deno_ast::swc::ast::Decl::Fn(fn_decl) = decl
+                    && let Some(return_type) = &fn_decl.function.return_type {
                         let ts_type = &return_type.type_ann;
                         let oats_type = map_ts_type(ts_type);
                         
@@ -133,9 +131,6 @@ fn parse_promise_string_type() -> Result<()> {
                         );
                         return Ok(());
                     }
-                }
-            }
-        }
     }
     
     panic!("Should have found function with Promise<string> return type");
@@ -155,10 +150,10 @@ fn parse_promise_void_type() -> Result<()> {
     
     // Find the function
     for item_ref in parsed.program_ref().body() {
-        if let deno_ast::ModuleItemRef::Stmt(stmt) = item_ref {
-            if let deno_ast::swc::ast::Stmt::Decl(decl) = stmt {
-                if let deno_ast::swc::ast::Decl::Fn(fn_decl) = decl {
-                    if let Some(return_type) = &fn_decl.function.return_type {
+        if let deno_ast::ModuleItemRef::Stmt(stmt) = item_ref
+            && let deno_ast::swc::ast::Stmt::Decl(decl) = stmt
+                && let deno_ast::swc::ast::Decl::Fn(fn_decl) = decl
+                    && let Some(return_type) = &fn_decl.function.return_type {
                         let ts_type = &return_type.type_ann;
                         let oats_type = map_ts_type(ts_type);
                         
@@ -171,9 +166,6 @@ fn parse_promise_void_type() -> Result<()> {
                         );
                         return Ok(());
                     }
-                }
-            }
-        }
     }
     
     panic!("Should have found function with Promise<void> return type");
@@ -200,11 +192,11 @@ fn parse_promise_custom_type() -> Result<()> {
     
     // Find the fetchUser function
     for item_ref in parsed.program_ref().body() {
-        if let deno_ast::ModuleItemRef::Stmt(stmt) = item_ref {
-            if let deno_ast::swc::ast::Stmt::Decl(decl) = stmt {
-                if let deno_ast::swc::ast::Decl::Fn(fn_decl) = decl {
-                    if fn_decl.ident.sym.as_ref() == "fetchUser" {
-                        if let Some(return_type) = &fn_decl.function.return_type {
+        if let deno_ast::ModuleItemRef::Stmt(stmt) = item_ref
+            && let deno_ast::swc::ast::Stmt::Decl(decl) = stmt
+                && let deno_ast::swc::ast::Decl::Fn(fn_decl) = decl
+                    && fn_decl.ident.sym.as_ref() == "fetchUser"
+                        && let Some(return_type) = &fn_decl.function.return_type {
                             let ts_type = &return_type.type_ann;
                             let oats_type = map_ts_type(ts_type);
                             
@@ -221,10 +213,6 @@ fn parse_promise_custom_type() -> Result<()> {
                             }
                             return Ok(());
                         }
-                    }
-                }
-            }
-        }
     }
     
     panic!("Should have found fetchUser function with Promise<User> return type");

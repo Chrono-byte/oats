@@ -22,9 +22,9 @@ fn parse_simple_arrow_function() -> Result<()> {
     // Find the const declaration with arrow function
     let mut found_arrow = false;
     for item_ref in parsed.program_ref().body() {
-        if let deno_ast::ModuleItemRef::Stmt(stmt) = item_ref {
-            if let deno_ast::swc::ast::Stmt::Decl(decl) = stmt {
-                if let deno_ast::swc::ast::Decl::Var(var_decl) = decl {
+        if let deno_ast::ModuleItemRef::Stmt(stmt) = item_ref
+            && let deno_ast::swc::ast::Stmt::Decl(decl) = stmt
+                && let deno_ast::swc::ast::Decl::Var(var_decl) = decl {
                     for decl in &var_decl.decls {
                         if let Some(init) = &decl.init {
                             // Check if init is an arrow function
@@ -40,8 +40,6 @@ fn parse_simple_arrow_function() -> Result<()> {
                         }
                     }
                 }
-            }
-        }
     }
     
     assert!(found_arrow, "Should have found arrow function in AST");

@@ -3,7 +3,6 @@
 // signature; it simply calls `oats_entry()` which the AOT module provides as
 // a void, no-argument wrapper around whatever `oats_main` the user exported.
 
-use libc::c_void;
 use std::ffi::CString;
 
 #[cfg(feature = "link_entry")]
@@ -35,6 +34,8 @@ fn main() {
             let name = CString::new("oats_entry").expect("CString::new failed");
             unsafe {
                 // Clear any existing dlerror state before lookup.
+
+                use std::ffi::c_void;
                 libc::dlerror();
                 let sym = libc::dlsym(libc::RTLD_DEFAULT, name.as_ptr()) as *mut c_void;
                 if sym.is_null() {

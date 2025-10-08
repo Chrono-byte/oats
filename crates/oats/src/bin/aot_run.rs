@@ -366,7 +366,10 @@ fn main() -> Result<()> {
                                 &params,
                                 &ret,
                                 Some("this"),
-                            );
+                            ).map_err(|d| {
+                                oats::diagnostics::emit_diagnostic(&d, Some(source.as_str()));
+                                anyhow::anyhow!("{}", d.message)
+                            })?;
                         } else {
                             // If strict check failed (e.g., missing return annotation), try to emit with Void return
                             let mut method_symbols = SymbolTable::new();
@@ -384,7 +387,10 @@ fn main() -> Result<()> {
                                     &params,
                                     &oats::types::OatsType::Void,
                                     Some("this"),
-                                );
+                                ).map_err(|d| {
+                                    oats::diagnostics::emit_diagnostic(&d, Some(source.as_str()));
+                                    anyhow::anyhow!("{}", d.message)
+                                })?;
                             }
                         }
                     }
@@ -419,7 +425,10 @@ fn main() -> Result<()> {
             let fsig = check_function_strictness(&inner_func, &mut inner_symbols)?;
             // skip exported `main` (we handle exported main separately later)
             if fname != "main" {
-                codegen.gen_function_ir(&fname, &inner_func, &fsig.params, &fsig.ret, None);
+                codegen.gen_function_ir(&fname, &inner_func, &fsig.params, &fsig.ret, None).map_err(|d| {
+                    oats::diagnostics::emit_diagnostic(&d, Some(source.as_str()));
+                    anyhow::anyhow!("{}", d.message)
+                })?;
             }
         }
 
@@ -433,7 +442,10 @@ fn main() -> Result<()> {
             let mut inner_symbols = SymbolTable::new();
             let fsig = check_function_strictness(&inner_func, &mut inner_symbols)?;
             if fname != "main" {
-                codegen.gen_function_ir(&fname, &inner_func, &fsig.params, &fsig.ret, None);
+                codegen.gen_function_ir(&fname, &inner_func, &fsig.params, &fsig.ret, None).map_err(|d| {
+                    oats::diagnostics::emit_diagnostic(&d, Some(source.as_str()));
+                    anyhow::anyhow!("{}", d.message)
+                })?;
             }
         }
     }
@@ -448,7 +460,10 @@ fn main() -> Result<()> {
         &func_sig.params,
         &func_sig.ret,
         None,
-    );
+    ).map_err(|d| {
+        oats::diagnostics::emit_diagnostic(&d, Some(source.as_str()));
+        anyhow::anyhow!("{}", d.message)
+    })?;
 
     // Try to emit a host `main` into the module so no external shim is
     // required. Recompute IR after emission.

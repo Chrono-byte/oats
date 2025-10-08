@@ -1488,6 +1488,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             &mut arrow_locals,
                         );
 
+                        let terminated = terminated?;
+
                         // If not terminated, add default return
                         if !terminated {
                             match ret_type {
@@ -1675,13 +1677,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         };
 
                         // Concatenate expression string with result
+                        let left = result
+                            .ok_or_else(|| Diagnostic::simple("concat left operand missing"))?;
                         let call_site = self
                             .builder
-                            .build_call(
-                                concat_fn,
-                                &[result.unwrap().into(), expr_str.into()],
-                                "tpl_concat_expr",
-                            )
+                            .build_call(concat_fn, &[left.into(), expr_str.into()], "tpl_concat_expr")
                             .map_err(|_| Diagnostic::simple("failed to build call"))?;
                         result = Some(
                             call_site

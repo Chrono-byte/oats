@@ -255,7 +255,10 @@ fn main() -> Result<()> {
                                 &params,
                                 &ret,
                                 Some("this"),
-                            );
+                            ).map_err(|d| {
+                                oats::diagnostics::emit_diagnostic(&d, Some(source.as_str()));
+                                anyhow::anyhow!("{}", d.message)
+                            })?;
                         } else {
                             // If strict check failed (e.g., missing return annotation), try to emit with Void return
                             if let Ok(sig2) = check_function_strictness(&m.function, &mut symbols) {
@@ -270,7 +273,10 @@ fn main() -> Result<()> {
                                     &params,
                                     &oats::types::OatsType::Void,
                                     Some("this"),
-                                );
+                                ).map_err(|d| {
+                                    oats::diagnostics::emit_diagnostic(&d, Some(source.as_str()));
+                                    anyhow::anyhow!("{}", d.message)
+                                })?;
                             }
                         }
                     }
@@ -299,7 +305,10 @@ fn main() -> Result<()> {
         &func_sig.params,
         &func_sig.ret,
         None,
-    );
+    ).map_err(|d| {
+        oats::diagnostics::emit_diagnostic(&d, Some(source.as_str()));
+        anyhow::anyhow!("{}", d.message)
+    })?;
 
     // Print IR
     println!("{}", codegen.module.print_to_string().to_string());

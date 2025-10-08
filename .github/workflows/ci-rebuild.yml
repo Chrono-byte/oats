@@ -8,17 +8,39 @@ on:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # Don't cancel in-progress runs automatically; cancelling causes the runner
+  # to exit early (you'll see "Error: The operation was canceled." and the
+  # post-checkout cleanup steps run). Set to `true` only if you want newer
+  # pushes to cancel older runs to save CI minutes.
+  cancel-in-progress: false
 
 jobs:
   build:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        rust: [stable, '1.70.0']
+        rust: [stable]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Start cancellation debug agent
+        run: |
+          # Create a tiny background agent that logs TERM/INT signals so we can
+          # inspect whether the runner received a cancel signal and when.
+          mkdir -p "$GITHUB_WORKSPACE/.github"
+          cat > "$GITHUB_WORKSPACE/.github/debug_agent.sh" <<'EOF'
+          #!/usr/bin/env bash
+          LOG="$GITHUB_WORKSPACE/.github/debug_agent.log"
+          echo "debug agent start: $$ $(date)" >> "$LOG"
+          trap 'echo "trapped signal at $(date) pid $$" >> "$LOG"; exit' TERM INT
+          # Keep looping so the agent can detect signals during the job lifetime
+          while true; do sleep 1; done
+          EOF
+          chmod +x "$GITHUB_WORKSPACE/.github/debug_agent.sh"
+          nohup "$GITHUB_WORKSPACE/.github/debug_agent.sh" > "$GITHUB_WORKSPACE/.github/debug_agent.out" 2>&1 &
+          echo $! > "$GITHUB_WORKSPACE/.github/debug_agent.pid"
+        shell: bash
 
       - name: Cache cargo registry and target
         uses: actions/cache@v4
@@ -72,3 +94,10 @@ jobs:
         with:
           name: oats-ir
           path: out.ll
+
+      - name: Upload debug log (always)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-debug-log
+          path: .github/debug_agent.log

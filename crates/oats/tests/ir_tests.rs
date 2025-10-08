@@ -62,6 +62,7 @@ fn gen_add_function_ir_contains_fadd() -> Result<()> {
         class_fields: std::cell::RefCell::new(std::collections::HashMap::new()),
         fn_param_types: std::cell::RefCell::new(std::collections::HashMap::new()),
         source: &parsed_mod.source,
+        loop_context_stack: std::cell::RefCell::new(Vec::new()),
     };
 
     codegen.gen_function_ir(

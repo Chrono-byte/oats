@@ -270,6 +270,7 @@ fn main() -> Result<()> {
         fn_number_to_string: std::cell::RefCell::new(None),
         class_fields: std::cell::RefCell::new(std::collections::HashMap::new()),
         fn_param_types: std::cell::RefCell::new(std::collections::HashMap::new()),
+        loop_context_stack: std::cell::RefCell::new(Vec::new()),
         source: &parsed_mod.source,
     };
 
@@ -572,21 +573,6 @@ fn main() -> Result<()> {
     let status = link_cmd.status()?;
     if !status.success() {
         anyhow::bail!("clang failed to link final binary");
-    }
-
-    // run produced program and forward its exit code. This keeps program
-    // output visible while making the runner behave like a thin wrapper.
-    let run = Command::new(&out_exe).status()?;
-    if let Some(code) = run.code() {
-        if code != 0 {
-            // Exit with the same code as the produced program so callers
-            // can observe the program's result without the runner converting
-            // it into an error.
-            std::process::exit(code);
-        }
-    } else {
-        // If there is no exit code (terminated by signal), return an error.
-        anyhow::bail!("running out failed (terminated by signal)");
     }
 
     Ok(())

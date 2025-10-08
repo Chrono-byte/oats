@@ -18,6 +18,13 @@ pub mod stmt;
 type LocalEntry<'a> = (PointerValue<'a>, BasicTypeEnum<'a>, bool, bool);
 type LocalsStackLocal<'a> = Vec<std::collections::HashMap<String, LocalEntry<'a>>>;
 
+/// Loop context for tracking break/continue targets
+#[derive(Clone, Copy)]
+pub struct LoopContext<'a> {
+    pub continue_block: inkwell::basic_block::BasicBlock<'a>,
+    pub break_block: inkwell::basic_block::BasicBlock<'a>,
+}
+
 /// The main code generation structure, holding the LLVM context, module,
 /// builder, and various caches for types and functions.
 pub struct CodeGen<'a> {
@@ -43,6 +50,7 @@ pub struct CodeGen<'a> {
     pub fn_number_to_string: RefCell<Option<FunctionValue<'a>>>,
     pub class_fields: RefCell<HashMap<String, Vec<(String, crate::types::OatsType)>>>,
     pub fn_param_types: RefCell<HashMap<String, Vec<crate::types::OatsType>>>,
+    pub loop_context_stack: RefCell<Vec<LoopContext<'a>>>,
     pub source: &'a str,
 }
 
@@ -363,6 +371,44 @@ impl<'a> CodeGen<'a> {
                 }
                 false
             }
+            ast::Stmt::Break(_break_stmt) => {
+                // Break statement: jump to the loop's break (exit) block
+                if let Some(loop_ctx) = self.loop_context_stack.borrow().last().copied() {
+                    // TODO: Handle labeled breaks if _break_stmt.label is Some
+                    // For now, only support unlabeled break
+                    
+                    // Emit RC decrements for locals before breaking
+                    self.emit_rc_dec_for_locals(_locals_stack);
+                    
+                    // Branch to break block
+                    let _ = self.builder.build_unconditional_branch(loop_ctx.break_block);
+                    
+                    return true; // break terminates the current block
+                } else {
+                    // Break outside of loop - this is a semantic error
+                    // For now, just ignore it (ideally should emit diagnostic)
+                    return false;
+                }
+            }
+            ast::Stmt::Continue(_continue_stmt) => {
+                // Continue statement: jump to the loop's continue block
+                if let Some(loop_ctx) = self.loop_context_stack.borrow().last().copied() {
+                    // TODO: Handle labeled continues if _continue_stmt.label is Some
+                    // For now, only support unlabeled continue
+                    
+                    // Emit RC decrements for locals before continuing
+                    self.emit_rc_dec_for_locals(_locals_stack);
+                    
+                    // Branch to continue block
+                    let _ = self.builder.build_unconditional_branch(loop_ctx.continue_block);
+                    
+                    return true; // continue terminates the current block
+                } else {
+                    // Continue outside of loop - this is a semantic error
+                    // For now, just ignore it (ideally should emit diagnostic)
+                    return false;
+                }
+            }
             ast::Stmt::Block(block) => {
                 // new scope
                 _locals_stack.push(HashMap::new());
@@ -458,6 +504,12 @@ impl<'a> CodeGen<'a> {
                                         self.context.append_basic_block(_function, "for.body");
                                     let loop_after_bb =
                                         self.context.append_basic_block(_function, "for.after");
+
+                                    // Push loop context (for-of: continue jumps to condition, break to after)
+                                    self.loop_context_stack.borrow_mut().push(LoopContext {
+                                        continue_block: loop_cond_bb,
+                                        break_block: loop_after_bb,
+                                    });
 
                                     let _ = self.builder.build_unconditional_branch(loop_cond_bb);
 
@@ -615,9 +667,14 @@ impl<'a> CodeGen<'a> {
                                     if !terminated
                                         && self.builder.build_unconditional_branch(loop_cond_bb).is_err()
                                         {
+                                            self.loop_context_stack.borrow_mut().pop();
                                             return false;
                                         }
                                     self.builder.position_at_end(loop_after_bb);
+                                    
+                                    // Pop loop context
+                                    self.loop_context_stack.borrow_mut().pop();
+                                    
                                     return terminated;
                                 }
                         }
@@ -653,6 +710,12 @@ impl<'a> CodeGen<'a> {
                 let loop_body_bb = self.context.append_basic_block(_function, "for.body");
                 let loop_incr_bb = self.context.append_basic_block(_function, "for.incr");
                 let loop_after_bb = self.context.append_basic_block(_function, "for.after");
+
+                // Push loop context (continue jumps to increment, break jumps to after)
+                self.loop_context_stack.borrow_mut().push(LoopContext {
+                    continue_block: loop_incr_bb,
+                    break_block: loop_after_bb,
+                });
 
                 // Branch to condition
                 let _ = self.builder.build_unconditional_branch(loop_cond_bb);
@@ -709,10 +772,127 @@ impl<'a> CodeGen<'a> {
                 // Position after loop
                 self.builder.position_at_end(loop_after_bb);
 
+                // Pop loop context
+                self.loop_context_stack.borrow_mut().pop();
+
                 // Pop loop scope
                 _locals_stack.pop();
 
                 false // loops don't terminate unless body always returns
+            }
+            // Handle while loops: `while (test) { body }`
+            ast::Stmt::While(while_stmt) => {
+                // Create basic blocks
+                let loop_cond_bb = self.context.append_basic_block(_function, "while.cond");
+                let loop_body_bb = self.context.append_basic_block(_function, "while.body");
+                let loop_after_bb = self.context.append_basic_block(_function, "while.after");
+
+                // Push loop context (continue jumps to condition, break jumps to after)
+                self.loop_context_stack.borrow_mut().push(LoopContext {
+                    continue_block: loop_cond_bb,
+                    break_block: loop_after_bb,
+                });
+
+                // Branch to condition
+                let _ = self.builder.build_unconditional_branch(loop_cond_bb);
+
+                // Build condition block
+                self.builder.position_at_end(loop_cond_bb);
+                if let Ok(cond_val) = self.lower_expr(&while_stmt.test, _function, _param_map, _locals_stack) {
+                    // Coerce to i1 boolean
+                    if let Some(cond_bool) = self.to_condition_i1(cond_val) {
+                        let _ = self.builder.build_conditional_branch(
+                            cond_bool,
+                            loop_body_bb,
+                            loop_after_bb,
+                        );
+                    } else {
+                        self.loop_context_stack.borrow_mut().pop();
+                        return false;
+                    }
+                } else {
+                    self.loop_context_stack.borrow_mut().pop();
+                    return false;
+                }
+
+                // Build body block
+                self.builder.position_at_end(loop_body_bb);
+                let body_terminated = match &*while_stmt.body {
+                    ast::Stmt::Block(block) => {
+                        self.lower_stmts(&block.stmts, _function, _param_map, _locals_stack)
+                    }
+                    _ => self.lower_stmt(&while_stmt.body, _function, _param_map, _locals_stack),
+                };
+
+                // If body didn't terminate, branch back to condition
+                if !body_terminated {
+                    let _ = self.builder.build_unconditional_branch(loop_cond_bb);
+                }
+
+                // Pop loop context
+                self.loop_context_stack.borrow_mut().pop();
+
+                // Position after loop
+                self.builder.position_at_end(loop_after_bb);
+
+                false // while loops don't terminate unless body always returns
+            }
+            // Handle do-while loops: `do { body } while (test)`
+            ast::Stmt::DoWhile(dowhile_stmt) => {
+                // Create basic blocks
+                let loop_body_bb = self.context.append_basic_block(_function, "dowhile.body");
+                let loop_cond_bb = self.context.append_basic_block(_function, "dowhile.cond");
+                let loop_after_bb = self.context.append_basic_block(_function, "dowhile.after");
+
+                // Push loop context (continue jumps to condition, break jumps to after)
+                self.loop_context_stack.borrow_mut().push(LoopContext {
+                    continue_block: loop_cond_bb,
+                    break_block: loop_after_bb,
+                });
+
+                // Branch directly to body (execute at least once)
+                let _ = self.builder.build_unconditional_branch(loop_body_bb);
+
+                // Build body block
+                self.builder.position_at_end(loop_body_bb);
+                let body_terminated = match &*dowhile_stmt.body {
+                    ast::Stmt::Block(block) => {
+                        self.lower_stmts(&block.stmts, _function, _param_map, _locals_stack)
+                    }
+                    _ => self.lower_stmt(&dowhile_stmt.body, _function, _param_map, _locals_stack),
+                };
+
+                // If body didn't terminate, branch to condition check
+                if !body_terminated {
+                    let _ = self.builder.build_unconditional_branch(loop_cond_bb);
+                }
+
+                // Build condition block
+                self.builder.position_at_end(loop_cond_bb);
+                if let Ok(cond_val) = self.lower_expr(&dowhile_stmt.test, _function, _param_map, _locals_stack) {
+                    // Coerce to i1 boolean
+                    if let Some(cond_bool) = self.to_condition_i1(cond_val) {
+                        let _ = self.builder.build_conditional_branch(
+                            cond_bool,
+                            loop_body_bb,  // Loop back to body
+                            loop_after_bb,
+                        );
+                    } else {
+                        self.loop_context_stack.borrow_mut().pop();
+                        return false;
+                    }
+                } else {
+                    self.loop_context_stack.borrow_mut().pop();
+                    return false;
+                }
+
+                // Pop loop context
+                self.loop_context_stack.borrow_mut().pop();
+
+                // Position after loop
+                self.builder.position_at_end(loop_after_bb);
+
+                false // do-while loops don't terminate unless body always returns
             }
             _ => false,
         }

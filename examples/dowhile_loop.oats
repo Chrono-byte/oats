@@ -1,0 +1,8 @@
+export function main(): void {
+    let i: number = 0;
+    do {
+        println(i);
+        i = i + 1;
+    } while (i < 5);
+    println("Done!");
+}

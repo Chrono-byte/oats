@@ -1,4 +1,5 @@
 use deno_ast::swc::ast;
+use inkwell::values::BasicValueEnum;
 use inkwell::values::{FunctionValue, PointerValue};
 use inkwell::builder::Builder;
 use inkwell::context::Context;
@@ -231,9 +232,82 @@ impl<'a> CodeGen<'a> {
         _param_map: &HashMap<String, u32>,
         _locals_stack: &mut LocalsStackLocal<'a>,
     ) -> bool {
-        // Statement lowering is implemented incrementally in `stmt.rs`.
-        // Returning false indicates no terminator was emitted.
-        false
+        use deno_ast::swc::ast;
+
+        // A small statement lowering implementation that covers the test
+        // cases: variable declarations with initializers, expression
+        // statements, return statements and blocks. This is intentionally
+        // minimal: more statements can be added into `stmt.rs` later.
+        match _stmt {
+            ast::Stmt::Decl(d) => {
+                if let ast::Decl::Var(var_decl) = d {
+                    for decl in &var_decl.decls {
+                        // Only handle simple identifier patterns for now
+                        if let ast::Pat::Ident(ident) = &decl.name {
+                            let name = ident.id.sym.to_string();
+
+                            // If there is an initializer, lower it and allocate a
+                            // matching alloca for its type.
+                            if let Some(init) = &decl.init {
+                                // `init` is an Option<Box<Expr>> (deno_ast wrapper); use `.as_ref()`
+                                if let Some(val) = self.lower_expr(&*init, _function, _param_map, _locals_stack) {
+                                    let ty = val.get_type().as_basic_type_enum();
+                                    let alloca = self.builder.build_alloca(ty, &name).expect("Failed to alloca var");
+                                    // store lowered value
+                                    let _ = self.builder.build_store(alloca, val);
+                                    // If pointer type, increment RC for stored pointer
+                                    if let inkwell::types::BasicTypeEnum::PointerType(_) = ty {
+                                        if let BasicValueEnum::PointerValue(pv) = val {
+                                            let rc_inc = self.get_rc_inc();
+                                            let _ = self.builder.build_call(rc_inc, &[pv.into()], "rc_inc_local");
+                                        }
+                                    }
+                                    // mark initialized in locals; is_const=false for now
+                                    self.insert_local_current_scope(_locals_stack, name, alloca, ty, true, false);
+                                }
+                            } else {
+                                // No initializer: create an uninitialized slot with i64 as default
+                                let ty = self.i64_t.as_basic_type_enum();
+                                let alloca = self.builder.build_alloca(ty, &name).expect("Failed to alloca var");
+                                self.insert_local_current_scope(_locals_stack, name, alloca, ty, false, false);
+                            }
+                        }
+                    }
+                }
+                false
+            }
+            ast::Stmt::Expr(expr_stmt) => {
+                // Evaluate expression for side-effects; ignore result
+                let _ = self.lower_expr(&expr_stmt.expr, _function, _param_map, _locals_stack);
+                false
+            }
+            ast::Stmt::Return(ret) => {
+                // Lower return expression, emit rc_decs for locals then return
+                if let Some(arg) = &ret.arg {
+                    if let Some(val) = self.lower_expr(&*arg, _function, _param_map, _locals_stack) {
+                        // emit rc decs for locals
+                        self.emit_rc_dec_for_locals(_locals_stack);
+                        // build return with the lowered value
+                        let _ = self.builder.build_return(Some(&val));
+                        return true;
+                    }
+                } else {
+                    self.emit_rc_dec_for_locals(_locals_stack);
+                    let _ = self.builder.build_return(None);
+                    return true;
+                }
+                false
+            }
+            ast::Stmt::Block(block) => {
+                // new scope
+                _locals_stack.push(HashMap::new());
+                let terminated = self.lower_stmts(&block.stmts, _function, _param_map, _locals_stack);
+                // pop scope
+                _locals_stack.pop();
+                terminated
+            }
+            _ => false,
+        }
     }
 
     // --- Host Main Generation ---

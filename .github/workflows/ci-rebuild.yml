@@ -1,17 +1,21 @@
-name: CI
+name: CI (rebuild)
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ master ]
   pull_request:
-    branches: [ main, master ]
+    branches: [ master ]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        rust: [stable, "1.70.0"]
+        rust: [stable, '1.70.0']
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -57,6 +61,7 @@ jobs:
       - name: Generate IR artifact (out.ll)
         if: success()
         run: |
+          # Try to source the helper script if present (keeps parity with local dev)
           . ./scripts/setup_env.sh || true
           cargo build -p oats --quiet
           OATS_SRC_FILE="examples/add.oats" cargo run -p oats --bin aot_run -- examples/add.oats > out.ll

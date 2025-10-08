@@ -14,6 +14,8 @@ pub enum OatsType {
     Void,
     String,
     NominalStruct(String),
+    /// Promise type wrapping a result type (e.g. Promise<number>)
+    Promise(Box<OatsType>),
 }
 
 #[derive(Debug, Clone)]
@@ -55,6 +57,43 @@ impl SymbolTable {
     }
 }
 
+/// Map a TypeScript AST type to an OatsType.
+/// Returns None if the type is not supported.
+pub fn map_ts_type(ty: &ast::TsType) -> Option<OatsType> {
+    match ty {
+        ast::TsType::TsKeywordType(keyword) => match keyword.kind {
+            ast::TsKeywordTypeKind::TsNumberKeyword => Some(OatsType::Number),
+            ast::TsKeywordTypeKind::TsVoidKeyword => Some(OatsType::Void),
+            ast::TsKeywordTypeKind::TsBooleanKeyword => Some(OatsType::Boolean),
+            ast::TsKeywordTypeKind::TsStringKeyword => Some(OatsType::String),
+            _ => None,
+        },
+        ast::TsType::TsTypeRef(type_ref) => {
+            // Check if this is a Promise<T> type
+            if let Some(ident) = type_ref.type_name.as_ident() {
+                if ident.sym.as_ref() == "Promise" {
+                    // Extract the type parameter
+                    if let Some(type_params) = &type_ref.type_params {
+                        if let Some(first_param) = type_params.params.first() {
+                            return map_ts_type(first_param).map(|inner| OatsType::Promise(Box::new(inner)));
+                        }
+                    }
+                    // Promise without type parameter defaults to Promise<void>
+                    return Some(OatsType::Promise(Box::new(OatsType::Void)));
+                }
+                // Otherwise, it's a nominal type like Foo -> map to NominalStruct("Foo")
+                return Some(OatsType::NominalStruct(ident.sym.to_string()));
+            }
+            None
+        }
+        ast::TsType::TsArrayType(arr) => {
+            // element type
+            map_ts_type(&arr.elem_type).map(|elem| OatsType::Array(Box::new(elem)))
+        }
+        _ => None,
+    }
+}
+
 pub fn check_function_strictness(
     func_decl: &ast::Function,
     _symbols: &mut SymbolTable,
@@ -62,31 +101,6 @@ pub fn check_function_strictness(
     // Return type annotation required
     if func_decl.return_type.is_none() {
         return Err(anyhow::anyhow!("Function missing return type annotation"));
-    }
-
-    // Map a swc TypeScript type to OatsType
-    fn map_ts_type(ty: &ast::TsType) -> Option<OatsType> {
-        match ty {
-            ast::TsType::TsKeywordType(keyword) => match keyword.kind {
-                ast::TsKeywordTypeKind::TsNumberKeyword => Some(OatsType::Number),
-                ast::TsKeywordTypeKind::TsVoidKeyword => Some(OatsType::Void),
-                ast::TsKeywordTypeKind::TsBooleanKeyword => Some(OatsType::Boolean),
-                ast::TsKeywordTypeKind::TsStringKeyword => Some(OatsType::String),
-                _ => None,
-            },
-            ast::TsType::TsTypeRef(type_ref) => {
-                // e.g., nominal type like Foo -> map to NominalStruct("Foo")
-                type_ref
-                    .type_name
-                    .as_ident()
-                    .map(|type_name| OatsType::NominalStruct(type_name.sym.to_string()))
-            }
-            ast::TsType::TsArrayType(arr) => {
-                // element type
-                map_ts_type(&arr.elem_type).map(|elem| OatsType::Array(Box::new(elem)))
-            }
-            _ => None,
-        }
     }
 
     // Collect param types
@@ -133,4 +147,24 @@ pub fn check_function_strictness(
         params: param_types,
         ret: ret_ty,
     })
+}
+
+impl OatsType {
+    /// Check if this type is a Promise
+    pub fn is_promise(&self) -> bool {
+        matches!(self, OatsType::Promise(_))
+    }
+
+    /// Unwrap the inner type of a Promise, if this is a Promise type
+    pub fn unwrap_promise_inner(&self) -> Option<&OatsType> {
+        match self {
+            OatsType::Promise(inner) => Some(inner),
+            _ => None,
+        }
+    }
+
+    /// Create a Promise wrapping the given type
+    pub fn wrap_in_promise(inner: OatsType) -> Self {
+        OatsType::Promise(Box::new(inner))
+    }
 }

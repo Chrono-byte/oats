@@ -6,6 +6,13 @@
 // high 32 bits contain type/flags and the low 32 bits contain a
 // refcount. All refcount updates are done via atomic CAS on the full
 // u64 word.
+//
+// OBJECT HEADER FORMAT (64 bits):
+// - Bits 0-31:  Reference count (atomic)
+// - Bit 32:     Static/immortal flag (1 = static, 0 = heap-allocated)
+// - Bits 33-63: Type tag and other flags (reserved for future use)
+//
+// Static objects (string literals, etc.) have bit 32 set and RC operations are no-ops.
 
 use libc::{c_char, c_void, size_t};
 use std::ffi::CStr;
@@ -14,6 +21,132 @@ use std::mem;
 use std::process;
 use std::ptr;
 use std::sync::atomic::{AtomicPtr, AtomicU64, Ordering};
+
+// Header flag constants
+const HEADER_STATIC_BIT: u64 = 1u64 << 32;
+const HEADER_RC_MASK: u64 = 0xffffffffu64;
+const HEADER_FLAGS_MASK: u64 = 0xffffffff00000000u64;
+
+/// Check if a pointer points to a static (immortal) object.
+/// Handles both object pointers (pointing to header) and string data pointers (at offset +16).
+#[inline]
+unsafe fn is_static_object(p: *mut c_void) -> bool {
+    if p.is_null() {
+        return false;
+    }
+    unsafe {
+        // First, try treating it as an object pointer (header at offset 0)
+        let header = p as *const AtomicU64;
+        let header_val = (*header).load(Ordering::Relaxed);
+        if (header_val & HEADER_STATIC_BIT) != 0 {
+            return true;
+        }
+        
+        // If that didn't work, try treating it as a string data pointer (header at offset -16)
+        // This handles the case where we're given a pointer to field 2 of a string literal struct
+        let obj_ptr = (p as *const u8).sub(16) as *const AtomicU64;
+        let obj_header = (*obj_ptr).load(Ordering::Relaxed);
+        (obj_header & HEADER_STATIC_BIT) != 0
+    }
+}
+
+/// Create a header value for a heap-allocated object with initial refcount
+#[inline]
+fn make_heap_header(initial_rc: u32) -> u64 {
+    (initial_rc as u64) & HEADER_RC_MASK
+}
+
+/// Create a header value for a static/immortal object
+#[inline]
+fn make_static_header() -> u64 {
+    HEADER_STATIC_BIT
+}
+
+/// Allocate a heap string with RC header (refcount initialized to 1).
+/// Layout: [u64 header][u64 length][char data + null terminator]
+/// Returns pointer to the header (caller should offset by 16 bytes to get char* for C compatibility).
+#[unsafe(no_mangle)]
+pub extern "C" fn heap_str_alloc(str_len: size_t) -> *mut c_void {
+    unsafe {
+        // Total size: 8 (header) + 8 (length) + str_len + 1 (null terminator)
+        let total_size = 16 + str_len + 1;
+        let p = libc::malloc(total_size);
+        if p.is_null() {
+            return ptr::null_mut();
+        }
+        
+        // Initialize header with refcount = 1
+        let header_ptr = p as *mut u64;
+        *header_ptr = make_heap_header(1);
+        
+        // Initialize length
+        let len_ptr = (p as *mut u8).add(8) as *mut u64;
+        *len_ptr = str_len as u64;
+        
+        p
+    }
+}
+
+/// Copy a C string into a heap-allocated string with RC header.
+/// Returns pointer to the data section (offset +16 from header) for C compatibility.
+#[unsafe(no_mangle)]
+pub extern "C" fn heap_str_from_cstr(s: *const c_char) -> *mut c_char {
+    if s.is_null() {
+        return ptr::null_mut();
+    }
+    unsafe {
+        let len = libc::strlen(s);
+        let obj = heap_str_alloc(len);
+        if obj.is_null() {
+            return ptr::null_mut();
+        }
+        
+        // Copy string data to offset +16
+        let data_ptr = (obj as *mut u8).add(16) as *mut c_char;
+        libc::memcpy(data_ptr as *mut c_void, s as *const c_void, len + 1);
+        
+        data_ptr
+    }
+}
+
+/// Get the object pointer from a heap string data pointer
+/// (reverse the +16 offset to get back to the header)
+#[inline]
+unsafe fn heap_str_to_obj(data: *const c_char) -> *mut c_void {
+    if data.is_null() {
+        return ptr::null_mut();
+    }
+    unsafe {
+        (data as *mut u8).sub(16) as *mut c_void
+    }
+}
+
+/// RC increment for string pointers (handles both static and heap strings)
+/// For heap strings, the data pointer is at offset +16 from the object header.
+#[unsafe(no_mangle)]
+pub extern "C" fn rc_inc_str(data: *mut c_char) {
+    if data.is_null() {
+        return;
+    }
+    unsafe {
+        // Check if this looks like a heap string by checking if there's a valid header at -16
+        // For now, we'll use a heuristic: try to read the header and see if it has the static bit
+        let obj = heap_str_to_obj(data);
+        rc_inc(obj);
+    }
+}
+
+/// RC decrement for string pointers (handles both static and heap strings)
+#[unsafe(no_mangle)]
+pub extern "C" fn rc_dec_str(data: *mut c_char) {
+    if data.is_null() {
+        return;
+    }
+    unsafe {
+        let obj = heap_str_to_obj(data);
+        rc_dec(obj);
+    }
+}
 
 // --- Memory Management ---
 
@@ -61,15 +194,28 @@ pub extern "C" fn str_concat(a: *const c_char, b: *const c_char) -> *mut c_char 
     unsafe {
         let la = libc::strlen(a);
         let lb = libc::strlen(b);
-        let total = la + lb + 1;
-        let dst = libc::malloc(total) as *mut c_char;
-        if dst.is_null() {
+        
+        // Allocate heap string with RC header
+        let obj = heap_str_alloc(la + lb);
+        if obj.is_null() {
             return ptr::null_mut();
         }
-        libc::memcpy(dst as *mut c_void, a as *const c_void, la);
-        libc::memcpy(dst.add(la as usize) as *mut c_void, b as *const c_void, lb);
-        *dst.add((la + lb) as usize) = 0;
-        dst
+        
+        // Get data pointer (offset +16)
+        let data_ptr = (obj as *mut u8).add(16) as *mut c_char;
+        
+        // Copy both strings
+        libc::memcpy(data_ptr as *mut c_void, a as *const c_void, la);
+        libc::memcpy(
+            data_ptr.add(la as usize) as *mut c_void,
+            b as *const c_void,
+            lb,
+        );
+        
+        // Null terminate
+        *data_ptr.add((la + lb) as usize) = 0;
+        
+        data_ptr
     }
 }
 
@@ -97,6 +243,49 @@ pub extern "C" fn print_i32(v: i32) {
         libc::printf(b"%d\n\0".as_ptr() as *const c_char, v);
     }
 }
+
+/// Convert a number (f64) to a string with RC header
+/// Returns a heap-allocated string (data pointer, header is at offset -16)
+#[unsafe(no_mangle)]
+pub extern "C" fn number_to_string(num: f64) -> *mut c_char {
+    // Format the number using libc's snprintf
+    unsafe {
+        // First, get the required buffer size
+        let len = libc::snprintf(
+            ptr::null_mut(),
+            0,
+            b"%g\0".as_ptr() as *const c_char,
+            num,
+        );
+        
+        if len < 0 {
+            return ptr::null_mut();
+        }
+        
+        // Allocate heap string with RC header
+        let obj = heap_str_alloc(len as size_t);
+        if obj.is_null() {
+            return ptr::null_mut();
+        }
+        
+        // Get data pointer (offset +16)
+        let data_ptr = (obj as *mut u8).add(16) as *mut c_char;
+        
+        // Format the number into the buffer
+        libc::snprintf(
+            data_ptr,
+            (len + 1) as size_t,
+            b"%g\0".as_ptr() as *const c_char,
+            num,
+        );
+        
+        data_ptr
+    }
+}
+
+// --- Reference Counting ---
+
+// --- Reference Counting ---
 
 // --- Array Operations ---
 //
@@ -132,10 +321,13 @@ pub extern "C" fn array_alloc(len: usize, elem_size: usize, elem_is_number: i32)
             return ptr::null_mut();
         }
 
-        // Initialize header: flags in high 32 bits, refcount (0) in low 32 bits.
+        // Initialize header with unified format:
+        // - Low 32 bits: refcount (initialized to 1)
+        // - High 32 bits: flags (elem_is_number flag at bit 32, other bits for future use)
         let header_ptr = p as *mut u64;
         let flags = ((elem_is_number as u64) << 32) & 0xffffffff00000000u64;
-        *header_ptr = flags;
+        let initial_rc = 1u64;
+        *header_ptr = flags | initial_rc;
 
         // Initialize length.
         let len_ptr = p.add(mem::size_of::<u64>()) as *mut u64;
@@ -265,20 +457,33 @@ pub extern "C" fn array_set_ptr(arr: *mut c_void, idx: usize, p: *mut c_void) {
 // --- Atomic Reference Counting ---
 
 /// Atomically increments the reference count of a heap-allocated object.
+/// No-op for static/immortal objects.
+/// Handles both object pointers and string data pointers (at offset +16 from header).
 #[unsafe(no_mangle)]
 pub extern "C" fn rc_inc(p: *mut c_void) {
     if p.is_null() {
         return;
     }
     unsafe {
-        let header = p as *mut AtomicU64;
-        // Relaxed ordering is sufficient for an increment, as it only needs to be
-        // atomic, not synchronize with other memory operations.
+        // Try to determine the actual object pointer
+        let obj_ptr = get_object_base(p);
+        if obj_ptr.is_null() {
+            return;
+        }
+        
+        // Check if this is a static object
+        let header = obj_ptr as *mut AtomicU64;
+        let header_val = (*header).load(Ordering::Relaxed);
+        if (header_val & HEADER_STATIC_BIT) != 0 {
+            return; // Static objects are immortal, skip RC
+        }
+        
+        // Increment RC on the object header
         loop {
             let old_header = (*header).load(Ordering::Relaxed);
-            let rc = old_header & 0xffffffff;
-            let new_rc = rc.wrapping_add(1) & 0xffffffff;
-            let new_header = (old_header & 0xffffffff00000000) | new_rc;
+            let rc = old_header & HEADER_RC_MASK;
+            let new_rc = rc.wrapping_add(1) & HEADER_RC_MASK;
+            let new_header = (old_header & HEADER_FLAGS_MASK) | new_rc;
             match (*header).compare_exchange_weak(
                 old_header,
                 new_header,
@@ -292,19 +497,73 @@ pub extern "C" fn rc_inc(p: *mut c_void) {
     }
 }
 
+/// Get the base object pointer from a pointer that might be either:
+/// - An object pointer (points to header at offset 0)
+/// - A string data pointer (points to data at offset +16 from header)
+#[inline]
+unsafe fn get_object_base(p: *mut c_void) -> *mut c_void {
+    if p.is_null() {
+        return ptr::null_mut();
+    }
+    unsafe {
+        // Check if p looks like an object pointer (has valid header at offset 0)
+        let header = p as *const AtomicU64;
+        let header_val = (*header).load(Ordering::Relaxed);
+        
+        // Valid header check: either has static bit, or has reasonable RC value
+        // If RC is between 0 and 10000 and flags look reasonable, assume it's a valid header
+        let rc = header_val & HEADER_RC_MASK;
+        let flags = (header_val >> 32) as u32;
+        
+        if rc < 10000 && (flags == 0 || flags == 1) {
+            // Looks like a valid header, use this pointer as-is
+            return p;
+        }
+        
+        // Otherwise, try offset -16 (string data pointer case)
+        let obj_ptr = (p as *const u8).sub(16) as *mut c_void;
+        let obj_header = obj_ptr as *const AtomicU64;
+        let obj_header_val = (*obj_header).load(Ordering::Relaxed);
+        let obj_rc = obj_header_val & HEADER_RC_MASK;
+        let obj_flags = (obj_header_val >> 32) as u32;
+        
+        if obj_rc < 10000 && (obj_flags == 0 || obj_flags == 1) {
+            // Found valid header at -16, this is a string data pointer
+            return obj_ptr;
+        }
+        
+        // Fallback: assume it's an object pointer
+        p
+    }
+}
+
 /// Atomically decrements the reference count and frees the object if the count reaches zero.
+/// No-op for static/immortal objects.
+/// Handles both object pointers and string data pointers (at offset +16 from header).
 #[unsafe(no_mangle)]
 pub extern "C" fn rc_dec(p: *mut c_void) {
     if p.is_null() {
         return;
     }
     unsafe {
-        let header = p as *mut AtomicU64;
+        // Get the actual object pointer
+        let obj_ptr = get_object_base(p);
+        if obj_ptr.is_null() {
+            return;
+        }
+        
+        // Check if this is a static object
+        let header = obj_ptr as *mut AtomicU64;
+        let header_val = (*header).load(Ordering::Relaxed);
+        if (header_val & HEADER_STATIC_BIT) != 0 {
+            return; // Static objects are immortal, skip RC
+        }
+        
         loop {
             // Acquire ordering ensures that we see any writes from other threads
             // that were holding a reference before we decrement.
             let old_header = (*header).load(Ordering::Acquire);
-            let rc = old_header & 0xffffffff;
+            let rc = old_header & HEADER_RC_MASK;
 
             if rc == 0 {
                 // This indicates a double-free or memory corruption.
@@ -312,8 +571,8 @@ pub extern "C" fn rc_dec(p: *mut c_void) {
                 return;
             }
 
-            let new_rc = rc.wrapping_sub(1) & 0xffffffff;
-            let new_header = (old_header & 0xffffffff00000000) | new_rc;
+            let new_rc = rc.wrapping_sub(1) & HEADER_RC_MASK;
+            let new_header = (old_header & HEADER_FLAGS_MASK) | new_rc;
 
             // AcqRel ordering:
             // - Acquire: See above.
@@ -341,7 +600,7 @@ pub extern "C" fn rc_dec(p: *mut c_void) {
                         if type_tag == 1 {
                             // Read the destructor pointer from the second word.
                             let dtor_ptr_ptr =
-                                (p as *mut u8).add(std::mem::size_of::<u64>()) as *mut *mut c_void;
+                                (obj_ptr as *mut u8).add(std::mem::size_of::<u64>()) as *mut *mut c_void;
                             let dtor_raw = *dtor_ptr_ptr as *mut c_void;
                             if !dtor_raw.is_null() {
                                 // SAFETY: we trust the stored pointer is a valid
@@ -350,11 +609,11 @@ pub extern "C" fn rc_dec(p: *mut c_void) {
                                 // object was created.
                                 let dtor: extern "C" fn(*mut c_void) =
                                     std::mem::transmute(dtor_raw);
-                                dtor(p);
+                                dtor(obj_ptr);
                             }
                         }
 
-                        libc::free(p);
+                        libc::free(obj_ptr);
                     }
                     break;
                 }

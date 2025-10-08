@@ -19,7 +19,7 @@ impl<'a> super::CodeGen<'a> {
         match t {
             OatsType::Number => self.f64_t.as_basic_type_enum(),
             OatsType::Boolean => self.bool_t.as_basic_type_enum(),
-            OatsType::String | OatsType::NominalStruct(_) | OatsType::Array(_) => {
+            OatsType::String | OatsType::NominalStruct(_) | OatsType::Array(_) | OatsType::Promise(_) => {
                 self.i8ptr_t.as_basic_type_enum()
             }
             OatsType::Void => panic!("Void cannot be mapped to a BasicTypeEnum for params"),

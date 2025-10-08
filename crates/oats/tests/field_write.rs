@@ -100,6 +100,7 @@ fn field_write_emits_gep_store_and_rc_calls() -> Result<()> {
         fn_array_alloc: std::cell::RefCell::new(None),
         fn_rc_inc: std::cell::RefCell::new(None),
         fn_rc_dec: std::cell::RefCell::new(None),
+        fn_number_to_string: std::cell::RefCell::new(None),
         class_fields: std::cell::RefCell::new(
             vec![("Counter".to_string(), class_fields)]
                 .into_iter()
@@ -237,6 +238,7 @@ fn field_write_with_pointer_type_uses_rc() -> Result<()> {
         fn_array_alloc: std::cell::RefCell::new(None),
         fn_rc_inc: std::cell::RefCell::new(None),
         fn_rc_dec: std::cell::RefCell::new(None),
+        fn_number_to_string: std::cell::RefCell::new(None),
         class_fields: std::cell::RefCell::new(
             vec![("Container".to_string(), class_fields)]
                 .into_iter()

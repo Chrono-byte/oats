@@ -1,0 +1,12 @@
+export function main(): void {
+    const count = 42;
+    const message1 = `Count is ${count}`;
+    println(message1);
+    
+    const flag = true;
+    const message2 = `Flag is ${flag}`;
+    println(message2);
+    
+    const calc = `Result: ${count * 2}`;
+    println(calc);
+}

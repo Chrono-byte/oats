@@ -61,6 +61,7 @@ fn class_fields_lowering_emits_field_access() -> Result<()> {
         fn_array_alloc: std::cell::RefCell::new(None),
         fn_rc_inc: std::cell::RefCell::new(None),
         fn_rc_dec: std::cell::RefCell::new(None),
+        fn_number_to_string: std::cell::RefCell::new(None),
         class_fields: std::cell::RefCell::new(std::collections::HashMap::new()),
         fn_param_types: std::cell::RefCell::new(std::collections::HashMap::new()),
         source: &parsed_mod.source,

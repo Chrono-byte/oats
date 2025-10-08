@@ -113,32 +113,11 @@ fn main() -> Result<()> {
         fn_array_alloc: std::cell::RefCell::new(None),
         fn_rc_inc: std::cell::RefCell::new(None),
         fn_rc_dec: std::cell::RefCell::new(None),
+        fn_number_to_string: std::cell::RefCell::new(None),
         class_fields: std::cell::RefCell::new(std::collections::HashMap::new()),
         fn_param_types: std::cell::RefCell::new(std::collections::HashMap::new()),
         source: &parsed_mod.source,
     };
-
-    // Helper: map a TypeScript type annotation to an OatsType
-    fn map_ts_type(ty: &deno_ast::swc::ast::TsType) -> Option<OatsType> {
-        use deno_ast::swc::ast;
-        match ty {
-            ast::TsType::TsKeywordType(keyword) => match keyword.kind {
-                ast::TsKeywordTypeKind::TsNumberKeyword => Some(OatsType::Number),
-                ast::TsKeywordTypeKind::TsVoidKeyword => Some(OatsType::Void),
-                ast::TsKeywordTypeKind::TsBooleanKeyword => Some(OatsType::Boolean),
-                ast::TsKeywordTypeKind::TsStringKeyword => Some(OatsType::String),
-                _ => None,
-            },
-            ast::TsType::TsTypeRef(type_ref) => type_ref
-                .type_name
-                .as_ident()
-                .map(|type_name| OatsType::NominalStruct(type_name.sym.to_string())),
-            ast::TsType::TsArrayType(arr) => {
-                map_ts_type(&arr.elem_type).map(|elem| OatsType::Array(Box::new(elem)))
-            }
-            _ => None,
-        }
-    }
 
     // Helper: infer a simple OatsType from an expression (literals and simple arrays)
     fn infer_from_expr(e: &deno_ast::swc::ast::Expr) -> Option<OatsType> {
@@ -195,7 +174,7 @@ fn main() -> Result<()> {
                                     let ty = binding_ident
                                         .type_ann
                                         .as_ref()
-                                        .and_then(|ann| map_ts_type(&ann.type_ann))
+                                        .and_then(|ann| oats::types::map_ts_type(&ann.type_ann))
                                         .unwrap_or(OatsType::Number);
                                     fields.push((fname, ty));
                                 }
@@ -293,63 +272,15 @@ fn main() -> Result<()> {
                             }
                         }
                     }
-                    ClassMember::Constructor(_ctor) => {
-                        // Emit a minimal placeholder constructor function
-                        // that returns a null i8* (opaque NominalStruct ptr).
-                        // This is a temporary placeholder until we implement
-                        // full constructor semantics (allocation/field init).
-                        let fname = format!("{}_ctor", class_name);
-                        // create a function returning i8* with no params
-                        // Ensure malloc is declared in the module (declare if missing)
-                        if codegen.module.get_function("malloc").is_none() {
-                            let i8ptr = codegen.context.ptr_type(inkwell::AddressSpace::default());
-                            let i64t = codegen.i64_t;
-                            let malloc_ty = i8ptr.fn_type(&[i64t.into()], false);
-                            let f = codegen.module.add_function("malloc", malloc_ty, None);
-                            let _ = f; // keep for clarity
-                        }
-                        let i8ptr = codegen.context.ptr_type(inkwell::AddressSpace::default());
-                        let fn_ty = i8ptr.fn_type(&[], false);
-                        let f = codegen.module.add_function(&fname, fn_ty, None);
-                        // emit a body that allocates a header word and
-                        // initializes it to refcount=1 (low 32 bits = 1)
-                        let entry = codegen.context.append_basic_block(f, "entry");
-                        codegen.builder.position_at_end(entry);
-                        // call malloc(size: i64) -> i8*
-                        let malloc_fn = codegen
-                            .module
-                            .get_function("malloc")
-                            .expect("malloc should be declared");
-                        // allocate 8 bytes for a single u64 header
-                        let size_const = codegen
-                            .i64_t
-                            .const_int(std::mem::size_of::<u64>() as u64, false);
-                        let call_site = codegen
-                            .builder
-                            .build_call(malloc_fn, &[size_const.into()], "call_malloc")
-                            .expect("build_call failed");
-                        let either = call_site.try_as_basic_value();
-                        let malloc_ret = if let inkwell::Either::Left(bv) = either {
-                            bv.into_pointer_value()
-                        } else {
-                            // If malloc didn't produce a basic value, return null
-                            i8ptr.const_null()
-                        };
-                        // bitcast returned i8* to i64* and store header=1
-                        let header_ptr = codegen
-                            .builder
-                            .build_pointer_cast(
-                                malloc_ret,
-                                codegen.context.ptr_type(inkwell::AddressSpace::default()),
-                                "hdr_ptr",
-                            )
-                            .expect("cast hdr_ptr failed");
-                        // header value: low 32 bits = refcount (1), high bits = 0 (type tag)
-                        let header_val = codegen.i64_t.const_int(1u64, false);
-                        let _ = codegen.builder.build_store(header_ptr, header_val);
-                        // return original i8* pointer
-                        let _ = codegen.builder.build_return(Some(&malloc_ret));
-                        // leave function in module
+                    ClassMember::Constructor(ctor) => {
+                        // Emit full constructor with field initialization
+                        let fields = codegen
+                            .class_fields
+                            .borrow()
+                            .get(&class_name)
+                            .cloned()
+                            .unwrap_or_default();
+                        codegen.gen_constructor_ir(&class_name, ctor, &fields);
                     }
                     _ => {}
                 }

@@ -44,7 +44,7 @@ This document consolidates all development-focused information including current
 
 **High Priority (Technical Debt):**
 - ❌ Switch statements (1 of 6 short-term features remaining)
-- ❌ Eliminate ~25 panic sites in compiler (`.unwrap()`, `.expect()`)
+- ✅ Eliminate ~25 panic sites in compiler (`.unwrap()`, `.expect()`) (initial work done)
 - ❌ Consolidate duplicate type mapping code
 
 **Medium Priority (Quality):**
@@ -61,7 +61,7 @@ This document consolidates all development-focused information including current
 
 #### Problem: Panics in Compiler
 
-**Current State:** ~25 instances of `.unwrap()` and `.expect()` in code generation logic.
+**Current State:** Several panic sites existed across codegen; an initial targeted migration removed multiple panic sites in `crates/oats/src/codegen/emit.rs` by changing constructors and certain builder calls to return `Result<_, Diagnostic>` instead of panicking. Remaining panic sites should be migrated following the plan below.
 
 **Risk:** These panics provide poor error messages and crash the compiler instead of providing helpful diagnostics.
 
@@ -88,10 +88,12 @@ This document consolidates all development-focused information including current
 
 Follow the migration plan to convert lowering functions to return `Result<_, Diagnostic>`:
 
-1. **Start with leaf functions** in `helpers.rs`
+1. **Start with leaf functions** in `helpers.rs` (next)
 2. **Propagate Result types** up through `expr.rs` 
 3. **Complete with statement lowering** in `mod.rs`
 4. **Add span-aware diagnostics** where possible
+
+Note: As a concrete first step, `gen_constructor_ir` in `crates/oats/src/codegen/emit.rs` was converted from returning nothing to returning `Result<(), Diagnostic>` and multiple `.expect()`/`.unwrap()` uses in that file were replaced with proper error propagation. Call sites in `crates/oats/src/main.rs`, `crates/oats/src/bin/aot_run.rs`, and the test `crates/oats/tests/constructor_params.rs` were updated to handle the new Result. The test suite remains green after these changes.
 
 ### Priority 2: Code Quality and Maintainability
 
@@ -402,6 +404,34 @@ After completing improvement plan:
 - ✅ More maintainable codebase
 
 ---
+
+## Test Suite Improvements
+
+I consolidated the test setup and added stronger integration tests to make the suite easier to maintain.
+
+- Shared utilities: `crates/oats/tests/common/mod.rs` now provides `gen_ir_for_source(src: &str) -> anyhow::Result<String>` which centralizes parser + CodeGen setup used by many tests.
+
+- Snapshot testing: `insta` was added as a dev-dependency and a snapshot test was added at `crates/oats/tests/codegen_snapshot.rs`. Snapshots are stored in `crates/oats/tests/snapshots/`.
+
+    - To create/update snapshots interactively:
+
+        ```bash
+        cargo insta test
+        ```
+
+    - To auto-accept snapshots (useful in CI or initial run):
+
+        ```bash
+        INSTA_UPDATE=auto cargo test -p oats --test codegen_snapshot
+        ```
+
+- End-to-end testing: `crates/oats/tests/end_to_end.rs` runs the `aot_run` runner to compile `examples/add.oats` into a temporary directory, runs the produced binary, and asserts the numeric output. This test builds `runtime` and `aot_run` as needed, and may take a few seconds on first run.
+
+Notes:
+
+- The shared helper intentionally mirrors `aot_run`'s emission path so unit tests can remain focused and small.
+- When IR output changes, update snapshots with `cargo insta review` or `INSTA_UPDATE=auto` for one-off acceptance.
+
 
 ## Contributing Guidelines
 

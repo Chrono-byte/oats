@@ -8,11 +8,10 @@ use std::cell::Cell;
 use inkwell::context::Context;
 use inkwell::targets::TargetMachine;
 
-#[test]
-fn aot_run_generates_oats_main_symbol() -> Result<()> {
-    let src = std::fs::read_to_string("../../examples/add.oats")?;
-
-    let parsed_mod = parser::parse_oats_module(&src, None)?;
+#[cfg(test)]
+#[allow(dead_code)]
+pub fn gen_ir_for_source(src: &str) -> Result<String> {
+    let parsed_mod = parser::parse_oats_module(src, None)?;
     let parsed = &parsed_mod.parsed;
 
     // find exported main
@@ -36,9 +35,8 @@ fn aot_run_generates_oats_main_symbol() -> Result<()> {
     let mut symbols = SymbolTable::new();
     let func_sig = check_function_strictness(&func_decl, &mut symbols)?;
 
-    // LLVM setup (mirror aot_run)
     let context = Context::create();
-    let module = context.create_module("aot_integration_test");
+    let module = context.create_module("test_module");
     let triple = TargetMachine::get_default_triple();
     module.set_triple(&triple);
     let builder = context.create_builder();
@@ -69,6 +67,7 @@ fn aot_run_generates_oats_main_symbol() -> Result<()> {
         loop_context_stack: std::cell::RefCell::new(Vec::new()),
     };
 
+    // gen_function_ir returns Diagnostic on failures; convert to anyhow for `?` compatibility
     codegen
         .gen_function_ir(
             "oats_main",
@@ -77,15 +76,7 @@ fn aot_run_generates_oats_main_symbol() -> Result<()> {
             &func_sig.ret,
             None,
         )
-        .expect("codegen should succeed");
+        .map_err(|d| anyhow::anyhow!(d.message))?;
 
-    let ir = codegen.module.print_to_string().to_string();
-
-    assert!(
-        ir.contains("oats_main"),
-        "expected generated IR to contain `oats_main`: {}",
-        ir
-    );
-
-    Ok(())
+    Ok(codegen.module.print_to_string().to_string())
 }

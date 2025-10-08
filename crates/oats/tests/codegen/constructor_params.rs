@@ -88,7 +88,9 @@ fn constructor_with_params_allocates_and_initializes() -> Result<()> {
             for member in &c.class.body {
                 use deno_ast::swc::ast::ClassMember;
                 if let ClassMember::Constructor(ctor) = member {
-                    codegen.gen_constructor_ir(&class_name, ctor, &fields);
+                    codegen
+                        .gen_constructor_ir(&class_name, ctor, &fields)
+                        .expect("constructor codegen should succeed");
                 }
             }
 

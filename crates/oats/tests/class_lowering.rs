@@ -113,7 +113,7 @@ fn class_simple_emits_ctor_and_method() -> Result<()> {
         &func_sig.params,
         &func_sig.ret,
         None,
-    );
+    ).expect("codegen should succeed");
 
     let ir = codegen.module.print_to_string().to_string();
 

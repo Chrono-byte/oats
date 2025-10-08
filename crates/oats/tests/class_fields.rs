@@ -159,7 +159,7 @@ fn class_fields_lowering_emits_field_access() -> Result<()> {
         &func_sig.params,
         &func_sig.ret,
         None,
-    );
+    ).expect("codegen should succeed");
 
     let ir = codegen.module.print_to_string().to_string();
 

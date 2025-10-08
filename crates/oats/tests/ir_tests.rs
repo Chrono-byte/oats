@@ -72,7 +72,7 @@ fn gen_add_function_ir_contains_fadd() -> Result<()> {
         &func_sig.params,
         &func_sig.ret,
         None,
-    );
+    ).expect("codegen should succeed");
 
     let ir = codegen.module.print_to_string().to_string();
 

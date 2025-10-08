@@ -75,7 +75,7 @@ fn aot_run_generates_oats_main_symbol() -> Result<()> {
         &func_sig.params,
         &func_sig.ret,
         None,
-    );
+    ).expect("codegen should succeed");
 
     let ir = codegen.module.print_to_string().to_string();
 

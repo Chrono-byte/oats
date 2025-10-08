@@ -79,7 +79,7 @@ export function main(): number {
         &func_sig.params,
         &func_sig.ret,
         None,
-    );
+    ).expect("codegen should succeed");
 
     let ir = codegen.module.print_to_string().to_string();
 
@@ -161,7 +161,7 @@ export function main(flag: boolean): number {
         &func_sig.params,
         &func_sig.ret,
         None,
-    );
+    ).expect("codegen should succeed");
 
     let ir = codegen.module.print_to_string().to_string();
 
@@ -244,7 +244,7 @@ export function main(): number {
         &func_sig.params,
         &func_sig.ret,
         None,
-    );
+    ).expect("codegen should succeed");
 
     let ir = codegen.module.print_to_string().to_string();
 
@@ -327,7 +327,7 @@ export function main(): number {
         &func_sig.params,
         &func_sig.ret,
         None,
-    );
+    ).expect("codegen should succeed");
 
     let ir = codegen.module.print_to_string().to_string();
 
@@ -407,7 +407,7 @@ export function main(): number {
         &func_sig.params,
         &func_sig.ret,
         None,
-    );
+    ).expect("codegen should succeed");
 
     let ir = codegen.module.print_to_string().to_string();
 

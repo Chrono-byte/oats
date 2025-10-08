@@ -71,7 +71,7 @@ fn gen_ir_for_source(src_path: &str) -> Result<String> {
         &func_sig.params,
         &func_sig.ret,
         None,
-    );
+    ).expect("codegen should succeed");
 
     Ok(codegen.module.print_to_string().to_string())
 }

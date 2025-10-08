@@ -59,11 +59,6 @@ fn main() -> Result<()> {
                         // export class Foo { ... } -> register Foo as nominal struct
                         let name = c.ident.sym.to_string();
                         pre_symbols.insert(name.clone(), OatsType::NominalStruct(name));
-                        // Collect declared fields (property declarations) and store
-                        // them into CodeGen later. We can't access CodeGen here yet,
-                        // but main will build CodeGen and can populate its
-                        // `class_fields` before emitting methods — that happens
-                        // after CodeGen construction below.
                     }
                     if let deno_ast::swc::ast::Decl::Fn(f) = &decl.decl {
                         let name = f.ident.sym.to_string();
@@ -71,6 +66,10 @@ fn main() -> Result<()> {
                             func_decl_opt = Some((*f.function).clone());
                         }
                     }
+                    // Note: explicit TypeScript `interface` and `type` alias
+                    // AST nodes depend on the SWC version. Handling for these
+                    // will be added when the compiler's deno_ast exposes the
+                    // corresponding variants in a stable way.
                 }
                 _ => {}
             }

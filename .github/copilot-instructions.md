@@ -75,8 +75,6 @@ Codegen must follow these rules:
 - Constructors must initialize parameter-property fields (e.g., `constructor(public name: string)`) — see `gen_constructor_ir` in codegen for the pattern.
 
 ## Short development notes (from docs/DEVELOPMENT.md)
-- High priority: Remove panics from lowering paths (`.unwrap()`/`.expect()`): migrate helpers to return `Result<_, Diagnostic>` and propagate diagnostics.
-- Quick wins: consolidate `map_ts_type` duplication (use `crates/oats/src/types.rs::map_ts_type()` across tools), add labeled break/continue support, fix remaining panic sites.
 - Testing: use `cargo test -p oats` and the example scripts; add regression tests when touching lowering logic.
 
 ## Roadmap highlights (short)

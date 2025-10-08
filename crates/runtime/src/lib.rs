@@ -286,6 +286,21 @@ pub extern "C" fn number_to_string(num: f64) -> *mut c_char {
     }
 }
 
+/// Math.random() -> f64 in [0, 1)
+#[unsafe(no_mangle)]
+pub extern "C" fn math_random() -> f64 {
+    // Use libc rand() for a simple PRNG and normalize to [0,1)
+    unsafe {
+        let r = libc::rand() as f64;
+        let m = libc::RAND_MAX as f64;
+        if m <= 0.0 {
+            0.0
+        } else {
+            r / (m + 1.0)
+        }
+    }
+}
+
 // --- Reference Counting ---
 
 // --- Reference Counting ---

@@ -4,7 +4,7 @@ use inkwell::context::Context;
 use inkwell::module::Module;
 use inkwell::types::BasicType;
 use inkwell::types::BasicTypeEnum;
-use inkwell::values::{BasicValue, BasicValueEnum, CallSiteValue, FunctionValue, PointerValue};
+use inkwell::values::{BasicValue, BasicValueEnum, FunctionValue, PointerValue};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
@@ -149,6 +149,24 @@ impl<'a> CodeGen<'a> {
         self.module.add_function("array_set_ptr", fn_type, None)
     }
 
+    /// Thin adapter that converts the existing Option-based `lower_expr` into
+    /// a Result carrying a `Diagnostic` so callers can centrally report errors.
+    fn lower_expr_result(
+        &self,
+        expr: &deno_ast::swc::ast::Expr,
+        function: inkwell::values::FunctionValue<'a>,
+        param_map: &HashMap<String, u32>,
+        locals: &mut Vec<HashMap<String, (inkwell::values::PointerValue<'a>, BasicTypeEnum<'a>, bool, bool)>>,
+        ctx_name: Option<&str>,
+    ) -> Result<inkwell::values::BasicValueEnum<'a>, crate::diagnostics::Diagnostic> {
+        if let Some(v) = self.lower_expr(expr, function, param_map, locals) {
+            Ok(v)
+        } else {
+            let msg = format!("failed to lower expression in context '{}'", ctx_name.unwrap_or("<unknown>"));
+            Err(crate::diagnostics::Diagnostic::simple(msg))
+        }
+    }
+
     pub fn lower_expr(
         &self,
         expr: &deno_ast::swc::ast::Expr,
@@ -176,27 +194,31 @@ impl<'a> CodeGen<'a> {
                  -> Option<BasicValueEnum<'a>> {
                     match op {
                         BinaryOp::Add => {
-                            let v = builder
-                                .build_float_add(lf, rf, "sum")
-                                .expect("build_float_add failed");
+                            let v = match builder.build_float_add(lf, rf, "sum") {
+                                Ok(v) => v,
+                                Err(_) => return None,
+                            };
                             Some(v.as_basic_value_enum())
                         }
                         BinaryOp::Sub => {
-                            let v = builder
-                                .build_float_sub(lf, rf, "sub")
-                                .expect("build_float_sub failed");
+                            let v = match builder.build_float_sub(lf, rf, "sub") {
+                                Ok(v) => v,
+                                Err(_) => return None,
+                            };
                             Some(v.as_basic_value_enum())
                         }
                         BinaryOp::Mul => {
-                            let v = builder
-                                .build_float_mul(lf, rf, "mul")
-                                .expect("build_float_mul failed");
+                            let v = match builder.build_float_mul(lf, rf, "mul") {
+                                Ok(v) => v,
+                                Err(_) => return None,
+                            };
                             Some(v.as_basic_value_enum())
                         }
                         BinaryOp::Div => {
-                            let v = builder
-                                .build_float_div(lf, rf, "div")
-                                .expect("build_float_div failed");
+                            let v = match builder.build_float_div(lf, rf, "div") {
+                                Ok(v) => v,
+                                Err(_) => return None,
+                            };
                             Some(v.as_basic_value_enum())
                         }
                         _ => None,
@@ -218,9 +240,10 @@ impl<'a> CodeGen<'a> {
                         BinaryOp::NotEq => FloatPredicate::ONE,
                         _ => return None,
                     };
-                    let iv = builder
-                        .build_float_compare(pred, lf, rf, "cmp")
-                        .expect("build_float_compare failed");
+                    let iv = match builder.build_float_compare(pred, lf, rf, "cmp") {
+                        Ok(iv) => iv,
+                        Err(_) => return None,
+                    };
                     Some(iv.as_basic_value_enum())
                 };
 
@@ -242,17 +265,19 @@ impl<'a> CodeGen<'a> {
                     let then_bb = self.context.append_basic_block(function, "and.then");
                     let else_bb = self.context.append_basic_block(function, "and.else");
                     let merge_bb = self.context.append_basic_block(function, "and.merge");
-                    self.builder
+                    if let Err(_) = self
+                        .builder
                         .build_conditional_branch(cond, then_bb, else_bb)
-                        .expect("build_conditional_branch failed");
+                    {
+                        return None;
+                    }
                     // then: evaluate right
                     self.builder.position_at_end(then_bb);
                     let rv = self.lower_expr(&bin.right, function, param_map, locals);
                     if self.builder.get_insert_block().is_some() {
-                        let _ = self
-                            .builder
-                            .build_unconditional_branch(merge_bb)
-                            .expect("build_unconditional_branch failed");
+                        if let Err(_) = self.builder.build_unconditional_branch(merge_bb) {
+                            return None;
+                        }
                     }
                     // else: keep left
                     self.builder.position_at_end(else_bb);
@@ -277,16 +302,18 @@ impl<'a> CodeGen<'a> {
                     let then_bb = self.context.append_basic_block(function, "or.then");
                     let else_bb = self.context.append_basic_block(function, "or.else");
                     let merge_bb = self.context.append_basic_block(function, "or.merge");
-                    self.builder
+                    if let Err(_) = self
+                        .builder
                         .build_conditional_branch(cond, then_bb, else_bb)
-                        .expect("build_conditional_branch failed");
+                    {
+                        return None;
+                    }
                     // then: keep left
                     self.builder.position_at_end(then_bb);
                     if self.builder.get_insert_block().is_some() {
-                        let _ = self
-                            .builder
-                            .build_unconditional_branch(merge_bb)
-                            .expect("build_unconditional_branch failed");
+                        if let Err(_) = self.builder.build_unconditional_branch(merge_bb) {
+                            return None;
+                        }
                     }
                     // else: evaluate right
                     self.builder.position_at_end(else_bb);
@@ -312,13 +339,14 @@ impl<'a> CodeGen<'a> {
                         // Keep string concat behavior for Add
                         if let BinaryOp::Add = bin.op {
                             if let Some(strcat) = self.module.get_function("str_concat") {
-                                let call_site = self.builder.build_call(
+                                let call_site = match self.builder.build_call(
                                     strcat,
                                     &[lp.into(), rp.into()],
                                     "concat",
-                                );
-                                let call_site: CallSiteValue =
-                                    call_site.expect("build_call failed");
+                                ) {
+                                    Ok(cs) => cs,
+                                    Err(_) => return None,
+                                };
                                 let either = call_site.try_as_basic_value();
                                 match either {
                                     inkwell::Either::Left(bv) => Some(bv),
@@ -346,16 +374,20 @@ impl<'a> CodeGen<'a> {
                     }
                     // build_load signature depends on LLVM version; for newer
                     // inkwell it expects (pointee_ty, ptr, name).
-                    let loaded = self
-                        .builder
-                        .build_load(ty, ptr, &name)
-                        .expect("build_load failed");
+                    let loaded = match self.builder.build_load(ty, ptr, &name) {
+                        Ok(v) => v,
+                        Err(_) => return None,
+                    };
                     return Some(loaded);
                 }
                 // Fallback to function parameter (should be rare since params are
                 // typically allocated into locals by gen_function_ir)
                 if let Some(idx) = param_map.get(&name) {
-                    return Some(function.get_nth_param(*idx).unwrap());
+                    if let Some(pv) = function.get_nth_param(*idx) {
+                        return Some(pv);
+                    } else {
+                        return None;
+                    }
                 }
                 None
             }
@@ -372,25 +404,38 @@ impl<'a> CodeGen<'a> {
                                     return None;
                                 }
                                 let a = &call.args[0];
-                                if let Some(val) = self.lower_expr(&a.expr, function, param_map, locals)
+                                if let Some(val) =
+                                    self.lower_expr(&a.expr, function, param_map, locals)
                                 {
                                     match val {
                                         BasicValueEnum::FloatValue(fv) => {
-                                            let print_fn =
-                                                self.module.get_function("print_f64").unwrap();
-                                            let _ = self
-                                                .builder
-                                                .build_call(print_fn, &[fv.into()], "print_f64_call")
-                                                .expect("build_call failed");
+                                            if let Some(print_fn) =
+                                                self.module.get_function("print_f64")
+                                            {
+                                                let _ = self
+                                                    .builder
+                                                    .build_call(
+                                                        print_fn,
+                                                        &[fv.into()],
+                                                        "print_f64_call",
+                                                    )
+                                                    .ok();
+                                            }
                                             return None;
                                         }
                                         BasicValueEnum::PointerValue(pv) => {
-                                            let print_fn =
-                                                self.module.get_function("print_str").unwrap();
-                                            let _ = self
-                                                .builder
-                                                .build_call(print_fn, &[pv.into()], "print_str_call")
-                                                .expect("build_call failed");
+                                            if let Some(print_fn) =
+                                                self.module.get_function("print_str")
+                                            {
+                                                let _ = self
+                                                    .builder
+                                                    .build_call(
+                                                        print_fn,
+                                                        &[pv.into()],
+                                                        "print_str_call",
+                                                    )
+                                                    .ok();
+                                            }
                                             return None;
                                         }
                                         _ => return None,
@@ -413,10 +458,14 @@ impl<'a> CodeGen<'a> {
                                         return None;
                                     }
                                 }
-                                let cs = self
-                                    .builder
-                                    .build_call(fv, &lowered_args, "call_internal")
-                                    .expect("build_call failed");
+                                let cs = match self.builder.build_call(
+                                    fv,
+                                    &lowered_args,
+                                    "call_internal",
+                                ) {
+                                    Ok(cs) => cs,
+                                    Err(_) => return None,
+                                };
                                 let either = cs.try_as_basic_value();
                                 match either {
                                     inkwell::Either::Left(bv) => Some(bv),
@@ -438,9 +487,13 @@ impl<'a> CodeGen<'a> {
                                         let cand = format!("{}_{}", class_name, method_name);
                                         if let Some(method_f) = self.module.get_function(&cand) {
                                             // lower user args
-                                            let mut user_args: Vec<inkwell::values::BasicMetadataValueEnum> = Vec::new();
+                                            let mut user_args: Vec<
+                                                inkwell::values::BasicMetadataValueEnum,
+                                            > = Vec::new();
                                             for a in &call.args {
-                                                if let Some(v) = self.lower_expr(&a.expr, function, param_map, locals) {
+                                                if let Some(v) = self.lower_expr(
+                                                    &a.expr, function, param_map, locals,
+                                                ) {
                                                     user_args.push(v.into());
                                                 } else {
                                                     return None;
@@ -449,7 +502,9 @@ impl<'a> CodeGen<'a> {
 
                                             // if the method expects an extra param (likely `this`), prepend obj_val
                                             let param_count = method_f.count_params() as usize;
-                                            let mut args: Vec<inkwell::values::BasicMetadataValueEnum> = Vec::new();
+                                            let mut args: Vec<
+                                                inkwell::values::BasicMetadataValueEnum,
+                                            > = Vec::new();
                                             if param_count > user_args.len() {
                                                 args.push(obj_val.into());
                                                 args.extend(user_args.into_iter());
@@ -457,10 +512,14 @@ impl<'a> CodeGen<'a> {
                                                 args = user_args;
                                             }
 
-                                            let cs = self
-                                                .builder
-                                                .build_call(method_f, &args, "call_method")
-                                                .expect("build_call failed");
+                                            let cs = match self.builder.build_call(
+                                                method_f,
+                                                &args,
+                                                "call_method",
+                                            ) {
+                                                Ok(cs) => cs,
+                                                Err(_) => return None,
+                                            };
                                             let either = cs.try_as_basic_value();
                                             if let inkwell::Either::Left(bv) = either {
                                                 return Some(bv);
@@ -505,27 +564,36 @@ impl<'a> CodeGen<'a> {
                             // If the local is a pointer type, and previously initialized, decrement old refcount
                             if _ty == self.i8ptr_t.as_basic_type_enum() {
                                 // load old value
-                                let old = self
-                                    .builder
-                                    .build_load(self.i8ptr_t, ptr, "old_val")
-                                    .expect("build_load failed");
+                                let old =
+                                    match self.builder.build_load(self.i8ptr_t, ptr, "old_val") {
+                                        Ok(v) => v,
+                                        Err(_) => return None,
+                                    };
                                 // check initialized flag
                                 if _init {
                                     let rc_dec = self.get_rc_dec();
-                                    let _ = self
-                                        .builder
-                                        .build_call(rc_dec, &[old.into()], "rc_dec_old")
-                                        .expect("build_call failed");
+                                    let _ = match self.builder.build_call(
+                                        rc_dec,
+                                        &[old.into()],
+                                        "rc_dec_old",
+                                    ) {
+                                        Ok(cs) => cs,
+                                        Err(_) => return None,
+                                    };
                                 }
                                 // store new value
                                 let _ = self.builder.build_store(ptr, val);
                                 // increment refcount of new value
                                 if let BasicValueEnum::PointerValue(newpv) = val {
                                     let rc_inc = self.get_rc_inc();
-                                    let _ = self
-                                        .builder
-                                        .build_call(rc_inc, &[newpv.into()], "rc_inc_assign")
-                                        .expect("build_call failed");
+                                    let _ = match self.builder.build_call(
+                                        rc_inc,
+                                        &[newpv.into()],
+                                        "rc_inc_assign",
+                                    ) {
+                                        Ok(cs) => cs,
+                                        Err(_) => return None,
+                                    };
                                 }
                             } else {
                                 let _ = self.builder.build_store(ptr, val);
@@ -547,54 +615,69 @@ impl<'a> CodeGen<'a> {
                     BasicValueEnum::FloatValue(fv) => {
                         // JS-like truthiness for numbers: false for +0, -0, and NaN
                         let zero = self.f64_t.const_float(0.0);
-                        let is_not_zero = self
+                        let is_not_zero = match self
                             .builder
                             .build_float_compare(inkwell::FloatPredicate::ONE, fv, zero, "neq0")
-                            .expect("build_float_compare failed");
+                        {
+                            Ok(v) => v,
+                            Err(_) => return None,
+                        };
                         // check not NaN: fv == fv
-                        let is_not_nan = self
+                        let is_not_nan = match self
                             .builder
                             .build_float_compare(inkwell::FloatPredicate::OEQ, fv, fv, "not_nan")
-                            .expect("build_float_compare failed");
-                        let cond = self
+                        {
+                            Ok(v) => v,
+                            Err(_) => return None,
+                        };
+                        let cond = match self
                             .builder
                             .build_and(is_not_zero, is_not_nan, "num_truth")
-                            .expect("build_and failed");
+                        {
+                            Ok(v) => v,
+                            Err(_) => return None,
+                        };
                         cond.as_basic_value_enum()
                     }
                     BasicValueEnum::PointerValue(pv) => {
                         // pointer truthiness: non-null and non-empty string are truthy
-                        let is_null = self
-                            .builder
-                            .build_is_null(pv, "is_null")
-                            .expect("build_is_null failed");
-                        let is_not_null = self
-                            .builder
-                            .build_not(is_null, "not_null")
-                            .expect("build_not failed");
+                        let is_null = match self.builder.build_is_null(pv, "is_null") {
+                            Ok(v) => v,
+                            Err(_) => return None,
+                        };
+                        let is_not_null = match self.builder.build_not(is_null, "not_null") {
+                            Ok(v) => v,
+                            Err(_) => return None,
+                        };
                         // call strlen(ptr) and check != 0
                         if let Some(strlen_fn) = self.module.get_function("strlen") {
-                            let cs = self
+                            let cs = match self
                                 .builder
                                 .build_call(strlen_fn, &[pv.into()], "strlen_call")
-                                .expect("build_call strlen failed");
+                            {
+                                Ok(cs) => cs,
+                                Err(_) => return None,
+                            };
                             let either = cs.try_as_basic_value();
                             if let inkwell::Either::Left(bv) = either {
                                 let len = bv.into_int_value();
                                 let zero64 = self.i64_t.const_int(0, false);
-                                let len_nonzero = self
-                                    .builder
-                                    .build_int_compare(
-                                        inkwell::IntPredicate::NE,
-                                        len,
-                                        zero64,
-                                        "len_nonzero",
-                                    )
-                                    .expect("build_int_compare failed");
-                                let cond = self
+                                let len_nonzero = match self.builder.build_int_compare(
+                                    inkwell::IntPredicate::NE,
+                                    len,
+                                    zero64,
+                                    "len_nonzero",
+                                ) {
+                                    Ok(v) => v,
+                                    Err(_) => return None,
+                                };
+                                let cond = match self
                                     .builder
                                     .build_and(is_not_null, len_nonzero, "ptr_truth")
-                                    .expect("build_and failed");
+                                {
+                                    Ok(v) => v,
+                                    Err(_) => return None,
+                                };
                                 return Some(cond.as_basic_value_enum());
                             }
                         }
@@ -737,18 +820,18 @@ impl<'a> CodeGen<'a> {
                     )
                 };
 
-                let call_site = self
-                    .builder
-                    .build_call(
-                        array_alloc_fn,
-                        &[
-                            len_const.into(),
-                            elem_size_const.into(),
-                            is_number_const.into(),
-                        ],
-                        "array_alloc_call",
-                    )
-                    .expect("build_call failed");
+                let call_site = match self.builder.build_call(
+                    array_alloc_fn,
+                    &[
+                        len_const.into(),
+                        elem_size_const.into(),
+                        is_number_const.into(),
+                    ],
+                    "array_alloc_call",
+                ) {
+                    Ok(cs) => cs,
+                    Err(_) => return None,
+                };
                 let either = call_site.try_as_basic_value();
                 let arr_ptr = match either {
                     inkwell::Either::Left(bv) => bv.into_pointer_value(),
@@ -794,14 +877,14 @@ impl<'a> CodeGen<'a> {
                                 return None;
                             };
                             // bitcast to f64* (unwrap Result returned by pointer cast)
-                            let elem_ptr = self
-                                .builder
-                                .build_pointer_cast(
-                                    elem_i8,
-                                    self.context.ptr_type(AddressSpace::default()),
-                                    "elem_f64_ptr",
-                                )
-                                .expect("build_pointer_cast failed");
+                            let elem_ptr = match self.builder.build_pointer_cast(
+                                elem_i8,
+                                self.context.ptr_type(AddressSpace::default()),
+                                "elem_f64_ptr",
+                            ) {
+                                Ok(p) => p,
+                                Err(_) => return None,
+                            };
                             let _ = self.builder.build_store(elem_ptr, fv);
                         } else {
                             return None;
@@ -827,27 +910,27 @@ impl<'a> CodeGen<'a> {
                         } else {
                             return None;
                         };
-                        // bitcast to i8** (pointer-to-pointer) and unwrap
-                        let elem_ptr = self
-                            .builder
-                            .build_pointer_cast(
-                                elem_i8,
-                                self.context.ptr_type(AddressSpace::default()),
-                                "elem_ptrptr",
-                            )
-                            .expect("build_pointer_cast failed");
+                        // bitcast to i8** (pointer-to-pointer)
+                        let elem_ptr = match self.builder.build_pointer_cast(
+                            elem_i8,
+                            self.context.ptr_type(AddressSpace::default()),
+                            "elem_ptrptr",
+                        ) {
+                            Ok(p) => p,
+                            Err(_) => return None,
+                        };
                         match v {
                             BasicValueEnum::PointerValue(pv) => {
                                 // call runtime array_set_ptr(arr_ptr, idx, pv)
                                 let idx_const = self.i64_t.const_int(i as u64, false);
-                                let _ = self
-                                    .builder
-                                    .build_call(
-                                        array_set_ptr_fn,
-                                        &[arr_ptr.into(), idx_const.into(), pv.into()],
-                                        "array_set_ptr_call",
-                                    )
-                                    .expect("build_call failed");
+                                let _ = match self.builder.build_call(
+                                    array_set_ptr_fn,
+                                    &[arr_ptr.into(), idx_const.into(), pv.into()],
+                                    "array_set_ptr_call",
+                                ) {
+                                    Ok(_cs) => (),
+                                    Err(_) => return None,
+                                };
                             }
                             BasicValueEnum::IntValue(iv) => {
                                 // store integer as-is into pointer slot (coerce as i8*)
@@ -868,7 +951,11 @@ impl<'a> CodeGen<'a> {
                     }
                 }
                 if let Some(idx) = param_map.get("this") {
-                    return Some(function.get_nth_param(*idx).unwrap());
+                    if let Some(pv) = function.get_nth_param(*idx) {
+                        return Some(pv);
+                    } else {
+                        return None;
+                    }
                 }
                 None
             }
@@ -916,14 +1003,14 @@ impl<'a> CodeGen<'a> {
                                         _ => return None,
                                     };
                                     let array_get = self.get_array_get_f64();
-                                    let cs = self
-                                        .builder
-                                        .build_call(
-                                            array_get,
-                                            &[arr_ptr.into(), idx_i64.into()],
-                                            "array_get_f64_call",
-                                        )
-                                        .expect("build_call failed");
+                                    let cs = match self.builder.build_call(
+                                        array_get,
+                                        &[arr_ptr.into(), idx_i64.into()],
+                                        "array_get_f64_call",
+                                    ) {
+                                        Ok(cs) => cs,
+                                        Err(_) => return None,
+                                    };
                                     let either = cs.try_as_basic_value();
                                     if let inkwell::Either::Left(bv) = either {
                                         return Some(bv);
@@ -932,14 +1019,14 @@ impl<'a> CodeGen<'a> {
 
                                 // fallback: call runtime helper that returns a pointer and rc_inc's it
                                 let array_get_ptr_fn = self.get_array_get_ptr();
-                                let cs = self
-                                    .builder
-                                    .build_call(
-                                        array_get_ptr_fn,
-                                        &[arr_ptr.into(), idx_i64.into()],
-                                        "array_get_ptr_call",
-                                    )
-                                    .expect("build_call failed");
+                                let cs = match self.builder.build_call(
+                                    array_get_ptr_fn,
+                                    &[arr_ptr.into(), idx_i64.into()],
+                                    "array_get_ptr_call",
+                                ) {
+                                    Ok(cs) => cs,
+                                    Err(_) => return None,
+                                };
                                 let either = cs.try_as_basic_value();
                                 if let inkwell::Either::Left(bv) = either {
                                     return Some(bv);
@@ -1071,14 +1158,14 @@ impl<'a> CodeGen<'a> {
                                                         "f64_ptr_cast",
                                                     )
                                                     .expect("cast f64_ptr failed");
-                                                let loaded = self
-                                                    .builder
-                                                    .build_load(
-                                                        self.f64_t,
-                                                        f64_ptr,
-                                                        "field_f64_load",
-                                                    )
-                                                    .expect("build_load failed");
+                                                let loaded = match self.builder.build_load(
+                                                    self.f64_t,
+                                                    f64_ptr,
+                                                    "field_f64_load",
+                                                ) {
+                                                    Ok(v) => v,
+                                                    Err(_) => return None,
+                                                };
                                                 return Some(loaded.as_basic_value_enum());
                                             }
                                             crate::types::OatsType::String
@@ -1087,23 +1174,24 @@ impl<'a> CodeGen<'a> {
                                                 // Cast to pointer type and load
                                                 let slot_ptr_ty =
                                                     self.context.ptr_type(AddressSpace::default());
-                                                let slot_ptr = self
-                                                    .builder
-                                                    .build_pointer_cast(
+                                                let slot_ptr =
+                                                    match self.builder.build_pointer_cast(
                                                         gep_ptr,
                                                         slot_ptr_ty,
                                                         "slot_ptr_cast",
-                                                    )
-                                                    .expect("cast slot_ptr failed");
+                                                    ) {
+                                                        Ok(p) => p,
+                                                        Err(_) => return None,
+                                                    };
                                                 // load slot (an i8*)
-                                                let loaded = self
-                                                    .builder
-                                                    .build_load(
-                                                        self.i8ptr_t,
-                                                        slot_ptr,
-                                                        "field_load",
-                                                    )
-                                                    .expect("build_load failed");
+                                                let loaded = match self.builder.build_load(
+                                                    self.i8ptr_t,
+                                                    slot_ptr,
+                                                    "field_load",
+                                                ) {
+                                                    Ok(v) => v,
+                                                    Err(_) => return None,
+                                                };
                                                 return Some(loaded.as_basic_value_enum());
                                             }
                                             _ => {
@@ -1262,30 +1350,29 @@ impl<'a> CodeGen<'a> {
             }
             let param_ty = llvm_param_types[i];
             // Create an alloca for the parameter's LLVM type
-            let alloca = self
-                .builder
-                .build_alloca(param_ty, name)
-                .expect("build_alloca failed");
+            let alloca = match self.builder.build_alloca(param_ty, name) {
+                Ok(a) => a,
+                Err(_) => {
+                    // If allocation fails at IR build time, insert unreachable and skip this param
+                    let _ = self.builder.build_unreachable();
+                    continue;
+                }
+            };
             // Store the incoming parameter into the alloca
-            let pv = function.get_nth_param(*idx).unwrap();
-            let _ = self.builder.build_store(alloca, pv);
-            // If this parameter is a pointer type, increment refcount for the stored value
-            if param_ty == self.i8ptr_t.as_basic_type_enum() {
-                let rc_inc = self.get_rc_inc();
-                let _ = self
-                    .builder
-                    .build_call(rc_inc, &[pv.into()], "rc_inc_param")
-                    .expect("build_call failed");
+            if let Some(pv) = function.get_nth_param(*idx) {
+                let _ = self.builder.build_store(alloca, pv);
+                // If this parameter is a pointer type, increment refcount for the stored value
+                if param_ty == self.i8ptr_t.as_basic_type_enum() {
+                    let rc_inc = self.get_rc_inc();
+                    let _ = self
+                        .builder
+                        .build_call(rc_inc, &[pv.into()], "rc_inc_param")
+                        .expect("build_call failed");
+                }
+            } else {
+                // Missing param value: skip storing and continue
+                continue;
             }
-            // Insert into current scope: initialized=true, is_const=false
-            self.insert_local_current_scope(
-                &mut locals_stack,
-                name.clone(),
-                alloca,
-                param_ty,
-                true,
-                false,
-            );
         }
 
         if let Some(body) = &func_decl.body {
@@ -1298,15 +1385,18 @@ impl<'a> CodeGen<'a> {
                 match stmt {
                     ast::Stmt::Return(ret) => {
                         if let Some(arg) = &ret.arg {
-                            if let Some(val) =
-                                self.lower_expr(arg, function, &param_map, &mut locals_stack)
-                            {
-                                // Decref pointer locals before returning
-                                self.emit_rc_dec_for_locals(&locals_stack);
-                                let _ = self.builder.build_return(Some(&val));
-                            } else {
-                                self.emit_rc_dec_for_locals(&locals_stack);
-                                let _ = self.builder.build_return(None);
+                            // Use result-based lowering so we can emit diagnostics centrally
+                            match self.lower_expr_result(arg, function, &param_map, &mut locals_stack, Some(function.get_name().to_str().unwrap_or(""))) {
+                                Ok(val) => {
+                                    self.emit_rc_dec_for_locals(&locals_stack);
+                                    let _ = self.builder.build_return(Some(&val));
+                                }
+                                Err(d) => {
+                                    // Emit diagnostic and return void to avoid panics
+                                    crate::diagnostics::emit_diagnostic(&d, None);
+                                    self.emit_rc_dec_for_locals(&locals_stack);
+                                    let _ = self.builder.build_return(None);
+                                }
                             }
                         } else {
                             let _ = self.builder.build_return(None);
@@ -1432,41 +1522,60 @@ impl<'a> CodeGen<'a> {
                                                             let slot_ptr_ty = self
                                                                 .context
                                                                 .ptr_type(AddressSpace::default());
-                                                            let slot_ptr = self
-                                                                .builder
-                                                                .build_pointer_cast(
-                                                                    gep_ptr,
-                                                                    slot_ptr_ty,
-                                                                    "slot_ptr_cast",
-                                                                )
-                                                                .expect("cast slot_ptr failed");
+                                                            let slot_ptr = match self.builder.build_pointer_cast(
+                                                                gep_ptr,
+                                                                slot_ptr_ty,
+                                                                "slot_ptr_cast",
+                                                            ) {
+                                                                Ok(p) => p,
+                                                                Err(_) => {
+                                                                    let _ = self.builder.build_unreachable();
+                                                                    // fallback to normal lowering
+                                                                    self.lower_expr(
+                                                                        &expr_stmt.expr,
+                                                                        function,
+                                                                        &param_map,
+                                                                        &mut locals_stack,
+                                                                    );
+                                                                    continue;
+                                                                }
+                                                            };
                                                             match val {
                                                                 BasicValueEnum::PointerValue(
                                                                     newpv,
                                                                 ) => {
                                                                     // load old value
-                                                                    let old = self
-                                                                        .builder
-                                                                        .build_load(
-                                                                            self.i8ptr_t,
-                                                                            slot_ptr,
-                                                                            "old_field",
-                                                                        )
-                                                                        .expect(
-                                                                            "build_load failed",
-                                                                        );
+                                                                    let old = match self.builder.build_load(
+                                                                        self.i8ptr_t,
+                                                                        slot_ptr,
+                                                                        "old_field",
+                                                                    ) {
+                                                                        Ok(v) => v,
+                                                                        Err(_) => {
+                                                                            let _ = self.builder.build_unreachable();
+                                                                            // fallback
+                                                                            self.lower_expr(
+                                                                                &expr_stmt.expr,
+                                                                                function,
+                                                                                &param_map,
+                                                                                &mut locals_stack,
+                                                                            );
+                                                                            continue;
+                                                                        }
+                                                                    };
                                                                     // call rc_dec on old (runtime should handle null)
                                                                     let rc_dec = self.get_rc_dec();
-                                                                    let _ = self
-                                                                        .builder
-                                                                        .build_call(
-                                                                            rc_dec,
-                                                                            &[old.into()],
-                                                                            "rc_dec_old_field",
-                                                                        )
-                                                                        .expect(
-                                                                            "build_call failed",
-                                                                        );
+                                                                    let _ = match self.builder.build_call(
+                                                                        rc_dec,
+                                                                        &[old.into()],
+                                                                        "rc_dec_old_field",
+                                                                    ) {
+                                                                        Ok(_) => (),
+                                                                        Err(_) => {
+                                                                            let _ = self.builder.build_unreachable();
+                                                                            continue;
+                                                                        }
+                                                                    };
                                                                     // store new pointer
                                                                     let _ = self
                                                                         .builder
@@ -1476,31 +1585,38 @@ impl<'a> CodeGen<'a> {
                                                                     );
                                                                     // increment refcount of new value
                                                                     let rc_inc = self.get_rc_inc();
-                                                                    let _ = self
-                                                                        .builder
-                                                                        .build_call(
-                                                                            rc_inc,
-                                                                            &[newpv.into()],
-                                                                            "rc_inc_field",
-                                                                        )
-                                                                        .expect(
-                                                                            "build_call failed",
-                                                                        );
+                                                                    let _ = match self.builder.build_call(
+                                                                        rc_inc,
+                                                                        &[newpv.into()],
+                                                                        "rc_inc_field",
+                                                                    ) {
+                                                                        Ok(_) => (),
+                                                                        Err(_) => {
+                                                                            let _ = self.builder.build_unreachable();
+                                                                            continue;
+                                                                        }
+                                                                    };
                                                                 }
                                                                 BasicValueEnum::FloatValue(fv) => {
                                                                     // cast slot to opaque pointer and store as f64
-                                                                    let elem_ptr = self
-                                                                        .builder
-                                                                        .build_pointer_cast(
-                                                                            gep_ptr,
-                                                                            self.context
-                                                                                .ptr_type(AddressSpace::default()),
-                                                                            "elem_f64_ptr",
-                                                                        )
-                                                                        .expect("build_pointer_cast failed");
-                                                                    let _ = self
-                                                                        .builder
-                                                                        .build_store(elem_ptr, fv);
+                                                                    let elem_ptr = match self.builder.build_pointer_cast(
+                                                                        gep_ptr,
+                                                                        self.context.ptr_type(AddressSpace::default()),
+                                                                        "elem_f64_ptr",
+                                                                    ) {
+                                                                        Ok(p) => p,
+                                                                        Err(_) => {
+                                                                            let _ = self.builder.build_unreachable();
+                                                                            self.lower_expr(
+                                                                                &expr_stmt.expr,
+                                                                                function,
+                                                                                &param_map,
+                                                                                &mut locals_stack,
+                                                                            );
+                                                                            continue;
+                                                                        }
+                                                                    };
+                                                                    let _ = self.builder.build_store(elem_ptr, fv);
                                                                 }
                                                                 _ => {
                                                                     // unsupported RHS type for member write: fallback to normal lowering
@@ -1536,10 +1652,11 @@ impl<'a> CodeGen<'a> {
                         // Decide const-ness for the whole declaration.
                         // Use `let` as the mutable option; `const` is immutable.
                         // Parser enforces that `var` is disallowed; codegen no longer emits a diagnostic here.
-                                for decl in &vdecl.decls {
-                                    if let Pat::Ident(ident) = &decl.name {
-                                        let name = ident.id.sym.to_string();
-                                        let is_const_decl = matches!(vdecl.kind, deno_ast::swc::ast::VarDeclKind::Const);
+                        for decl in &vdecl.decls {
+                            if let Pat::Ident(ident) = &decl.name {
+                                let name = ident.id.sym.to_string();
+                                let is_const_decl =
+                                    matches!(vdecl.kind, deno_ast::swc::ast::VarDeclKind::Const);
                                 // Create an alloca for this local at function entry
                                 // and insert it into the current scope as uninitialized
                                 if let Some(init) = &decl.init {
@@ -1551,10 +1668,16 @@ impl<'a> CodeGen<'a> {
                                     ) {
                                         match val {
                                             BasicValueEnum::FloatValue(fv) => {
-                                                let alloca = self
+                                                let alloca = match self
                                                     .builder
                                                     .build_alloca(self.f64_t, &name)
-                                                    .expect("build_alloca failed");
+                                                {
+                                                    Ok(a) => a,
+                                                    Err(_) => {
+                                                        let _ = self.builder.build_unreachable();
+                                                        continue;
+                                                    }
+                                                };
                                                 // insert as uninitialized first to model TDZ
                                                 self.insert_local_current_scope(
                                                     &mut locals_stack,
@@ -1574,10 +1697,16 @@ impl<'a> CodeGen<'a> {
                                             }
                                             BasicValueEnum::PointerValue(pv) => {
                                                 let ptr_ty = self.i8ptr_t;
-                                                let alloca = self
+                                                let alloca = match self
                                                     .builder
                                                     .build_alloca(ptr_ty, &name)
-                                                    .expect("build_alloca failed");
+                                                {
+                                                    Ok(a) => a,
+                                                    Err(_) => {
+                                                        let _ = self.builder.build_unreachable();
+                                                        continue;
+                                                    }
+                                                };
                                                 self.insert_local_current_scope(
                                                     &mut locals_stack,
                                                     name.clone(),
@@ -1605,10 +1734,16 @@ impl<'a> CodeGen<'a> {
                                             }
                                             BasicValueEnum::IntValue(iv) => {
                                                 let boolt = self.bool_t;
-                                                let alloca = self
+                                                let alloca = match self
                                                     .builder
                                                     .build_alloca(boolt, &name)
-                                                    .expect("build_alloca failed");
+                                                {
+                                                    Ok(a) => a,
+                                                    Err(_) => {
+                                                        let _ = self.builder.build_unreachable();
+                                                        continue;
+                                                    }
+                                                };
                                                 self.insert_local_current_scope(
                                                     &mut locals_stack,
                                                     name.clone(),
@@ -1648,10 +1783,16 @@ impl<'a> CodeGen<'a> {
                                     // No initializer: for const this is a syntax error in JS/TS
                                     // For now, insert uninitialized const/local and let later checks catch usage.
                                     let ptr_ty = self.context.ptr_type(AddressSpace::default());
-                                    let alloca = self
+                                    let alloca = match self
                                         .builder
                                         .build_alloca(ptr_ty, &name)
-                                        .expect("build_alloca failed");
+                                    {
+                                        Ok(a) => a,
+                                        Err(_) => {
+                                            let _ = self.builder.build_unreachable();
+                                            continue;
+                                        }
+                                    };
                                     self.insert_local_current_scope(
                                         &mut locals_stack,
                                         name.clone(),
@@ -1737,9 +1878,12 @@ impl<'a> CodeGen<'a> {
                                             ast::Stmt::Decl(ast::Decl::Var(vdecl)) => {
                                                 use deno_ast::swc::ast::Pat;
                                                 for decl in &vdecl.decls {
-                                                            if let Pat::Ident(ident) = &decl.name {
-                                                                let name = ident.id.sym.to_string();
-                                                                let is_const_decl = matches!(vdecl.kind, deno_ast::swc::ast::VarDeclKind::Const);
+                                                    if let Pat::Ident(ident) = &decl.name {
+                                                        let name = ident.id.sym.to_string();
+                                                        let is_const_decl = matches!(
+                                                            vdecl.kind,
+                                                            deno_ast::swc::ast::VarDeclKind::Const
+                                                        );
                                                         if let Some(init) = &decl.init
                                                             && let Some(val) = self.lower_expr(
                                                                 init,
@@ -1834,10 +1978,13 @@ impl<'a> CodeGen<'a> {
                                 }
                                 ast::Stmt::Decl(ast::Decl::Var(vdecl)) => {
                                     use deno_ast::swc::ast::Pat;
-                                                for decl in &vdecl.decls {
+                                    for decl in &vdecl.decls {
                                         if let Pat::Ident(ident) = &decl.name {
                                             let name = ident.id.sym.to_string();
-                                            let _is_const_decl = matches!(vdecl.kind, deno_ast::swc::ast::VarDeclKind::Const);
+                                            let _is_const_decl = matches!(
+                                                vdecl.kind,
+                                                deno_ast::swc::ast::VarDeclKind::Const
+                                            );
                                             if let Some(init) = &decl.init
                                                 && let Some(val) = self.lower_expr(
                                                     init,
@@ -2024,7 +2171,10 @@ impl<'a> CodeGen<'a> {
                                         for decl in &vdecl.decls {
                                             if let Pat::Ident(ident) = &decl.name {
                                                 let name = ident.id.sym.to_string();
-                                                let _is_const_decl = matches!(vdecl.kind, deno_ast::swc::ast::VarDeclKind::Const);
+                                                let _is_const_decl = matches!(
+                                                    vdecl.kind,
+                                                    deno_ast::swc::ast::VarDeclKind::Const
+                                                );
                                                 if let Some(init) = &decl.init
                                                     && let Some(val) = self.lower_expr(
                                                         init,
@@ -2127,7 +2277,10 @@ impl<'a> CodeGen<'a> {
                                         use deno_ast::swc::ast::Pat;
                                         if let Pat::Ident(ident) = &decl.name {
                                             let name = ident.id.sym.to_string();
-                                            let is_const_decl = matches!(vdecl.kind, deno_ast::swc::ast::VarDeclKind::Const);
+                                            let is_const_decl = matches!(
+                                                vdecl.kind,
+                                                deno_ast::swc::ast::VarDeclKind::Const
+                                            );
                                             if let Some(init_expr) = &decl.init {
                                                 if let Some(val) = self.lower_expr(
                                                     init_expr,
@@ -2314,7 +2467,10 @@ impl<'a> CodeGen<'a> {
                                             for decl in &vdecl.decls {
                                                 if let Pat::Ident(ident) = &decl.name {
                                                     let name = ident.id.sym.to_string();
-                                                    let _is_const_decl = matches!(vdecl.kind, deno_ast::swc::ast::VarDeclKind::Const);
+                                                    let _is_const_decl = matches!(
+                                                        vdecl.kind,
+                                                        deno_ast::swc::ast::VarDeclKind::Const
+                                                    );
                                                     if let Some(init) = &decl.init
                                                         && let Some(val) = self.lower_expr(
                                                             init,
@@ -2575,19 +2731,29 @@ impl<'a> CodeGen<'a> {
 
                             // load header to determine element-kind flag (elem_is_number stored in high 32 bits)
                             // header is at arr_ptr as u64
-                            let header_ptr = self
-                                .builder
-                                .build_pointer_cast(
-                                    arr_ptr,
-                                    self.context.ptr_type(AddressSpace::default()),
-                                    "header_ptr",
-                                )
-                                .expect("cast header_ptr failed");
-                            let header_loaded = self
-                                .builder
-                                .build_load(self.i64_t, header_ptr, "header_load")
-                                .expect("load header failed")
-                                .into_int_value();
+                            let header_ptr = match self.builder.build_pointer_cast(
+                                arr_ptr,
+                                self.context.ptr_type(AddressSpace::default()),
+                                "header_ptr",
+                            ) {
+                                Ok(p) => p,
+                                Err(_) => {
+                                    // failed to inspect header -> skip loop body
+                                    self.builder
+                                        .build_unconditional_branch(end_bb)
+                                        .expect("build_unconditional_branch failed");
+                                    continue;
+                                }
+                            };
+                            let header_loaded = match self.builder.build_load(self.i64_t, header_ptr, "header_load") {
+                                Ok(v) => v.into_int_value(),
+                                Err(_) => {
+                                    self.builder
+                                        .build_unconditional_branch(end_bb)
+                                        .expect("build_unconditional_branch failed");
+                                    continue;
+                                }
+                            };
                             // shift right by 32
                             let shift_amt = self.i64_t.const_int(32, false);
                             let header_shr = self
@@ -2625,26 +2791,36 @@ impl<'a> CodeGen<'a> {
                                 .build_load(self.i64_t, idx_alloca, "idx_load2")
                                 .expect("load idx failed")
                                 .into_int_value();
-                            let cs = self
-                                .builder
-                                .build_call(
-                                    array_get_f64,
-                                    &[arr_ptr.into(), idx_loaded.into()],
-                                    "array_get_f64_call",
-                                )
-                                .expect("build_call failed");
+                            let cs = match self.builder.build_call(
+                                array_get_f64,
+                                &[arr_ptr.into(), idx_loaded.into()],
+                                "array_get_f64_call",
+                            ) {
+                                Ok(cs) => cs,
+                                Err(_) => {
+                                    self.builder
+                                        .build_unconditional_branch(after_elem_bb)
+                                        .expect("build_unconditional_branch failed");
+                                    continue;
+                                }
+                            };
                             if let inkwell::Either::Left(bv) = cs.try_as_basic_value() {
                                 // store numeric value into loop var: bitcast alloca to f64* and store
                                 if let Some((name, alloca)) = &loop_var_alloca {
                                     let elem_f64 = bv.into_float_value();
-                                    let elem_ptr = self
-                                        .builder
-                                        .build_pointer_cast(
-                                            *alloca,
-                                            self.context.ptr_type(AddressSpace::default()),
-                                            "elem_f64_ptr",
-                                        )
-                                        .expect("cast elem_ptr failed");
+                                    let elem_ptr = match self.builder.build_pointer_cast(
+                                        *alloca,
+                                        self.context.ptr_type(AddressSpace::default()),
+                                        "elem_f64_ptr",
+                                    ) {
+                                        Ok(p) => p,
+                                        Err(_) => {
+                                            self.builder
+                                                .build_unconditional_branch(after_elem_bb)
+                                                .expect("build_unconditional_branch failed");
+                                            continue;
+                                        }
+                                    };
                                     let _ = self.builder.build_store(elem_ptr, elem_f64);
                                     // mark initialized
                                     self.set_local_initialized(&mut locals_stack, name, true);
@@ -2665,14 +2841,19 @@ impl<'a> CodeGen<'a> {
                                 .build_load(self.i64_t, idx_alloca, "idx_load3")
                                 .expect("load idx failed")
                                 .into_int_value();
-                            let cs2 = self
-                                .builder
-                                .build_call(
-                                    array_get_ptr,
-                                    &[arr_ptr.into(), idx_loaded2.into()],
-                                    "array_get_ptr_call",
-                                )
-                                .expect("build_call failed");
+                            let cs2 = match self.builder.build_call(
+                                array_get_ptr,
+                                &[arr_ptr.into(), idx_loaded2.into()],
+                                "array_get_ptr_call",
+                            ) {
+                                Ok(cs) => cs,
+                                Err(_) => {
+                                    self.builder
+                                        .build_unconditional_branch(after_elem_bb)
+                                        .expect("build_unconditional_branch failed");
+                                    continue;
+                                }
+                            };
                             if let inkwell::Either::Left(bv2) = cs2.try_as_basic_value()
                                 && let Some((name, alloca)) = &loop_var_alloca
                             {
@@ -2751,7 +2932,10 @@ impl<'a> CodeGen<'a> {
                                                 for decl in &vdecl.decls {
                                                     if let Pat::Ident(ident) = &decl.name {
                                                         let name = ident.id.sym.to_string();
-                                                        let is_const_decl = matches!(vdecl.kind, deno_ast::swc::ast::VarDeclKind::Const);
+                                                        let is_const_decl = matches!(
+                                                            vdecl.kind,
+                                                            deno_ast::swc::ast::VarDeclKind::Const
+                                                        );
                                                         if let Some(init) = &decl.init
                                                             && let Some(val) = self.lower_expr(
                                                                 init,

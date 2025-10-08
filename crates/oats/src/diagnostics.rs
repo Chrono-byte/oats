@@ -142,3 +142,27 @@ pub fn report_error_span_and_bail<T>(
     }
     Err(anyhow::anyhow!("{}", err_text))
 }
+
+/// Simple Diagnostic container used by lowering to propagate structured
+/// errors up to a single emission site.
+#[derive(Debug, Clone)]
+pub struct Diagnostic {
+    pub message: String,
+    pub file: Option<String>,
+    pub note: Option<String>,
+}
+
+impl Diagnostic {
+    pub fn simple(msg: impl Into<String>) -> Self {
+        Diagnostic {
+            message: msg.into(),
+            file: None,
+            note: None,
+        }
+    }
+}
+
+/// Emit the diagnostic via the existing lightweight printer.
+pub fn emit_diagnostic(d: &Diagnostic, source: Option<&str>) {
+    report_error(d.file.as_deref(), source, &d.message, d.note.as_deref());
+}

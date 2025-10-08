@@ -505,17 +505,21 @@ fn main() -> Result<()> {
                             let malloc_ty = codegen.i8ptr_t.fn_type(&[codegen.i64_t.into()], false);
                             let _ = codegen.module.add_function("malloc", malloc_ty, None);
                         }
-                        let malloc_fn = codegen.module.get_function("malloc").unwrap();
-
-                        let call_malloc = codegen
-                            .builder
-                            .build_call(malloc_fn, &[size_const.into()], "call_malloc")
-                            .expect("build_call failed");
-                        let obj_ptr = call_malloc
-                            .try_as_basic_value()
-                            .left()
-                            .unwrap()
-                            .into_pointer_value();
+                        let obj_ptr = if let Some(malloc_fn) = codegen.module.get_function("malloc") {
+                            let call_malloc = codegen
+                                .builder
+                                .build_call(malloc_fn, &[size_const.into()], "call_malloc")
+                                .expect("build_call failed");
+                            if let inkwell::Either::Left(bv) = call_malloc.try_as_basic_value() {
+                                bv.into_pointer_value()
+                            } else {
+                                // fallback to null pointer if malloc didn't produce a value
+                                codegen.context.ptr_type(inkwell::AddressSpace::default()).const_null()
+                            }
+                        } else {
+                            // If malloc isn't declared (shouldn't happen), return a null pointer
+                            codegen.context.ptr_type(inkwell::AddressSpace::default()).const_null()
+                        };
 
                         let header_val = codegen.i64_t.const_int(1u64, false);
                         let _ = codegen.builder.build_store(obj_ptr, header_val);
@@ -533,7 +537,8 @@ fn main() -> Result<()> {
                             .build_alloca(codegen.i8ptr_t, "this")
                             .expect("alloca this");
                         let _ = codegen.builder.build_store(this_alloca, obj_ptr);
-                        locals_stack.last_mut().unwrap().insert(
+                        if let Some(last) = locals_stack.last_mut() {
+                            last.insert(
                             "this".to_string(),
                             (
                                 this_alloca,
@@ -541,7 +546,8 @@ fn main() -> Result<()> {
                                 true,
                                 false,
                             ),
-                        );
+                            );
+                        }
 
                         let mut param_allocas: std::collections::HashMap<
                             String,
@@ -549,11 +555,14 @@ fn main() -> Result<()> {
                         > = std::collections::HashMap::new();
                         for (idx, (name, _ty, _is_prop)) in param_infos.iter().enumerate() {
                             let llvm_ty = param_llvm_types[idx];
-                            let param_alloca = codegen
-                                .builder
-                                .build_alloca(llvm_ty, name)
-                                .expect("alloca param");
-                            let param_val = func.get_nth_param(idx as u32).unwrap();
+                            let param_alloca = match codegen.builder.build_alloca(llvm_ty, name) {
+                                Ok(a) => a,
+                                Err(_) => continue,
+                            };
+                            let param_val = match func.get_nth_param(idx as u32) {
+                                Some(p) => p,
+                                None => continue,
+                            };
                             let _ = codegen.builder.build_store(param_alloca, param_val);
                             if llvm_ty == codegen.i8ptr_t.as_basic_type_enum() {
                                 let rc_inc = codegen.get_rc_inc();
@@ -562,10 +571,9 @@ fn main() -> Result<()> {
                                     .build_call(rc_inc, &[param_val.into()], "rc_inc_param")
                                     .expect("rc_inc param");
                             }
-                            locals_stack
-                                .last_mut()
-                                .unwrap()
-                                .insert(name.clone(), (param_alloca, llvm_ty, true, false));
+                            if let Some(last) = locals_stack.last_mut() {
+                                last.insert(name.clone(), (param_alloca, llvm_ty, true, false));
+                            }
                             param_allocas.insert(name.clone(), (param_alloca, llvm_ty));
                         }
 

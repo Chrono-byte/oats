@@ -34,11 +34,13 @@ impl<'a> super::CodeGen<'a> {
     ) -> Option<inkwell::values::FloatValue<'a>> {
         match val {
             BasicValueEnum::FloatValue(fv) => Some(fv),
-            BasicValueEnum::IntValue(iv) => Some(
-                self.builder
-                    .build_signed_int_to_float(iv, self.f64_t, "i2f")
-                    .expect("i2f failed"),
-            ),
+            BasicValueEnum::IntValue(iv) => match self
+                .builder
+                .build_signed_int_to_float(iv, self.f64_t, "i2f")
+            {
+                Ok(v) => Some(v),
+                Err(_) => None,
+            },
             _ => None,
         }
     }
@@ -53,18 +55,19 @@ impl<'a> super::CodeGen<'a> {
                 if iv.get_type().get_bit_width() == 64 {
                     Some(iv)
                 } else {
-                    Some(
-                        self.builder
-                            .build_int_cast(iv, self.i64_t, "cast_i64")
-                            .expect("build_int_cast failed"),
-                    )
+                    match self.builder.build_int_cast(iv, self.i64_t, "cast_i64") {
+                        Ok(v) => Some(v),
+                        Err(_) => None,
+                    }
                 }
             }
-            BasicValueEnum::FloatValue(fv) => Some(
-                self.builder
-                    .build_float_to_signed_int(fv, self.i64_t, "f2i")
-                    .expect("f2i failed"),
-            ),
+            BasicValueEnum::FloatValue(fv) => match self
+                .builder
+                .build_float_to_signed_int(fv, self.i64_t, "f2i")
+            {
+                Ok(v) => Some(v),
+                Err(_) => None,
+            },
             _ => None,
         }
     }
@@ -83,16 +86,14 @@ impl<'a> super::CodeGen<'a> {
                     let zero = self.i64_t.const_int(0, false);
                     // widen iv to i64 if needed
                     let iv_wide = if iv.get_type().get_bit_width() < 64 {
-                        self.builder
-                            .build_int_cast(iv, self.i64_t, "cast_i_wide")
-                            .expect("build_int_cast failed")
+                        self.builder.build_int_cast(iv, self.i64_t, "cast_i_wide").ok()? 
                     } else {
                         iv
                     };
                     let cmp = self
                         .builder
                         .build_int_compare(inkwell::IntPredicate::NE, iv_wide, zero, "cond_int_ne0")
-                        .expect("build_int_compare failed");
+                        .ok()?;
                     Some(cmp)
                 }
             }
@@ -102,48 +103,37 @@ impl<'a> super::CodeGen<'a> {
                 let is_not_zero = self
                     .builder
                     .build_float_compare(inkwell::FloatPredicate::ONE, fv, zero, "neq0")
-                    .expect("build_float_compare failed");
+                    .ok()?;
                 let is_not_nan = self
                     .builder
                     .build_float_compare(inkwell::FloatPredicate::OEQ, fv, fv, "not_nan")
-                    .expect("build_float_compare failed");
+                    .ok()?;
                 let cond = self
                     .builder
                     .build_and(is_not_zero, is_not_nan, "num_truth")
-                    .expect("build_and failed");
+                    .ok()?;
                 Some(cond)
             }
             BasicValueEnum::PointerValue(pv) => {
-                let is_null = self
-                    .builder
-                    .build_is_null(pv, "is_null")
-                    .expect("build_is_null failed");
-                let is_not_null = self
-                    .builder
-                    .build_not(is_null, "not_null")
-                    .expect("build_not failed");
+                let is_null = self.builder.build_is_null(pv, "is_null").ok()?;
+                let is_not_null = self.builder.build_not(is_null, "not_null").ok()?;
                 if let Some(strlen_fn) = self.module.get_function("strlen") {
                     let cs = self
                         .builder
                         .build_call(strlen_fn, &[pv.into()], "strlen_call")
-                        .expect("build_call strlen failed");
+                        .ok()?;
                     let either = cs.try_as_basic_value();
                     if let inkwell::Either::Left(bv) = either {
                         let len = bv.into_int_value();
                         let zero64 = self.i64_t.const_int(0, false);
                         let len_nonzero = self
                             .builder
-                            .build_int_compare(
-                                inkwell::IntPredicate::NE,
-                                len,
-                                zero64,
-                                "len_nonzero",
-                            )
-                            .expect("build_int_compare failed");
+                            .build_int_compare(inkwell::IntPredicate::NE, len, zero64, "len_nonzero")
+                            .ok()?;
                         let cond = self
                             .builder
                             .build_and(is_not_null, len_nonzero, "ptr_truth")
-                            .expect("build_and failed");
+                            .ok()?;
                         return Some(cond);
                     }
                 }
@@ -172,17 +162,17 @@ impl<'a> super::CodeGen<'a> {
         {
             let tv_f = match tv {
                 BasicValueEnum::FloatValue(fv) => fv,
-                BasicValueEnum::IntValue(iv) => self
-                    .builder
-                    .build_signed_int_to_float(iv, self.f64_t, "i2f")
-                    .expect("i2f failed"),
+                BasicValueEnum::IntValue(iv) => match self.builder.build_signed_int_to_float(iv, self.f64_t, "i2f") {
+                    Ok(v) => v,
+                    Err(_) => return None,
+                },
                 _ => return None,
             };
             let ty = self.f64_t.as_basic_type_enum();
-            let phi_node = self
-                .builder
-                .build_phi(ty, "phi_tmp")
-                .expect("build_phi failed");
+            let phi_node = match self.builder.build_phi(ty, "phi_tmp") {
+                Ok(p) => p,
+                Err(_) => return None,
+            };
             phi_node.add_incoming(&[
                 (&tv_f.as_basic_value_enum(), then_bb),
                 (&ev_f.as_basic_value_enum(), else_bb),
@@ -194,17 +184,17 @@ impl<'a> super::CodeGen<'a> {
         {
             let ev_f = match ev {
                 BasicValueEnum::FloatValue(fv) => fv,
-                BasicValueEnum::IntValue(iv) => self
-                    .builder
-                    .build_signed_int_to_float(iv, self.f64_t, "i2f")
-                    .expect("i2f failed"),
+                BasicValueEnum::IntValue(iv) => match self.builder.build_signed_int_to_float(iv, self.f64_t, "i2f") {
+                    Ok(v) => v,
+                    Err(_) => return None,
+                },
                 _ => return None,
             };
             let ty = self.f64_t.as_basic_type_enum();
-            let phi_node = self
-                .builder
-                .build_phi(ty, "phi_tmp")
-                .expect("build_phi failed");
+            let phi_node = match self.builder.build_phi(ty, "phi_tmp") {
+                Ok(p) => p,
+                Err(_) => return None,
+            };
             phi_node.add_incoming(&[
                 (&tv_f.as_basic_value_enum(), then_bb),
                 (&ev_f.as_basic_value_enum(), else_bb),
@@ -219,10 +209,10 @@ impl<'a> super::CodeGen<'a> {
         ) = (tv_ty, ev_ty)
         {
             let ty = self.i8ptr_t.as_basic_type_enum();
-            let phi_node = self
-                .builder
-                .build_phi(ty, "phi_tmp")
-                .expect("build_phi failed");
+            let phi_node = match self.builder.build_phi(ty, "phi_tmp") {
+                Ok(p) => p,
+                Err(_) => return None,
+            };
             phi_node.add_incoming(&[(&tv, then_bb), (&ev, else_bb)]);
             return Some(phi_node.as_basic_value());
         }

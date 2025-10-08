@@ -3,7 +3,6 @@
 // signature; it simply calls `oats_entry()` which the AOT module provides as
 // a void, no-argument wrapper around whatever `oats_main` the user exported.
 
-use std::ffi::CString;
 
 #[cfg(feature = "link_entry")]
 unsafe extern "C" {
@@ -31,7 +30,7 @@ fn main() {
         // Helper: attempt to locate and call `oats_entry`. All unsafe
         // interaction with the dynamic loader is contained here.
         fn try_call_oats_entry() -> Option<i32> {
-            let name = CString::new("oats_entry").unwrap();
+            let name = std::ffi::CString::new("oats_entry").unwrap();
             unsafe {
                 // Clear any existing dlerror state before lookup.
 

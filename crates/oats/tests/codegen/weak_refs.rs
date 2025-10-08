@@ -1,21 +1,29 @@
 use anyhow::Result;
-
-use oats::codegen::CodeGen;
 use oats::parser;
+use oats::codegen::CodeGen;
 use oats::types::{SymbolTable, check_function_strictness};
-use std::cell::Cell;
-
 use inkwell::context::Context;
 use inkwell::targets::TargetMachine;
+use std::cell::Cell;
 
 #[test]
-fn gen_add_function_ir_contains_fadd() -> Result<()> {
-    let source = r#"export function main(a: number, b: number): number { return a + b; }"#;
+fn test_weak_upgrade_downgrade_codegen() -> Result<()> {
+    let source = r#"
+export function main(): number {
+    // pseudo-API: assume someObject.downgrade() -> Weak<SomeType> and weak.upgrade() -> SomeType | null
+    // We'll use a member call pattern in source so codegen emits the helper calls.
+    // For the minimal test we don't need real types; we only assert IR contains helper names.
+    let obj: any = { } as any;
+    let w = obj.downgrade();
+    let u = w.upgrade();
+    return 0;
+}
+"#;
 
+    // parse and typecheck
     let parsed_mod = parser::parse_oats_module(source, None)?;
     let parsed = &parsed_mod.parsed;
 
-    // extract exported function and name
     let mut func_decl_opt: Option<(String, deno_ast::swc::ast::Function)> = None;
     for item_ref in parsed.program_ref().body() {
         if let deno_ast::ModuleItemRef::ModuleDecl(module_decl) = item_ref
@@ -28,9 +36,7 @@ fn gen_add_function_ir_contains_fadd() -> Result<()> {
         }
     }
 
-    let (func_name, func_decl) =
-        func_decl_opt.ok_or_else(|| anyhow::anyhow!("No exported function found"))?;
-
+    let (func_name, func_decl) = func_decl_opt.ok_or_else(|| anyhow::anyhow!("No exported function found"))?;
     let mut symbols = SymbolTable::new();
     let func_sig = check_function_strictness(&func_decl, &mut symbols)?;
 
@@ -39,6 +45,7 @@ fn gen_add_function_ir_contains_fadd() -> Result<()> {
     let triple = TargetMachine::get_default_triple();
     module.set_triple(&triple);
     let builder = context.create_builder();
+
     let codegen = CodeGen {
         context: &context,
         module,
@@ -64,35 +71,24 @@ fn gen_add_function_ir_contains_fadd() -> Result<()> {
         fn_union_box_ptr: std::cell::RefCell::new(None),
         fn_union_unbox_f64: std::cell::RefCell::new(None),
         fn_union_unbox_ptr: std::cell::RefCell::new(None),
-    fn_rc_weak_inc: std::cell::RefCell::new(None),
-    fn_rc_weak_dec: std::cell::RefCell::new(None),
-    fn_rc_weak_upgrade: std::cell::RefCell::new(None),
+        fn_rc_weak_inc: std::cell::RefCell::new(None),
+        fn_rc_weak_dec: std::cell::RefCell::new(None),
+        fn_rc_weak_upgrade: std::cell::RefCell::new(None),
         fn_union_get_discriminant: std::cell::RefCell::new(None),
         class_fields: std::cell::RefCell::new(std::collections::HashMap::new()),
         fn_param_types: std::cell::RefCell::new(std::collections::HashMap::new()),
-        source: &parsed_mod.source,
         loop_context_stack: std::cell::RefCell::new(Vec::new()),
+        source: &parsed_mod.source,
     };
 
     codegen
-        .gen_function_ir(
-            &func_name,
-            &func_decl,
-            &func_sig.params,
-            &func_sig.ret,
-            None,
-        )
+        .gen_function_ir(&func_name, &func_decl, &func_sig.params, &func_sig.ret, None)
         .expect("codegen should succeed");
 
     let ir = codegen.module.print_to_string().to_string();
 
-    let expected_sig = format!("define double @{}(double", func_name);
-    assert!(
-        ir.contains(&expected_sig),
-        "unexpected function signature: {}",
-        ir
-    );
-    assert!(ir.contains("fadd double"), "expected fadd in IR: {}", ir);
+    // Assert the runtime helper symbols are present in the generated IR
+    assert!(ir.contains("rc_weak_inc") || ir.contains("rc_weak_upgrade"), "IR should reference rc_weak helper functions (rc_weak_inc/rc_weak_upgrade)");
 
     Ok(())
 }

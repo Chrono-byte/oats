@@ -23,14 +23,35 @@ use std::ptr;
 use std::sync::atomic::{AtomicPtr, AtomicU64, Ordering};
 
 // Header flag constants
+// New header layout reserves 16 bits for a weak reference count in bits 33-48.
 const HEADER_STATIC_BIT: u64 = 1u64 << 32;
+// Low 32 bits are strong refcount
 const HEADER_RC_MASK: u64 = 0xffffffffu64;
+// Weak count occupies bits 33-48 (16 bits)
+const HEADER_WEAK_SHIFT: u64 = 33;
+const HEADER_WEAK_MASK: u64 = 0xffffu64 << HEADER_WEAK_SHIFT; // bits 33-48
+// Type tag bits start at bit 49 (to avoid colliding with weak count)
+const HEADER_TYPE_TAG_SHIFT: u64 = 49;
+// Flags mask includes everything above the low 32-bit refcount
 const HEADER_FLAGS_MASK: u64 = 0xffffffff00000000u64;
 
 // Create a header value for a heap-allocated object with initial refcount
 #[inline]
 fn make_heap_header(initial_rc: u32) -> u64 {
     (initial_rc as u64) & HEADER_RC_MASK
+}
+
+// Helper to extract weak count from a header value
+#[inline]
+fn header_get_weak_bits(h: u64) -> u64 {
+    (h & HEADER_WEAK_MASK) >> HEADER_WEAK_SHIFT
+}
+
+// Helper to set weak bits into a header value (weak must fit in 16 bits)
+#[inline]
+fn header_with_weak(h: u64, weak: u64) -> u64 {
+    let cleared = h & !HEADER_WEAK_MASK;
+    cleared | ((weak & 0xffffu64) << HEADER_WEAK_SHIFT)
 }
 
 // Allocate a heap string with RC header (refcount initialized to 1).
@@ -742,17 +763,13 @@ pub unsafe extern "C" fn rc_dec(p: *mut c_void) {
                 Ok(_) => {
                     if new_rc == 0 {
                         // An acquire fence ensures that all memory effects that happened
-                        // before the last reference was dropped are visible before we free.
+                        // before the last reference was dropped are visible before we run destructor.
                         std::sync::atomic::fence(Ordering::Acquire);
 
-                        // If the high 32 bits encode a type tag that indicates a
-                        // per-object destructor pointer is present, call it before
-                        // freeing. We use a simple convention for now: a type tag
-                        // value of 1 (in bits 33-63) means the second word
-                        // at offset sizeof(u64) holds a function pointer with
-                        // signature `extern "C" fn(*mut c_void)`.
-                        // Extract type tag from bits 33-63 (shift by 33, not 32)
-                        let type_tag = (old_header >> 33) as u32;
+                        // Extract the type tag that indicates a destructor. With the
+                        // new layout we expect type tags to be stored in the high bits
+                        // above the weak count (shift by HEADER_TYPE_TAG_SHIFT).
+                        let type_tag = (old_header >> HEADER_TYPE_TAG_SHIFT) as u32;
                         if type_tag == 1 {
                             // Read the destructor pointer from the second word.
                             let dtor_ptr_ptr = (obj_ptr as *mut u8).add(std::mem::size_of::<u64>())
@@ -769,11 +786,141 @@ pub unsafe extern "C" fn rc_dec(p: *mut c_void) {
                             }
                         }
 
-                        libc::free(obj_ptr);
+                        // After destructor runs, decrement the weak count on the control block
+                        // (the object's control block must survive until weak count reaches zero).
+                        rc_weak_dec(obj_ptr);
+                        // rc_weak_dec is responsible for freeing when weak count reaches zero.
                     }
                     break;
                 }
                 Err(_) => continue, // Spin on contention
+            }
+        }
+    }
+}
+
+// Atomically increment the weak count on an object. No-op for static objects.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rc_weak_inc(p: *mut c_void) {
+    if p.is_null() {
+        return;
+    }
+    unsafe {
+        let obj_ptr = get_object_base(p);
+        if obj_ptr.is_null() {
+            return;
+        }
+        let header = obj_ptr as *mut AtomicU64;
+        let header_val = (*header).load(Ordering::Relaxed);
+        if (header_val & HEADER_STATIC_BIT) != 0 {
+            return; // static objects never need weak accounting
+        }
+
+        loop {
+            let old_header = (*header).load(Ordering::Relaxed);
+            let weak = header_get_weak_bits(old_header);
+            let new_weak = (weak.wrapping_add(1)) & 0xffffu64;
+            let new_header = header_with_weak(old_header, new_weak);
+            match (*header).compare_exchange_weak(
+                old_header,
+                new_header,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => break,
+                Err(_) => continue,
+            }
+        }
+    }
+}
+
+// Atomically decrement the weak count and free the object when weak reaches zero
+// (and strong is already zero). No-op for static objects.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rc_weak_dec(p: *mut c_void) {
+    if p.is_null() {
+        return;
+    }
+    unsafe {
+        let obj_ptr = get_object_base(p);
+        if obj_ptr.is_null() {
+            return;
+        }
+        let header = obj_ptr as *mut AtomicU64;
+        let header_val = (*header).load(Ordering::Relaxed);
+        if (header_val & HEADER_STATIC_BIT) != 0 {
+            return; // static objects are immortal
+        }
+
+        loop {
+            let old_header = (*header).load(Ordering::Acquire);
+            let weak = header_get_weak_bits(old_header);
+            if weak == 0 {
+                // Underflow or double-dec; ignore
+                return;
+            }
+            let new_weak = (weak - 1) & 0xffffu64;
+            let new_header = header_with_weak(old_header, new_weak);
+
+            match (*header).compare_exchange_weak(
+                old_header,
+                new_header,
+                Ordering::AcqRel,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => {
+                    // If both strong and weak are now zero, free the object
+                    let strong = new_header & HEADER_RC_MASK;
+                    let weak_after = header_get_weak_bits(new_header);
+                    if strong == 0 && weak_after == 0 {
+                        // As an extra barrier, ensure destructor effects are visible
+                        std::sync::atomic::fence(Ordering::Acquire);
+                        libc::free(obj_ptr);
+                    }
+                    break;
+                }
+                Err(_) => continue,
+            }
+        }
+    }
+}
+
+// Attempt to upgrade a weak pointer into a strong one.
+// Returns the object pointer (same as input resolved to base) with strong
+// count incremented if successful, or NULL if the object has already been
+// destroyed (strong==0).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rc_weak_upgrade(p: *mut c_void) -> *mut c_void {
+    if p.is_null() {
+        return ptr::null_mut();
+    }
+    unsafe {
+        let obj_ptr = get_object_base(p);
+        if obj_ptr.is_null() {
+            return ptr::null_mut();
+        }
+
+        let header = obj_ptr as *mut AtomicU64;
+        loop {
+            let old_header = (*header).load(Ordering::Acquire);
+            if (old_header & HEADER_STATIC_BIT) != 0 {
+                // static objects: just return the base pointer without modifying counts
+                return obj_ptr;
+            }
+            let strong = old_header & HEADER_RC_MASK;
+            if strong == 0 {
+                return ptr::null_mut(); // object already destroyed
+            }
+            let new_strong = (strong.wrapping_add(1)) & HEADER_RC_MASK;
+            let new_header = (old_header & HEADER_FLAGS_MASK) | new_strong;
+            match (*header).compare_exchange_weak(
+                old_header,
+                new_header,
+                Ordering::AcqRel,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => return obj_ptr,
+                Err(_) => continue,
             }
         }
     }
@@ -813,11 +960,11 @@ pub extern "C" fn union_box_f64(v: f64) -> *mut c_void {
             return ptr::null_mut();
         }
 
-        // header: type_tag=1 (dtor present) | rc=1
-        let header_ptr = mem as *mut u64;
-        let type_tag: u64 = 1u64 << 33;
-        let refcount: u64 = 1u64;
-        *header_ptr = type_tag | refcount;
+    // header: type_tag=1 (dtor present) | rc=1
+    let header_ptr = mem as *mut u64;
+    let type_tag: u64 = 1u64 << HEADER_TYPE_TAG_SHIFT;
+    let refcount: u64 = 1u64;
+    *header_ptr = header_with_weak(type_tag | refcount, 0);
 
         // store dtor pointer at offset +8
         let dtor_ptr = mem.add(8) as *mut *mut c_void;
@@ -844,10 +991,10 @@ pub extern "C" fn union_box_ptr(p: *mut c_void) -> *mut c_void {
             return ptr::null_mut();
         }
 
-        let header_ptr = mem as *mut u64;
-        let type_tag: u64 = 1u64 << 33;
-        let refcount: u64 = 1u64;
-        *header_ptr = type_tag | refcount;
+    let header_ptr = mem as *mut u64;
+    let type_tag: u64 = 1u64 << HEADER_TYPE_TAG_SHIFT;
+    let refcount: u64 = 1u64;
+    *header_ptr = header_with_weak(type_tag | refcount, 0);
 
         // store dtor
         let dtor_ptr = mem.add(8) as *mut *mut c_void;
@@ -929,12 +1076,11 @@ mod tests {
             let mem = runtime_malloc(size) as *mut u8;
             assert!(!mem.is_null());
 
-            // set header: type_tag=1 (bits 33-63), refcount=1 (bits 0-31)
-            // Note: bit 32 is the static bit and should be 0 for heap objects
+            // set header: type_tag=1, refcount=1, weak=0
             let header_ptr = mem as *mut u64;
-            let type_tag: u64 = 1u64 << 33; // Type tag starts at bit 33, not bit 32
+            let type_tag: u64 = 1u64 << HEADER_TYPE_TAG_SHIFT;
             let refcount: u64 = 1u64;
-            let header_val: u64 = type_tag | refcount;
+            let header_val: u64 = header_with_weak(type_tag | refcount, 0);
             *header_ptr = header_val;
 
             // store destructor pointer at second word

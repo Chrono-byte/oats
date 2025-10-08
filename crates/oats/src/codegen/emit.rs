@@ -126,7 +126,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 OatsType::String
                 | OatsType::NominalStruct(_)
                 | OatsType::Array(_)
-                | OatsType::Promise(_) => self.i8ptr_t.into(),
+                | OatsType::Promise(_)
+                | OatsType::Weak(_)
+                | OatsType::Option(_) => self.i8ptr_t.into(),
                 OatsType::Boolean => self.bool_t.into(),
                 OatsType::Union(parts) => {
                     let any_ptr = parts.iter().any(|p| {
@@ -136,6 +138,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 | OatsType::NominalStruct(_)
                                 | OatsType::Array(_)
                                 | OatsType::Promise(_)
+                                | OatsType::Weak(_)
+                                | OatsType::Option(_)
                         )
                     });
                     if any_ptr {

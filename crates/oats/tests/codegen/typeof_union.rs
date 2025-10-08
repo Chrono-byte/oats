@@ -1,21 +1,29 @@
 use anyhow::Result;
-
+use inkwell::context::Context;
+use inkwell::targets::TargetMachine;
 use oats::codegen::CodeGen;
 use oats::parser;
 use oats::types::{SymbolTable, check_function_strictness};
 use std::cell::Cell;
 
-use inkwell::context::Context;
-use inkwell::targets::TargetMachine;
-
 #[test]
-fn gen_add_function_ir_contains_fadd() -> Result<()> {
-    let source = r#"export function main(a: number, b: number): number { return a + b; }"#;
+fn test_typeof_uses_discriminant_for_unions() -> Result<()> {
+    let source = r#"
+export function main(x: number | string): string {
+    // unary typeof
+    let a = typeof x;
+    // binary typeof comparison
+    if (typeof x === "number") {
+        return "num";
+    }
+    return "other";
+}
+"#;
 
     let parsed_mod = parser::parse_oats_module(source, None)?;
     let parsed = &parsed_mod.parsed;
 
-    // extract exported function and name
+    // Extract exported function
     let mut func_decl_opt: Option<(String, deno_ast::swc::ast::Function)> = None;
     for item_ref in parsed.program_ref().body() {
         if let deno_ast::ModuleItemRef::ModuleDecl(module_decl) = item_ref
@@ -28,8 +36,7 @@ fn gen_add_function_ir_contains_fadd() -> Result<()> {
         }
     }
 
-    let (func_name, func_decl) =
-        func_decl_opt.ok_or_else(|| anyhow::anyhow!("No exported function found"))?;
+    let (func_name, func_decl) = func_decl_opt.ok_or_else(|| anyhow::anyhow!("No exported function found"))?;
 
     let mut symbols = SymbolTable::new();
     let func_sig = check_function_strictness(&func_decl, &mut symbols)?;
@@ -39,6 +46,7 @@ fn gen_add_function_ir_contains_fadd() -> Result<()> {
     let triple = TargetMachine::get_default_triple();
     module.set_triple(&triple);
     let builder = context.create_builder();
+
     let codegen = CodeGen {
         context: &context,
         module,
@@ -67,7 +75,7 @@ fn gen_add_function_ir_contains_fadd() -> Result<()> {
     fn_rc_weak_inc: std::cell::RefCell::new(None),
     fn_rc_weak_dec: std::cell::RefCell::new(None),
     fn_rc_weak_upgrade: std::cell::RefCell::new(None),
-        fn_union_get_discriminant: std::cell::RefCell::new(None),
+    fn_union_get_discriminant: std::cell::RefCell::new(None),
         class_fields: std::cell::RefCell::new(std::collections::HashMap::new()),
         fn_param_types: std::cell::RefCell::new(std::collections::HashMap::new()),
         source: &parsed_mod.source,
@@ -86,13 +94,11 @@ fn gen_add_function_ir_contains_fadd() -> Result<()> {
 
     let ir = codegen.module.print_to_string().to_string();
 
-    let expected_sig = format!("define double @{}(double", func_name);
-    assert!(
-        ir.contains(&expected_sig),
-        "unexpected function signature: {}",
-        ir
-    );
-    assert!(ir.contains("fadd double"), "expected fadd in IR: {}", ir);
+    // Expect the discriminant helper to be referenced in the IR
+    assert!(ir.contains("union_get_discriminant") || ir.contains("union_get_disc"), "IR should call the union discriminant helper");
+
+    // Expect interned string literal globals for "number" and "string"
+    assert!(ir.contains("strlit") , "IR should contain string literal globals (interned strings)");
 
     Ok(())
 }

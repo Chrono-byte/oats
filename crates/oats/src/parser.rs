@@ -12,8 +12,29 @@ pub struct ParsedModule {
 
 pub fn parse_oats_module(source_code: &str, file_path: Option<&str>) -> Result<ParsedModule> {
     let sti = SourceTextInfo::from_string(source_code.to_string());
+    // Use the provided file_path (if any) to create a proper file:// URL so
+    // diagnostics and span-based tooling can show accurate paths. Fall back
+    // to a generic placeholder when no path is available.
+    let specifier = if let Some(p) = file_path {
+        // Try to canonicalize to an absolute path where possible; if that
+        // fails, still attempt to produce a file:// URL from the provided
+        // path string.
+        match std::fs::canonicalize(p) {
+            Ok(abs) => Url::from_file_path(abs).map_err(|()| {
+                anyhow::anyhow!("failed to convert path to file URL: {}", p)
+            })?,
+            Err(_) => Url::from_file_path(p).unwrap_or_else(|_| {
+                // Last-resort: treat as a plain file URL using the original
+                // string (not ideal but better than a constant placeholder).
+                Url::parse("file://file.ts").unwrap()
+            }),
+        }
+    } else {
+        Url::parse("file://file.ts")?
+    };
+
     let params = ParseParams {
-        specifier: Url::parse("file://file.ts")?,
+        specifier,
         text: sti.text().clone(),
         media_type: MediaType::TypeScript,
         // Capture tokens so we can validate semicolon presence if needed.

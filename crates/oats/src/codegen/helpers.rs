@@ -22,7 +22,9 @@ impl<'a> super::CodeGen<'a> {
             OatsType::String
             | OatsType::NominalStruct(_)
             | OatsType::Array(_)
-            | OatsType::Promise(_) => self.i8ptr_t.as_basic_type_enum(),
+            | OatsType::Promise(_)
+            | OatsType::Weak(_)
+            | OatsType::Option(_) => self.i8ptr_t.as_basic_type_enum(),
             OatsType::Union(parts) => {
                 // If any part is pointer-like, treat as pointer; otherwise number.
                 let any_ptr = parts.iter().any(|p| {
@@ -32,6 +34,8 @@ impl<'a> super::CodeGen<'a> {
                             | OatsType::NominalStruct(_)
                             | OatsType::Array(_)
                             | OatsType::Promise(_)
+                            | OatsType::Weak(_)
+                            | OatsType::Option(_)
                     )
                 });
                 if any_ptr {

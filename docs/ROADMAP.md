@@ -1,6 +1,8 @@
 # Oats Compiler Roadmap
 
-This document provides a comprehensive roadmap for the Oats TypeScript-to-LLVM AOT compiler, covering short-term goals, long-term vision, and detailed implementation plans for major features.
+This document provides a comprehensive roadmap for the Oats TypeScript-to-LLVM
+AOT compiler, covering short-term goals, long-term vision, and detailed
+implementation plans for major features.
 
 ## Table of Contents
 
@@ -17,15 +19,19 @@ This document provides a comprehensive roadmap for the Oats TypeScript-to-LLVM A
 
 ## Executive Summary
 
-**Current State:** Oats can compile simple, self-contained TypeScript programs with basic classes, arrays, loops, and functions. However, it cannot run "off the shelf" TypeScript code from the internet.
+**Current State:** Oats can compile simple, self-contained TypeScript programs
+with basic classes, arrays, loops, and functions. However, it cannot run "off
+the shelf" TypeScript code from the internet.
 
 **Compatibility Estimate:**
+
 - **Today:** <1% of npm packages would work
 - **After Phase 1:** ~10-15% of simple TypeScript code
-- **After Phase 2:** ~40-50% of typical applications  
+- **After Phase 2:** ~40-50% of typical applications
 - **Production Ready:** 3-5 years of development
 
 **Development Focus:**
+
 - **Phase 1 (6-12 months):** Core language features for basic compatibility
 - **Phase 2 (6-12 months):** Advanced features for real applications
 - **Phase 3 (12+ months):** Ecosystem integration and production readiness
@@ -37,12 +43,14 @@ This document provides a comprehensive roadmap for the Oats TypeScript-to-LLVM A
 ### ✅ What Works Today (v0.1.0)
 
 #### Type System
+
 - [x] Basic types: `number`, `boolean`, `string`, `void`
 - [x] Arrays: `number[]`, `string[]` (homogeneous only)
 - [x] Nominal classes: `class Foo { ... }`
 - [x] Type annotations on parameters and returns
 
 #### Language Features
+
 - [x] Named functions with strict type checking
 - [x] Classes with constructors, fields, methods
 - [x] `this` binding in methods
@@ -57,11 +65,13 @@ This document provides a comprehensive roadmap for the Oats TypeScript-to-LLVM A
 - [x] Constructor parameters: `constructor(public x: number)`
 
 #### Module System
+
 - [x] Export declarations: `export function`, `export class`
 - [x] Import declarations parsed (types registered)
 - [ ] **NOT SUPPORTED:** Cross-file compilation, module resolution
 
 #### Memory Management
+
 - [x] Reference counting for heap objects
 - [x] Automatic RC increment/decrement
 - [x] Runtime bounds checking for arrays
@@ -69,6 +79,7 @@ This document provides a comprehensive roadmap for the Oats TypeScript-to-LLVM A
 - [x] Static string literals (immortal, no RC overhead)
 
 #### Tooling
+
 - [x] LLVM IR generation
 - [x] AOT compilation to native code
 - [x] Basic diagnostics with source spans
@@ -77,25 +88,44 @@ This document provides a comprehensive roadmap for the Oats TypeScript-to-LLVM A
 ### ❌ Critical Missing Features
 
 **Blocking Real-world Usage:**
-- ❌ Arrow functions (non-closing)
-- ❌ Object literals: `{ x: 1, y: 2 }`
-- ❌ Interface types and type aliases
-- ❌ Module resolution and multi-file compilation
-- ❌ Standard library (console.log, Math, Array methods)
-- ❌ Union types and basic generics
-- ❌ Closures with capture
+
+### Status: implemented / partially-implemented / outstanding
+
+The project has made progress on several items previously listed as missing.
+Below is the updated status with short notes.
+
+- ✅ Arrow functions (non-capturing) — implemented (non-capturing arrows lowered
+  to static functions; capturing/closures remain to be implemented)
+- ✅ Object literals (basic) — implemented: object literals are lowered to
+  heap-allocated structs with header + fields; shorthand props supported.
+  Computed keys and spread remain unsupported.
+- ⚠️ Interface types and type aliases — partially implemented: nominal type
+  mapping (`TsTypeRef` -> `NominalStruct`) and Promise/Array generic handling
+  exist; full structural interface/type-alias support is still incomplete.
+- ❌ Module resolution and multi-file compilation — still outstanding
+  (architectural work: resolver, graph, cross-file symbol resolution).
+- ⚠️ Standard library — partially implemented: runtime helpers exist for
+  `math_random`, string/print helpers, and array helper functions
+  (`array_alloc`, `array_get_*`, `array_push_*`); full stdlib API surface is
+  still missing.
+- ✅ Union types (basic) — implemented: `OatsType::Union` support in the type
+  mapper, runtime boxing/unboxing helpers, and discriminant helper are present.
+  Generics beyond simple Promise/Array support remain outstanding.
+- ❌ Closures with capture — still outstanding (escape analysis and closure
+  environment lowering planned in Phase 2)
 
 ---
 
 ## Short-term Roadmap (Phase 1)
 
-**Goal:** Support simple npm packages and common TypeScript patterns  
-**Target Compatibility:** 10-15% of TypeScript code  
+**Goal:** Support simple npm packages and common TypeScript patterns\
+**Target Compatibility:** 10-15% of TypeScript code\
 **Timeline:** 6-12 months, 1-2 developers
 
 ### Priority 0 (Critical Blockers)
 
 #### 1. Arrow Functions (non-capturing) 🔴
+
 **Effort:** 1-2 weeks | **Complexity:** Low
 
 ```typescript
@@ -106,6 +136,7 @@ arr.forEach((x) => print_f64(x));
 ```
 
 **Implementation:**
+
 - Parse `ast::Expr::Arrow` in expression lowering
 - Generate function symbol for arrow expression
 - Handle implicit returns for expression bodies
@@ -113,16 +144,18 @@ arr.forEach((x) => print_f64(x));
 - Start with non-capturing arrows (defer closures to Phase 2)
 
 #### 2. Module Resolution and Multi-file Compilation 🔴
+
 **Effort:** 4-6 weeks | **Complexity:** High
 
 ```typescript
 // Target support:
-import { readFile } from 'fs';
-import utils from './utils';
-export { helper } from './lib';
+import { readFile } from "fs";
+import utils from "./utils";
+export { helper } from "./lib";
 ```
 
 **Implementation:**
+
 - Module resolver (Node.js algorithm for relative imports)
 - Find .ts/.tsx files on disk (no node_modules initially)
 - Parse imported modules recursively
@@ -132,6 +165,7 @@ export { helper } from './lib';
 - This is the biggest architectural change
 
 #### 3. Interfaces and Type Aliases 🔴
+
 **Effort:** 2-3 weeks | **Complexity:** Medium
 
 ```typescript
@@ -144,6 +178,7 @@ type Point = { x: number; y: number };
 ```
 
 **Implementation:**
+
 - Parse `TsInterfaceDecl` and register as nominal type
 - Parse `TsTypeAliasDecl` and expand to underlying type
 - Extend `map_ts_type()` to handle interface references
@@ -152,58 +187,45 @@ type Point = { x: number; y: number };
 
 ### Priority 1 (High Impact)
 
-#### 4. Object Literals 🟡
-**Effort:** 1-2 weeks | **Complexity:** Low-Medium
+#### 4. Unions, Object Literals, and typeof (Critical consolidation) 🟡
 
-```typescript
-// Target support:
-const point = { x: 1, y: 2 };
-const user = { name: "Alice", age: 30 };
-```
+Work completed so far has introduced a runtime discriminant helper and basic
+boxed-union layout. The next step is to finish end-to-end support and test
+coverage.
 
-**Implementation:**
-- Parse `ast::Expr::Object` (ObjectLit)
-- Infer anonymous struct type from literal
-- Allocate struct on heap with RC header
-- Initialize fields from literal values
-- Support shorthand properties: `{ x, y }`
+Effort: 1-3 weeks | Complexity: Medium
 
-#### 5. Union Types (Basic) 🟡
-**Effort:** 2-3 weeks | **Complexity:** Medium
+Goals & acceptance criteria:
 
-```typescript
-// Target support:
-function process(value: string | number) { }
-let result: string | null = null;
-```
+- Representation: unions are boxed where necessary (pointer ABI) and expose a
+  64-bit discriminant word (runtime helper `union_get_discriminant`).
+- Lowering: locals, parameters, field stores, array elements, and object
+  literals use boxed unions when type requires. Compiler emits `union_box_*` /
+  `union_unbox_*` and `rc_inc`/`rc_dec` appropriately.
+- typeof semantics: unary `typeof` and binary `typeof <expr> === "..."` use the
+  discriminant for boxed unions and return interned string pointers that behave
+  like static string literals.
+- Tests: IR-level tests assert presence of `union_get_discriminant` and interned
+  string globals; integration smoke test executes an AOT output exercising
+  typeof on boxed unions.
 
-**Implementation:**
-- Extend `OatsType` enum: `Union(Vec<OatsType>)`
-- Parse `TsUnionType` in `map_ts_type()`
-- Tagged union representation (discriminator + payload)
-- Runtime type guards: `typeof`, `instanceof`
-- Start with simple unions (2-3 types max)
+Implementation steps (short):
 
-#### 6. Standard Library Basics 🟡
-**Effort:** 2-4 weeks | **Complexity:** Medium
+1. Finish codegen lowering for union-typed locals/params/fields (box on store,
+   unbox on numeric coercion). Ensure `rc_inc`/`rc_dec` invariants. (1 week)
+2. Finalize unary and binary `typeof` lowering to consult discriminant when
+   operand is pointer-like and fall back correctly. (2-3 days)
+3. Add IR-level and runtime tests covering boxed number/string/boolean unions,
+   field writes, param passing, and destructor behaviour. (3-5 days)
+4. Small optimizations: hoist cached helper FunctionValue lookups and consider
+   inlining discriminant checks in hot paths. (optional)
 
-```typescript
-// Target support:
-console.log("hello", 42);
-Math.random();
-arr.push(42);
-"hello".length;
-```
-
-**Implementation:**
-- `console.log()` - varargs, format any type
-- `Math.random()`, `Math.floor()`, `Math.ceil()`, `Math.abs()`
-- `Array.prototype.push()`, `pop()`, `shift()`, `unshift()`
-- `String.prototype.length`, `charAt()`, `substring()`
-- Start with intrinsics (compiler builtins)
-- Link Math functions to libc `<math.h>`
+Rationale: finishing unions and object-literal boxing is high-impact — it
+enables many real-world patterns (heterogeneous containers, optional values) and
+stabilizes runtime/RC semantics.
 
 ### Expected Phase 1 Outcome
+
 - **Compatibility:** Jump from <1% to ~15-20%
 - **Can Compile:** Simple utility libraries, basic frameworks
 - **Examples:** Basic Express routes, simple React components
@@ -212,41 +234,49 @@ arr.push(42);
 
 ## Medium-term Roadmap (Phase 2)
 
-**Goal:** Support typical application code, framework basics  
-**Target Compatibility:** 40-50% of TypeScript code  
+**Goal:** Support typical application code, framework basics\
+**Target Compatibility:** 40-50% of TypeScript code\
 **Timeline:** 6-12 months, 2-3 developers
 
 ### Advanced Language Features
 
 #### 7. Closures with Capture 🔴
+
 **Effort:** 4-6 weeks | **Complexity:** High
 
 ```typescript
 // Target support:
 function makeCounter() {
     let count = 0;
-    return () => count++;  // captures 'count'
+    return () => count++; // captures 'count'
 }
 ```
 
 **Implementation:**
+
 - Escape analysis: detect captured variables
-- Closure environment struct allocation  
+- Closure environment struct allocation
 - Box captured variables on heap
 - Generate closure thunk (trampoline)
 - Pass environment pointer to closure body
 - This unlocks functional programming patterns
 
 #### 8. Generics (Monomorphization) 🔴
+
 **Effort:** 6-8 weeks | **Complexity:** Very High
 
 ```typescript
 // Target support:
-function identity<T>(x: T): T { return x; }
-class Box<T> { constructor(public value: T) {} }
+function identity<T>(x: T): T {
+    return x;
+}
+class Box<T> {
+    constructor(public value: T) {}
+}
 ```
 
 **Implementation:**
+
 - Parse type parameters: `<T, U extends Base>`
 - Track generic types in `OatsType`
 - Monomorphization: generate specialized code per concrete type
@@ -255,6 +285,7 @@ class Box<T> { constructor(public value: T) {} }
 - This is PhD-level compiler work
 
 #### 9. Try/Catch/Finally 🟠
+
 **Effort:** 4-6 weeks | **Complexity:** High
 
 ```typescript
@@ -269,6 +300,7 @@ try {
 ```
 
 **Implementation:**
+
 - LLVM exception handling (landing pads, invoke)
 - Error object representation
 - Stack unwinding with proper cleanup
@@ -277,16 +309,18 @@ try {
 ### Enhanced Type System
 
 #### 10. Destructuring 🟢
+
 **Effort:** 3-4 weeks | **Complexity:** Medium
 
 ```typescript
 // Target support:
 const { x, y } = point;
 const [first, second] = array;
-function fn({ name, age }: User) { }
+function fn({ name, age }: User) {}
 ```
 
 #### 11. Tuples 🟢
+
 **Effort:** 1-2 weeks | **Complexity:** Low
 
 ```typescript
@@ -295,16 +329,18 @@ const pair: [string, number] = ["age", 42];
 ```
 
 #### 12. Spread & Rest Operators 🟡
+
 **Effort:** 2-3 weeks | **Complexity:** Medium
 
 ```typescript
 // Target support:
 const arr = [1, 2, ...otherArr];
 const obj = { x: 1, ...otherObj };
-function sum(...nums: number[]) { }
+function sum(...nums: number[]) {}
 ```
 
 ### Expected Phase 2 Outcome
+
 - **Compatibility:** ~40-50% of typical applications
 - **Can Compile:** Medium frameworks, React applications
 - **Examples:** Full Express servers, complex React apps
@@ -313,11 +349,12 @@ function sum(...nums: number[]) { }
 
 ## Long-term Vision (Phase 3)
 
-**Goal:** Production-ready, npm-compatible, ecosystem integration  
-**Target Compatibility:** 80%+ of TypeScript code  
+**Goal:** Production-ready, npm-compatible, ecosystem integration\
+**Target Compatibility:** 80%+ of TypeScript code\
 **Timeline:** 12+ months, 3-5 developers
 
 ### Advanced Type System
+
 - [ ] Higher-kinded types
 - [ ] Conditional types: `T extends U ? X : Y`
 - [ ] Mapped types: `{ [K in keyof T]: ... }`
@@ -327,13 +364,15 @@ function sum(...nums: number[]) { }
 - [ ] Index signatures: `[key: string]: any`
 
 ### Module System (Advanced)
+
 - [ ] `node_modules` resolution
-- [ ] Package.json parsing  
+- [ ] Package.json parsing
 - [ ] `@types/*` definitions
 - [ ] CommonJS interop: `require()`
 - [ ] ESM: `import.meta`, dynamic `import()`
 
 ### Standard Library (Complete)
+
 - [ ] Full `Array` prototype methods
 - [ ] Full `String` prototype methods
 - [ ] `Map`, `Set`, `WeakMap`, `WeakSet`
@@ -342,6 +381,7 @@ function sum(...nums: number[]) { }
 - [ ] `Proxy`, `Reflect`
 
 ### Ecosystem Integration
+
 - [ ] `tsconfig.json` support
 - [ ] Source maps and debugging
 - [ ] Incremental compilation
@@ -349,6 +389,7 @@ function sum(...nums: number[]) { }
 - [ ] FFI & native interop
 
 ### Performance & Optimization
+
 - [ ] Inline functions
 - [ ] Dead code elimination
 - [ ] Loop optimizations
@@ -360,14 +401,16 @@ function sum(...nums: number[]) { }
 
 ### Overview
 
-Async/await is one of the most complex features to implement, requiring deep integration between compiler and runtime. This section provides a comprehensive implementation plan.
+Async/await is one of the most complex features to implement, requiring deep
+integration between compiler and runtime. This section provides a comprehensive
+implementation plan.
 
 ### Architecture: State Machines + Runtime Scheduler
 
 #### Compiler-Side Transformation
 
-**1. Create State Struct**
-For each async function, create a struct containing:
+**1. Create State Struct** For each async function, create a struct containing:
+
 - All local variables (persist when function pauses)
 - State field (integer) to track execution point
 - Saved intermediate values from expressions
@@ -390,8 +433,8 @@ struct FetchUserState {
 }
 ```
 
-**2. Rewrite Function Body**
-Transform the async function into a resume function with switch-based dispatch:
+**2. Rewrite Function Body** Transform the async function into a resume function
+with switch-based dispatch:
 
 ```rust
 fn fetchUser_resume(state_ptr: *mut FetchUserState) -> TaskStatus {
@@ -414,17 +457,16 @@ fn fetchUser_resume(state_ptr: *mut FetchUserState) -> TaskStatus {
 }
 ```
 
-**3. Lower `await` Expressions**
-Each `await` becomes:
+**3. Lower `await` Expressions** Each `await` becomes:
+
 1. Execute the awaited expression
-2. Save current state  
+2. Save current state
 3. Return "pending" status to runtime
 4. Create continuation point for resume
 
 #### Runtime-Side Execution
 
-**1. Task Queue**
-Runtime maintains queue of ready-to-run tasks:
+**1. Task Queue** Runtime maintains queue of ready-to-run tasks:
 
 ```c
 typedef struct Task {
@@ -434,8 +476,7 @@ typedef struct Task {
 } Task;
 ```
 
-**2. Event Loop**
-Core scheduler loop:
+**2. Event Loop** Core scheduler loop:
 
 ```c
 void runtime_run_event_loop() {
@@ -452,8 +493,8 @@ void runtime_run_event_loop() {
 }
 ```
 
-**3. Promise Object**
-Link tasks together and enable scheduler to resume waiting tasks:
+**3. Promise Object** Link tasks together and enable scheduler to resume waiting
+tasks:
 
 ```c
 typedef struct Promise {
@@ -468,11 +509,13 @@ typedef struct Promise {
 ### Implementation Phases
 
 #### Phase 0: Foundation (2-4 hours)
+
 - [ ] Add `Promise` object layout to heap design
 - [ ] Add `OatsType::Promise(Box<OatsType>)` to type system
 - [ ] Write unit tests for Promise representation
 
 #### Phase 1: State Machine Transformation (1-2 weeks)
+
 - [ ] Add `is_async` detection in function parsing
 - [ ] Implement `gen_async_function_ir()` for simple case
 - [ ] Transform single `await` expression
@@ -480,6 +523,7 @@ typedef struct Promise {
 - [ ] Test: compile async function to IR
 
 #### Phase 2: Minimal Scheduler (1-2 weeks)
+
 - [ ] Implement task queue in runtime
 - [ ] Add `runtime_schedule_task()` function
 - [ ] Add `runtime_run_event_loop()` function
@@ -487,12 +531,14 @@ typedef struct Promise {
 - [ ] Test: manually schedule tasks
 
 #### Phase 3: Integration (1-2 weeks)
+
 - [ ] Codegen for `await` calls runtime functions
 - [ ] Async function wrapper schedules tasks
 - [ ] Main function calls event loop
 - [ ] Test: end-to-end async function execution
 
 #### Phase 4: Real I/O (3-4 weeks)
+
 - [ ] Integrate with OS event systems (epoll/kqueue/IOCP)
 - [ ] Implement `setTimeout()` using timer wheel
 - [ ] Implement async file I/O
@@ -536,7 +582,7 @@ typedef struct Promise {
 
 2. **Core language features**
    - Arrow functions (non-capturing)
-   - Object literals  
+   - Object literals
    - Module resolution (relative imports first)
    - Standard library basics
 
@@ -552,40 +598,41 @@ typedef struct Promise {
 
 ### Phase 1 Breakdown (6-12 months, 1-2 developers)
 
-| Feature | Effort | Complexity | Priority |
-|---------|--------|------------|----------|
-| Arrow functions (non-closing) | 1-2 weeks | Low | P0 |
-| Interfaces & type aliases | 2-3 weeks | Medium | P0 |
-| Union types (basic) | 2-3 weeks | Medium | P1 |
-| Object literals | 1-2 weeks | Low-Medium | P1 |
-| Template literals | 1 week | Low | P2 |
-| Module resolution | 4-6 weeks | High | P0 |
-| Standard library basics | 2-4 weeks | Medium | P1 |
-| **Total Phase 1** | **14-22 weeks** | | |
+| Feature                       | Effort          | Complexity | Priority |
+| ----------------------------- | --------------- | ---------- | -------- |
+| Arrow functions (non-closing) | 1-2 weeks       | Low        | P0       |
+| Interfaces & type aliases     | 2-3 weeks       | Medium     | P0       |
+| Union types (basic)           | 2-3 weeks       | Medium     | P1       |
+| Object literals               | 1-2 weeks       | Low-Medium | P1       |
+| Template literals             | 1 week          | Low        | P2       |
+| Module resolution             | 4-6 weeks       | High       | P0       |
+| Standard library basics       | 2-4 weeks       | Medium     | P1       |
+| **Total Phase 1**             | **14-22 weeks** |            |          |
 
 ### Phase 2 Breakdown (6-12 months, 2-3 developers)
 
-| Feature | Effort | Complexity | Priority |
-|---------|--------|------------|----------|
-| Closures | 4-6 weeks | High | P0 |
-| Generics | 6-8 weeks | Very High | P0 |
-| Async/await | 8-12 weeks | Very High | P0 |
-| Destructuring | 3-4 weeks | Medium | P2 |
-| Optional/default params | 1-2 weeks | Low | P2 |
-| Try/catch | 4-6 weeks | High | P1 |
-| Tuples | 1-2 weeks | Low | P2 |
-| Spread/rest | 2-3 weeks | Medium | P1 |
-| **Total Phase 2** | **30-48 weeks** | | |
+| Feature                 | Effort          | Complexity | Priority |
+| ----------------------- | --------------- | ---------- | -------- |
+| Closures                | 4-6 weeks       | High       | P0       |
+| Generics                | 6-8 weeks       | Very High  | P0       |
+| Async/await             | 8-12 weeks      | Very High  | P0       |
+| Destructuring           | 3-4 weeks       | Medium     | P2       |
+| Optional/default params | 1-2 weeks       | Low        | P2       |
+| Try/catch               | 4-6 weeks       | High       | P1       |
+| Tuples                  | 1-2 weeks       | Low        | P2       |
+| Spread/rest             | 2-3 weeks       | Medium     | P1       |
+| **Total Phase 2**       | **30-48 weeks** |            |          |
 
 ### Phase 3 Breakdown (12+ months, 3-5 developers)
 
 - **Advanced language features:** 6-12 months
-- **Ecosystem integration:** 6-12 months  
+- **Ecosystem integration:** 6-12 months
 - **Production hardening:** 6-12 months
 
 ### Success Metrics
 
 #### Compatibility Milestones
+
 - [ ] **10% milestone:** Simple utility libraries (lodash basics)
 - [ ] **25% milestone:** Small frameworks (basic Express routes)
 - [ ] **50% milestone:** Medium applications (React components)
@@ -593,11 +640,13 @@ typedef struct Promise {
 - [ ] **90% milestone:** Most npm packages
 
 #### Performance Targets
+
 - [ ] Compilation speed: <100ms per 1000 LOC
 - [ ] Generated code: Within 2x of V8/JIT performance
 - [ ] Memory overhead: <10MB baseline
 
-#### Quality Targets  
+#### Quality Targets
+
 - [ ] Test coverage: >80%
 - [ ] Zero crashes on valid TypeScript
 - [ ] Graceful errors on invalid code
@@ -610,7 +659,7 @@ typedef struct Promise {
 ### Immediate (This Sprint)
 
 1. ✅ **Arrow functions (non-closing)** - Quick win, high impact
-2. ✅ **Object literals** - Unblocks many patterns  
+2. ✅ **Object literals** - Unblocks many patterns
 3. ✅ **Template literals** - Quality-of-life improvement
 
 **Expected Outcome:** Jump from <1% to ~10% compatibility
@@ -636,12 +685,14 @@ typedef struct Promise {
 ## Contributing
 
 ### Good First Issues
+
 - Arrow functions (non-closing)
-- Template literals  
+- Template literals
 - Tuples
 - Object literals
 
 ### Harder Issues (Need Mentoring)
+
 - Module resolution
 - Closures
 - Generics
@@ -657,4 +708,7 @@ typedef struct Promise {
 
 ---
 
-This roadmap represents a living document that evolves based on user feedback, technical discoveries, and resource availability. The focus remains on building a production-quality TypeScript compiler that can handle real-world codebases while maintaining the performance benefits of AOT compilation.
+This roadmap represents a living document that evolves based on user feedback,
+technical discoveries, and resource availability. The focus remains on building
+a production-quality TypeScript compiler that can handle real-world codebases
+while maintaining the performance benefits of AOT compilation.

@@ -1708,7 +1708,16 @@ impl<'a> CodeGen<'a> {
                                 // Create an alloca for this local at function entry
                                 // and insert it into the current scope as uninitialized
                                 if let Some(init) = &decl.init {
-                                    if let Some(val) = self.lower_expr_result(init, function, &param_map, &mut locals_stack, Some(function.get_name().to_str().unwrap_or(""))).ok() {
+                                    if let Some(val) = self
+                                        .lower_expr_result(
+                                            init,
+                                            function,
+                                            &param_map,
+                                            &mut locals_stack,
+                                            Some(function.get_name().to_str().unwrap_or("")),
+                                        )
+                                        .ok()
+                                    {
                                         match val {
                                             BasicValueEnum::FloatValue(fv) => {
                                                 let alloca = match self
@@ -2132,12 +2141,7 @@ impl<'a> CodeGen<'a> {
                                             match s {
                                                 ast::Stmt::Return(ret) => {
                                                     if let Some(arg) = &ret.arg {
-                                                        if let Some(val) = self.lower_expr(
-                                                            arg,
-                                                            function,
-                                                            &param_map,
-                                                            &mut locals_stack,
-                                                        ) {
+                                                        if let Some(val) = self.lower_expr_result(arg, function, &param_map, &mut locals_stack, Some(function.get_name().to_str().unwrap_or(""))).ok() {
                                                             let _ = self
                                                                 .builder
                                                                 .build_return(Some(&val));

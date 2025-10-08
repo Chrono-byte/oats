@@ -73,11 +73,10 @@ pub fn map_ts_type(ty: &ast::TsType) -> Option<OatsType> {
             if let Some(ident) = type_ref.type_name.as_ident() {
                 if ident.sym.as_ref() == "Promise" {
                     // Extract the type parameter
-                    if let Some(type_params) = &type_ref.type_params {
-                        if let Some(first_param) = type_params.params.first() {
+                    if let Some(type_params) = &type_ref.type_params
+                        && let Some(first_param) = type_params.params.first() {
                             return map_ts_type(first_param).map(|inner| OatsType::Promise(Box::new(inner)));
                         }
-                    }
                     // Promise without type parameter defaults to Promise<void>
                     return Some(OatsType::Promise(Box::new(OatsType::Void)));
                 }

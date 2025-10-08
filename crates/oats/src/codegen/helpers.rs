@@ -226,10 +226,10 @@ impl<'a> super::CodeGen<'a> {
             let tv_i = self.coerce_to_i64(tv)?;
             let ev_i = self.coerce_to_i64(ev)?;
             let ty = self.i64_t.as_basic_type_enum();
-            let phi_node = self
-                .builder
-                .build_phi(ty, "phi_tmp")
-                .expect("build_phi failed");
+            let phi_node = match self.builder.build_phi(ty, "phi_tmp") {
+                Ok(p) => p,
+                Err(_) => return None,
+            };
             phi_node.add_incoming(&[
                 (&tv_i.as_basic_value_enum(), then_bb),
                 (&ev_i.as_basic_value_enum(), else_bb),
@@ -266,10 +266,10 @@ impl<'a> super::CodeGen<'a> {
         if locals.is_empty() {
             locals.push(HashMap::new());
         }
-        locals
-            .last_mut()
-            .unwrap()
-            .insert(name, (ptr, ty, initialized, is_const));
+        // Safe: we just ensured locals is not empty above
+        if let Some(scope) = locals.last_mut() {
+            scope.insert(name, (ptr, ty, initialized, is_const));
+        }
     }
 
     #[allow(dead_code)]
@@ -353,10 +353,10 @@ impl<'a> super::CodeGen<'a> {
                     if let Ok(loaded) = self.builder.build_load(*ty, *ptr, "drop_load")
                         && let BasicValueEnum::PointerValue(pv) = loaded
                     {
+                        // Silently ignore build_call errors during cleanup
                         let _ = self
                             .builder
-                            .build_call(rc_dec, &[pv.into()], "rc_dec_local")
-                            .expect("build_call failed");
+                            .build_call(rc_dec, &[pv.into()], "rc_dec_local");
                     }
                 }
             }
@@ -383,10 +383,10 @@ impl<'a> super::CodeGen<'a> {
                     && let Ok(loaded) = self.builder.build_load(*ty, *ptr, "drop_load")
                     && let BasicValueEnum::PointerValue(pv) = loaded
                 {
+                    // Silently ignore build_call errors during cleanup
                     let _ = self
                         .builder
-                        .build_call(rc_dec, &[pv.into()], "rc_dec_local")
-                        .expect("build_call failed");
+                        .build_call(rc_dec, &[pv.into()], "rc_dec_local");
                 }
             }
         }

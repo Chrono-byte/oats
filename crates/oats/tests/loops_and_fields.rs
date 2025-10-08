@@ -17,13 +17,14 @@ fn gen_ir_for_source(src: &str) -> Result<String> {
     for item_ref in parsed.program_ref().body() {
         if let deno_ast::ModuleItemRef::ModuleDecl(module_decl) = item_ref
             && let deno_ast::swc::ast::ModuleDecl::ExportDecl(decl) = module_decl
-                && let deno_ast::swc::ast::Decl::Fn(f) = &decl.decl {
-                    let name = f.ident.sym.to_string();
-                    if name == "main" {
-                        func_decl_opt = Some((*f.function).clone());
-                        break;
-                    }
-                }
+            && let deno_ast::swc::ast::Decl::Fn(f) = &decl.decl
+        {
+            let name = f.ident.sym.to_string();
+            if name == "main" {
+                func_decl_opt = Some((*f.function).clone());
+                break;
+            }
+        }
     }
 
     let func_decl = func_decl_opt.ok_or_else(|| anyhow::anyhow!("No exported `main` found"))?;
@@ -67,49 +68,52 @@ fn gen_ir_for_source(src: &str) -> Result<String> {
     for item_ref in parsed.program_ref().body() {
         if let deno_ast::ModuleItemRef::ModuleDecl(module_decl) = item_ref
             && let deno_ast::swc::ast::ModuleDecl::ExportDecl(decl) = module_decl
-                && let deno_ast::swc::ast::Decl::Class(c) = &decl.decl {
-                    let class_name = c.ident.sym.to_string();
-                    let mut fields: Vec<(String, oats::types::OatsType)> = Vec::new();
-                    use deno_ast::swc::ast::{ClassMember, Expr, MemberProp, Stmt};
-                    // Collect explicit property declarations
-                    for member in &c.class.body {
-                        if let ClassMember::ClassProp(prop) = member
-                            && let deno_ast::swc::ast::PropName::Ident(id) = &prop.key {
-                                let fname = id.sym.to_string();
-                                if !fields.iter().any(|(n, _)| n == &fname) {
-                                    fields.push((fname, oats::types::OatsType::Number));
-                                }
-                            }
-                    }
-                    // Scan constructor ASTs for `this.<ident> = <expr>` assignments
-                    if fields.is_empty() {
-                        for member in &c.class.body {
-                            if let ClassMember::Constructor(cons) = member
-                                && let Some(body) = &cons.body {
-                                    for stmt in &body.stmts {
-                                        if let Stmt::Expr(expr_stmt) = stmt
-                                            && let Expr::Assign(assign) = &*expr_stmt.expr
-                                                && let deno_ast::swc::ast::AssignTarget::Simple(
-                                                    simple_target,
-                                                ) = &assign.left
-                                                    && let deno_ast::swc::ast::SimpleAssignTarget::Member(mem) =
-                                                        simple_target
-                                                        && matches!(&*mem.obj, Expr::This(_))
-                                                            && let MemberProp::Ident(ident) = &mem.prop {
-                                                                let name = ident.sym.to_string();
-                                                                let inferred = oats::types::OatsType::Number;
-                                                                if fields.iter().all(|(n, _)| n != &name) {
-                                                                    fields.push((name, inferred));
-                                                                }
-                                                            }
-                                    }
-                                }
-                        }
-                    }
-                    if !fields.is_empty() {
-                        codegen.class_fields.borrow_mut().insert(class_name, fields);
+            && let deno_ast::swc::ast::Decl::Class(c) = &decl.decl
+        {
+            let class_name = c.ident.sym.to_string();
+            let mut fields: Vec<(String, oats::types::OatsType)> = Vec::new();
+            use deno_ast::swc::ast::{ClassMember, Expr, MemberProp, Stmt};
+            // Collect explicit property declarations
+            for member in &c.class.body {
+                if let ClassMember::ClassProp(prop) = member
+                    && let deno_ast::swc::ast::PropName::Ident(id) = &prop.key
+                {
+                    let fname = id.sym.to_string();
+                    if !fields.iter().any(|(n, _)| n == &fname) {
+                        fields.push((fname, oats::types::OatsType::Number));
                     }
                 }
+            }
+            // Scan constructor ASTs for `this.<ident> = <expr>` assignments
+            if fields.is_empty() {
+                for member in &c.class.body {
+                    if let ClassMember::Constructor(cons) = member
+                        && let Some(body) = &cons.body
+                    {
+                        for stmt in &body.stmts {
+                            if let Stmt::Expr(expr_stmt) = stmt
+                                && let Expr::Assign(assign) = &*expr_stmt.expr
+                                && let deno_ast::swc::ast::AssignTarget::Simple(simple_target) =
+                                    &assign.left
+                                && let deno_ast::swc::ast::SimpleAssignTarget::Member(mem) =
+                                    simple_target
+                                && matches!(&*mem.obj, Expr::This(_))
+                                && let MemberProp::Ident(ident) = &mem.prop
+                            {
+                                let name = ident.sym.to_string();
+                                let inferred = oats::types::OatsType::Number;
+                                if fields.iter().all(|(n, _)| n != &name) {
+                                    fields.push((name, inferred));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if !fields.is_empty() {
+                codegen.class_fields.borrow_mut().insert(class_name, fields);
+            }
+        }
     }
 
     codegen.gen_function_ir(

@@ -1,5 +1,5 @@
 // Test to see all unary operators
-use deno_ast::{parse_module, MediaType, ParseParams};
+use deno_ast::{MediaType, ParseParams, parse_module};
 
 #[test]
 fn dump_all_unary_ops() {
@@ -21,7 +21,8 @@ export function main(): number {
         capture_tokens: false,
         scope_analysis: false,
         maybe_syntax: None,
-    }).unwrap();
+    })
+    .unwrap();
 
     println!("{:#?}", parsed.program());
 }

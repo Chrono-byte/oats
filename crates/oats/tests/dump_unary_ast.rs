@@ -1,5 +1,5 @@
 // Test to print what AST node type we get for unary operators
-use deno_ast::{parse_module, MediaType, ParseParams};
+use deno_ast::{MediaType, ParseParams, parse_module};
 
 #[test]
 fn dump_unary_ast() {
@@ -18,7 +18,8 @@ export function main(): number {
         capture_tokens: false,
         scope_analysis: false,
         maybe_syntax: None,
-    }).unwrap();
+    })
+    .unwrap();
 
     // Print the program structure
     println!("{:#?}", parsed.program());

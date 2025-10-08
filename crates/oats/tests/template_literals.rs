@@ -11,14 +11,14 @@ fn parse_simple_template_literal() -> Result<()> {
             return 0;
         }
     "#;
-    
+
     let parsed_mod = oats::parser::parse_oats_module(src, None)?;
     let parsed = &parsed_mod.parsed;
-    
+
     // Verify it parses without errors
     let body_count = parsed.program_ref().body().count();
     assert!(body_count > 0);
-    
+
     println!("Template literal parsed successfully");
     Ok(())
 }
@@ -34,10 +34,10 @@ fn parse_template_with_multiple_expressions() -> Result<()> {
             return 0;
         }
     "#;
-    
+
     let parsed_mod = oats::parser::parse_oats_module(src, None)?;
     let parsed = &parsed_mod.parsed;
-    
+
     let body_count = parsed.program_ref().body().count();
     assert!(body_count > 0);
     Ok(())
@@ -53,10 +53,10 @@ fn parse_template_with_number() -> Result<()> {
             return 0;
         }
     "#;
-    
+
     let parsed_mod = oats::parser::parse_oats_module(src, None)?;
     let parsed = &parsed_mod.parsed;
-    
+
     let body_count = parsed.program_ref().body().count();
     assert!(body_count > 0);
     Ok(())
@@ -73,10 +73,10 @@ Line 3`;
             return 0;
         }
     "#;
-    
+
     let parsed_mod = oats::parser::parse_oats_module(src, None)?;
     let parsed = &parsed_mod.parsed;
-    
+
     let body_count = parsed.program_ref().body().count();
     assert!(body_count > 0);
     Ok(())

@@ -3,7 +3,6 @@
 // signature; it simply calls `oats_entry()` which the AOT module provides as
 // a void, no-argument wrapper around whatever `oats_main` the user exported.
 
-
 #[cfg(feature = "link_entry")]
 unsafe extern "C" {
     // When the feature is enabled, `oats_entry` must be provided at link time

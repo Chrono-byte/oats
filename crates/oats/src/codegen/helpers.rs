@@ -19,9 +19,10 @@ impl<'a> super::CodeGen<'a> {
         match t {
             OatsType::Number => self.f64_t.as_basic_type_enum(),
             OatsType::Boolean => self.bool_t.as_basic_type_enum(),
-            OatsType::String | OatsType::NominalStruct(_) | OatsType::Array(_) | OatsType::Promise(_) => {
-                self.i8ptr_t.as_basic_type_enum()
-            }
+            OatsType::String
+            | OatsType::NominalStruct(_)
+            | OatsType::Array(_)
+            | OatsType::Promise(_) => self.i8ptr_t.as_basic_type_enum(),
             OatsType::Void => panic!("Void cannot be mapped to a BasicTypeEnum for params"),
         }
     }
@@ -36,7 +37,8 @@ impl<'a> super::CodeGen<'a> {
             BasicValueEnum::FloatValue(fv) => Some(fv),
             BasicValueEnum::IntValue(iv) => self
                 .builder
-                .build_signed_int_to_float(iv, self.f64_t, "i2f").ok(),
+                .build_signed_int_to_float(iv, self.f64_t, "i2f")
+                .ok(),
             _ => None,
         }
     }
@@ -56,7 +58,8 @@ impl<'a> super::CodeGen<'a> {
             }
             BasicValueEnum::FloatValue(fv) => self
                 .builder
-                .build_float_to_signed_int(fv, self.i64_t, "f2i").ok(),
+                .build_float_to_signed_int(fv, self.i64_t, "f2i")
+                .ok(),
             _ => None,
         }
     }

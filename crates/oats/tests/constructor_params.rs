@@ -1,7 +1,7 @@
 use anyhow::Result;
 use oats::codegen::CodeGen;
 use oats::parser;
-use oats::types::{check_function_strictness, OatsType, SymbolTable};
+use oats::types::{OatsType, SymbolTable, check_function_strictness};
 use std::cell::Cell;
 
 use inkwell::context::Context;
@@ -107,7 +107,13 @@ fn constructor_with_params_allocates_and_initializes() -> Result<()> {
                         params.push(OatsType::NominalStruct(class_name.clone()));
                         params.extend(sig.params.into_iter());
                         let fname = format!("{}_{}", class_name, mname);
-                        codegen.gen_function_ir(&fname, &m.function, &params, &sig.ret, Some("this"));
+                        codegen.gen_function_ir(
+                            &fname,
+                            &m.function,
+                            &params,
+                            &sig.ret,
+                            Some("this"),
+                        );
                     }
                 }
             }

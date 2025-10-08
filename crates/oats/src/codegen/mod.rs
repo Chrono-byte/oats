@@ -242,12 +242,13 @@ impl<'a> CodeGen<'a> {
         for &idx in param_map.values() {
             if let Some(param_ty) = llvm_param_types.get(idx as usize)
                 && param_ty.is_pointer_type()
-                    && let Some(pv) = function.get_nth_param(idx) {
-                        let rc_inc = self.get_rc_inc();
-                        self.builder
-                            .build_call(rc_inc, &[pv.into()], "rc_inc_param")
-                            .unwrap();
-                    }
+                && let Some(pv) = function.get_nth_param(idx)
+            {
+                let rc_inc = self.get_rc_inc();
+                self.builder
+                    .build_call(rc_inc, &[pv.into()], "rc_inc_param")
+                    .unwrap();
+            }
         }
         (param_map, locals_stack)
     }
@@ -309,14 +310,15 @@ impl<'a> CodeGen<'a> {
                                     let _ = self.builder.build_store(alloca, val);
                                     // If pointer type, increment RC for stored pointer
                                     if let inkwell::types::BasicTypeEnum::PointerType(_) = ty
-                                        && let BasicValueEnum::PointerValue(pv) = val {
-                                            let rc_inc = self.get_rc_inc();
-                                            let _ = self.builder.build_call(
-                                                rc_inc,
-                                                &[pv.into()],
-                                                "rc_inc_local",
-                                            );
-                                        }
+                                        && let BasicValueEnum::PointerValue(pv) = val
+                                    {
+                                        let rc_inc = self.get_rc_inc();
+                                        let _ = self.builder.build_call(
+                                            rc_inc,
+                                            &[pv.into()],
+                                            "rc_inc_local",
+                                        );
+                                    }
                                     // mark initialized in locals; is_const=false for now
                                     self.insert_local_current_scope(
                                         _locals_stack,
@@ -356,8 +358,7 @@ impl<'a> CodeGen<'a> {
             ast::Stmt::Return(ret) => {
                 // Lower return expression, emit rc_decs for locals then return
                 if let Some(arg) = &ret.arg {
-                    if let Ok(val) = self.lower_expr(arg, _function, _param_map, _locals_stack)
-                    {
+                    if let Ok(val) = self.lower_expr(arg, _function, _param_map, _locals_stack) {
                         // emit rc decs for locals
                         self.emit_rc_dec_for_locals(_locals_stack);
                         // build return with the lowered value
@@ -376,14 +377,16 @@ impl<'a> CodeGen<'a> {
                 if let Some(loop_ctx) = self.loop_context_stack.borrow().last().copied() {
                     // TODO: Handle labeled breaks if _break_stmt.label is Some
                     // For now, only support unlabeled break
-                    
+
                     // Emit RC decrements for locals before breaking
                     self.emit_rc_dec_for_locals(_locals_stack);
-                    
+
                     // Branch to break block
-                    let _ = self.builder.build_unconditional_branch(loop_ctx.break_block);
-                    
-                    true// break terminates the current block
+                    let _ = self
+                        .builder
+                        .build_unconditional_branch(loop_ctx.break_block);
+
+                    true // break terminates the current block
                 } else {
                     // Break outside of loop - this is a semantic error
                     // For now, just ignore it (ideally should emit diagnostic)
@@ -395,14 +398,16 @@ impl<'a> CodeGen<'a> {
                 if let Some(loop_ctx) = self.loop_context_stack.borrow().last().copied() {
                     // TODO: Handle labeled continues if _continue_stmt.label is Some
                     // For now, only support unlabeled continue
-                    
+
                     // Emit RC decrements for locals before continuing
                     self.emit_rc_dec_for_locals(_locals_stack);
-                    
+
                     // Branch to continue block
-                    let _ = self.builder.build_unconditional_branch(loop_ctx.continue_block);
-                    
-                    true// continue terminates the current block
+                    let _ = self
+                        .builder
+                        .build_unconditional_branch(loop_ctx.continue_block);
+
+                    true // continue terminates the current block
                 } else {
                     // Continue outside of loop - this is a semantic error
                     // For now, just ignore it (ideally should emit diagnostic)
@@ -430,11 +435,9 @@ impl<'a> CodeGen<'a> {
                         let merge_bb = self.context.append_basic_block(_function, "if.merge");
 
                         // Conditional branch
-                        let _ = self.builder.build_conditional_branch(
-                            cond_bool,
-                            then_bb,
-                            else_bb,
-                        );
+                        let _ = self
+                            .builder
+                            .build_conditional_branch(cond_bool, then_bb, else_bb);
 
                         // Build then block
                         self.builder.position_at_end(then_bb);
@@ -442,7 +445,9 @@ impl<'a> CodeGen<'a> {
                             ast::Stmt::Block(block) => {
                                 self.lower_stmts(&block.stmts, _function, _param_map, _locals_stack)
                             }
-                            _ => self.lower_stmt(&ifstmt.cons, _function, _param_map, _locals_stack),
+                            _ => {
+                                self.lower_stmt(&ifstmt.cons, _function, _param_map, _locals_stack)
+                            }
                         };
                         if !then_terminated {
                             let _ = self.builder.build_unconditional_branch(merge_bb);
@@ -452,9 +457,12 @@ impl<'a> CodeGen<'a> {
                         self.builder.position_at_end(else_bb);
                         let else_terminated = if let Some(alt) = &ifstmt.alt {
                             match &**alt {
-                                ast::Stmt::Block(block) => {
-                                    self.lower_stmts(&block.stmts, _function, _param_map, _locals_stack)
-                                }
+                                ast::Stmt::Block(block) => self.lower_stmts(
+                                    &block.stmts,
+                                    _function,
+                                    _param_map,
+                                    _locals_stack,
+                                ),
                                 _ => self.lower_stmt(alt, _function, _param_map, _locals_stack),
                             }
                         } else {
@@ -481,204 +489,209 @@ impl<'a> CodeGen<'a> {
                 // Only handle left as a var decl: `for (let v of rhs)`
                 // forof.left can be either a VarDecl or a Pat; we match on VarDecl
                 if let ast::ForHead::VarDecl(var_decl) = &forof.left
-                    && var_decl.decls.len() == 1 {
-                        let decl = &var_decl.decls[0];
-                        if let ast::Pat::Ident(ident) = &decl.name {
-                            let loop_var_name = ident.id.sym.to_string();
-                            // Lower RHS (iterable)
-                            if let Ok(iter_val) =
-                                self.lower_expr(&forof.right, _function, _param_map, _locals_stack)
-                                && let BasicValueEnum::PointerValue(arr_ptr) = iter_val {
-                                    // create index
-                                    let idx_alloca = self
+                    && var_decl.decls.len() == 1
+                {
+                    let decl = &var_decl.decls[0];
+                    if let ast::Pat::Ident(ident) = &decl.name {
+                        let loop_var_name = ident.id.sym.to_string();
+                        // Lower RHS (iterable)
+                        if let Ok(iter_val) =
+                            self.lower_expr(&forof.right, _function, _param_map, _locals_stack)
+                            && let BasicValueEnum::PointerValue(arr_ptr) = iter_val
+                        {
+                            // create index
+                            let idx_alloca = self
+                                .builder
+                                .build_alloca(self.i64_t, "for_idx")
+                                .expect("alloca idx");
+                            let zero = self.i64_t.const_int(0, false);
+                            let _ = self.builder.build_store(idx_alloca, zero);
+
+                            // create blocks
+                            let loop_cond_bb =
+                                self.context.append_basic_block(_function, "for.cond");
+                            let loop_body_bb =
+                                self.context.append_basic_block(_function, "for.body");
+                            let loop_after_bb =
+                                self.context.append_basic_block(_function, "for.after");
+
+                            // Push loop context (for-of: continue jumps to condition, break to after)
+                            self.loop_context_stack.borrow_mut().push(LoopContext {
+                                continue_block: loop_cond_bb,
+                                break_block: loop_after_bb,
+                            });
+
+                            let _ = self.builder.build_unconditional_branch(loop_cond_bb);
+
+                            self.builder.position_at_end(loop_cond_bb);
+                            // call strlen to get length
+                            if let Some(strlen_fn) = self.module.get_function("strlen") {
+                                let cs = match self.builder.build_call(
+                                    strlen_fn,
+                                    &[arr_ptr.into()],
+                                    "strlen_call",
+                                ) {
+                                    Ok(cs) => cs,
+                                    Err(_) => return false,
+                                };
+                                if let inkwell::Either::Left(bv) = cs.try_as_basic_value() {
+                                    let len = bv.into_int_value();
+                                    let cur_idx = match self
                                         .builder
-                                        .build_alloca(self.i64_t, "for_idx")
-                                        .expect("alloca idx");
-                                    let zero = self.i64_t.const_int(0, false);
-                                    let _ = self.builder.build_store(idx_alloca, zero);
-
-                                    // create blocks
-                                    let loop_cond_bb =
-                                        self.context.append_basic_block(_function, "for.cond");
-                                    let loop_body_bb =
-                                        self.context.append_basic_block(_function, "for.body");
-                                    let loop_after_bb =
-                                        self.context.append_basic_block(_function, "for.after");
-
-                                    // Push loop context (for-of: continue jumps to condition, break to after)
-                                    self.loop_context_stack.borrow_mut().push(LoopContext {
-                                        continue_block: loop_cond_bb,
-                                        break_block: loop_after_bb,
-                                    });
-
-                                    let _ = self.builder.build_unconditional_branch(loop_cond_bb);
-
-                                    self.builder.position_at_end(loop_cond_bb);
-                                    // call strlen to get length
-                                    if let Some(strlen_fn) = self.module.get_function("strlen") {
-                                        let cs = match self.builder.build_call(
-                                            strlen_fn,
-                                            &[arr_ptr.into()],
-                                            "strlen_call",
-                                        ) {
-                                            Ok(cs) => cs,
-                                            Err(_) => return false,
-                                        };
-                                        if let inkwell::Either::Left(bv) = cs.try_as_basic_value() {
-                                            let len = bv.into_int_value();
-                                            let cur_idx = match self
-                                                .builder
-                                                .build_load(self.i64_t, idx_alloca, "idx_load")
-                                            {
-                                                Ok(v) => v.into_int_value(),
-                                                Err(_) => return false,
-                                            };
-                                            let cmp = match self.builder.build_int_compare(
-                                                inkwell::IntPredicate::ULT,
-                                                cur_idx,
-                                                len,
-                                                "cmp_idx",
-                                            ) {
-                                                Ok(v) => v,
-                                                Err(_) => return false,
-                                            };
-                                            if self.builder.build_conditional_branch(
-                                                cmp,
-                                                loop_body_bb,
-                                                loop_after_bb,
-                                            ).is_err() {
-                                                return false;
-                                            }
-                                        } else if self
-                                            .builder
-                                            .build_unconditional_branch(loop_after_bb).is_err()
-                                        {
-                                            return false;
-                                        }
-                                    } else if self.builder.build_unconditional_branch(loop_after_bb).is_err()
+                                        .build_load(self.i64_t, idx_alloca, "idx_load")
+                                    {
+                                        Ok(v) => v.into_int_value(),
+                                        Err(_) => return false,
+                                    };
+                                    let cmp = match self.builder.build_int_compare(
+                                        inkwell::IntPredicate::ULT,
+                                        cur_idx,
+                                        len,
+                                        "cmp_idx",
+                                    ) {
+                                        Ok(v) => v,
+                                        Err(_) => return false,
+                                    };
+                                    if self
+                                        .builder
+                                        .build_conditional_branch(cmp, loop_body_bb, loop_after_bb)
+                                        .is_err()
                                     {
                                         return false;
                                     }
-
-                                    // body
-                                    self.builder.position_at_end(loop_body_bb);
-                                    let cur_idx = match self.builder.build_load(
-                                        self.i64_t,
-                                        idx_alloca,
-                                        "idx_load2",
-                                    ) {
-                                        Ok(v) => v.into_int_value(),
-                                        Err(_) => return false,
-                                    };
-                                    if let Some(array_get_f64_fn) =
-                                        self.module.get_function("array_get_f64")
-                                    {
-                                        let cs = match self.builder.build_call(
-                                            array_get_f64_fn,
-                                            &[arr_ptr.into(), cur_idx.into()],
-                                            "array_get_f64_call",
-                                        ) {
-                                            Ok(cs) => cs,
-                                            Err(_) => return false,
-                                        };
-                                        if let inkwell::Either::Left(bv) = cs.try_as_basic_value() {
-                                            let ty = bv.get_type().as_basic_type_enum();
-                                            let alloca = self
-                                                .builder
-                                                .build_alloca(ty, &loop_var_name)
-                                                .expect("alloca loop var");
-                                            let _ = self.builder.build_store(alloca, bv);
-                                            self.insert_local_current_scope(
-                                                _locals_stack,
-                                                loop_var_name.clone(),
-                                                alloca,
-                                                ty,
-                                                true,
-                                                false,
-                                            );
-                                        }
-                                    } else if let Some(array_get_ptr_fn) =
-                                        self.module.get_function("array_get_ptr")
-                                    {
-                                        let cs = match self.builder.build_call(
-                                            array_get_ptr_fn,
-                                            &[arr_ptr.into(), cur_idx.into()],
-                                            "array_get_ptr_call",
-                                        ) {
-                                            Ok(cs) => cs,
-                                            Err(_) => return false,
-                                        };
-                                        if let inkwell::Either::Left(bv) = cs.try_as_basic_value() {
-                                            let pv = bv.into_pointer_value();
-                                            let ty = pv.get_type().as_basic_type_enum();
-                                            let alloca = self
-                                                .builder
-                                                .build_alloca(ty, &loop_var_name)
-                                                .expect("alloca loop var ptr");
-                                            let _ = self.builder.build_store(alloca, bv);
-                                            let rc_inc = self.get_rc_inc();
-                                            let _ = self.builder.build_call(
-                                                rc_inc,
-                                                &[pv.into()],
-                                                "rc_inc_loop_var",
-                                            );
-                                            self.insert_local_current_scope(
-                                                _locals_stack,
-                                                loop_var_name.clone(),
-                                                alloca,
-                                                ty,
-                                                true,
-                                                false,
-                                            );
-                                        }
-                                    }
-
-                                    // Lower the loop body: handle a Block or single statement
-                                    let terminated = match &*forof.body {
-                                        ast::Stmt::Block(block) => self.lower_stmts(
-                                            &block.stmts,
-                                            _function,
-                                            _param_map,
-                                            _locals_stack,
-                                        ),
-                                        other => self.lower_stmt(
-                                            other,
-                                            _function,
-                                            _param_map,
-                                            _locals_stack,
-                                        ),
-                                    };
-                                    let cur_idx2 = match self.builder.build_load(
-                                        self.i64_t,
-                                        idx_alloca,
-                                        "idx_load3",
-                                    ) {
-                                        Ok(v) => v.into_int_value(),
-                                        Err(_) => return false,
-                                    };
-                                    let one = self.i64_t.const_int(1, false);
-                                    let next_idx =
-                                        match self.builder.build_int_add(cur_idx2, one, "idx_next")
-                                        {
-                                            Ok(v) => v,
-                                            Err(_) => return false,
-                                        };
-                                    let _ = self.builder.build_store(idx_alloca, next_idx);
-                                    if !terminated
-                                        && self.builder.build_unconditional_branch(loop_cond_bb).is_err()
-                                        {
-                                            self.loop_context_stack.borrow_mut().pop();
-                                            return false;
-                                        }
-                                    self.builder.position_at_end(loop_after_bb);
-                                    
-                                    // Pop loop context
-                                    self.loop_context_stack.borrow_mut().pop();
-                                    
-                                    return terminated;
+                                } else if self
+                                    .builder
+                                    .build_unconditional_branch(loop_after_bb)
+                                    .is_err()
+                                {
+                                    return false;
                                 }
+                            } else if self
+                                .builder
+                                .build_unconditional_branch(loop_after_bb)
+                                .is_err()
+                            {
+                                return false;
+                            }
+
+                            // body
+                            self.builder.position_at_end(loop_body_bb);
+                            let cur_idx = match self.builder.build_load(
+                                self.i64_t,
+                                idx_alloca,
+                                "idx_load2",
+                            ) {
+                                Ok(v) => v.into_int_value(),
+                                Err(_) => return false,
+                            };
+                            if let Some(array_get_f64_fn) =
+                                self.module.get_function("array_get_f64")
+                            {
+                                let cs = match self.builder.build_call(
+                                    array_get_f64_fn,
+                                    &[arr_ptr.into(), cur_idx.into()],
+                                    "array_get_f64_call",
+                                ) {
+                                    Ok(cs) => cs,
+                                    Err(_) => return false,
+                                };
+                                if let inkwell::Either::Left(bv) = cs.try_as_basic_value() {
+                                    let ty = bv.get_type().as_basic_type_enum();
+                                    let alloca = self
+                                        .builder
+                                        .build_alloca(ty, &loop_var_name)
+                                        .expect("alloca loop var");
+                                    let _ = self.builder.build_store(alloca, bv);
+                                    self.insert_local_current_scope(
+                                        _locals_stack,
+                                        loop_var_name.clone(),
+                                        alloca,
+                                        ty,
+                                        true,
+                                        false,
+                                    );
+                                }
+                            } else if let Some(array_get_ptr_fn) =
+                                self.module.get_function("array_get_ptr")
+                            {
+                                let cs = match self.builder.build_call(
+                                    array_get_ptr_fn,
+                                    &[arr_ptr.into(), cur_idx.into()],
+                                    "array_get_ptr_call",
+                                ) {
+                                    Ok(cs) => cs,
+                                    Err(_) => return false,
+                                };
+                                if let inkwell::Either::Left(bv) = cs.try_as_basic_value() {
+                                    let pv = bv.into_pointer_value();
+                                    let ty = pv.get_type().as_basic_type_enum();
+                                    let alloca = self
+                                        .builder
+                                        .build_alloca(ty, &loop_var_name)
+                                        .expect("alloca loop var ptr");
+                                    let _ = self.builder.build_store(alloca, bv);
+                                    let rc_inc = self.get_rc_inc();
+                                    let _ = self.builder.build_call(
+                                        rc_inc,
+                                        &[pv.into()],
+                                        "rc_inc_loop_var",
+                                    );
+                                    self.insert_local_current_scope(
+                                        _locals_stack,
+                                        loop_var_name.clone(),
+                                        alloca,
+                                        ty,
+                                        true,
+                                        false,
+                                    );
+                                }
+                            }
+
+                            // Lower the loop body: handle a Block or single statement
+                            let terminated = match &*forof.body {
+                                ast::Stmt::Block(block) => self.lower_stmts(
+                                    &block.stmts,
+                                    _function,
+                                    _param_map,
+                                    _locals_stack,
+                                ),
+                                other => {
+                                    self.lower_stmt(other, _function, _param_map, _locals_stack)
+                                }
+                            };
+                            let cur_idx2 = match self.builder.build_load(
+                                self.i64_t,
+                                idx_alloca,
+                                "idx_load3",
+                            ) {
+                                Ok(v) => v.into_int_value(),
+                                Err(_) => return false,
+                            };
+                            let one = self.i64_t.const_int(1, false);
+                            let next_idx =
+                                match self.builder.build_int_add(cur_idx2, one, "idx_next") {
+                                    Ok(v) => v,
+                                    Err(_) => return false,
+                                };
+                            let _ = self.builder.build_store(idx_alloca, next_idx);
+                            if !terminated
+                                && self
+                                    .builder
+                                    .build_unconditional_branch(loop_cond_bb)
+                                    .is_err()
+                            {
+                                self.loop_context_stack.borrow_mut().pop();
+                                return false;
+                            }
+                            self.builder.position_at_end(loop_after_bb);
+
+                            // Pop loop context
+                            self.loop_context_stack.borrow_mut().pop();
+
+                            return terminated;
                         }
                     }
+                }
                 false
             }
             // Handle regular for loops: `for (init; test; update) { body }`
@@ -798,7 +811,9 @@ impl<'a> CodeGen<'a> {
 
                 // Build condition block
                 self.builder.position_at_end(loop_cond_bb);
-                if let Ok(cond_val) = self.lower_expr(&while_stmt.test, _function, _param_map, _locals_stack) {
+                if let Ok(cond_val) =
+                    self.lower_expr(&while_stmt.test, _function, _param_map, _locals_stack)
+                {
                     // Coerce to i1 boolean
                     if let Some(cond_bool) = self.to_condition_i1(cond_val) {
                         let _ = self.builder.build_conditional_branch(
@@ -869,12 +884,14 @@ impl<'a> CodeGen<'a> {
 
                 // Build condition block
                 self.builder.position_at_end(loop_cond_bb);
-                if let Ok(cond_val) = self.lower_expr(&dowhile_stmt.test, _function, _param_map, _locals_stack) {
+                if let Ok(cond_val) =
+                    self.lower_expr(&dowhile_stmt.test, _function, _param_map, _locals_stack)
+                {
                     // Coerce to i1 boolean
                     if let Some(cond_bool) = self.to_condition_i1(cond_val) {
                         let _ = self.builder.build_conditional_branch(
                             cond_bool,
-                            loop_body_bb,  // Loop back to body
+                            loop_body_bb, // Loop back to body
                             loop_after_bb,
                         );
                     } else {
@@ -1040,9 +1057,10 @@ impl<'a> CodeGen<'a> {
         for pty in &param_types_vec {
             let llvm_ty = match pty {
                 OatsType::Number => self.f64_t.into(),
-                OatsType::String | OatsType::NominalStruct(_) | OatsType::Array(_) | OatsType::Promise(_) => {
-                    self.i8ptr_t.into()
-                }
+                OatsType::String
+                | OatsType::NominalStruct(_)
+                | OatsType::Array(_)
+                | OatsType::Promise(_) => self.i8ptr_t.into(),
                 OatsType::Boolean => self.bool_t.into(),
                 OatsType::Void => continue, // skip void params
             };
@@ -1137,15 +1155,13 @@ impl<'a> CodeGen<'a> {
                     .build_int_to_ptr(field_addr, self.i8ptr_t, "field_ptr")
                     .expect("int_to_ptr failed");
                 let _ = self.builder.build_store(field_ptr_cast, param_val);
-                
+
                 // If the field is a pointer type, increment its reference count
                 if param_val.get_type().is_pointer_type() {
                     let rc_inc_fn = self.get_rc_inc();
-                    let _ = self.builder.build_call(
-                        rc_inc_fn,
-                        &[param_val.into()],
-                        "rc_inc_field",
-                    );
+                    let _ = self
+                        .builder
+                        .build_call(rc_inc_fn, &[param_val.into()], "rc_inc_field");
                 }
             }
         }

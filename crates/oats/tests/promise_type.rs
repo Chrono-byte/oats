@@ -1,14 +1,17 @@
+use anyhow::Result;
+use oats::parser;
 /// Unit tests for Promise type support in the type system
 use oats::types::{OatsType, map_ts_type};
-use oats::parser;
-use anyhow::Result;
 
 #[test]
 fn promise_type_creation() {
     // Test creating a Promise<number> type
     let promise_number = OatsType::wrap_in_promise(OatsType::Number);
     assert!(promise_number.is_promise());
-    assert_eq!(promise_number.unwrap_promise_inner(), Some(&OatsType::Number));
+    assert_eq!(
+        promise_number.unwrap_promise_inner(),
+        Some(&OatsType::Number)
+    );
 }
 
 #[test]
@@ -16,7 +19,7 @@ fn promise_type_nested() {
     // Test Promise<Promise<number>>
     let inner_promise = OatsType::wrap_in_promise(OatsType::Number);
     let outer_promise = OatsType::wrap_in_promise(inner_promise.clone());
-    
+
     assert!(outer_promise.is_promise());
     let unwrapped = outer_promise.unwrap_promise_inner();
     assert!(unwrapped.is_some());
@@ -28,7 +31,10 @@ fn promise_type_with_string() {
     // Test Promise<string>
     let promise_string = OatsType::wrap_in_promise(OatsType::String);
     assert!(promise_string.is_promise());
-    assert_eq!(promise_string.unwrap_promise_inner(), Some(&OatsType::String));
+    assert_eq!(
+        promise_string.unwrap_promise_inner(),
+        Some(&OatsType::String)
+    );
 }
 
 #[test]
@@ -36,7 +42,7 @@ fn promise_type_with_array() {
     // Test Promise<number[]>
     let array_type = OatsType::Array(Box::new(OatsType::Number));
     let promise_array = OatsType::wrap_in_promise(array_type.clone());
-    
+
     assert!(promise_array.is_promise());
     assert_eq!(promise_array.unwrap_promise_inner(), Some(&array_type));
 }
@@ -48,10 +54,10 @@ fn non_promise_type_checks() {
     assert!(!OatsType::String.is_promise());
     assert!(!OatsType::Boolean.is_promise());
     assert!(!OatsType::Void.is_promise());
-    
+
     let array_type = OatsType::Array(Box::new(OatsType::Number));
     assert!(!array_type.is_promise());
-    
+
     let struct_type = OatsType::NominalStruct("Foo".to_string());
     assert!(!struct_type.is_promise());
 }
@@ -71,33 +77,34 @@ fn parse_promise_number_type() -> Result<()> {
             return 42;
         }
     "#;
-    
+
     let parsed_mod = parser::parse_oats_module(src, None)?;
     let parsed = &parsed_mod.parsed;
-    
+
     // Find the function
     for item_ref in parsed.program_ref().body() {
         if let deno_ast::ModuleItemRef::Stmt(stmt) = item_ref
             && let deno_ast::swc::ast::Stmt::Decl(decl) = stmt
-                && let deno_ast::swc::ast::Decl::Fn(fn_decl) = decl {
-                    // Check if it has a return type annotation
-                    if let Some(return_type) = &fn_decl.function.return_type {
-                        let ts_type = &return_type.type_ann;
-                        let oats_type = map_ts_type(ts_type);
-                        
-                        assert!(oats_type.is_some(), "Should parse Promise<number>");
-                        let oats_type = oats_type.unwrap();
-                        assert!(oats_type.is_promise(), "Should be a Promise type");
-                        assert_eq!(
-                            oats_type.unwrap_promise_inner(),
-                            Some(&OatsType::Number),
-                            "Promise should wrap Number type"
-                        );
-                        return Ok(());
-                    }
-                }
+            && let deno_ast::swc::ast::Decl::Fn(fn_decl) = decl
+        {
+            // Check if it has a return type annotation
+            if let Some(return_type) = &fn_decl.function.return_type {
+                let ts_type = &return_type.type_ann;
+                let oats_type = map_ts_type(ts_type);
+
+                assert!(oats_type.is_some(), "Should parse Promise<number>");
+                let oats_type = oats_type.unwrap();
+                assert!(oats_type.is_promise(), "Should be a Promise type");
+                assert_eq!(
+                    oats_type.unwrap_promise_inner(),
+                    Some(&OatsType::Number),
+                    "Promise should wrap Number type"
+                );
+                return Ok(());
+            }
+        }
     }
-    
+
     panic!("Should have found function with Promise return type");
 }
 
@@ -109,30 +116,28 @@ fn parse_promise_string_type() -> Result<()> {
             return "hello";
         }
     "#;
-    
+
     let parsed_mod = parser::parse_oats_module(src, None)?;
     let parsed = &parsed_mod.parsed;
-    
+
     // Find the function
     for item_ref in parsed.program_ref().body() {
         if let deno_ast::ModuleItemRef::Stmt(stmt) = item_ref
             && let deno_ast::swc::ast::Stmt::Decl(decl) = stmt
-                && let deno_ast::swc::ast::Decl::Fn(fn_decl) = decl
-                    && let Some(return_type) = &fn_decl.function.return_type {
-                        let ts_type = &return_type.type_ann;
-                        let oats_type = map_ts_type(ts_type);
-                        
-                        assert!(oats_type.is_some());
-                        let oats_type = oats_type.unwrap();
-                        assert!(oats_type.is_promise());
-                        assert_eq!(
-                            oats_type.unwrap_promise_inner(),
-                            Some(&OatsType::String)
-                        );
-                        return Ok(());
-                    }
+            && let deno_ast::swc::ast::Decl::Fn(fn_decl) = decl
+            && let Some(return_type) = &fn_decl.function.return_type
+        {
+            let ts_type = &return_type.type_ann;
+            let oats_type = map_ts_type(ts_type);
+
+            assert!(oats_type.is_some());
+            let oats_type = oats_type.unwrap();
+            assert!(oats_type.is_promise());
+            assert_eq!(oats_type.unwrap_promise_inner(), Some(&OatsType::String));
+            return Ok(());
+        }
     }
-    
+
     panic!("Should have found function with Promise<string> return type");
 }
 
@@ -144,30 +149,28 @@ fn parse_promise_void_type() -> Result<()> {
             return;
         }
     "#;
-    
+
     let parsed_mod = parser::parse_oats_module(src, None)?;
     let parsed = &parsed_mod.parsed;
-    
+
     // Find the function
     for item_ref in parsed.program_ref().body() {
         if let deno_ast::ModuleItemRef::Stmt(stmt) = item_ref
             && let deno_ast::swc::ast::Stmt::Decl(decl) = stmt
-                && let deno_ast::swc::ast::Decl::Fn(fn_decl) = decl
-                    && let Some(return_type) = &fn_decl.function.return_type {
-                        let ts_type = &return_type.type_ann;
-                        let oats_type = map_ts_type(ts_type);
-                        
-                        assert!(oats_type.is_some());
-                        let oats_type = oats_type.unwrap();
-                        assert!(oats_type.is_promise());
-                        assert_eq!(
-                            oats_type.unwrap_promise_inner(),
-                            Some(&OatsType::Void)
-                        );
-                        return Ok(());
-                    }
+            && let deno_ast::swc::ast::Decl::Fn(fn_decl) = decl
+            && let Some(return_type) = &fn_decl.function.return_type
+        {
+            let ts_type = &return_type.type_ann;
+            let oats_type = map_ts_type(ts_type);
+
+            assert!(oats_type.is_some());
+            let oats_type = oats_type.unwrap();
+            assert!(oats_type.is_promise());
+            assert_eq!(oats_type.unwrap_promise_inner(), Some(&OatsType::Void));
+            return Ok(());
+        }
     }
-    
+
     panic!("Should have found function with Promise<void> return type");
 }
 
@@ -186,35 +189,36 @@ fn parse_promise_custom_type() -> Result<()> {
             return new User("Alice");
         }
     "#;
-    
+
     let parsed_mod = parser::parse_oats_module(src, None)?;
     let parsed = &parsed_mod.parsed;
-    
+
     // Find the fetchUser function
     for item_ref in parsed.program_ref().body() {
         if let deno_ast::ModuleItemRef::Stmt(stmt) = item_ref
             && let deno_ast::swc::ast::Stmt::Decl(decl) = stmt
-                && let deno_ast::swc::ast::Decl::Fn(fn_decl) = decl
-                    && fn_decl.ident.sym.as_ref() == "fetchUser"
-                        && let Some(return_type) = &fn_decl.function.return_type {
-                            let ts_type = &return_type.type_ann;
-                            let oats_type = map_ts_type(ts_type);
-                            
-                            assert!(oats_type.is_some());
-                            let oats_type = oats_type.unwrap();
-                            assert!(oats_type.is_promise());
-                            
-                            let inner = oats_type.unwrap_promise_inner().unwrap();
-                            match inner {
-                                OatsType::NominalStruct(name) => {
-                                    assert_eq!(name, "User");
-                                }
-                                _ => panic!("Expected NominalStruct(User), got {:?}", inner),
-                            }
-                            return Ok(());
-                        }
+            && let deno_ast::swc::ast::Decl::Fn(fn_decl) = decl
+            && fn_decl.ident.sym.as_ref() == "fetchUser"
+            && let Some(return_type) = &fn_decl.function.return_type
+        {
+            let ts_type = &return_type.type_ann;
+            let oats_type = map_ts_type(ts_type);
+
+            assert!(oats_type.is_some());
+            let oats_type = oats_type.unwrap();
+            assert!(oats_type.is_promise());
+
+            let inner = oats_type.unwrap_promise_inner().unwrap();
+            match inner {
+                OatsType::NominalStruct(name) => {
+                    assert_eq!(name, "User");
+                }
+                _ => panic!("Expected NominalStruct(User), got {:?}", inner),
+            }
+            return Ok(());
+        }
     }
-    
+
     panic!("Should have found fetchUser function with Promise<User> return type");
 }
 
@@ -224,7 +228,7 @@ fn promise_type_equality() {
     let p1 = OatsType::wrap_in_promise(OatsType::Number);
     let p2 = OatsType::wrap_in_promise(OatsType::Number);
     let p3 = OatsType::wrap_in_promise(OatsType::String);
-    
+
     assert_eq!(p1, p2);
     assert_ne!(p1, p3);
 }

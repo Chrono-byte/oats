@@ -21,9 +21,10 @@ fn semicolon_present_is_ok() -> Result<()> {
     for item in parsed.program_ref().body() {
         if let deno_ast::ModuleItemRef::ModuleDecl(md) = item
             && let deno_ast::swc::ast::ModuleDecl::ExportDecl(decl) = md
-                && let deno_ast::swc::ast::Decl::Fn(_f) = &decl.decl {
-                    found = true;
-                }
+            && let deno_ast::swc::ast::Decl::Fn(_f) = &decl.decl
+        {
+            found = true;
+        }
     }
     assert!(found, "expected exported function to be present");
     Ok(())

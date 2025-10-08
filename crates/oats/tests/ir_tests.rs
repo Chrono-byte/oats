@@ -20,11 +20,12 @@ fn gen_add_function_ir_contains_fadd() -> Result<()> {
     for item_ref in parsed.program_ref().body() {
         if let deno_ast::ModuleItemRef::ModuleDecl(module_decl) = item_ref
             && let deno_ast::swc::ast::ModuleDecl::ExportDecl(decl) = module_decl
-                && let deno_ast::swc::ast::Decl::Fn(f) = &decl.decl {
-                    let name = f.ident.sym.to_string();
-                    func_decl_opt = Some((name, (*f.function).clone()));
-                    break;
-                }
+            && let deno_ast::swc::ast::Decl::Fn(f) = &decl.decl
+        {
+            let name = f.ident.sym.to_string();
+            func_decl_opt = Some((name, (*f.function).clone()));
+            break;
+        }
     }
 
     let (func_name, func_decl) =

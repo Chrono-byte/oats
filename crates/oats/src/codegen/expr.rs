@@ -1567,6 +1567,126 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 
                 Ok(result.ok_or_else(|| Diagnostic::simple("empty template literal"))?.as_basic_value_enum())
             }
+            ast::Expr::Unary(unary) => {
+                // Handle unary operators: -, +, !, ~
+                use deno_ast::swc::ast::UnaryOp;
+                
+                let arg_val = self.lower_expr(&unary.arg, function, param_map, locals)?;
+                
+                match unary.op {
+                    UnaryOp::Minus => {
+                        // Unary minus: negate the value
+                        if let Some(fv) = self.coerce_to_f64(arg_val) {
+                            let neg = self.builder.build_float_neg(fv, "neg")
+                                .map_err(|_| Diagnostic::simple("LLVM builder error"))?;
+                            Ok(neg.as_basic_value_enum())
+                        } else {
+                            Err(Diagnostic::simple("unary minus requires numeric operand"))
+                        }
+                    }
+                    UnaryOp::Plus => {
+                        // Unary plus: coerce to number (no-op for numbers)
+                        if let Some(fv) = self.coerce_to_f64(arg_val) {
+                            Ok(fv.as_basic_value_enum())
+                        } else {
+                            Err(Diagnostic::simple("unary plus requires numeric operand"))
+                        }
+                    }
+                    UnaryOp::Bang => {
+                        // Logical NOT: convert to boolean and negate
+                        let cond = self.to_condition_i1(arg_val)
+                            .ok_or_else(|| Diagnostic::simple("failed to convert to boolean"))?;
+                        let not = self.builder.build_not(cond, "not")
+                            .map_err(|_| Diagnostic::simple("LLVM builder error"))?;
+                        Ok(not.as_basic_value_enum())
+                    }
+                    UnaryOp::Tilde => {
+                        // Bitwise NOT: convert to integer, apply NOT, convert back
+                        if let Some(fv) = self.coerce_to_f64(arg_val) {
+                            // Convert to i32
+                            let iv = self.builder.build_float_to_signed_int(fv, self.context.i32_type(), "f2i")
+                                .map_err(|_| Diagnostic::simple("LLVM builder error"))?;
+                            // Apply bitwise NOT
+                            let not_iv = self.builder.build_not(iv, "bnot")
+                                .map_err(|_| Diagnostic::simple("LLVM builder error"))?;
+                            // Convert back to f64
+                            let result_fv = self.builder.build_signed_int_to_float(not_iv, self.f64_t, "i2f")
+                                .map_err(|_| Diagnostic::simple("LLVM builder error"))?;
+                            Ok(result_fv.as_basic_value_enum())
+                        } else {
+                            Err(Diagnostic::simple("bitwise NOT requires numeric operand"))
+                        }
+                    }
+                    _ => Err(Diagnostic::simple("unsupported unary operator")),
+                }
+            }
+            ast::Expr::Update(update) => {
+                // Handle update operators: ++, --
+                // These modify the variable and return the old (postfix) or new (prefix) value
+                use deno_ast::swc::ast::UpdateOp;
+                
+                // Only support simple identifier updates for now
+                if let ast::Expr::Ident(ident) = &*update.arg {
+                    let name = ident.sym.to_string();
+                    
+                    // Find the variable (parameter or local)
+                    let var_entry = if param_map.contains_key(&name) {
+                        // It's a parameter - we can't update parameters directly
+                        // Need to create a local shadow
+                        return Err(Diagnostic::simple("cannot update function parameter directly"));
+                    } else if let Some((ptr, ty, initialized, is_const)) = self.find_local(locals, &name) {
+                        if is_const {
+                            return Err(Diagnostic::simple("cannot update immutable variable"));
+                        }
+                        if !initialized {
+                            return Err(Diagnostic::simple("cannot update uninitialized variable"));
+                        }
+                        Some((ptr, ty))
+                    } else {
+                        None
+                    };
+                    
+                    if let Some((ptr, ty)) = var_entry {
+                        // Load current value
+                        let old_val = self.builder.build_load(ty, ptr, &name)
+                            .map_err(|_| Diagnostic::simple("LLVM builder error"))?;
+                        
+                        // Only support numeric updates
+                        if let Some(old_fv) = self.coerce_to_f64(old_val) {
+                            let one = self.f64_t.const_float(1.0);
+                            
+                            // Compute new value based on operator
+                            let new_fv = match update.op {
+                                UpdateOp::PlusPlus => {
+                                    self.builder.build_float_add(old_fv, one, "inc")
+                                        .map_err(|_| Diagnostic::simple("LLVM builder error"))?
+                                }
+                                UpdateOp::MinusMinus => {
+                                    self.builder.build_float_sub(old_fv, one, "dec")
+                                        .map_err(|_| Diagnostic::simple("LLVM builder error"))?
+                                }
+                            };
+                            
+                            // Store new value
+                            self.builder.build_store(ptr, new_fv)
+                                .map_err(|_| Diagnostic::simple("LLVM builder error"))?;
+                            
+                            // Return old value for postfix, new value for prefix
+                            if update.prefix {
+                                Ok(new_fv.as_basic_value_enum())
+                            } else {
+                                Ok(old_fv.as_basic_value_enum())
+                            }
+                        } else {
+                            Err(Diagnostic::simple("update operators require numeric operand"))
+                        }
+                    } else {
+                        Err(Diagnostic::simple("variable not found"))
+                    }
+                } else {
+                    Err(Diagnostic::simple("update operator only supports simple identifiers"))
+                }
+            }
             _ => Err(Diagnostic::simple("operation not supported")),
         }
     }

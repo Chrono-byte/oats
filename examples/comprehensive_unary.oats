@@ -1,0 +1,87 @@
+// Comprehensive test of all unary operators with real-world use cases
+
+export function main(): number {
+    println("=== Testing Unary Operators ===");
+    
+    // 1. Unary Minus: Negation
+    println("\n1. Unary Minus:");
+    let temperature: number = 25;
+    let freezing: number = -temperature;
+    println(temperature);  // 25
+    println(freezing);     // -25
+    
+    // 2. Unary Plus: Type coercion (no-op for numbers)
+    println("\n2. Unary Plus:");
+    let value: number = 42;
+    let same: number = +value;
+    println(same);  // 42
+    
+    // 3. Logical NOT: Boolean negation
+    println("\n3. Logical NOT:");
+    let isReady: boolean = false;
+    let isNotReady: boolean = !isReady;
+    if (isNotReady) {
+        println(1);  // Should print
+    }
+    
+    let flag: boolean = true;
+    if (!flag) {
+        println(0);  // Should NOT print
+    }
+    
+    // 4. Bitwise NOT: Two's complement
+    println("\n4. Bitwise NOT:");
+    let bits: number = 5;      // Binary: 0101
+    let inverted: number = ~bits;  // ~5 = -6 (two's complement)
+    println(bits);      // 5
+    println(inverted);  // -6
+    
+    // 5. Postfix Increment: x++
+    println("\n5. Postfix Increment:");
+    let counter: number = 0;
+    let snapshot: number = counter++;  // snapshot = 0, counter = 1
+    println(snapshot);  // 0
+    println(counter);   // 1
+    
+    // 6. Postfix Decrement: x--
+    println("\n6. Postfix Decrement:");
+    let lives: number = 3;
+    let before: number = lives--;  // before = 3, lives = 2
+    println(before);  // 3
+    println(lives);   // 2
+    
+    // 7. Prefix Increment: ++x
+    println("\n7. Prefix Increment:");
+    let score: number = 99;
+    let updated: number = ++score;  // score = 100, updated = 100
+    println(updated);  // 100
+    println(score);    // 100
+    
+    // 8. Prefix Decrement: --x
+    println("\n8. Prefix Decrement:");
+    let fuel: number = 10;
+    let remaining: number = --fuel;  // fuel = 9, remaining = 9
+    println(remaining);  // 9
+    println(fuel);       // 9
+    
+    // Real-world scenario: Countdown timer with loops
+    println("\n=== Countdown Example ===");
+    let countdown: number = 5;
+    while (countdown > 0) {
+        println(countdown);
+        countdown--;
+    }
+    println(0);  // Blast off!
+    
+    // Real-world scenario: Toggle flag
+    println("\n=== Toggle Flag Example ===");
+    let enabled: boolean = true;
+    println(1);  // Initially enabled
+    enabled = !enabled;  // Toggle
+    if (!enabled) {
+        println(0);  // Now disabled
+    }
+    
+    println("\n=== All Tests Passed! ===");
+    return 0;
+}

@@ -65,13 +65,15 @@ fn gen_ir_for_source(src_path: &str) -> Result<String> {
         loop_context_stack: std::cell::RefCell::new(Vec::new()),
     };
 
-    codegen.gen_function_ir(
-        "oats_main",
-        &func_decl,
-        &func_sig.params,
-        &func_sig.ret,
-        None,
-    ).expect("codegen should succeed");
+    codegen
+        .gen_function_ir(
+            "oats_main",
+            &func_decl,
+            &func_sig.params,
+            &func_sig.ret,
+            None,
+        )
+        .expect("codegen should succeed");
 
     Ok(codegen.module.print_to_string().to_string())
 }

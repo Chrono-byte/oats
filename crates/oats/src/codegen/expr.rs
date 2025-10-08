@@ -1681,7 +1681,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             .ok_or_else(|| Diagnostic::simple("concat left operand missing"))?;
                         let call_site = self
                             .builder
-                            .build_call(concat_fn, &[left.into(), expr_str.into()], "tpl_concat_expr")
+                            .build_call(
+                                concat_fn,
+                                &[left.into(), expr_str.into()],
+                                "tpl_concat_expr",
+                            )
                             .map_err(|_| Diagnostic::simple("failed to build call"))?;
                         result = Some(
                             call_site

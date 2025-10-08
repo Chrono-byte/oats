@@ -1,7 +1,7 @@
 use anyhow::Result;
 use oats::parser;
 /// Unit tests for Promise type support in the type system
-use oats::types::{OatsType, map_ts_type, infer_type_from_expr, infer_type};
+use oats::types::{OatsType, infer_type, infer_type_from_expr, map_ts_type};
 
 #[test]
 fn promise_type_creation() {
@@ -286,7 +286,10 @@ export function main(): number {
                         if let Some(init) = &decl.init {
                             if let deno_ast::swc::ast::Expr::Array(_) = &**init {
                                 let inferred = infer_type_from_expr(init);
-                                assert_eq!(inferred, Some(OatsType::Array(Box::new(OatsType::Number))));
+                                assert_eq!(
+                                    inferred,
+                                    Some(OatsType::Array(Box::new(OatsType::Number)))
+                                );
                             }
                         }
                     }

@@ -73,13 +73,15 @@ export function main(): number {
         loop_context_stack: std::cell::RefCell::new(Vec::new()),
     };
 
-    codegen.gen_function_ir(
-        &func_name,
-        &func_decl,
-        &func_sig.params,
-        &func_sig.ret,
-        None,
-    ).expect("codegen should succeed");
+    codegen
+        .gen_function_ir(
+            &func_name,
+            &func_decl,
+            &func_sig.params,
+            &func_sig.ret,
+            None,
+        )
+        .expect("codegen should succeed");
 
     let ir = codegen.module.print_to_string().to_string();
 
@@ -155,13 +157,15 @@ export function main(flag: boolean): number {
         loop_context_stack: std::cell::RefCell::new(Vec::new()),
     };
 
-    codegen.gen_function_ir(
-        &func_name,
-        &func_decl,
-        &func_sig.params,
-        &func_sig.ret,
-        None,
-    ).expect("codegen should succeed");
+    codegen
+        .gen_function_ir(
+            &func_name,
+            &func_decl,
+            &func_sig.params,
+            &func_sig.ret,
+            None,
+        )
+        .expect("codegen should succeed");
 
     let ir = codegen.module.print_to_string().to_string();
 
@@ -238,13 +242,15 @@ export function main(): number {
         loop_context_stack: std::cell::RefCell::new(Vec::new()),
     };
 
-    codegen.gen_function_ir(
-        &func_name,
-        &func_decl,
-        &func_sig.params,
-        &func_sig.ret,
-        None,
-    ).expect("codegen should succeed");
+    codegen
+        .gen_function_ir(
+            &func_name,
+            &func_decl,
+            &func_sig.params,
+            &func_sig.ret,
+            None,
+        )
+        .expect("codegen should succeed");
 
     let ir = codegen.module.print_to_string().to_string();
 
@@ -321,13 +327,15 @@ export function main(): number {
         loop_context_stack: std::cell::RefCell::new(Vec::new()),
     };
 
-    codegen.gen_function_ir(
-        &func_name,
-        &func_decl,
-        &func_sig.params,
-        &func_sig.ret,
-        None,
-    ).expect("codegen should succeed");
+    codegen
+        .gen_function_ir(
+            &func_name,
+            &func_decl,
+            &func_sig.params,
+            &func_sig.ret,
+            None,
+        )
+        .expect("codegen should succeed");
 
     let ir = codegen.module.print_to_string().to_string();
 
@@ -401,13 +409,15 @@ export function main(): number {
         loop_context_stack: std::cell::RefCell::new(Vec::new()),
     };
 
-    codegen.gen_function_ir(
-        &func_name,
-        &func_decl,
-        &func_sig.params,
-        &func_sig.ret,
-        None,
-    ).expect("codegen should succeed");
+    codegen
+        .gen_function_ir(
+            &func_name,
+            &func_decl,
+            &func_sig.params,
+            &func_sig.ret,
+            None,
+        )
+        .expect("codegen should succeed");
 
     let ir = codegen.module.print_to_string().to_string();
 

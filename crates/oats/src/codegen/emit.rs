@@ -65,7 +65,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             self.emit_rc_dec_for_locals(&locals_stack);
             self.builder
                 .build_return(None)
-                .expect("Failed to build implicit return");
+                .map_err(|_| crate::diagnostics::Diagnostic::simple("Failed to build implicit return"))?;
         }
 
         Ok(function)
@@ -77,7 +77,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         class_name: &str,
         ctor: &deno_ast::swc::ast::Constructor,
         fields: &[(String, crate::types::OatsType)],
-    ) {
+    ) -> Result<(), crate::diagnostics::Diagnostic> {
         use crate::types::OatsType;
 
         let fname = format!("{}_ctor", class_name);
@@ -148,19 +148,19 @@ impl<'a> crate::codegen::CodeGen<'a> {
         let call_site = self
             .builder
             .build_call(malloc_fn, &[size_const.into()], "call_malloc")
-            .expect("build_call failed");
+            .map_err(|_| crate::diagnostics::Diagnostic::simple("build_call failed"))?;
         let malloc_ret = call_site
             .try_as_basic_value()
             .left()
-            .unwrap()
+            .ok_or_else(|| crate::diagnostics::Diagnostic::simple("malloc call did not return a value"))?
             .into_pointer_value();
 
         let header_ptr = self
             .builder
             .build_pointer_cast(malloc_ret, self.i8ptr_t, "hdr_ptr")
-            .expect("cast failed");
+            .map_err(|_| crate::diagnostics::Diagnostic::simple("pointer cast failed"))?;
         let header_val = self.i64_t.const_int(1u64, false);
-        let _ = self.builder.build_store(header_ptr, header_val);
+    let _ = self.builder.build_store(header_ptr, header_val);
 
         let mut locals: LocalsStackLocal = vec![];
         let mut scope = HashMap::new();
@@ -168,7 +168,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         let this_alloca = self
             .builder
             .build_alloca(self.i8ptr_t, "this")
-            .expect("alloca failed");
+            .map_err(|_| crate::diagnostics::Diagnostic::simple("alloca failed for this"))?;
         let _ = self.builder.build_store(this_alloca, malloc_ret);
         scope.insert(
             "this".to_string(),
@@ -178,12 +178,22 @@ impl<'a> crate::codegen::CodeGen<'a> {
         let mut param_map: HashMap<String, u32> = HashMap::new();
 
         for (i, pname) in param_names.iter().enumerate() {
-            let param_val = f.get_nth_param(i as u32).expect("param missing");
+            let param_val = f.get_nth_param(i as u32).ok_or_else(|| {
+                crate::diagnostics::Diagnostic::simple(&format!(
+                    "missing parameter {} for constructor {}",
+                    pname, class_name
+                ))
+            })?;
             let param_ty = param_val.get_type();
             let alloca = self
                 .builder
                 .build_alloca(param_ty, &format!("param_{}", pname))
-                .expect("alloca failed");
+                .map_err(|_| {
+                    crate::diagnostics::Diagnostic::simple(&format!(
+                        "alloca failed for param {} in constructor {}",
+                        pname, class_name
+                    ))
+                })?;
             let _ = self.builder.build_store(alloca, param_val);
             scope.insert(pname.clone(), (alloca, param_ty, true, true));
             param_map.insert(pname.clone(), i as u32);
@@ -193,21 +203,26 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
         for (field_idx, (field_name, _field_type)) in fields.iter().enumerate() {
             if let Some(param_idx) = param_names.iter().position(|pn| pn == field_name) {
-                let param_val = f.get_nth_param(param_idx as u32).expect("param missing");
+                let param_val = f.get_nth_param(param_idx as u32).ok_or_else(|| {
+                    crate::diagnostics::Diagnostic::simple(&format!(
+                        "missing parameter {} for constructor {}",
+                        field_name, class_name
+                    ))
+                })?;
                 let field_offset = header_size + (field_idx as u64 * 8);
                 let field_ptr_int = self
                     .builder
                     .build_ptr_to_int(malloc_ret, self.i64_t, "obj_addr")
-                    .expect("ptr_to_int failed");
+                    .map_err(|_| crate::diagnostics::Diagnostic::simple("ptr_to_int failed"))?;
                 let offset_const = self.i64_t.const_int(field_offset, false);
                 let field_addr = self
                     .builder
                     .build_int_add(field_ptr_int, offset_const, "field_addr")
-                    .expect("int_add failed");
+                    .map_err(|_| crate::diagnostics::Diagnostic::simple("int_add failed"))?;
                 let field_ptr_cast = self
                     .builder
                     .build_int_to_ptr(field_addr, self.i8ptr_t, "field_ptr")
-                    .expect("int_to_ptr failed");
+                    .map_err(|_| crate::diagnostics::Diagnostic::simple("int_to_ptr failed"))?;
                 let _ = self.builder.build_store(field_ptr_cast, param_val);
 
                 if param_val.get_type().is_pointer_type() {
@@ -226,5 +241,6 @@ impl<'a> crate::codegen::CodeGen<'a> {
         }
 
         let _ = self.builder.build_return(Some(&malloc_ret));
+        Ok(())
     }
 }

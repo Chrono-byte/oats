@@ -1,0 +1,29 @@
+---
+source: crates/oats/tests/codegen_snapshot.rs
+assertion_line: 9
+expression: ir
+---
+; ModuleID = 'test_module'
+source_filename = "test_module"
+target triple = "x86_64-redhat-linux-gnu"
+
+declare ptr @malloc(i64)
+
+declare i64 @strlen(ptr)
+
+declare ptr @memcpy(ptr, ptr, i64)
+
+declare void @free(ptr)
+
+declare void @print_f64(double)
+
+declare void @print_str(ptr)
+
+declare ptr @str_concat(ptr, ptr)
+
+define double @oats_main() {
+entry:
+  ret double 0.000000e+00
+}
+
+declare void @rc_dec(ptr)

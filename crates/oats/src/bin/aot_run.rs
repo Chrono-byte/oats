@@ -381,7 +381,10 @@ fn main() -> Result<()> {
                             .get(&class_name)
                             .cloned()
                             .unwrap_or_default();
-                        codegen.gen_constructor_ir(&class_name, ctor, &fields);
+                        if let Err(d) = codegen.gen_constructor_ir(&class_name, ctor, &fields) {
+                            diagnostics::emit_diagnostic(&d, Some(parsed_mod.source.as_str()));
+                            return Err(anyhow::anyhow!(d.message));
+                        }
                     }
                     _ => {}
                 }

@@ -13,3 +13,8 @@ anyhow = "1.0"
 url = "2.4"
 swc_ecma_lexer = "23.0.2"
 
+
+[dev-dependencies]
+insta = "1.30.0"
+tempfile = "3.5"
+

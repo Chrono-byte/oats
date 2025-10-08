@@ -1810,7 +1810,7 @@ impl<'a> CodeGen<'a> {
                         // lower the consequent/alternative as statements.
                         // Lower the test to i1
                         if let Some(test_val) =
-                            self.lower_expr(&if_stmt.test, function, &param_map, &mut locals_stack)
+                            self.lower_expr_result(&if_stmt.test, function, &param_map, &mut locals_stack, Some(function.get_name().to_str().unwrap_or(""))).ok()
                         {
                             let cond_i1 = match test_val {
                                 BasicValueEnum::IntValue(iv) => iv,

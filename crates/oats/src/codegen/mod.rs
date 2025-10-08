@@ -19,15 +19,15 @@ pub mod stmt;
 type LocalEntry<'a> = (PointerValue<'a>, BasicTypeEnum<'a>, bool, bool);
 type LocalsStackLocal<'a> = Vec<std::collections::HashMap<String, LocalEntry<'a>>>;
 
-/// Loop context for tracking break/continue targets
+// Loop context for tracking break/continue targets
 #[derive(Clone, Copy)]
 pub struct LoopContext<'a> {
     pub continue_block: inkwell::basic_block::BasicBlock<'a>,
     pub break_block: inkwell::basic_block::BasicBlock<'a>,
 }
 
-/// The main code generation structure, holding the LLVM context, module,
-/// builder, and various caches for types and functions.
+// The main code generation structure, holding the LLVM context, module,
+// builder, and various caches for types and functions.
 pub struct CodeGen<'a> {
     pub context: &'a Context,
     pub module: Module<'a>,
@@ -149,7 +149,7 @@ impl<'a> CodeGen<'a> {
 
     // --- Function Generation Helpers ---
 
-    /// Helper to build the LLVM function type from parameter and return types.
+    // Helper to build the LLVM function type from parameter and return types.
     fn build_llvm_fn_type(
         &self,
         llvm_param_types: &[BasicTypeEnum<'a>],
@@ -162,8 +162,8 @@ impl<'a> CodeGen<'a> {
         }
     }
 
-    /// Creates stack allocations (`alloca`) for all function parameters, making them
-    /// accessible like local variables and handling initial reference counting.
+    // Creates stack allocations (`alloca`) for all function parameters, making them
+    // accessible like local variables and handling initial reference counting.
     fn create_param_allocas(
         &self,
         function: FunctionValue<'a>,
@@ -196,7 +196,8 @@ impl<'a> CodeGen<'a> {
                 let rc_inc = self.get_rc_inc();
                 if self
                     .builder
-                    .build_call(rc_inc, &[pv.into()], "rc_inc_param").is_err()
+                    .build_call(rc_inc, &[pv.into()], "rc_inc_param")
+                    .is_err()
                 {
                     return Err(crate::diagnostics::Diagnostic::simple(
                         "rc_inc param call failed",
@@ -207,7 +208,7 @@ impl<'a> CodeGen<'a> {
         Ok((param_map, locals_stack))
     }
 
-    /// Lowers a slice of AST statements into the current basic block.
+    // Lowers a slice of AST statements into the current basic block.
     // Statement lowering functions have been moved to stmt.rs
 
     // --- Host Main Generation ---
@@ -313,18 +314,18 @@ impl<'a> CodeGen<'a> {
         true
     }
 
-    /// Generate a complete constructor function for a class.
-    /// The constructor allocates memory for the header + fields, initializes the header
-    /// with refcount=1, and runs the constructor body (which may initialize fields via
-    /// assignments or use constructor parameters).
-    ///
-    /// # Arguments
-    /// * `class_name` - Name of the class (e.g., "Point")
-    /// * `ctor` - The constructor AST node
-    /// * `fields` - Ordered list of (field_name, field_type) tuples
-    ///
-    /// The emitted function signature is:
-    ///   `ClassName_ctor(param1, param2, ...) -> i8*`
+    // Generate a complete constructor function for a class.
+    // The constructor allocates memory for the header + fields, initializes the header
+    // with refcount=1, and runs the constructor body (which may initialize fields via
+    // assignments or use constructor parameters).
+    //
+    // # Arguments
+    // * `class_name` - Name of the class (e.g., "Point")
+    // * `ctor` - The constructor AST node
+    // * `fields` - Ordered list of (field_name, field_type) tuples
+    //
+    // The emitted function signature is:
+    //   `ClassName_ctor(param1, param2, ...) -> i8*`
 
     fn get_malloc(&self) -> FunctionValue<'a> {
         if let Some(f) = *self.fn_malloc.borrow() {

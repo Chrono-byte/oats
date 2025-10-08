@@ -18,17 +18,15 @@ fn class_fields_lowering_emits_field_access() -> Result<()> {
     // find exported main
     let mut func_decl_opt: Option<deno_ast::swc::ast::Function> = None;
     for item_ref in parsed.program_ref().body() {
-        if let deno_ast::ModuleItemRef::ModuleDecl(module_decl) = item_ref {
-            if let deno_ast::swc::ast::ModuleDecl::ExportDecl(decl) = module_decl {
-                if let deno_ast::swc::ast::Decl::Fn(f) = &decl.decl {
+        if let deno_ast::ModuleItemRef::ModuleDecl(module_decl) = item_ref
+            && let deno_ast::swc::ast::ModuleDecl::ExportDecl(decl) = module_decl
+                && let deno_ast::swc::ast::Decl::Fn(f) = &decl.decl {
                     let name = f.ident.sym.to_string();
                     if name == "main" {
                         func_decl_opt = Some((*f.function).clone());
                         break;
                     }
                 }
-            }
-        }
     }
 
     let func_decl =
@@ -70,17 +68,17 @@ fn class_fields_lowering_emits_field_access() -> Result<()> {
 
     // Emit class symbols by scanning module items and invoking main's codegen
     for item_ref in parsed.program_ref().body() {
-        if let deno_ast::ModuleItemRef::ModuleDecl(module_decl) = item_ref {
-            if let deno_ast::swc::ast::ModuleDecl::ExportDecl(decl) = module_decl {
-                if let deno_ast::swc::ast::Decl::Class(c) = &decl.decl {
+        if let deno_ast::ModuleItemRef::ModuleDecl(module_decl) = item_ref
+            && let deno_ast::swc::ast::ModuleDecl::ExportDecl(decl) = module_decl
+                && let deno_ast::swc::ast::Decl::Class(c) = &decl.decl {
                     let class_name = c.ident.sym.to_string();
                     // collect field names from constructor source text using a regex
                     // This is a test heuristic: look for `this.<name> =` patterns inside constructor bodies.
                     let mut fields = Vec::new();
                     for member in &c.class.body {
                         use deno_ast::swc::ast::ClassMember;
-                        if let ClassMember::Constructor(cons) = member {
-                            if let Some(body) = &cons.body {
+                        if let ClassMember::Constructor(cons) = member
+                            && let Some(body) = &cons.body {
                                 // reconstruct the source slice for the constructor body
                                 let start = body.span.lo.0 as usize;
                                 let end = body.span.hi.0 as usize;
@@ -101,12 +99,10 @@ fn class_fields_lowering_emits_field_access() -> Result<()> {
                                                 } else {
                                                     break;
                                                 }
+                                            } else if c.is_ascii_alphanumeric() || c == '_' {
+                                                ident.push(c);
                                             } else {
-                                                if c.is_ascii_alphanumeric() || c == '_' {
-                                                    ident.push(c);
-                                                } else {
-                                                    break;
-                                                }
+                                                break;
                                             }
                                             i += 1;
                                         }
@@ -116,7 +112,6 @@ fn class_fields_lowering_emits_field_access() -> Result<()> {
                                     }
                                 }
                             }
-                        }
                     }
                     codegen
                         .class_fields
@@ -150,8 +145,6 @@ fn class_fields_lowering_emits_field_access() -> Result<()> {
                         }
                     }
                 }
-            }
-        }
     }
 
     // Now emit main

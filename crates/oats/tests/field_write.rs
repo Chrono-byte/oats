@@ -18,9 +18,9 @@ fn field_write_emits_gep_store_and_rc_calls() -> Result<()> {
     // Find the Counter class and extract its fields for codegen
     let mut class_fields = vec![];
     for item_ref in parsed.program_ref().body() {
-        if let deno_ast::ModuleItemRef::ModuleDecl(module_decl) = item_ref {
-            if let deno_ast::swc::ast::ModuleDecl::ExportDecl(decl) = module_decl {
-                if let deno_ast::swc::ast::Decl::Class(c) = &decl.decl {
+        if let deno_ast::ModuleItemRef::ModuleDecl(module_decl) = item_ref
+            && let deno_ast::swc::ast::ModuleDecl::ExportDecl(decl) = module_decl
+                && let deno_ast::swc::ast::Decl::Class(c) = &decl.decl {
                     let class_name = c.ident.sym.to_string();
                     if class_name == "Counter" {
                         // Extract constructor params as fields
@@ -30,8 +30,7 @@ fn field_write_emits_gep_store_and_rc_calls() -> Result<()> {
                                     if let deno_ast::swc::ast::ParamOrTsParamProp::TsParamProp(
                                         prop,
                                     ) = param
-                                    {
-                                        if let deno_ast::swc::ast::TsParamPropParam::Ident(ident) =
+                                        && let deno_ast::swc::ast::TsParamPropParam::Ident(ident) =
                                             &prop.param
                                         {
                                             let field_name = ident.id.sym.to_string();
@@ -39,36 +38,30 @@ fn field_write_emits_gep_store_and_rc_calls() -> Result<()> {
                                             class_fields
                                                 .push((field_name, oats::types::OatsType::Number));
                                         }
-                                    }
                                 }
                             }
                         }
                     }
                 }
-            }
-        }
     }
 
     // Find the increment method
     let mut increment_func_opt: Option<deno_ast::swc::ast::Function> = None;
     for item_ref in parsed.program_ref().body() {
-        if let deno_ast::ModuleItemRef::ModuleDecl(module_decl) = item_ref {
-            if let deno_ast::swc::ast::ModuleDecl::ExportDecl(decl) = module_decl {
-                if let deno_ast::swc::ast::Decl::Class(c) = &decl.decl {
+        if let deno_ast::ModuleItemRef::ModuleDecl(module_decl) = item_ref
+            && let deno_ast::swc::ast::ModuleDecl::ExportDecl(decl) = module_decl
+                && let deno_ast::swc::ast::Decl::Class(c) = &decl.decl {
                     for member in &c.class.body {
-                        if let deno_ast::swc::ast::ClassMember::Method(method) = member {
-                            if let deno_ast::swc::ast::PropName::Ident(method_ident) = &method.key {
+                        if let deno_ast::swc::ast::ClassMember::Method(method) = member
+                            && let deno_ast::swc::ast::PropName::Ident(method_ident) = &method.key {
                                 let method_name = method_ident.sym.to_string();
                                 if method_name == "increment" {
                                     increment_func_opt = Some((*method.function).clone());
                                     break;
                                 }
                             }
-                        }
                     }
                 }
-            }
-        }
     }
 
     let increment_func = increment_func_opt
@@ -192,22 +185,18 @@ fn field_write_with_pointer_type_uses_rc() -> Result<()> {
     // Find setData method
     let mut setdata_func_opt: Option<deno_ast::swc::ast::Function> = None;
     for item_ref in parsed.program_ref().body() {
-        if let deno_ast::ModuleItemRef::ModuleDecl(module_decl) = item_ref {
-            if let deno_ast::swc::ast::ModuleDecl::ExportDecl(decl) = module_decl {
-                if let deno_ast::swc::ast::Decl::Class(c) = &decl.decl {
+        if let deno_ast::ModuleItemRef::ModuleDecl(module_decl) = item_ref
+            && let deno_ast::swc::ast::ModuleDecl::ExportDecl(decl) = module_decl
+                && let deno_ast::swc::ast::Decl::Class(c) = &decl.decl {
                     for member in &c.class.body {
-                        if let deno_ast::swc::ast::ClassMember::Method(method) = member {
-                            if let deno_ast::swc::ast::PropName::Ident(method_ident) = &method.key {
-                                if method_ident.sym.to_string() == "setData" {
+                        if let deno_ast::swc::ast::ClassMember::Method(method) = member
+                            && let deno_ast::swc::ast::PropName::Ident(method_ident) = &method.key
+                                && method_ident.sym == "setData" {
                                     setdata_func_opt = Some((*method.function).clone());
                                     break;
                                 }
-                            }
-                        }
                     }
                 }
-            }
-        }
     }
 
     let setdata_func =

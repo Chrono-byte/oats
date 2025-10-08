@@ -20,17 +20,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         expr: &Expr,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
-        locals: &mut Vec<
-            HashMap<
-                String,
-                (
-                    inkwell::values::PointerValue<'a>,
-                    inkwell::types::BasicTypeEnum<'a>,
-                    bool,
-                    bool,
-                ),
-            >,
-        >,
+        locals: &mut LocalsStackLocal<'a>,
         ctx_name: Option<&str>,
     ) -> Result<BasicValueEnum<'a>, Diagnostic> {
         if let Some(v) = self.lower_expr(expr, function, param_map, locals) {

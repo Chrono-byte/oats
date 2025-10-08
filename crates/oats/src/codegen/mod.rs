@@ -153,7 +153,7 @@ impl<'a> CodeGen<'a> {
         param_types: &[crate::types::OatsType],
         ret_type: &crate::types::OatsType,
         receiver_name: Option<&str>,
-    ) -> FunctionValue<'a> {
+    ) -> Result<FunctionValue<'a>, crate::diagnostics::Diagnostic> {
         // 1. Build the LLVM function type.
         let llvm_param_types: Vec<_> = param_types
             .iter()
@@ -172,13 +172,13 @@ impl<'a> CodeGen<'a> {
             .borrow_mut()
             .insert(func_name.to_string(), param_types.to_vec());
         let (param_map, mut locals_stack) =
-            self.create_param_allocas(function, func_decl, &llvm_param_types, receiver_name);
+            self.create_param_allocas(function, func_decl, &llvm_param_types, receiver_name)?;
 
         // 4. Lower the function body statements into IR.
         let mut emitted_terminator = false;
         if let Some(body) = &func_decl.body {
             emitted_terminator =
-                self.lower_stmts(&body.stmts, function, &param_map, &mut locals_stack);
+                self.lower_stmts(&body.stmts, function, &param_map, &mut locals_stack)?;
         }
 
         // 5. Add an implicit `return void` if the function hasn't already returned.
@@ -190,12 +190,15 @@ impl<'a> CodeGen<'a> {
         {
             // Helpers live in helpers.rs; emit rc decs for locals before returning
             self.emit_rc_dec_for_locals(&locals_stack);
-            self.builder
-                .build_return(None)
-                .expect("Failed to build implicit return");
+            if let Err(_) = self.builder.build_return(None) {
+                crate::diagnostics::emit_diagnostic(
+                    &crate::diagnostics::Diagnostic::simple("failed to build implicit return"),
+                    Some(self.source),
+                );
+            }
         }
 
-        function
+        Ok(function)
     }
 
     // --- Function Generation Helpers ---
@@ -221,7 +224,7 @@ impl<'a> CodeGen<'a> {
         func_decl: &ast::Function,
         llvm_param_types: &[BasicTypeEnum<'a>],
         receiver_name: Option<&str>,
-    ) -> (HashMap<String, u32>, LocalsStackLocal<'a>) {
+    ) -> Result<(HashMap<String, u32>, LocalsStackLocal<'a>), crate::diagnostics::Diagnostic> {
         let mut param_map = HashMap::new();
         if let Some(rname) = receiver_name {
             param_map.insert(rname.to_string(), 0u32);
@@ -245,12 +248,12 @@ impl<'a> CodeGen<'a> {
                 && let Some(pv) = function.get_nth_param(idx)
             {
                 let rc_inc = self.get_rc_inc();
-                self.builder
-                    .build_call(rc_inc, &[pv.into()], "rc_inc_param")
-                    .unwrap();
+                if let Err(_) = self.builder.build_call(rc_inc, &[pv.into()], "rc_inc_param") {
+                    return Err(crate::diagnostics::Diagnostic::simple("rc_inc param call failed"));
+                }
             }
         }
-        (param_map, locals_stack)
+        Ok((param_map, locals_stack))
     }
 
     /// Lowers a slice of AST statements into the current basic block.
@@ -261,13 +264,13 @@ impl<'a> CodeGen<'a> {
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals_stack: &mut LocalsStackLocal<'a>,
-    ) -> bool {
+    ) -> Result<bool, crate::diagnostics::Diagnostic> {
         for stmt in stmts {
-            if self.lower_stmt(stmt, function, param_map, locals_stack) {
-                return true; // Terminator found, stop processing.
+            if self.lower_stmt(stmt, function, param_map, locals_stack)? {
+                return Ok(true); // Terminator found, stop processing.
             }
         }
-        false // No terminator found.
+        Ok(false)
     }
 
     // ... Additional helper functions (`lower_stmt`, `lower_if_stmt`, etc.) would go here ...
@@ -281,7 +284,7 @@ impl<'a> CodeGen<'a> {
         _function: FunctionValue<'a>,
         _param_map: &HashMap<String, u32>,
         _locals_stack: &mut LocalsStackLocal<'a>,
-    ) -> bool {
+    ) -> Result<bool, crate::diagnostics::Diagnostic> {
         // A small statement lowering implementation that covers the test
         // cases: variable declarations with initializers, expression
         // statements, return statements and blocks. This is intentionally
@@ -302,10 +305,18 @@ impl<'a> CodeGen<'a> {
                                     self.lower_expr(init, _function, _param_map, _locals_stack)
                                 {
                                     let ty = val.get_type().as_basic_type_enum();
-                                    let alloca = self
-                                        .builder
-                                        .build_alloca(ty, &name)
-                                        .expect("Failed to alloca var");
+                                    let alloca = match self.builder.build_alloca(ty, &name) {
+                                        Ok(a) => a,
+                                        Err(_) => {
+                                            crate::diagnostics::emit_diagnostic(
+                                                &crate::diagnostics::Diagnostic::simple(
+                                                    "alloca failed for local variable",
+                                                ),
+                                                Some(self.source),
+                                            );
+                                            return Ok(false);
+                                        }
+                                    };
                                     // store lowered value
                                     let _ = self.builder.build_store(alloca, val);
                                     // If pointer type, increment RC for stored pointer
@@ -332,10 +343,18 @@ impl<'a> CodeGen<'a> {
                             } else {
                                 // No initializer: create an uninitialized slot with i64 as default
                                 let ty = self.i64_t.as_basic_type_enum();
-                                let alloca = self
-                                    .builder
-                                    .build_alloca(ty, &name)
-                                    .expect("Failed to alloca var");
+                                let alloca = match self.builder.build_alloca(ty, &name) {
+                                    Ok(a) => a,
+                                    Err(_) => {
+                                        crate::diagnostics::emit_diagnostic(
+                                            &crate::diagnostics::Diagnostic::simple(
+                                                "alloca failed for uninitialized var",
+                                            ),
+                                            Some(self.source),
+                                        );
+                                        return Ok(false);
+                                    }
+                                };
                                 self.insert_local_current_scope(
                                     _locals_stack,
                                     name,
@@ -348,12 +367,12 @@ impl<'a> CodeGen<'a> {
                         }
                     }
                 }
-                false
+                Ok(false)
             }
             ast::Stmt::Expr(expr_stmt) => {
                 // Evaluate expression for side-effects; ignore result
                 let _ = self.lower_expr(&expr_stmt.expr, _function, _param_map, _locals_stack);
-                false
+                Ok(false)
             }
             ast::Stmt::Return(ret) => {
                 // Lower return expression, emit rc_decs for locals then return
@@ -363,14 +382,14 @@ impl<'a> CodeGen<'a> {
                         self.emit_rc_dec_for_locals(_locals_stack);
                         // build return with the lowered value
                         let _ = self.builder.build_return(Some(&val));
-                        return true;
+                        return Ok(true);
                     }
                 } else {
                     self.emit_rc_dec_for_locals(_locals_stack);
                     let _ = self.builder.build_return(None);
-                    return true;
+                    return Ok(true);
                 }
-                false
+                Ok(false)
             }
             ast::Stmt::Break(_break_stmt) => {
                 // Break statement: jump to the loop's break (exit) block
@@ -386,11 +405,11 @@ impl<'a> CodeGen<'a> {
                         .builder
                         .build_unconditional_branch(loop_ctx.break_block);
 
-                    true // break terminates the current block
+                    Ok(true) // break terminates the current block
                 } else {
                     // Break outside of loop - this is a semantic error
                     // For now, just ignore it (ideally should emit diagnostic)
-                    false
+                    Ok(false)
                 }
             }
             ast::Stmt::Continue(_continue_stmt) => {
@@ -407,21 +426,21 @@ impl<'a> CodeGen<'a> {
                         .builder
                         .build_unconditional_branch(loop_ctx.continue_block);
 
-                    true // continue terminates the current block
+                    Ok(true) // continue terminates the current block
                 } else {
                     // Continue outside of loop - this is a semantic error
                     // For now, just ignore it (ideally should emit diagnostic)
-                    false
+                    Ok(false)
                 }
             }
             ast::Stmt::Block(block) => {
                 // new scope
                 _locals_stack.push(HashMap::new());
                 let terminated =
-                    self.lower_stmts(&block.stmts, _function, _param_map, _locals_stack);
+                    self.lower_stmts(&block.stmts, _function, _param_map, _locals_stack)?;
                 // pop scope
                 _locals_stack.pop();
-                terminated
+                Ok(terminated)
             }
             // Handle if statements: `if (cond) { ... } else { ... }`
             ast::Stmt::If(ifstmt) => {
@@ -441,12 +460,12 @@ impl<'a> CodeGen<'a> {
 
                         // Build then block
                         self.builder.position_at_end(then_bb);
-                        let then_terminated = match &*ifstmt.cons {
+                        let then_terminated: bool = match &*ifstmt.cons {
                             ast::Stmt::Block(block) => {
-                                self.lower_stmts(&block.stmts, _function, _param_map, _locals_stack)
+                                self.lower_stmts(&block.stmts, _function, _param_map, _locals_stack)?
                             }
                             _ => {
-                                self.lower_stmt(&ifstmt.cons, _function, _param_map, _locals_stack)
+                                self.lower_stmt(&ifstmt.cons, _function, _param_map, _locals_stack)?
                             }
                         };
                         if !then_terminated {
@@ -455,15 +474,15 @@ impl<'a> CodeGen<'a> {
 
                         // Build else block
                         self.builder.position_at_end(else_bb);
-                        let else_terminated = if let Some(alt) = &ifstmt.alt {
+                        let else_terminated: bool = if let Some(alt) = &ifstmt.alt {
                             match &**alt {
                                 ast::Stmt::Block(block) => self.lower_stmts(
                                     &block.stmts,
                                     _function,
                                     _param_map,
                                     _locals_stack,
-                                ),
-                                _ => self.lower_stmt(alt, _function, _param_map, _locals_stack),
+                                )?,
+                                _ => self.lower_stmt(alt, _function, _param_map, _locals_stack)?,
                             }
                         } else {
                             false // no else branch
@@ -476,12 +495,12 @@ impl<'a> CodeGen<'a> {
                         self.builder.position_at_end(merge_bb);
 
                         // If both branches terminated, the if statement terminates
-                        then_terminated && else_terminated
+                        Ok(then_terminated && else_terminated)
                     } else {
-                        false
+                        Ok(false)
                     }
                 } else {
-                    false
+                    Ok(false)
                 }
             }
             // Minimal ForOf lowering: handle `for (let v of iterable) { body }`
@@ -500,10 +519,19 @@ impl<'a> CodeGen<'a> {
                             && let BasicValueEnum::PointerValue(arr_ptr) = iter_val
                         {
                             // create index
-                            let idx_alloca = self
-                                .builder
-                                .build_alloca(self.i64_t, "for_idx")
-                                .expect("alloca idx");
+                            let idx_alloca = match self.builder.build_alloca(self.i64_t, "for_idx")
+                            {
+                                Ok(a) => a,
+                                Err(_) => {
+                                    crate::diagnostics::emit_diagnostic(
+                                        &crate::diagnostics::Diagnostic::simple(
+                                            "alloca failed for for-loop index",
+                                        ),
+                                        Some(self.source),
+                                    );
+                                    return Ok(false);
+                                }
+                            };
                             let zero = self.i64_t.const_int(0, false);
                             let _ = self.builder.build_store(idx_alloca, zero);
 
@@ -532,7 +560,7 @@ impl<'a> CodeGen<'a> {
                                     "strlen_call",
                                 ) {
                                     Ok(cs) => cs,
-                                    Err(_) => return false,
+                                    Err(_) => return Ok(false),
                                 };
                                 if let inkwell::Either::Left(bv) = cs.try_as_basic_value() {
                                     let len = bv.into_int_value();
@@ -541,7 +569,7 @@ impl<'a> CodeGen<'a> {
                                         .build_load(self.i64_t, idx_alloca, "idx_load")
                                     {
                                         Ok(v) => v.into_int_value(),
-                                        Err(_) => return false,
+                                        Err(_) => return Ok(false),
                                     };
                                     let cmp = match self.builder.build_int_compare(
                                         inkwell::IntPredicate::ULT,
@@ -550,28 +578,28 @@ impl<'a> CodeGen<'a> {
                                         "cmp_idx",
                                     ) {
                                         Ok(v) => v,
-                                        Err(_) => return false,
+                                        Err(_) => return Ok(false),
                                     };
                                     if self
                                         .builder
                                         .build_conditional_branch(cmp, loop_body_bb, loop_after_bb)
                                         .is_err()
                                     {
-                                        return false;
+                                        return Ok(false);
                                     }
                                 } else if self
                                     .builder
                                     .build_unconditional_branch(loop_after_bb)
                                     .is_err()
                                 {
-                                    return false;
+                                    return Ok(false);
                                 }
                             } else if self
                                 .builder
                                 .build_unconditional_branch(loop_after_bb)
                                 .is_err()
                             {
-                                return false;
+                                return Ok(false);
                             }
 
                             // body
@@ -582,7 +610,7 @@ impl<'a> CodeGen<'a> {
                                 "idx_load2",
                             ) {
                                 Ok(v) => v.into_int_value(),
-                                Err(_) => return false,
+                                Err(_) => return Ok(false),
                             };
                             if let Some(array_get_f64_fn) =
                                 self.module.get_function("array_get_f64")
@@ -593,14 +621,23 @@ impl<'a> CodeGen<'a> {
                                     "array_get_f64_call",
                                 ) {
                                     Ok(cs) => cs,
-                                    Err(_) => return false,
+                                    Err(_) => return Ok(false),
                                 };
                                 if let inkwell::Either::Left(bv) = cs.try_as_basic_value() {
                                     let ty = bv.get_type().as_basic_type_enum();
-                                    let alloca = self
-                                        .builder
-                                        .build_alloca(ty, &loop_var_name)
-                                        .expect("alloca loop var");
+                                    let alloca = match self.builder.build_alloca(ty, &loop_var_name)
+                                    {
+                                        Ok(a) => a,
+                                        Err(_) => {
+                                            crate::diagnostics::emit_diagnostic(
+                                                &crate::diagnostics::Diagnostic::simple(
+                                                    "alloca failed for loop variable",
+                                                ),
+                                                Some(self.source),
+                                            );
+                                            return Ok(false);
+                                        }
+                                    };
                                     let _ = self.builder.build_store(alloca, bv);
                                     self.insert_local_current_scope(
                                         _locals_stack,
@@ -620,15 +657,24 @@ impl<'a> CodeGen<'a> {
                                     "array_get_ptr_call",
                                 ) {
                                     Ok(cs) => cs,
-                                    Err(_) => return false,
+                                    Err(_) => return Ok(false),
                                 };
                                 if let inkwell::Either::Left(bv) = cs.try_as_basic_value() {
                                     let pv = bv.into_pointer_value();
                                     let ty = pv.get_type().as_basic_type_enum();
-                                    let alloca = self
-                                        .builder
-                                        .build_alloca(ty, &loop_var_name)
-                                        .expect("alloca loop var ptr");
+                                    let alloca = match self.builder.build_alloca(ty, &loop_var_name)
+                                    {
+                                        Ok(a) => a,
+                                        Err(_) => {
+                                            crate::diagnostics::emit_diagnostic(
+                                                &crate::diagnostics::Diagnostic::simple(
+                                                    "alloca failed for loop variable (ptr)",
+                                                ),
+                                                Some(self.source),
+                                            );
+                                            return Ok(false);
+                                        }
+                                    };
                                     let _ = self.builder.build_store(alloca, bv);
                                     let rc_inc = self.get_rc_inc();
                                     let _ = self.builder.build_call(
@@ -654,9 +700,9 @@ impl<'a> CodeGen<'a> {
                                     _function,
                                     _param_map,
                                     _locals_stack,
-                                ),
+                                )?,
                                 other => {
-                                    self.lower_stmt(other, _function, _param_map, _locals_stack)
+                                    self.lower_stmt(other, _function, _param_map, _locals_stack)?
                                 }
                             };
                             let cur_idx2 = match self.builder.build_load(
@@ -665,13 +711,13 @@ impl<'a> CodeGen<'a> {
                                 "idx_load3",
                             ) {
                                 Ok(v) => v.into_int_value(),
-                                Err(_) => return false,
+                                Err(_) => return Ok(false),
                             };
                             let one = self.i64_t.const_int(1, false);
                             let next_idx =
                                 match self.builder.build_int_add(cur_idx2, one, "idx_next") {
                                     Ok(v) => v,
-                                    Err(_) => return false,
+                                    Err(_) => return Ok(false),
                                 };
                             let _ = self.builder.build_store(idx_alloca, next_idx);
                             if !terminated
@@ -681,18 +727,18 @@ impl<'a> CodeGen<'a> {
                                     .is_err()
                             {
                                 self.loop_context_stack.borrow_mut().pop();
-                                return false;
+                                return Ok(false);
                             }
                             self.builder.position_at_end(loop_after_bb);
 
                             // Pop loop context
                             self.loop_context_stack.borrow_mut().pop();
 
-                            return terminated;
+                            return Ok(terminated);
                         }
                     }
                 }
-                false
+                Ok(false)
             }
             // Handle regular for loops: `for (init; test; update) { body }`
             ast::Stmt::For(forstmt) => {
@@ -749,12 +795,12 @@ impl<'a> CodeGen<'a> {
                         } else {
                             // Failed to coerce, bail out
                             _locals_stack.pop();
-                            return false;
+                            return Ok(false);
                         }
                     } else {
                         // Failed to lower test, bail out
                         _locals_stack.pop();
-                        return false;
+                        return Ok(false);
                     }
                 } else {
                     // No test means infinite loop: always branch to body
@@ -763,11 +809,11 @@ impl<'a> CodeGen<'a> {
 
                 // Build body block
                 self.builder.position_at_end(loop_body_bb);
-                let body_terminated = match &*forstmt.body {
+                let body_terminated: bool = match &*forstmt.body {
                     ast::Stmt::Block(block) => {
-                        self.lower_stmts(&block.stmts, _function, _param_map, _locals_stack)
+                        self.lower_stmts(&block.stmts, _function, _param_map, _locals_stack)?
                     }
-                    _ => self.lower_stmt(&forstmt.body, _function, _param_map, _locals_stack),
+                    _ => self.lower_stmt(&forstmt.body, _function, _param_map, _locals_stack)?,
                 };
 
                 // If body didn't terminate, branch to increment
@@ -791,7 +837,7 @@ impl<'a> CodeGen<'a> {
                 // Pop loop scope
                 _locals_stack.pop();
 
-                false // loops don't terminate unless body always returns
+                Ok(false) // loops don't terminate unless body always returns
             }
             // Handle while loops: `while (test) { body }`
             ast::Stmt::While(while_stmt) => {
@@ -823,20 +869,20 @@ impl<'a> CodeGen<'a> {
                         );
                     } else {
                         self.loop_context_stack.borrow_mut().pop();
-                        return false;
+                        return Ok(false);
                     }
                 } else {
                     self.loop_context_stack.borrow_mut().pop();
-                    return false;
+                    return Ok(false);
                 }
 
                 // Build body block
                 self.builder.position_at_end(loop_body_bb);
-                let body_terminated = match &*while_stmt.body {
+                let body_terminated: bool = match &*while_stmt.body {
                     ast::Stmt::Block(block) => {
-                        self.lower_stmts(&block.stmts, _function, _param_map, _locals_stack)
+                        self.lower_stmts(&block.stmts, _function, _param_map, _locals_stack)?
                     }
-                    _ => self.lower_stmt(&while_stmt.body, _function, _param_map, _locals_stack),
+                    _ => self.lower_stmt(&while_stmt.body, _function, _param_map, _locals_stack)?,
                 };
 
                 // If body didn't terminate, branch back to condition
@@ -850,7 +896,7 @@ impl<'a> CodeGen<'a> {
                 // Position after loop
                 self.builder.position_at_end(loop_after_bb);
 
-                false // while loops don't terminate unless body always returns
+                Ok(false) // while loops don't terminate unless body always returns
             }
             // Handle do-while loops: `do { body } while (test)`
             ast::Stmt::DoWhile(dowhile_stmt) => {
@@ -870,11 +916,11 @@ impl<'a> CodeGen<'a> {
 
                 // Build body block
                 self.builder.position_at_end(loop_body_bb);
-                let body_terminated = match &*dowhile_stmt.body {
+                let body_terminated: bool = match &*dowhile_stmt.body {
                     ast::Stmt::Block(block) => {
-                        self.lower_stmts(&block.stmts, _function, _param_map, _locals_stack)
+                        self.lower_stmts(&block.stmts, _function, _param_map, _locals_stack)?
                     }
-                    _ => self.lower_stmt(&dowhile_stmt.body, _function, _param_map, _locals_stack),
+                    _ => self.lower_stmt(&dowhile_stmt.body, _function, _param_map, _locals_stack)?,
                 };
 
                 // If body didn't terminate, branch to condition check
@@ -896,11 +942,11 @@ impl<'a> CodeGen<'a> {
                         );
                     } else {
                         self.loop_context_stack.borrow_mut().pop();
-                        return false;
+                        return Ok(false);
                     }
                 } else {
                     self.loop_context_stack.borrow_mut().pop();
-                    return false;
+                    return Ok(false);
                 }
 
                 // Pop loop context
@@ -909,9 +955,9 @@ impl<'a> CodeGen<'a> {
                 // Position after loop
                 self.builder.position_at_end(loop_after_bb);
 
-                false // do-while loops don't terminate unless body always returns
+                Ok(false) // do-while loops don't terminate unless body always returns
             }
-            _ => false,
+            _ => Ok(false),
         }
     }
 
@@ -951,10 +997,18 @@ impl<'a> CodeGen<'a> {
         };
 
         // Call oats_main(); we only support a no-arg oats_main here.
-        let call_site = self
-            .builder
-            .build_call(oats_main_fn, &[], "call_oats_main")
-            .expect("build_call failed");
+        let call_site = match self.builder.build_call(oats_main_fn, &[], "call_oats_main") {
+            Ok(cs) => cs,
+            Err(_) => {
+                crate::diagnostics::emit_diagnostic(
+                    &crate::diagnostics::Diagnostic::simple("failed to build call to oats_main"),
+                    Some(self.source),
+                );
+                let const_zero = i32_t.const_int(0, false);
+                let _ = self.builder.build_return(Some(&const_zero));
+                return true;
+            }
+        };
         // Interpret the result depending on its type. If the function returns an i64 or f64
         // we coerce/truncate to i32; if void, return 0.
         let either = call_site.try_as_basic_value();
@@ -962,18 +1016,37 @@ impl<'a> CodeGen<'a> {
             let ret_val = if bv.get_type().is_int_type() {
                 // Truncate or bitcast to i32 if needed
                 let rv_int = bv.into_int_value();
-                let cast = self
+                let cast = match self
                     .builder
                     .build_int_truncate_or_bit_cast(rv_int, i32_t, "ret_i32")
-                    .expect("int cast failed");
+                {
+                    Ok(c) => c,
+                    Err(_) => {
+                        crate::diagnostics::emit_diagnostic(
+                            &crate::diagnostics::Diagnostic::simple(
+                                "int cast failed when building host main",
+                            ),
+                            Some(self.source),
+                        );
+                        i32_t.const_int(0, false)
+                    }
+                };
                 inkwell::values::BasicValueEnum::IntValue(cast)
             } else if bv.get_type().is_float_type() {
                 // cast float to i32 via fptosi
                 let fv = bv.into_float_value();
-                let conv = self
-                    .builder
-                    .build_float_to_signed_int(fv, i32_t, "f_to_i")
-                    .expect("float->int failed");
+                let conv = match self.builder.build_float_to_signed_int(fv, i32_t, "f_to_i") {
+                    Ok(c) => c,
+                    Err(_) => {
+                        crate::diagnostics::emit_diagnostic(
+                            &crate::diagnostics::Diagnostic::simple(
+                                "float->int conversion failed in host main",
+                            ),
+                            Some(self.source),
+                        );
+                        i32_t.const_int(0, false)
+                    }
+                };
                 inkwell::values::BasicValueEnum::IntValue(conv)
             } else if bv.get_type().is_pointer_type() {
                 // pointer return -> return 0
@@ -1083,21 +1156,47 @@ impl<'a> CodeGen<'a> {
         // Allocate memory
         let malloc_fn = self.get_malloc();
         let size_const = self.i64_t.const_int(total_size, false);
-        let call_site = self
-            .builder
-            .build_call(malloc_fn, &[size_const.into()], "call_malloc")
-            .expect("build_call failed");
-        let malloc_ret = call_site
-            .try_as_basic_value()
-            .left()
-            .unwrap()
-            .into_pointer_value();
+        let call_site =
+            match self
+                .builder
+                .build_call(malloc_fn, &[size_const.into()], "call_malloc")
+            {
+                Ok(cs) => cs,
+                Err(_) => {
+                    crate::diagnostics::emit_diagnostic(
+                        &crate::diagnostics::Diagnostic::simple(
+                            "malloc call failed during constructor generation",
+                        ),
+                        Some(self.source),
+                    );
+                    return;
+                }
+            };
+        let malloc_ret = match call_site.try_as_basic_value() {
+            inkwell::Either::Left(bv) => bv.into_pointer_value(),
+            _ => {
+                crate::diagnostics::emit_diagnostic(
+                    &crate::diagnostics::Diagnostic::simple("malloc returned no pointer"),
+                    Some(self.source),
+                );
+                return;
+            }
+        };
 
         // Initialize header (refcount = 1)
-        let header_ptr = self
+        let header_ptr = match self
             .builder
             .build_pointer_cast(malloc_ret, self.i8ptr_t, "hdr_ptr")
-            .expect("cast failed");
+        {
+            Ok(p) => p,
+            Err(_) => {
+                crate::diagnostics::emit_diagnostic(
+                    &crate::diagnostics::Diagnostic::simple("pointer cast failed in constructor"),
+                    Some(self.source),
+                );
+                return;
+            }
+        };
         let header_val = self.i64_t.const_int(1u64, false);
         let _ = self.builder.build_store(header_ptr, header_val);
 
@@ -1106,10 +1205,18 @@ impl<'a> CodeGen<'a> {
         let mut scope = std::collections::HashMap::new();
 
         // Add 'this' to locals (points to the allocated object)
-        let this_alloca = self
-            .builder
-            .build_alloca(self.i8ptr_t, "this")
-            .expect("alloca failed");
+        let this_alloca = match self.builder.build_alloca(self.i8ptr_t, "this") {
+            Ok(a) => a,
+            Err(_) => {
+                crate::diagnostics::emit_diagnostic(
+                    &crate::diagnostics::Diagnostic::simple(
+                        "alloca failed for 'this' in constructor",
+                    ),
+                    Some(self.source),
+                );
+                return;
+            }
+        };
         let _ = self.builder.build_store(this_alloca, malloc_ret);
         scope.insert(
             "this".to_string(),
@@ -1121,12 +1228,32 @@ impl<'a> CodeGen<'a> {
 
         // Store constructor parameters into locals
         for (i, pname) in param_names.iter().enumerate() {
-            let param_val = f.get_nth_param(i as u32).expect("param missing");
+            let param_val = match f.get_nth_param(i as u32) {
+                Some(pv) => pv,
+                None => {
+                    crate::diagnostics::emit_diagnostic(
+                        &crate::diagnostics::Diagnostic::simple("missing constructor parameter"),
+                        Some(self.source),
+                    );
+                    return;
+                }
+            };
             let param_ty = param_val.get_type();
-            let alloca = self
+            let alloca = match self
                 .builder
                 .build_alloca(param_ty, &format!("param_{}", pname))
-                .expect("alloca failed");
+            {
+                Ok(a) => a,
+                Err(_) => {
+                    crate::diagnostics::emit_diagnostic(
+                        &crate::diagnostics::Diagnostic::simple(
+                            "alloca failed for constructor parameter",
+                        ),
+                        Some(self.source),
+                    );
+                    return;
+                }
+            };
             let _ = self.builder.build_store(alloca, param_val);
             scope.insert(pname.clone(), (alloca, param_ty, true, true));
             param_map.insert(pname.clone(), i as u32);
@@ -1139,21 +1266,67 @@ impl<'a> CodeGen<'a> {
         for (field_idx, (field_name, _field_type)) in fields.iter().enumerate() {
             if let Some(param_idx) = param_names.iter().position(|pn| pn == field_name) {
                 // This field matches a constructor parameter - auto-assign it
-                let param_val = f.get_nth_param(param_idx as u32).expect("param missing");
+                let param_val = match f.get_nth_param(param_idx as u32) {
+                    Some(pv) => pv,
+                    None => {
+                        crate::diagnostics::emit_diagnostic(
+                            &crate::diagnostics::Diagnostic::simple(
+                                "missing constructor parameter for field assignment",
+                            ),
+                            Some(self.source),
+                        );
+                        return;
+                    }
+                };
                 let field_offset = header_size + (field_idx as u64 * 8);
-                let field_ptr = self
+                let field_ptr = match self
                     .builder
                     .build_ptr_to_int(malloc_ret, self.i64_t, "obj_addr")
-                    .expect("ptr_to_int failed");
+                {
+                    Ok(v) => v,
+                    Err(_) => {
+                        crate::diagnostics::emit_diagnostic(
+                            &crate::diagnostics::Diagnostic::simple(
+                                "ptr_to_int failed for constructor field",
+                            ),
+                            Some(self.source),
+                        );
+                        return;
+                    }
+                };
                 let offset_const = self.i64_t.const_int(field_offset, false);
-                let field_addr = self
-                    .builder
-                    .build_int_add(field_ptr, offset_const, "field_addr")
-                    .expect("int_add failed");
-                let field_ptr_cast = self
-                    .builder
-                    .build_int_to_ptr(field_addr, self.i8ptr_t, "field_ptr")
-                    .expect("int_to_ptr failed");
+                let field_addr =
+                    match self
+                        .builder
+                        .build_int_add(field_ptr, offset_const, "field_addr")
+                    {
+                        Ok(v) => v,
+                        Err(_) => {
+                            crate::diagnostics::emit_diagnostic(
+                                &crate::diagnostics::Diagnostic::simple(
+                                    "int_add failed for constructor field address computation",
+                                ),
+                                Some(self.source),
+                            );
+                            return;
+                        }
+                    };
+                let field_ptr_cast =
+                    match self
+                        .builder
+                        .build_int_to_ptr(field_addr, self.i8ptr_t, "field_ptr")
+                    {
+                        Ok(v) => v,
+                        Err(_) => {
+                            crate::diagnostics::emit_diagnostic(
+                                &crate::diagnostics::Diagnostic::simple(
+                                    "int_to_ptr failed for constructor field",
+                                ),
+                                Some(self.source),
+                            );
+                            return;
+                        }
+                    };
                 let _ = self.builder.build_store(field_ptr_cast, param_val);
 
                 // If the field is a pointer type, increment its reference count

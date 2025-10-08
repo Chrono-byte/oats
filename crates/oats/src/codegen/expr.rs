@@ -142,20 +142,19 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     let then_bb = self.context.append_basic_block(function, "and.then");
                     let else_bb = self.context.append_basic_block(function, "and.else");
                     let merge_bb = self.context.append_basic_block(function, "and.merge");
-                    if let Err(_) = self
+                    if self
                         .builder
-                        .build_conditional_branch(cond, then_bb, else_bb)
+                        .build_conditional_branch(cond, then_bb, else_bb).is_err()
                     {
                         return None;
                     }
                     // then: evaluate right
                     self.builder.position_at_end(then_bb);
                     let rv = self.lower_expr(&bin.right, function, param_map, locals);
-                    if self.builder.get_insert_block().is_some() {
-                        if let Err(_) = self.builder.build_unconditional_branch(merge_bb) {
+                    if self.builder.get_insert_block().is_some()
+                        && self.builder.build_unconditional_branch(merge_bb).is_err() {
                             return None;
                         }
-                    }
                     // else: keep left
                     self.builder.position_at_end(else_bb);
                     if self.builder.get_insert_block().is_some() {
@@ -179,19 +178,18 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     let then_bb = self.context.append_basic_block(function, "or.then");
                     let else_bb = self.context.append_basic_block(function, "or.else");
                     let merge_bb = self.context.append_basic_block(function, "or.merge");
-                    if let Err(_) = self
+                    if self
                         .builder
-                        .build_conditional_branch(cond, then_bb, else_bb)
+                        .build_conditional_branch(cond, then_bb, else_bb).is_err()
                     {
                         return None;
                     }
                     // then: keep left
                     self.builder.position_at_end(then_bb);
-                    if self.builder.get_insert_block().is_some() {
-                        if let Err(_) = self.builder.build_unconditional_branch(merge_bb) {
+                    if self.builder.get_insert_block().is_some()
+                        && self.builder.build_unconditional_branch(merge_bb).is_err() {
                             return None;
                         }
-                    }
                     // else: evaluate right
                     self.builder.position_at_end(else_bb);
                     let rv = self.lower_expr(&bin.right, function, param_map, locals);
@@ -243,11 +241,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 let name = id.sym.to_string();
 
                 // First, check if the identifier is a function parameter.
-                if let Some(idx) = param_map.get(&name) {
-                    if let Some(pv) = function.get_nth_param(*idx) {
+                if let Some(idx) = param_map.get(&name)
+                    && let Some(pv) = function.get_nth_param(*idx) {
                         return Some(pv);
                     }
-                }
 
                 // If not a parameter, then it must be a local variable (`let` or `const`).
                 if let Some((ptr, ty, initialized, _is_const)) = self.find_local(locals, &name) {
@@ -513,8 +510,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         {
                                             class_name_opt = Some(n.clone());
                                         }
-                                    } else if let Some(param_idx) = param_map.get(&ident_name) {
-                                        if let Some(param_types) = self
+                                    } else if let Some(param_idx) = param_map.get(&ident_name)
+                                        && let Some(param_types) = self
                                             .fn_param_types
                                             .borrow()
                                             .get(function.get_name().to_str().unwrap_or(""))
@@ -527,10 +524,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                 class_name_opt = Some(n.clone());
                                             }
                                         }
-                                    }
                                 } else if matches!(&*member.obj, deno_ast::swc::ast::Expr::This(_))
-                                {
-                                    if let Some(param_types) = self
+                                    && let Some(param_types) = self
                                         .fn_param_types
                                         .borrow()
                                         .get(function.get_name().to_str().unwrap_or(""))
@@ -540,7 +535,6 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     {
                                         class_name_opt = Some(n.clone());
                                     }
-                                }
 
                                 if let Some(class_name) = class_name_opt {
                                     // Look up field list for this class
@@ -1009,7 +1003,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             BasicValueEnum::PointerValue(pv) => {
                                 // call runtime array_set_ptr(arr_ptr, idx, pv)
                                 let idx_const = self.i64_t.const_int(i as u64, false);
-                                let _ = match self.builder.build_call(
+                                match self.builder.build_call(
                                     array_set_ptr_fn,
                                     &[arr_ptr.into(), idx_const.into(), pv.into()],
                                     "array_set_ptr_call",
@@ -1029,13 +1023,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 }
             }
             ast::Expr::This(_) => {
-                if let Some((ptr, ty, init, _)) = self.find_local(locals, "this") {
-                    if init {
-                        if let Ok(loaded) = self.builder.build_load(ty, ptr, "this_load") {
+                if let Some((ptr, ty, init, _)) = self.find_local(locals, "this")
+                    && init
+                        && let Ok(loaded) = self.builder.build_load(ty, ptr, "this_load") {
                             return Some(loaded);
                         }
-                    }
-                }
                 if let Some(idx) = param_map.get("this") {
                     if let Some(pv) = function.get_nth_param(*idx) {
                         return Some(pv);
@@ -1167,8 +1159,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         }
                                     }
                                 }
-                            } else if matches!(&*member.obj, deno_ast::swc::ast::Expr::This(_)) {
-                                if let Some(param_types) = self
+                            } else if matches!(&*member.obj, deno_ast::swc::ast::Expr::This(_))
+                                && let Some(param_types) = self
                                     .fn_param_types
                                     .borrow()
                                     .get(function.get_name().to_str().unwrap_or(""))
@@ -1178,7 +1170,6 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 {
                                     class_name_opt = Some(n.clone());
                                 }
-                            }
 
                             if let Some(class_name) = class_name_opt {
                                 // lookup field list for this class
@@ -1298,7 +1289,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             }
             ast::Expr::New(new_expr) => {
                 if let ast::Expr::Ident(ident) = &*new_expr.callee {
-                    let ctor_name = format!("{}_ctor", ident.sym.to_string());
+                    let ctor_name = format!("{}_ctor", ident.sym);
                     if let Some(fv) = self.module.get_function(&ctor_name) {
                         let mut lowered_args: Vec<inkwell::values::BasicMetadataValueEnum> =
                             Vec::new();

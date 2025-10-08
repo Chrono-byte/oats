@@ -34,13 +34,9 @@ impl<'a> super::CodeGen<'a> {
     ) -> Option<inkwell::values::FloatValue<'a>> {
         match val {
             BasicValueEnum::FloatValue(fv) => Some(fv),
-            BasicValueEnum::IntValue(iv) => match self
+            BasicValueEnum::IntValue(iv) => self
                 .builder
-                .build_signed_int_to_float(iv, self.f64_t, "i2f")
-            {
-                Ok(v) => Some(v),
-                Err(_) => None,
-            },
+                .build_signed_int_to_float(iv, self.f64_t, "i2f").ok(),
             _ => None,
         }
     }
@@ -55,19 +51,12 @@ impl<'a> super::CodeGen<'a> {
                 if iv.get_type().get_bit_width() == 64 {
                     Some(iv)
                 } else {
-                    match self.builder.build_int_cast(iv, self.i64_t, "cast_i64") {
-                        Ok(v) => Some(v),
-                        Err(_) => None,
-                    }
+                    self.builder.build_int_cast(iv, self.i64_t, "cast_i64").ok()
                 }
             }
-            BasicValueEnum::FloatValue(fv) => match self
+            BasicValueEnum::FloatValue(fv) => self
                 .builder
-                .build_float_to_signed_int(fv, self.i64_t, "f2i")
-            {
-                Ok(v) => Some(v),
-                Err(_) => None,
-            },
+                .build_float_to_signed_int(fv, self.i64_t, "f2i").ok(),
             _ => None,
         }
     }

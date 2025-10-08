@@ -1,0 +1,20 @@
+export class Counter {
+    constructor(public count: number) {
+    }
+
+    increment(): void {
+        this.count = this.count + 1.0;
+    }
+
+    getCount(): number {
+        return this.count;
+    }
+}
+
+export function main(): number {
+    let c = new Counter(5.0);
+    c.increment();
+    let result = c.getCount();
+    print_f64(result);
+    return 0;
+}

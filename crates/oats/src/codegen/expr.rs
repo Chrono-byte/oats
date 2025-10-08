@@ -241,7 +241,15 @@ impl<'a> crate::codegen::CodeGen<'a> {
             }
             ast::Expr::Ident(id) => {
                 let name = id.sym.to_string();
-                // First check locals (alloca slots) by searching scope stack
+
+                // First, check if the identifier is a function parameter.
+                if let Some(idx) = param_map.get(&name) {
+                    if let Some(pv) = function.get_nth_param(*idx) {
+                        return Some(pv);
+                    }
+                }
+
+                // If not a parameter, then it must be a local variable (`let` or `const`).
                 if let Some((ptr, ty, initialized, _is_const)) = self.find_local(locals, &name) {
                     // If not initialized -> TDZ: generate a trap (unreachable)
                     if !initialized {
@@ -249,22 +257,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         let _ = self.builder.build_unreachable();
                         return None;
                     }
-                    // build_load signature depends on LLVM version; for newer
-                    // inkwell it expects (pointee_ty, ptr, name).
                     let loaded = match self.builder.build_load(ty, ptr, &name) {
                         Ok(v) => v,
                         Err(_) => return None,
                     };
                     return Some(loaded);
-                }
-                // Fallback to function parameter (should be rare since params are
-                // typically allocated into locals by gen_function_ir)
-                if let Some(idx) = param_map.get(&name) {
-                    if let Some(pv) = function.get_nth_param(*idx) {
-                        return Some(pv);
-                    } else {
-                        return None;
-                    }
                 }
                 None
             }
@@ -478,6 +475,214 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             // mark initialized after assignment
                             self.set_local_initialized(locals, &name, true);
                             return Some(val);
+                        }
+                    }
+                }
+
+                // Handle member assignment: obj.field = expr
+                // Check if left side is a member expression
+                use deno_ast::swc::ast::{AssignTarget, SimpleAssignTarget};
+                if let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = &assign.left {
+                    // Lower the right-hand side value
+                    if let Some(new_val) =
+                        self.lower_expr(&assign.right, function, param_map, locals)
+                    {
+                        // Only handle dot-member (obj.prop), not computed (obj[expr])
+                        use deno_ast::swc::ast::MemberProp;
+                        if let MemberProp::Ident(prop_ident) = &member.prop {
+                            let field_name = prop_ident.sym.to_string();
+
+                            // Lower the object to get its pointer
+                            if let Some(BasicValueEnum::PointerValue(obj_ptr)) =
+                                self.lower_expr(&member.obj, function, param_map, locals)
+                            {
+                                // Determine the class name from the object expression
+                                let mut class_name_opt: Option<String> = None;
+
+                                // Check if obj is `this` or a named parameter
+                                if let deno_ast::swc::ast::Expr::Ident(ident) = &*member.obj {
+                                    let ident_name = ident.sym.to_string();
+                                    if ident_name == "this" {
+                                        if let Some(param_types) = self
+                                            .fn_param_types
+                                            .borrow()
+                                            .get(function.get_name().to_str().unwrap_or(""))
+                                            && !param_types.is_empty()
+                                            && let crate::types::OatsType::NominalStruct(n) =
+                                                &param_types[0]
+                                        {
+                                            class_name_opt = Some(n.clone());
+                                        }
+                                    } else if let Some(param_idx) = param_map.get(&ident_name) {
+                                        if let Some(param_types) = self
+                                            .fn_param_types
+                                            .borrow()
+                                            .get(function.get_name().to_str().unwrap_or(""))
+                                        {
+                                            let idx = *param_idx as usize;
+                                            if idx < param_types.len()
+                                                && let crate::types::OatsType::NominalStruct(n) =
+                                                    &param_types[idx]
+                                            {
+                                                class_name_opt = Some(n.clone());
+                                            }
+                                        }
+                                    }
+                                } else if matches!(&*member.obj, deno_ast::swc::ast::Expr::This(_))
+                                {
+                                    if let Some(param_types) = self
+                                        .fn_param_types
+                                        .borrow()
+                                        .get(function.get_name().to_str().unwrap_or(""))
+                                        && !param_types.is_empty()
+                                        && let crate::types::OatsType::NominalStruct(n) =
+                                            &param_types[0]
+                                    {
+                                        class_name_opt = Some(n.clone());
+                                    }
+                                }
+
+                                if let Some(class_name) = class_name_opt {
+                                    // Look up field list for this class
+                                    if let Some(fields) =
+                                        self.class_fields.borrow().get(&class_name)
+                                    {
+                                        // Find the field by name
+                                        if let Some((field_idx, (_fname, field_ty))) = fields
+                                            .iter()
+                                            .enumerate()
+                                            .find(|(_, (n, _))| n == &field_name)
+                                        {
+                                            // Compute field offset: header (u64) + field_idx * sizeof(ptr)
+                                            let hdr_size = self.i64_t.const_int(
+                                                std::mem::size_of::<u64>() as u64,
+                                                false,
+                                            );
+                                            let ptr_sz = self.i64_t.const_int(
+                                                std::mem::size_of::<usize>() as u64,
+                                                false,
+                                            );
+                                            let idx_const =
+                                                self.i64_t.const_int(field_idx as u64, false);
+                                            let mul = self
+                                                .builder
+                                                .build_int_mul(idx_const, ptr_sz, "fld_off_mul")
+                                                .expect("mul failed");
+                                            let offset = self
+                                                .builder
+                                                .build_int_add(hdr_size, mul, "fld_off")
+                                                .expect("add failed");
+                                            let offset_i32 = self
+                                                .builder
+                                                .build_int_cast(
+                                                    offset,
+                                                    self.context.i32_type(),
+                                                    "off_i32",
+                                                )
+                                                .expect("cast off_i32");
+
+                                            // GEP to field location
+                                            let gep_ptr = unsafe {
+                                                self.builder.build_gep(
+                                                    self.context.i8_type(),
+                                                    obj_ptr,
+                                                    &[offset_i32],
+                                                    "field_i8ptr_store",
+                                                )
+                                            };
+                                            let gep_ptr = match gep_ptr {
+                                                Ok(pv) => pv,
+                                                Err(_) => return None,
+                                            };
+
+                                            // Store based on field type
+                                            match field_ty {
+                                                crate::types::OatsType::Number => {
+                                                    // Cast to f64 pointer and store
+                                                    let f64_ptr = self
+                                                        .builder
+                                                        .build_pointer_cast(
+                                                            gep_ptr,
+                                                            self.context
+                                                                .ptr_type(AddressSpace::default()),
+                                                            "f64_ptr_cast_store",
+                                                        )
+                                                        .expect("cast f64_ptr failed");
+                                                    let _ =
+                                                        self.builder.build_store(f64_ptr, new_val);
+                                                    return Some(new_val);
+                                                }
+                                                crate::types::OatsType::String
+                                                | crate::types::OatsType::NominalStruct(_)
+                                                | crate::types::OatsType::Array(_) => {
+                                                    // Cast to pointer type for slot
+                                                    let slot_ptr_ty = self
+                                                        .context
+                                                        .ptr_type(AddressSpace::default());
+                                                    let slot_ptr =
+                                                        match self.builder.build_pointer_cast(
+                                                            gep_ptr,
+                                                            slot_ptr_ty,
+                                                            "slot_ptr_cast_store",
+                                                        ) {
+                                                            Ok(p) => p,
+                                                            Err(_) => return None,
+                                                        };
+
+                                                    // Load old value for RC decrement
+                                                    let old_val = match self.builder.build_load(
+                                                        self.i8ptr_t,
+                                                        slot_ptr,
+                                                        "old_field_val",
+                                                    ) {
+                                                        Ok(v) => v,
+                                                        Err(_) => return None,
+                                                    };
+
+                                                    // Decrement old value's refcount
+                                                    if let BasicValueEnum::PointerValue(old_pv) =
+                                                        old_val
+                                                    {
+                                                        let rc_dec = self.get_rc_dec();
+                                                        let _ = match self.builder.build_call(
+                                                            rc_dec,
+                                                            &[old_pv.into()],
+                                                            "rc_dec_old_field",
+                                                        ) {
+                                                            Ok(cs) => cs,
+                                                            Err(_) => return None,
+                                                        };
+                                                    }
+
+                                                    // Store new value
+                                                    let _ =
+                                                        self.builder.build_store(slot_ptr, new_val);
+
+                                                    // Increment new value's refcount
+                                                    if let BasicValueEnum::PointerValue(new_pv) =
+                                                        new_val
+                                                    {
+                                                        let rc_inc = self.get_rc_inc();
+                                                        let _ = match self.builder.build_call(
+                                                            rc_inc,
+                                                            &[new_pv.into()],
+                                                            "rc_inc_new_field",
+                                                        ) {
+                                                            Ok(cs) => cs,
+                                                            Err(_) => return None,
+                                                        };
+                                                    }
+                                                    return Some(new_val);
+                                                }
+                                                _ => {
+                                                    // Unsupported field type
+                                                    return None;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }

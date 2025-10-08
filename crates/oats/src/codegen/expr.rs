@@ -37,7 +37,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     // Lower inner expression and then check union discriminant if it's a pointer
                     let inner = self.lower_expr(&unary.arg, function, param_map, locals)?;
                     if let BasicValueEnum::PointerValue(pv) = inner {
-                        // call union_get_discriminant(i8*) -> i64
+                        // For pointer-like values, consult the union discriminant helper.
+                        // Runtime layout: union-boxed objects expose a discriminant word
+                        // (0=number, 1=string, 2=boolean/other). Calling the helper
+                        // allows `typeof` guards and comparisons to work on boxed unions.
                         let get_disc = self.get_union_get_discriminant();
                         let cs = self.builder.build_call(get_disc, &[pv.into()], "get_disc");
                         if let Ok(cs) = cs {
@@ -390,6 +393,41 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 if let Ok(obj_val) =
                                     self.lower_expr(&member.obj, function, param_map, locals)
                                 {
+                                        // Support weak reference helpers: downgrade() and upgrade()
+                                        if method_name == "downgrade" {
+                                            // Expect no args
+                                            if !call.args.is_empty() {
+                                                return Err(Diagnostic::simple("expression lowering failed"))?;
+                                            }
+                                            if let BasicValueEnum::PointerValue(pv) = obj_val {
+                                                let f = self.get_rc_weak_inc();
+                                                let _ = self.builder.build_call(f, &[pv.into()], "rc_weak_inc_call");
+                                                return Ok(pv.as_basic_value_enum());
+                                            } else {
+                                                return Err(Diagnostic::simple("downgrade on non-pointer"))?;
+                                            }
+                                        }
+                                        if method_name == "upgrade" {
+                                            // Expect no args
+                                            if !call.args.is_empty() {
+                                                return Err(Diagnostic::simple("expression lowering failed"))?;
+                                            }
+                                            if let BasicValueEnum::PointerValue(pv) = obj_val {
+                                                let f = self.get_rc_weak_upgrade();
+                                                let cs = match self.builder.build_call(f, &[pv.into()], "rc_weak_upgrade_call") {
+                                                    Ok(cs) => cs,
+                                                    Err(_) => return Err(Diagnostic::simple("operation failed")),
+                                                };
+                                                let either = cs.try_as_basic_value();
+                                                if let inkwell::Either::Left(bv) = either {
+                                                    return Ok(bv);
+                                                } else {
+                                                    return Err(Diagnostic::simple("operation not supported"));
+                                                }
+                                            } else {
+                                                return Err(Diagnostic::simple("upgrade on non-pointer"))?;
+                                            }
+                                        }
                                     // Special-case: arr.push(x) / arr.pop()
                                     if method_name == "push" {
                                         // Expect one argument
@@ -2251,7 +2289,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     // determine the runtime kind (number/string/boolean/object). This
                     // enables typeof guards to work on boxed union values.
                     if let BasicValueEnum::PointerValue(pv) = inner {
-                        // call union_get_discriminant(i8*) -> i64
+                        // If this pointer may be a boxed union, call the discriminant
+                        // helper to distinguish number/string/boolean/object at runtime.
+                        // This keeps `typeof` semantics consistent for boxed union values.
                         let disc_fn = self.get_union_get_discriminant();
                         let call_site = self
                             .builder

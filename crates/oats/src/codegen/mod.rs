@@ -54,6 +54,9 @@ pub struct CodeGen<'a> {
     pub fn_union_unbox_f64: RefCell<Option<FunctionValue<'a>>>,
     pub fn_union_unbox_ptr: RefCell<Option<FunctionValue<'a>>>,
     pub fn_union_get_discriminant: RefCell<Option<FunctionValue<'a>>>,
+    pub fn_rc_weak_inc: RefCell<Option<FunctionValue<'a>>>,
+    pub fn_rc_weak_dec: RefCell<Option<FunctionValue<'a>>>,
+    pub fn_rc_weak_upgrade: RefCell<Option<FunctionValue<'a>>>,
     pub class_fields: RefCell<HashMap<String, Vec<(String, crate::types::OatsType)>>>,
     pub fn_param_types: RefCell<HashMap<String, Vec<crate::types::OatsType>>>,
     pub loop_context_stack: RefCell<Vec<LoopContext<'a>>>,
@@ -174,6 +177,37 @@ impl<'a> CodeGen<'a> {
             .module
             .add_function("union_get_discriminant", fn_type, None);
         *self.fn_union_get_discriminant.borrow_mut() = Some(f);
+        f
+    }
+
+    fn get_rc_weak_inc(&self) -> FunctionValue<'a> {
+        if let Some(f) = *self.fn_rc_weak_inc.borrow() {
+            return f;
+        }
+        let fn_type = self.context.void_type().fn_type(&[self.i8ptr_t.into()], false);
+        let f = self.module.add_function("rc_weak_inc", fn_type, None);
+        *self.fn_rc_weak_inc.borrow_mut() = Some(f);
+        f
+    }
+
+    fn get_rc_weak_dec(&self) -> FunctionValue<'a> {
+        if let Some(f) = *self.fn_rc_weak_dec.borrow() {
+            return f;
+        }
+        let fn_type = self.context.void_type().fn_type(&[self.i8ptr_t.into()], false);
+        let f = self.module.add_function("rc_weak_dec", fn_type, None);
+        *self.fn_rc_weak_dec.borrow_mut() = Some(f);
+        f
+    }
+
+    fn get_rc_weak_upgrade(&self) -> FunctionValue<'a> {
+        if let Some(f) = *self.fn_rc_weak_upgrade.borrow() {
+            return f;
+        }
+        // rc_weak_upgrade(i8*) -> i8*
+        let fn_type = self.i8ptr_t.fn_type(&[self.i8ptr_t.into()], false);
+        let f = self.module.add_function("rc_weak_upgrade", fn_type, None);
+        *self.fn_rc_weak_upgrade.borrow_mut() = Some(f);
         f
     }
 

@@ -13,6 +13,10 @@ pub enum OatsType {
     Union(Vec<OatsType>),
     // Array of element type (e.g. number[])
     Array(Box<OatsType>),
+    // Weak reference wrapper (non-owning)
+    Weak(Box<OatsType>),
+    // Optional wrapper, represented as nullable/Option
+    Option(Box<OatsType>),
     Void,
     String,
     NominalStruct(String),
@@ -95,6 +99,23 @@ pub fn map_ts_type(ty: &ast::TsType) -> Option<OatsType> {
                     }
                     // No type param -> default to Array<number>
                     return Some(OatsType::Array(Box::new(OatsType::Number)));
+                }
+                // Support Weak<T> and Option<T> as language-level generics
+                if ident.sym.as_ref() == "Weak" {
+                    if let Some(type_params) = &type_ref.type_params
+                        && let Some(first_param) = type_params.params.first()
+                    {
+                        return map_ts_type(first_param).map(|inner| OatsType::Weak(Box::new(inner)));
+                    }
+                    return None;
+                }
+                if ident.sym.as_ref() == "Option" {
+                    if let Some(type_params) = &type_ref.type_params
+                        && let Some(first_param) = type_params.params.first()
+                    {
+                        return map_ts_type(first_param).map(|inner| OatsType::Option(Box::new(inner)));
+                    }
+                    return None;
                 }
                 return Some(OatsType::NominalStruct(ident.sym.to_string()));
             }

@@ -137,6 +137,48 @@ impl<'a> CodeGen<'a> {
             })
     }
 
+    fn get_array_push_f64(&self) -> FunctionValue<'a> {
+        self.module
+            .get_function("array_push_f64")
+            .unwrap_or_else(|| {
+                let fn_type = self
+                    .context
+                    .void_type()
+                    .fn_type(&[self.i8ptr_t.into(), self.f64_t.into()], false);
+                self.module.add_function("array_push_f64", fn_type, None)
+            })
+    }
+
+    fn get_array_pop_f64(&self) -> FunctionValue<'a> {
+        self.module
+            .get_function("array_pop_f64")
+            .unwrap_or_else(|| {
+                let fn_type = self.f64_t.fn_type(&[self.i8ptr_t.into()], false);
+                self.module.add_function("array_pop_f64", fn_type, None)
+            })
+    }
+
+    fn get_array_push_ptr(&self) -> FunctionValue<'a> {
+        self.module
+            .get_function("array_push_ptr")
+            .unwrap_or_else(|| {
+                let fn_type = self
+                    .context
+                    .void_type()
+                    .fn_type(&[self.i8ptr_t.into(), self.i8ptr_t.into()], false);
+                self.module.add_function("array_push_ptr", fn_type, None)
+            })
+    }
+
+    fn get_array_pop_ptr(&self) -> FunctionValue<'a> {
+        self.module
+            .get_function("array_pop_ptr")
+            .unwrap_or_else(|| {
+                let fn_type = self.i8ptr_t.fn_type(&[self.i8ptr_t.into()], false);
+                self.module.add_function("array_pop_ptr", fn_type, None)
+            })
+    }
+
     fn get_array_set_ptr(&self) -> FunctionValue<'a> {
         self.module
             .get_function("array_set_ptr")

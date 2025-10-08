@@ -1,0 +1,8 @@
+// Example demonstrating array push/pop
+function main(): number {
+    let arr = [1, 2, 3];
+    arr.push(4);
+    let v = arr.pop();
+    println(v);
+    return 0;
+}

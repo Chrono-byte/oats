@@ -289,7 +289,26 @@ pub extern "C" fn number_to_string(num: f64) -> *mut c_char {
 /// Math.random() -> f64 in [0, 1)
 #[unsafe(no_mangle)]
 pub extern "C" fn math_random() -> f64 {
-    // Use libc rand() for a simple PRNG and normalize to [0,1)
+    // Seed libc PRNG once per process to avoid deterministic output across runs.
+    // We use std::sync::Once for thread-safe one-time initialization.
+    static INIT_RAND: std::sync::Once = std::sync::Once::new();
+    INIT_RAND.call_once(|| unsafe {
+        // Use gettimeofday for microsecond resolution to avoid same-second collisions.
+        let mut tv: libc::timeval = std::mem::zeroed();
+        if libc::gettimeofday(&mut tv as *mut libc::timeval, std::ptr::null_mut()) == 0 {
+            let secs = tv.tv_sec as u64;
+            let usec = tv.tv_usec as u64;
+            let pid = libc::getpid() as u64;
+            let seed = ((secs << 32) ^ usec ^ (pid as u64)) as u32;
+            libc::srand(seed);
+        } else {
+            // Fallback to time-based seeding
+            let now = libc::time(std::ptr::null_mut()) as u64;
+            libc::srand((now as u32).wrapping_mul(1664525).wrapping_add(1013904223));
+        }
+    });
+
+    // Simple PRNG using libc::rand() normalized to [0,1).
     unsafe {
         let r = libc::rand() as f64;
         let m = libc::RAND_MAX as f64;
@@ -504,6 +523,86 @@ pub unsafe extern "C" fn array_set_ptr(arr: *mut c_void, idx: usize, p: *mut c_v
             rc_dec(old);
         }
     }
+}
+
+/// Push a f64 value onto an existing array.
+/// Note: this does not perform capacity checks or reallocation. The caller
+/// must ensure the array was allocated with sufficient space.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn array_push_f64(arr: *mut c_void, value: f64) {
+    if arr.is_null() {
+        return;
+    }
+    let len_ptr = (arr as *mut u8).add(mem::size_of::<u64>()) as *mut u64;
+    let len = *len_ptr as usize;
+    let data_start = (arr as *mut u8).add(ARRAY_HEADER_SIZE);
+    let elem_ptr = data_start.add(len * mem::size_of::<f64>()) as *mut f64;
+    *elem_ptr = value;
+    *len_ptr = (len + 1) as u64;
+}
+
+/// Pop a f64 value from an array and return it. If the array is empty,
+/// returns 0.0.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn array_pop_f64(arr: *mut c_void) -> f64 {
+    if arr.is_null() {
+        return 0.0;
+    }
+    let len_ptr = (arr as *mut u8).add(mem::size_of::<u64>()) as *mut u64;
+    let len = *len_ptr as isize;
+    if len <= 0 {
+        return 0.0;
+    }
+    let new_len = (len - 1) as usize;
+    let data_start = (arr as *mut u8).add(ARRAY_HEADER_SIZE);
+    let elem_ptr = data_start.add(new_len * mem::size_of::<f64>()) as *mut f64;
+    let val = *elem_ptr;
+    // Optionally zero the slot
+    *elem_ptr = 0.0;
+    *len_ptr = new_len as u64;
+    val
+}
+
+/// Push a pointer-sized element into a pointer-typed array. Increments the
+/// pushed pointer's refcount to reflect array ownership. Caller must ensure
+/// sufficient capacity.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn array_push_ptr(arr: *mut c_void, value: *mut c_void) {
+    if arr.is_null() {
+        return;
+    }
+    let len_ptr = (arr as *mut u8).add(mem::size_of::<u64>()) as *mut u64;
+    let len = *len_ptr as usize;
+    let data_start = (arr as *mut u8).add(ARRAY_HEADER_SIZE);
+    let elem_ptr = data_start.add(len * mem::size_of::<*mut c_void>()) as *mut *mut c_void;
+    *elem_ptr = value;
+    if !value.is_null() {
+        rc_inc(value);
+    }
+    *len_ptr = (len + 1) as u64;
+}
+
+/// Pop a pointer element from a pointer-typed array and return it. Returns
+/// NULL if the array is empty. Ownership of the returned pointer is
+/// transferred to the caller (no refcount change is performed).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn array_pop_ptr(arr: *mut c_void) -> *mut c_void {
+    if arr.is_null() {
+        return ptr::null_mut();
+    }
+    let len_ptr = (arr as *mut u8).add(mem::size_of::<u64>()) as *mut u64;
+    let len = *len_ptr as isize;
+    if len <= 0 {
+        return ptr::null_mut();
+    }
+    let new_len = (len - 1) as usize;
+    let data_start = (arr as *mut u8).add(ARRAY_HEADER_SIZE);
+    let elem_ptr = data_start.add(new_len * mem::size_of::<*mut c_void>()) as *mut *mut c_void;
+    let raw = *elem_ptr;
+    // Clear the slot to avoid dangling references in the array buffer.
+    *elem_ptr = ptr::null_mut();
+    *len_ptr = new_len as u64;
+    raw
 }
 
 // --- Atomic Reference Counting ---

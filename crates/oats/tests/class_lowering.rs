@@ -20,13 +20,14 @@ fn class_simple_emits_ctor_and_method() -> Result<()> {
     for item_ref in parsed.program_ref().body() {
         if let deno_ast::ModuleItemRef::ModuleDecl(module_decl) = item_ref
             && let deno_ast::swc::ast::ModuleDecl::ExportDecl(decl) = module_decl
-                && let deno_ast::swc::ast::Decl::Fn(f) = &decl.decl {
-                    let name = f.ident.sym.to_string();
-                    if name == "main" {
-                        func_decl_opt = Some((*f.function).clone());
-                        break;
-                    }
-                }
+            && let deno_ast::swc::ast::Decl::Fn(f) = &decl.decl
+        {
+            let name = f.ident.sym.to_string();
+            if name == "main" {
+                func_decl_opt = Some((*f.function).clone());
+                break;
+            }
+        }
     }
 
     let func_decl =
@@ -65,43 +66,44 @@ fn class_simple_emits_ctor_and_method() -> Result<()> {
         class_fields: std::cell::RefCell::new(std::collections::HashMap::new()),
         fn_param_types: std::cell::RefCell::new(std::collections::HashMap::new()),
         source: &parsed_mod.source,
-        loop_context_stack: std::cell::RefCell::new(Vec::new())
+        loop_context_stack: std::cell::RefCell::new(Vec::new()),
     };
 
     // Emit class symbols by scanning module items and invoking main's codegen
     for item_ref in parsed.program_ref().body() {
         if let deno_ast::ModuleItemRef::ModuleDecl(module_decl) = item_ref
             && let deno_ast::swc::ast::ModuleDecl::ExportDecl(decl) = module_decl
-                && let deno_ast::swc::ast::Decl::Class(c) = &decl.decl {
-                    let class_name = c.ident.sym.to_string();
-                    // emit simple ctor symbol (we rely on main.rs lowering to do the real work)
-                    let ctor_name = format!("{}_ctor", class_name);
+            && let deno_ast::swc::ast::Decl::Class(c) = &decl.decl
+        {
+            let class_name = c.ident.sym.to_string();
+            // emit simple ctor symbol (we rely on main.rs lowering to do the real work)
+            let ctor_name = format!("{}_ctor", class_name);
+            codegen.module.add_function(
+                &ctor_name,
+                codegen
+                    .context
+                    .ptr_type(inkwell::AddressSpace::default())
+                    .fn_type(&[], false),
+                None,
+            );
+            // emit method symbol
+            for member in &c.class.body {
+                use deno_ast::swc::ast::ClassMember;
+                if let ClassMember::Method(m) = member {
+                    let mname = match &m.key {
+                        deno_ast::swc::ast::PropName::Ident(id) => id.sym.to_string(),
+                        deno_ast::swc::ast::PropName::Str(s) => s.value.to_string(),
+                        _ => continue,
+                    };
+                    let fname = format!("{}_{}", class_name, mname);
                     codegen.module.add_function(
-                        &ctor_name,
-                        codegen
-                            .context
-                            .ptr_type(inkwell::AddressSpace::default())
-                            .fn_type(&[], false),
+                        &fname,
+                        codegen.context.f64_type().fn_type(&[], false),
                         None,
                     );
-                    // emit method symbol
-                    for member in &c.class.body {
-                        use deno_ast::swc::ast::ClassMember;
-                        if let ClassMember::Method(m) = member {
-                            let mname = match &m.key {
-                                deno_ast::swc::ast::PropName::Ident(id) => id.sym.to_string(),
-                                deno_ast::swc::ast::PropName::Str(s) => s.value.to_string(),
-                                _ => continue,
-                            };
-                            let fname = format!("{}_{}", class_name, mname);
-                            codegen.module.add_function(
-                                &fname,
-                                codegen.context.f64_type().fn_type(&[], false),
-                                None,
-                            );
-                        }
-                    }
                 }
+            }
+        }
     }
 
     // Now emit main

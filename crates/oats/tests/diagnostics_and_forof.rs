@@ -17,13 +17,14 @@ fn gen_ir_for_source(src: &str) -> Result<String> {
     for item_ref in parsed.program_ref().body() {
         if let deno_ast::ModuleItemRef::ModuleDecl(module_decl) = item_ref
             && let deno_ast::swc::ast::ModuleDecl::ExportDecl(decl) = module_decl
-                && let deno_ast::swc::ast::Decl::Fn(f) = &decl.decl {
-                    let name = f.ident.sym.to_string();
-                    if name == "main" {
-                        func_decl_opt = Some((*f.function).clone());
-                        break;
-                    }
-                }
+            && let deno_ast::swc::ast::Decl::Fn(f) = &decl.decl
+        {
+            let name = f.ident.sym.to_string();
+            if name == "main" {
+                func_decl_opt = Some((*f.function).clone());
+                break;
+            }
+        }
     }
 
     let func_decl =

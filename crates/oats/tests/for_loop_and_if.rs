@@ -5,7 +5,7 @@ use anyhow::Result;
 fn for_loop_and_if_statement_in_fibonacci() -> Result<()> {
     // Read the fibonacci example which contains both for-loop and if statement
     let src = std::fs::read_to_string("../../examples/fibonaci.oats")?;
-    
+
     // Parse and compile it
     let parsed_mod = oats::parser::parse_oats_module(&src, None)?;
     let parsed = &parsed_mod.parsed;
@@ -24,7 +24,10 @@ fn for_loop_and_if_statement_in_fibonacci() -> Result<()> {
             }
         }
     }
-    assert!(found_main, "No exported main function found in fibonaci.oats");
+    assert!(
+        found_main,
+        "No exported main function found in fibonaci.oats"
+    );
 
     // The test just verifies the file parses and has a main function with a for-loop
     // The actual IR generation is tested by running the aot_run binary
@@ -42,7 +45,7 @@ fn for_loop_generates_basic_blocks() {
             return 0;
         }
     "#;
-    
+
     let result = oats::parser::parse_oats_module(src, None);
     assert!(result.is_ok(), "For-loop should parse successfully");
 }
@@ -59,7 +62,7 @@ fn if_statement_generates_basic_blocks() {
             }
         }
     "#;
-    
+
     let result = oats::parser::parse_oats_module(src, None);
     assert!(result.is_ok(), "If statement should parse successfully");
 }

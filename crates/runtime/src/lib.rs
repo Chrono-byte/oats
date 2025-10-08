@@ -45,15 +45,15 @@ pub extern "C" fn heap_str_alloc(str_len: size_t) -> *mut c_void {
         if p.is_null() {
             return ptr::null_mut();
         }
-        
+
         // Initialize header with refcount = 1
         let header_ptr = p as *mut u64;
         *header_ptr = make_heap_header(1);
-        
+
         // Initialize length
         let len_ptr = (p as *mut u8).add(8) as *mut u64;
         *len_ptr = str_len as u64;
-        
+
         p
     }
 }
@@ -75,11 +75,11 @@ pub unsafe extern "C" fn heap_str_from_cstr(s: *const c_char) -> *mut c_char {
         if obj.is_null() {
             return ptr::null_mut();
         }
-        
+
         // Copy string data to offset +16
         let data_ptr = (obj as *mut u8).add(16) as *mut c_char;
         libc::memcpy(data_ptr as *mut c_void, s as *const c_void, len + 1);
-        
+
         data_ptr
     }
 }
@@ -91,9 +91,7 @@ unsafe fn heap_str_to_obj(data: *const c_char) -> *mut c_void {
     if data.is_null() {
         return ptr::null_mut();
     }
-    unsafe {
-        (data as *mut u8).sub(16) as *mut c_void
-    }
+    unsafe { (data as *mut u8).sub(16) as *mut c_void }
 }
 
 /// RC increment for string pointers (handles both static and heap strings)
@@ -199,16 +197,16 @@ pub unsafe extern "C" fn str_concat(a: *const c_char, b: *const c_char) -> *mut 
     unsafe {
         let la = libc::strlen(a);
         let lb = libc::strlen(b);
-        
+
         // Allocate heap string with RC header
         let obj = heap_str_alloc(la + lb);
         if obj.is_null() {
             return ptr::null_mut();
         }
-        
+
         // Get data pointer (offset +16)
         let data_ptr = (obj as *mut u8).add(16) as *mut c_char;
-        
+
         // Copy both strings
         libc::memcpy(data_ptr as *mut c_void, a as *const c_void, la);
         libc::memcpy(
@@ -216,10 +214,10 @@ pub unsafe extern "C" fn str_concat(a: *const c_char, b: *const c_char) -> *mut 
             b as *const c_void,
             lb,
         );
-        
+
         // Null terminate
         *data_ptr.add((la + lb) as usize) = 0;
-        
+
         data_ptr
     }
 }
@@ -261,26 +259,21 @@ pub extern "C" fn number_to_string(num: f64) -> *mut c_char {
     // Format the number using libc's snprintf
     unsafe {
         // First, get the required buffer size
-        let len = libc::snprintf(
-            ptr::null_mut(),
-            0,
-            b"%g\0".as_ptr() as *const c_char,
-            num,
-        );
-        
+        let len = libc::snprintf(ptr::null_mut(), 0, b"%g\0".as_ptr() as *const c_char, num);
+
         if len < 0 {
             return ptr::null_mut();
         }
-        
+
         // Allocate heap string with RC header
         let obj = heap_str_alloc(len as size_t);
         if obj.is_null() {
             return ptr::null_mut();
         }
-        
+
         // Get data pointer (offset +16)
         let data_ptr = (obj as *mut u8).add(16) as *mut c_char;
-        
+
         // Format the number into the buffer
         libc::snprintf(
             data_ptr,
@@ -288,7 +281,7 @@ pub extern "C" fn number_to_string(num: f64) -> *mut c_char {
             b"%g\0".as_ptr() as *const c_char,
             num,
         );
-        
+
         data_ptr
     }
 }
@@ -328,7 +321,11 @@ fn runtime_index_oob_abort(_arr: *mut c_void, idx: usize, len: usize) -> ! {
 /// Callers must ensure the returned pointer is handled correctly and not
 /// dereferenced from safe Rust code without proper checks.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn array_alloc(len: usize, elem_size: usize, elem_is_number: i32) -> *mut c_void {
+pub unsafe extern "C" fn array_alloc(
+    len: usize,
+    elem_size: usize,
+    elem_is_number: i32,
+) -> *mut c_void {
     let data_bytes = len * elem_size;
     let total_bytes = ARRAY_HEADER_SIZE + data_bytes;
     unsafe {
@@ -510,14 +507,14 @@ pub unsafe extern "C" fn rc_inc(p: *mut c_void) {
         if obj_ptr.is_null() {
             return;
         }
-        
+
         // Check if this is a static object
         let header = obj_ptr as *mut AtomicU64;
         let header_val = (*header).load(Ordering::Relaxed);
         if (header_val & HEADER_STATIC_BIT) != 0 {
             return; // Static objects are immortal, skip RC
         }
-        
+
         // Increment RC on the object header
         loop {
             let old_header = (*header).load(Ordering::Relaxed);
@@ -549,29 +546,29 @@ unsafe fn get_object_base(p: *mut c_void) -> *mut c_void {
         // Check if p looks like an object pointer (has valid header at offset 0)
         let header = p as *const AtomicU64;
         let header_val = (*header).load(Ordering::Relaxed);
-        
+
         // Valid header check: either has static bit, or has reasonable RC value
         // If RC is between 0 and 10000 and flags look reasonable, assume it's a valid header
         let rc = header_val & HEADER_RC_MASK;
         let flags = (header_val >> 32) as u32;
-        
+
         if rc < 10000 && (flags == 0 || flags == 1) {
             // Looks like a valid header, use this pointer as-is
             return p;
         }
-        
+
         // Otherwise, try offset -16 (string data pointer case)
         let obj_ptr = (p as *const u8).sub(16) as *mut c_void;
         let obj_header = obj_ptr as *const AtomicU64;
         let obj_header_val = (*obj_header).load(Ordering::Relaxed);
         let obj_rc = obj_header_val & HEADER_RC_MASK;
         let obj_flags = (obj_header_val >> 32) as u32;
-        
+
         if obj_rc < 10000 && (obj_flags == 0 || obj_flags == 1) {
             // Found valid header at -16, this is a string data pointer
             return obj_ptr;
         }
-        
+
         // Fallback: assume it's an object pointer
         p
     }
@@ -591,14 +588,14 @@ pub unsafe extern "C" fn rc_dec(p: *mut c_void) {
         if obj_ptr.is_null() {
             return;
         }
-        
+
         // Check if this is a static object
         let header = obj_ptr as *mut AtomicU64;
         let header_val = (*header).load(Ordering::Relaxed);
         if (header_val & HEADER_STATIC_BIT) != 0 {
             return; // Static objects are immortal, skip RC
         }
-        
+
         loop {
             // Acquire ordering ensures that we see any writes from other threads
             // that were holding a reference before we decrement.
@@ -640,8 +637,8 @@ pub unsafe extern "C" fn rc_dec(p: *mut c_void) {
                         let type_tag = (old_header >> 33) as u32;
                         if type_tag == 1 {
                             // Read the destructor pointer from the second word.
-                            let dtor_ptr_ptr =
-                                (obj_ptr as *mut u8).add(std::mem::size_of::<u64>()) as *mut *mut c_void;
+                            let dtor_ptr_ptr = (obj_ptr as *mut u8).add(std::mem::size_of::<u64>())
+                                as *mut *mut c_void;
                             let dtor_raw = *dtor_ptr_ptr;
                             if !dtor_raw.is_null() {
                                 // SAFETY: we trust the stored pointer is a valid

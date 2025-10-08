@@ -169,17 +169,18 @@ fn main() -> Result<()> {
                     for param in &cons.params {
                         use deno_ast::swc::ast::{ParamOrTsParamProp, TsParamPropParam};
                         if let ParamOrTsParamProp::TsParamProp(ts_param) = param
-                            && let TsParamPropParam::Ident(binding_ident) = &ts_param.param {
-                                let fname = binding_ident.id.sym.to_string();
-                                if fields.iter().all(|(n, _)| n != &fname) {
-                                    let ty = binding_ident
-                                        .type_ann
-                                        .as_ref()
-                                        .and_then(|ann| oats::types::map_ts_type(&ann.type_ann))
-                                        .unwrap_or(OatsType::Number);
-                                    fields.push((fname, ty));
-                                }
+                            && let TsParamPropParam::Ident(binding_ident) = &ts_param.param
+                        {
+                            let fname = binding_ident.id.sym.to_string();
+                            if fields.iter().all(|(n, _)| n != &fname) {
+                                let ty = binding_ident
+                                    .type_ann
+                                    .as_ref()
+                                    .and_then(|ann| oats::types::map_ts_type(&ann.type_ann))
+                                    .unwrap_or(OatsType::Number);
+                                fields.push((fname, ty));
                             }
+                        }
                     }
                 }
             }

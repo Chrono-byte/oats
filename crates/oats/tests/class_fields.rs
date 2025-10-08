@@ -20,13 +20,14 @@ fn class_fields_lowering_emits_field_access() -> Result<()> {
     for item_ref in parsed.program_ref().body() {
         if let deno_ast::ModuleItemRef::ModuleDecl(module_decl) = item_ref
             && let deno_ast::swc::ast::ModuleDecl::ExportDecl(decl) = module_decl
-                && let deno_ast::swc::ast::Decl::Fn(f) = &decl.decl {
-                    let name = f.ident.sym.to_string();
-                    if name == "main" {
-                        func_decl_opt = Some((*f.function).clone());
-                        break;
-                    }
-                }
+            && let deno_ast::swc::ast::Decl::Fn(f) = &decl.decl
+        {
+            let name = f.ident.sym.to_string();
+            if name == "main" {
+                func_decl_opt = Some((*f.function).clone());
+                break;
+            }
+        }
     }
 
     let func_decl =
@@ -65,88 +66,90 @@ fn class_fields_lowering_emits_field_access() -> Result<()> {
         class_fields: std::cell::RefCell::new(std::collections::HashMap::new()),
         fn_param_types: std::cell::RefCell::new(std::collections::HashMap::new()),
         source: &parsed_mod.source,
-        loop_context_stack: std::cell::RefCell::new(Vec::new())
+        loop_context_stack: std::cell::RefCell::new(Vec::new()),
     };
 
     // Emit class symbols by scanning module items and invoking main's codegen
     for item_ref in parsed.program_ref().body() {
         if let deno_ast::ModuleItemRef::ModuleDecl(module_decl) = item_ref
             && let deno_ast::swc::ast::ModuleDecl::ExportDecl(decl) = module_decl
-                && let deno_ast::swc::ast::Decl::Class(c) = &decl.decl {
-                    let class_name = c.ident.sym.to_string();
-                    // collect field names from constructor source text using a regex
-                    // This is a test heuristic: look for `this.<name> =` patterns inside constructor bodies.
-                    let mut fields = Vec::new();
-                    for member in &c.class.body {
-                        use deno_ast::swc::ast::ClassMember;
-                        if let ClassMember::Constructor(cons) = member
-                            && let Some(body) = &cons.body {
-                                // reconstruct the source slice for the constructor body
-                                let start = body.span.lo.0 as usize;
-                                let end = body.span.hi.0 as usize;
-                                if end > start && end <= src.len() {
-                                    let slice = &src[start..end];
-                                    // find occurrences of `this.<ident> =`
-                                    // simple scanner: find `this.` then read identifier chars
-                                    let mut i = 0;
-                                    while let Some(pos) = slice[i..].find("this.") {
-                                        i += pos + "this.".len();
-                                        // read identifier
-                                        let mut ident = String::new();
-                                        while i < slice.len() {
-                                            let c = slice.as_bytes()[i] as char;
-                                            if ident.is_empty() {
-                                                if c.is_ascii_alphabetic() || c == '_' {
-                                                    ident.push(c);
-                                                } else {
-                                                    break;
-                                                }
-                                            } else if c.is_ascii_alphanumeric() || c == '_' {
-                                                ident.push(c);
-                                            } else {
-                                                break;
-                                            }
-                                            i += 1;
-                                        }
-                                        if !ident.is_empty() {
-                                            fields.push((ident, oats::types::OatsType::Number));
-                                        }
+            && let deno_ast::swc::ast::Decl::Class(c) = &decl.decl
+        {
+            let class_name = c.ident.sym.to_string();
+            // collect field names from constructor source text using a regex
+            // This is a test heuristic: look for `this.<name> =` patterns inside constructor bodies.
+            let mut fields = Vec::new();
+            for member in &c.class.body {
+                use deno_ast::swc::ast::ClassMember;
+                if let ClassMember::Constructor(cons) = member
+                    && let Some(body) = &cons.body
+                {
+                    // reconstruct the source slice for the constructor body
+                    let start = body.span.lo.0 as usize;
+                    let end = body.span.hi.0 as usize;
+                    if end > start && end <= src.len() {
+                        let slice = &src[start..end];
+                        // find occurrences of `this.<ident> =`
+                        // simple scanner: find `this.` then read identifier chars
+                        let mut i = 0;
+                        while let Some(pos) = slice[i..].find("this.") {
+                            i += pos + "this.".len();
+                            // read identifier
+                            let mut ident = String::new();
+                            while i < slice.len() {
+                                let c = slice.as_bytes()[i] as char;
+                                if ident.is_empty() {
+                                    if c.is_ascii_alphabetic() || c == '_' {
+                                        ident.push(c);
+                                    } else {
+                                        break;
                                     }
+                                } else if c.is_ascii_alphanumeric() || c == '_' {
+                                    ident.push(c);
+                                } else {
+                                    break;
                                 }
+                                i += 1;
                             }
-                    }
-                    codegen
-                        .class_fields
-                        .borrow_mut()
-                        .insert(class_name.clone(), fields);
-
-                    // emit ctor and method symbols (placeholders)
-                    let ctor_name = format!("{}_ctor", class_name);
-                    codegen.module.add_function(
-                        &ctor_name,
-                        codegen
-                            .context
-                            .ptr_type(inkwell::AddressSpace::default())
-                            .fn_type(&[], false),
-                        None,
-                    );
-                    for member in &c.class.body {
-                        use deno_ast::swc::ast::ClassMember;
-                        if let ClassMember::Method(m) = member {
-                            let mname = match &m.key {
-                                deno_ast::swc::ast::PropName::Ident(id) => id.sym.to_string(),
-                                deno_ast::swc::ast::PropName::Str(s) => s.value.to_string(),
-                                _ => continue,
-                            };
-                            let fname = format!("{}_{}", class_name, mname);
-                            codegen.module.add_function(
-                                &fname,
-                                codegen.context.f64_type().fn_type(&[], false),
-                                None,
-                            );
+                            if !ident.is_empty() {
+                                fields.push((ident, oats::types::OatsType::Number));
+                            }
                         }
                     }
                 }
+            }
+            codegen
+                .class_fields
+                .borrow_mut()
+                .insert(class_name.clone(), fields);
+
+            // emit ctor and method symbols (placeholders)
+            let ctor_name = format!("{}_ctor", class_name);
+            codegen.module.add_function(
+                &ctor_name,
+                codegen
+                    .context
+                    .ptr_type(inkwell::AddressSpace::default())
+                    .fn_type(&[], false),
+                None,
+            );
+            for member in &c.class.body {
+                use deno_ast::swc::ast::ClassMember;
+                if let ClassMember::Method(m) = member {
+                    let mname = match &m.key {
+                        deno_ast::swc::ast::PropName::Ident(id) => id.sym.to_string(),
+                        deno_ast::swc::ast::PropName::Str(s) => s.value.to_string(),
+                        _ => continue,
+                    };
+                    let fname = format!("{}_{}", class_name, mname);
+                    codegen.module.add_function(
+                        &fname,
+                        codegen.context.f64_type().fn_type(&[], false),
+                        None,
+                    );
+                }
+            }
+        }
     }
 
     // Now emit main

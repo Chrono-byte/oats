@@ -41,22 +41,26 @@ impl<'a> crate::codegen::CodeGen<'a> {
                  -> Result<BasicValueEnum<'a>, Diagnostic> {
                     match op {
                         BinaryOp::Add => {
-                            let v = builder.build_float_add(lf, rf, "sum")
+                            let v = builder
+                                .build_float_add(lf, rf, "sum")
                                 .map_err(|_| Diagnostic::simple("float add failed"))?;
                             Ok(v.as_basic_value_enum())
                         }
                         BinaryOp::Sub => {
-                            let v = builder.build_float_sub(lf, rf, "sub")
+                            let v = builder
+                                .build_float_sub(lf, rf, "sub")
                                 .map_err(|_| Diagnostic::simple("float sub failed"))?;
                             Ok(v.as_basic_value_enum())
                         }
                         BinaryOp::Mul => {
-                            let v = builder.build_float_mul(lf, rf, "mul")
+                            let v = builder
+                                .build_float_mul(lf, rf, "mul")
                                 .map_err(|_| Diagnostic::simple("float mul failed"))?;
                             Ok(v.as_basic_value_enum())
                         }
                         BinaryOp::Div => {
-                            let v = builder.build_float_div(lf, rf, "div")
+                            let v = builder
+                                .build_float_div(lf, rf, "div")
                                 .map_err(|_| Diagnostic::simple("float div failed"))?;
                             Ok(v.as_basic_value_enum())
                         }
@@ -79,7 +83,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         BinaryOp::NotEq => FloatPredicate::ONE,
                         _ => return Err(Diagnostic::simple("unsupported comparison operation")),
                     };
-                    let iv = builder.build_float_compare(pred, lf, rf, "cmp")
+                    let iv = builder
+                        .build_float_compare(pred, lf, rf, "cmp")
                         .map_err(|_| Diagnostic::simple("float compare failed"))?;
                     Ok(iv.as_basic_value_enum())
                 };
@@ -98,13 +103,16 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 if let deno_ast::swc::ast::BinaryOp::LogicalAnd = bin.op {
                     // a && b -> if a truthy then b else a
                     let left_val = l;
-                    let cond = self.to_condition_i1(left_val).ok_or_else(|| Diagnostic::simple("failed to convert to boolean condition"))?;
+                    let cond = self.to_condition_i1(left_val).ok_or_else(|| {
+                        Diagnostic::simple("failed to convert to boolean condition")
+                    })?;
                     let then_bb = self.context.append_basic_block(function, "and.then");
                     let else_bb = self.context.append_basic_block(function, "and.else");
                     let merge_bb = self.context.append_basic_block(function, "and.merge");
                     if self
                         .builder
-                        .build_conditional_branch(cond, then_bb, else_bb).is_err()
+                        .build_conditional_branch(cond, then_bb, else_bb)
+                        .is_err()
                     {
                         return Err(Diagnostic::simple("expression lowering failed"))?;
                     }
@@ -112,9 +120,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     self.builder.position_at_end(then_bb);
                     let rv = self.lower_expr(&bin.right, function, param_map, locals);
                     if self.builder.get_insert_block().is_some()
-                        && self.builder.build_unconditional_branch(merge_bb).is_err() {
-                            return Err(Diagnostic::simple("expression lowering failed"))?;
-                        }
+                        && self.builder.build_unconditional_branch(merge_bb).is_err()
+                    {
+                        return Err(Diagnostic::simple("expression lowering failed"))?;
+                    }
                     // else: keep left
                     self.builder.position_at_end(else_bb);
                     if self.builder.get_insert_block().is_some() {
@@ -134,22 +143,26 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 if let deno_ast::swc::ast::BinaryOp::LogicalOr = bin.op {
                     // a || b -> if a truthy then a else b
                     let left_val = l;
-                    let cond = self.to_condition_i1(left_val).ok_or_else(|| Diagnostic::simple("failed to convert to boolean condition"))?;
+                    let cond = self.to_condition_i1(left_val).ok_or_else(|| {
+                        Diagnostic::simple("failed to convert to boolean condition")
+                    })?;
                     let then_bb = self.context.append_basic_block(function, "or.then");
                     let else_bb = self.context.append_basic_block(function, "or.else");
                     let merge_bb = self.context.append_basic_block(function, "or.merge");
                     if self
                         .builder
-                        .build_conditional_branch(cond, then_bb, else_bb).is_err()
+                        .build_conditional_branch(cond, then_bb, else_bb)
+                        .is_err()
                     {
                         return Err(Diagnostic::simple("expression lowering failed"))?;
                     }
                     // then: keep left
                     self.builder.position_at_end(then_bb);
                     if self.builder.get_insert_block().is_some()
-                        && self.builder.build_unconditional_branch(merge_bb).is_err() {
-                            return Err(Diagnostic::simple("expression lowering failed"))?;
-                        }
+                        && self.builder.build_unconditional_branch(merge_bb).is_err()
+                    {
+                        return Err(Diagnostic::simple("expression lowering failed"))?;
+                    }
                     // else: evaluate right
                     self.builder.position_at_end(else_bb);
                     let rv = self.lower_expr(&bin.right, function, param_map, locals);
@@ -202,9 +215,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
                 // First, check if the identifier is a function parameter.
                 if let Some(idx) = param_map.get(&name)
-                    && let Some(pv) = function.get_nth_param(*idx) {
-                        return Ok(pv);
-                    }
+                    && let Some(pv) = function.get_nth_param(*idx)
+                {
+                    return Ok(pv);
+                }
 
                 // If not a parameter, then it must be a local variable (`let` or `const`).
                 if let Some((ptr, ty, initialized, _is_const)) = self.find_local(locals, &name) {
@@ -252,7 +266,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                     )
                                                     .ok();
                                             }
-                                            return Err(Diagnostic::simple("expression lowering failed"))?;
+                                            return Err(Diagnostic::simple(
+                                                "expression lowering failed",
+                                            ))?;
                                         }
                                         BasicValueEnum::PointerValue(pv) => {
                                             if let Some(print_fn) =
@@ -267,7 +283,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                     )
                                                     .ok();
                                             }
-                                            return Err(Diagnostic::simple("expression lowering failed"))?;
+                                            return Err(Diagnostic::simple(
+                                                "expression lowering failed",
+                                            ))?;
                                         }
                                         _ => return Err(Diagnostic::simple("operation failed")),
                                     }
@@ -286,7 +304,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     {
                                         lowered_args.push(val.into());
                                     } else {
-                                        return Err(Diagnostic::simple("expression lowering failed"))?;
+                                        return Err(Diagnostic::simple(
+                                            "expression lowering failed",
+                                        ))?;
                                     }
                                 }
                                 let cs = match self.builder.build_call(
@@ -327,7 +347,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                 ) {
                                                     user_args.push(v.into());
                                                 } else {
-                                                    return Err(Diagnostic::simple("expression lowering failed"))?;
+                                                    return Err(Diagnostic::simple(
+                                                        "expression lowering failed",
+                                                    ))?;
                                                 }
                                             }
 
@@ -349,13 +371,19 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                 "call_method",
                                             ) {
                                                 Ok(cs) => cs,
-                                                Err(_) => return Err(Diagnostic::simple("operation failed")),
+                                                Err(_) => {
+                                                    return Err(Diagnostic::simple(
+                                                        "operation failed",
+                                                    ));
+                                                }
                                             };
                                             let either = cs.try_as_basic_value();
                                             if let inkwell::Either::Left(bv) = either {
                                                 return Ok(bv);
                                             } else {
-                                                return Err(Diagnostic::simple("expression lowering failed"))?;
+                                                return Err(Diagnostic::simple(
+                                                    "expression lowering failed",
+                                                ))?;
                                             }
                                         }
                                     }
@@ -389,8 +417,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             );
                             return Err(Diagnostic::simple("expression lowering failed"))?;
                         }
-                        if let Ok(val) =
-                            self.lower_expr(&assign.right, function, param_map, locals)
+                        if let Ok(val) = self.lower_expr(&assign.right, function, param_map, locals)
                         {
                             // If the local is a pointer type, and previously initialized, decrement old refcount
                             if _ty == self.i8ptr_t.as_basic_type_enum() {
@@ -398,7 +425,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 let old =
                                     match self.builder.build_load(self.i8ptr_t, ptr, "old_val") {
                                         Ok(v) => v,
-                                        Err(_) => return Err(Diagnostic::simple("operation failed")),
+                                        Err(_) => {
+                                            return Err(Diagnostic::simple("operation failed"));
+                                        }
                                     };
                                 // check initialized flag
                                 if _init {
@@ -409,7 +438,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         "rc_dec_old",
                                     ) {
                                         Ok(cs) => cs,
-                                        Err(_) => return Err(Diagnostic::simple("operation failed")),
+                                        Err(_) => {
+                                            return Err(Diagnostic::simple("operation failed"));
+                                        }
                                     };
                                 }
                                 // store new value
@@ -423,7 +454,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         "rc_inc_assign",
                                     ) {
                                         Ok(cs) => cs,
-                                        Err(_) => return Err(Diagnostic::simple("operation failed")),
+                                        Err(_) => {
+                                            return Err(Diagnostic::simple("operation failed"));
+                                        }
                                     };
                                 }
                             } else {
@@ -441,8 +474,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 use deno_ast::swc::ast::{AssignTarget, SimpleAssignTarget};
                 if let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = &assign.left {
                     // Lower the right-hand side value
-                    if let Ok(new_val) =
-                        self.lower_expr(&assign.right, function, param_map, locals)
+                    if let Ok(new_val) = self.lower_expr(&assign.right, function, param_map, locals)
                     {
                         // Only handle dot-member (obj.prop), not computed (obj[expr])
                         use deno_ast::swc::ast::MemberProp;
@@ -475,26 +507,26 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             .fn_param_types
                                             .borrow()
                                             .get(function.get_name().to_str().unwrap_or(""))
+                                    {
+                                        let idx = *param_idx as usize;
+                                        if idx < param_types.len()
+                                            && let crate::types::OatsType::NominalStruct(n) =
+                                                &param_types[idx]
                                         {
-                                            let idx = *param_idx as usize;
-                                            if idx < param_types.len()
-                                                && let crate::types::OatsType::NominalStruct(n) =
-                                                    &param_types[idx]
-                                            {
-                                                class_name_opt = Some(n.clone());
-                                            }
+                                            class_name_opt = Some(n.clone());
                                         }
+                                    }
                                 } else if matches!(&*member.obj, deno_ast::swc::ast::Expr::This(_))
                                     && let Some(param_types) = self
                                         .fn_param_types
                                         .borrow()
                                         .get(function.get_name().to_str().unwrap_or(""))
-                                        && !param_types.is_empty()
-                                        && let crate::types::OatsType::NominalStruct(n) =
-                                            &param_types[0]
-                                    {
-                                        class_name_opt = Some(n.clone());
-                                    }
+                                    && !param_types.is_empty()
+                                    && let crate::types::OatsType::NominalStruct(n) =
+                                        &param_types[0]
+                                {
+                                    class_name_opt = Some(n.clone());
+                                }
 
                                 if let Some(class_name) = class_name_opt {
                                     // Look up field list for this class
@@ -521,11 +553,15 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             let mul = self
                                                 .builder
                                                 .build_int_mul(idx_const, ptr_sz, "fld_off_mul")
-                                                .map_err(|_| Diagnostic::simple("LLVM builder error"))?;
+                                                .map_err(|_| {
+                                                    Diagnostic::simple("LLVM builder error")
+                                                })?;
                                             let offset = self
                                                 .builder
                                                 .build_int_add(hdr_size, mul, "fld_off")
-                                                .map_err(|_| Diagnostic::simple("LLVM builder error"))?;
+                                                .map_err(|_| {
+                                                    Diagnostic::simple("LLVM builder error")
+                                                })?;
                                             let offset_i32 = self
                                                 .builder
                                                 .build_int_cast(
@@ -533,7 +569,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                     self.context.i32_type(),
                                                     "off_i32",
                                                 )
-                                                .map_err(|_| Diagnostic::simple("LLVM builder error"))?;
+                                                .map_err(|_| {
+                                                    Diagnostic::simple("LLVM builder error")
+                                                })?;
 
                                             // GEP to field location
                                             let gep_ptr = unsafe {
@@ -546,7 +584,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             };
                                             let gep_ptr = match gep_ptr {
                                                 Ok(pv) => pv,
-                                                Err(_) => return Err(Diagnostic::simple("operation failed")),
+                                                Err(_) => {
+                                                    return Err(Diagnostic::simple(
+                                                        "operation failed",
+                                                    ));
+                                                }
                                             };
 
                                             // Store based on field type
@@ -561,7 +603,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                                 .ptr_type(AddressSpace::default()),
                                                             "f64_ptr_cast_store",
                                                         )
-                                                        .map_err(|_| Diagnostic::simple("LLVM builder error"))?;
+                                                        .map_err(|_| {
+                                                            Diagnostic::simple("LLVM builder error")
+                                                        })?;
                                                     let _ =
                                                         self.builder.build_store(f64_ptr, new_val);
                                                     return Ok(new_val);
@@ -580,7 +624,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                             "slot_ptr_cast_store",
                                                         ) {
                                                             Ok(p) => p,
-                                                            Err(_) => return Err(Diagnostic::simple("operation failed")),
+                                                            Err(_) => {
+                                                                return Err(Diagnostic::simple(
+                                                                    "operation failed",
+                                                                ));
+                                                            }
                                                         };
 
                                                     // Load old value for RC decrement
@@ -590,7 +638,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                         "old_field_val",
                                                     ) {
                                                         Ok(v) => v,
-                                                        Err(_) => return Err(Diagnostic::simple("operation failed")),
+                                                        Err(_) => {
+                                                            return Err(Diagnostic::simple(
+                                                                "operation failed",
+                                                            ));
+                                                        }
                                                     };
 
                                                     // Decrement old value's refcount
@@ -604,7 +656,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                             "rc_dec_old_field",
                                                         ) {
                                                             Ok(cs) => cs,
-                                                            Err(_) => return Err(Diagnostic::simple("operation failed")),
+                                                            Err(_) => {
+                                                                return Err(Diagnostic::simple(
+                                                                    "operation failed",
+                                                                ));
+                                                            }
                                                         };
                                                     }
 
@@ -623,14 +679,20 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                             "rc_inc_new_field",
                                                         ) {
                                                             Ok(cs) => cs,
-                                                            Err(_) => return Err(Diagnostic::simple("operation failed")),
+                                                            Err(_) => {
+                                                                return Err(Diagnostic::simple(
+                                                                    "operation failed",
+                                                                ));
+                                                            }
                                                         };
                                                     }
                                                     return Ok(new_val);
                                                 }
                                                 _ => {
                                                     // Unsupported field type
-                                                    return Err(Diagnostic::simple("expression lowering failed"))?;
+                                                    return Err(Diagnostic::simple(
+                                                        "expression lowering failed",
+                                                    ))?;
                                                 }
                                             }
                                         }
@@ -733,7 +795,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 let merge_bb = self.context.append_basic_block(function, "merge");
 
                 // branch based on cond_i1
-                let cond_val = self.to_condition_i1(cond_i1).ok_or_else(|| Diagnostic::simple("failed to convert to boolean condition"))?;
+                let cond_val = self
+                    .to_condition_i1(cond_i1)
+                    .ok_or_else(|| Diagnostic::simple("failed to convert to boolean condition"))?;
                 self.builder
                     .build_conditional_branch(cond_val, then_bb, else_bb)
                     .map_err(|_| Diagnostic::simple("LLVM builder error"))?;
@@ -792,27 +856,26 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         // [u64 header][u64 length][N x i8 data]
                         // Header has static bit set (bit 32)
                         let str_len = bytes.len();
-                        
+
                         // Create a struct type: { i64, i64, [N x i8] }
                         let header_ty = self.i64_t;
                         let len_ty = self.i64_t;
                         let data_ty = self.context.i8_type().array_type((str_len + 1) as u32);
-                        let struct_ty = self.context.struct_type(
-                            &[header_ty.into(), len_ty.into(), data_ty.into()],
-                            false,
-                        );
-                        
+                        let struct_ty = self
+                            .context
+                            .struct_type(&[header_ty.into(), len_ty.into(), data_ty.into()], false);
+
                         // generate a unique global name for this string literal
                         let id = self.next_str_id.get();
                         let name = format!("strlit.{}", id);
                         self.next_str_id.set(id.wrapping_add(1));
                         let gv = self.module.add_global(struct_ty, None, &name);
-                        
+
                         // Initialize: header = (1 << 32) [static bit], length = str_len, data = bytes
                         let static_header = self.i64_t.const_int(1u64 << 32, false);
                         let length_val = self.i64_t.const_int(str_len as u64, false);
                         let data_val = self.context.const_string(bytes, true);
-                        
+
                         let initializer = self.context.const_struct(
                             &[static_header.into(), length_val.into(), data_val.into()],
                             false,
@@ -1009,9 +1072,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
             ast::Expr::This(_) => {
                 if let Some((ptr, ty, init, _)) = self.find_local(locals, "this")
                     && init
-                        && let Ok(loaded) = self.builder.build_load(ty, ptr, "this_load") {
-                            return Ok(loaded);
-                        }
+                    && let Ok(loaded) = self.builder.build_load(ty, ptr, "this_load")
+                {
+                    return Ok(loaded);
+                }
                 if let Some(idx) = param_map.get("this") {
                     if let Some(pv) = function.get_nth_param(*idx) {
                         return Ok(pv);
@@ -1057,11 +1121,15 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         BasicValueEnum::IntValue(iv) => self
                                             .builder
                                             .build_int_cast(iv, self.i64_t, "idx_i64")
-                                            .map_err(|_| Diagnostic::simple("LLVM builder error"))?,
+                                            .map_err(|_| {
+                                                Diagnostic::simple("LLVM builder error")
+                                            })?,
                                         BasicValueEnum::FloatValue(fv) => self
                                             .builder
                                             .build_float_to_signed_int(fv, self.i64_t, "f2i_i64")
-                                            .map_err(|_| Diagnostic::simple("LLVM builder error"))?,
+                                            .map_err(|_| {
+                                                Diagnostic::simple("LLVM builder error")
+                                            })?,
                                         _ => return Err(Diagnostic::simple("operation failed")),
                                     };
                                     let array_get = self.get_array_get_f64();
@@ -1071,7 +1139,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         "array_get_f64_call",
                                     ) {
                                         Ok(cs) => cs,
-                                        Err(_) => return Err(Diagnostic::simple("operation failed")),
+                                        Err(_) => {
+                                            return Err(Diagnostic::simple("operation failed"));
+                                        }
                                     };
                                     let either = cs.try_as_basic_value();
                                     if let inkwell::Either::Left(bv) = either {
@@ -1148,12 +1218,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     .fn_param_types
                                     .borrow()
                                     .get(function.get_name().to_str().unwrap_or(""))
-                                    && !param_types.is_empty()
-                                    && let crate::types::OatsType::NominalStruct(n) =
-                                        &param_types[0]
-                                {
-                                    class_name_opt = Some(n.clone());
-                                }
+                                && !param_types.is_empty()
+                                && let crate::types::OatsType::NominalStruct(n) = &param_types[0]
+                            {
+                                class_name_opt = Some(n.clone());
+                            }
 
                             if let Some(class_name) = class_name_opt {
                                 // lookup field list for this class
@@ -1178,11 +1247,15 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         let mul = self
                                             .builder
                                             .build_int_mul(idx_const, ptr_sz, "fld_off_mul")
-                                            .map_err(|_| Diagnostic::simple("LLVM builder error"))?;
+                                            .map_err(|_| {
+                                                Diagnostic::simple("LLVM builder error")
+                                            })?;
                                         let offset = self
                                             .builder
                                             .build_int_add(hdr_size, mul, "fld_off")
-                                            .map_err(|_| Diagnostic::simple("LLVM builder error"))?;
+                                            .map_err(|_| {
+                                                Diagnostic::simple("LLVM builder error")
+                                            })?;
                                         // We need a i32 index sequence for gep on i8 pointer: cast offset to i64->i32 for index
                                         let offset_i64 = offset;
                                         let offset_i32 = self
@@ -1192,7 +1265,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                 self.context.i32_type(),
                                                 "off_i32",
                                             )
-                                            .map_err(|_| Diagnostic::simple("LLVM builder error"))?;
+                                            .map_err(|_| {
+                                                Diagnostic::simple("LLVM builder error")
+                                            })?;
                                         // Perform GEP on i8* using i32 index (element type i8, index is byte offset)
                                         let gep_res = unsafe {
                                             self.builder.build_gep(
@@ -1204,7 +1279,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         };
                                         let gep_ptr = match gep_res {
                                             Ok(pv) => pv,
-                                            Err(_) => return Err(Diagnostic::simple("operation failed")),
+                                            Err(_) => {
+                                                return Err(Diagnostic::simple("operation failed"));
+                                            }
                                         };
                                         // Load based on field type
                                         match field_ty {
@@ -1218,14 +1295,20 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                             .ptr_type(AddressSpace::default()),
                                                         "f64_ptr_cast",
                                                     )
-                                                    .map_err(|_| Diagnostic::simple("LLVM builder error"))?;
+                                                    .map_err(|_| {
+                                                        Diagnostic::simple("LLVM builder error")
+                                                    })?;
                                                 let loaded = match self.builder.build_load(
                                                     self.f64_t,
                                                     f64_ptr,
                                                     "field_f64_load",
                                                 ) {
                                                     Ok(v) => v,
-                                                    Err(_) => return Err(Diagnostic::simple("operation failed")),
+                                                    Err(_) => {
+                                                        return Err(Diagnostic::simple(
+                                                            "operation failed",
+                                                        ));
+                                                    }
                                                 };
                                                 return Ok(loaded.as_basic_value_enum());
                                             }
@@ -1242,7 +1325,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                         "slot_ptr_cast",
                                                     ) {
                                                         Ok(p) => p,
-                                                        Err(_) => return Err(Diagnostic::simple("operation failed")),
+                                                        Err(_) => {
+                                                            return Err(Diagnostic::simple(
+                                                                "operation failed",
+                                                            ));
+                                                        }
                                                     };
                                                 // load slot (an i8*)
                                                 let loaded = match self.builder.build_load(
@@ -1251,13 +1338,19 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                     "field_load",
                                                 ) {
                                                     Ok(v) => v,
-                                                    Err(_) => return Err(Diagnostic::simple("operation failed")),
+                                                    Err(_) => {
+                                                        return Err(Diagnostic::simple(
+                                                            "operation failed",
+                                                        ));
+                                                    }
                                                 };
                                                 return Ok(loaded.as_basic_value_enum());
                                             }
                                             _ => {
                                                 // Unsupported field type
-                                                return Err(Diagnostic::simple("expression lowering failed"))?;
+                                                return Err(Diagnostic::simple(
+                                                    "expression lowering failed",
+                                                ))?;
                                             }
                                         }
                                     }
@@ -1307,33 +1400,42 @@ impl<'a> crate::codegen::CodeGen<'a> {
             ast::Expr::Arrow(arrow) => {
                 // For now, only support non-capturing arrow functions
                 // They will be lowered to static functions and returned as function pointers
-                
+
                 // TODO: Detect captured variables and implement closure support
                 // For Phase 1, we only support arrows that don't capture variables
-                
+
                 // Generate a unique function name for this arrow
                 let arrow_fn_name = format!("arrow_fn_{}", self.next_str_id.get());
                 self.next_str_id.set(self.next_str_id.get() + 1);
-                
+
                 // Extract parameter types from arrow.params
                 let mut param_types = Vec::new();
                 for param in &arrow.params {
                     match param {
                         ast::Pat::Ident(ident) => {
                             if let Some(type_ann) = &ident.type_ann {
-                                if let Some(mapped) = crate::types::map_ts_type(&type_ann.type_ann) {
+                                if let Some(mapped) = crate::types::map_ts_type(&type_ann.type_ann)
+                                {
                                     param_types.push(mapped);
                                 } else {
-                                    return Err(Diagnostic::simple("Arrow parameter has unsupported type annotation"));
+                                    return Err(Diagnostic::simple(
+                                        "Arrow parameter has unsupported type annotation",
+                                    ));
                                 }
                             } else {
-                                return Err(Diagnostic::simple("Arrow parameter missing type annotation"));
+                                return Err(Diagnostic::simple(
+                                    "Arrow parameter missing type annotation",
+                                ));
                             }
                         }
-                        _ => return Err(Diagnostic::simple("Arrow function parameter pattern not supported")),
+                        _ => {
+                            return Err(Diagnostic::simple(
+                                "Arrow function parameter pattern not supported",
+                            ));
+                        }
                     }
                 }
-                
+
                 // Determine return type from arrow.return_type or infer from body
                 let ret_type = if let Some(return_type) = &arrow.return_type {
                     if let Some(mapped) = crate::types::map_ts_type(&return_type.type_ann) {
@@ -1346,24 +1448,24 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     // TODO: Implement type inference
                     crate::types::OatsType::Number
                 };
-                
+
                 // Build LLVM function type
                 let llvm_param_types: Vec<BasicTypeEnum> = param_types
                     .iter()
                     .map(|t| self.map_type_to_llvm(t))
                     .collect();
                 let fn_type = self.build_llvm_fn_type(&llvm_param_types, &ret_type);
-                
+
                 // Create the arrow function
                 let arrow_fn = self.module.add_function(&arrow_fn_name, fn_type, None);
-                
+
                 // Save current insert block so we can return to it
                 let current_block = self.builder.get_insert_block();
-                
+
                 // Build the function body
                 let entry_bb = self.context.append_basic_block(arrow_fn, "entry");
                 self.builder.position_at_end(entry_bb);
-                
+
                 // Create parameter map for arrow function
                 let mut arrow_param_map = HashMap::new();
                 for (idx, param) in arrow.params.iter().enumerate() {
@@ -1371,16 +1473,21 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         arrow_param_map.insert(ident.id.sym.to_string(), idx as u32);
                     }
                 }
-                
+
                 // Create locals stack for arrow function
                 let mut arrow_locals = vec![HashMap::new()];
-                
+
                 // Lower the body
                 if arrow.body.is_block_stmt() {
                     // Block body: { statements }
                     if let ast::BlockStmtOrExpr::BlockStmt(block) = &*arrow.body {
-                        let terminated = self.lower_stmts(&block.stmts, arrow_fn, &arrow_param_map, &mut arrow_locals);
-                        
+                        let terminated = self.lower_stmts(
+                            &block.stmts,
+                            arrow_fn,
+                            &arrow_param_map,
+                            &mut arrow_locals,
+                        );
+
                         // If not terminated, add default return
                         if !terminated {
                             match ret_type {
@@ -1392,7 +1499,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     let _ = self.builder.build_return(Some(&zero));
                                 }
                                 _ => {
-                                    return Err(Diagnostic::simple("Cannot generate default return for arrow function"));
+                                    return Err(Diagnostic::simple(
+                                        "Cannot generate default return for arrow function",
+                                    ));
                                 }
                             }
                         }
@@ -1402,133 +1511,144 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 } else {
                     // Expression body: => expr (implicit return)
                     if let ast::BlockStmtOrExpr::Expr(expr) = &*arrow.body {
-                        let result = self.lower_expr(expr, arrow_fn, &arrow_param_map, &mut arrow_locals)?;
-                        
+                        let result =
+                            self.lower_expr(expr, arrow_fn, &arrow_param_map, &mut arrow_locals)?;
+
                         // RC cleanup for locals before return
                         self.emit_rc_dec_for_locals(&mut arrow_locals);
-                        
+
                         let _ = self.builder.build_return(Some(&result));
                     } else {
                         return Err(Diagnostic::simple("Arrow body type mismatch"));
                     }
                 }
-                
+
                 // Position back to original function
                 if let Some(block) = current_block {
                     self.builder.position_at_end(block);
                 }
-                
+
                 // Return the function pointer as a value
                 // For now, we return the function pointer directly
                 // TODO: Create proper closure struct when capturing is supported
-                Ok(arrow_fn.as_global_value().as_pointer_value().as_basic_value_enum())
+                Ok(arrow_fn
+                    .as_global_value()
+                    .as_pointer_value()
+                    .as_basic_value_enum())
             }
             ast::Expr::Tpl(tpl) => {
                 // Template literal: `hello ${name}!`
                 // Structure: quasis (string parts) and exprs (interpolated expressions)
                 // Build result by concatenating: quasis[0] + str(exprs[0]) + quasis[1] + str(exprs[1]) + ...
-                
+
                 // Ensure str_concat is declared
                 self.gen_str_concat();
-                let concat_fn = self.module.get_function("str_concat")
+                let concat_fn = self
+                    .module
+                    .get_function("str_concat")
                     .ok_or_else(|| Diagnostic::simple("str_concat not found"))?;
-                
+
                 // Helper to create a string literal (with header, same as Lit::Str)
-                let create_string_literal = |codegen: &Self, s: &str| -> Result<PointerValue<'a>, Diagnostic> {
-                    let bytes = s.as_bytes();
-                    let key = s.to_string();
-                    
-                    // Check cache first
-                    if let Some(ptr_val) = codegen.string_literals.borrow().get(&key) {
-                        return Ok(*ptr_val);
-                    }
-                    
-                    // String literal layout with header: [u64 header][u64 length][N x i8 data]
-                    let str_len = bytes.len();
-                    let header_ty = codegen.i64_t;
-                    let len_ty = codegen.i64_t;
-                    let data_ty = codegen.context.i8_type().array_type((str_len + 1) as u32);
-                    let struct_ty = codegen.context.struct_type(
-                        &[header_ty.into(), len_ty.into(), data_ty.into()],
-                        false,
-                    );
-                    
-                    let id = codegen.next_str_id.get();
-                    let name = format!("strlit.{}", id);
-                    codegen.next_str_id.set(id.wrapping_add(1));
-                    let gv = codegen.module.add_global(struct_ty, None, &name);
-                    
-                    // Initialize with static header
-                    let static_header = codegen.i64_t.const_int(1u64 << 32, false);
-                    let length_val = codegen.i64_t.const_int(str_len as u64, false);
-                    let data_val = codegen.context.const_string(bytes, true);
-                    
-                    let initializer = codegen.context.const_struct(
-                        &[static_header.into(), length_val.into(), data_val.into()],
-                        false,
-                    );
-                    gv.set_initializer(&initializer);
-                    
-                    // Return pointer to data section (offset +16, field index 2)
-                    let zero = codegen.i32_t.const_int(0, false);
-                    let two = codegen.i32_t.const_int(2, false);
-                    let indices = &[zero, two];
-                    let gep = unsafe {
-                        codegen.builder.build_gep(
-                            struct_ty,
-                            gv.as_pointer_value(),
-                            indices,
-                            "strptr",
-                        )
+                let create_string_literal =
+                    |codegen: &Self, s: &str| -> Result<PointerValue<'a>, Diagnostic> {
+                        let bytes = s.as_bytes();
+                        let key = s.to_string();
+
+                        // Check cache first
+                        if let Some(ptr_val) = codegen.string_literals.borrow().get(&key) {
+                            return Ok(*ptr_val);
+                        }
+
+                        // String literal layout with header: [u64 header][u64 length][N x i8 data]
+                        let str_len = bytes.len();
+                        let header_ty = codegen.i64_t;
+                        let len_ty = codegen.i64_t;
+                        let data_ty = codegen.context.i8_type().array_type((str_len + 1) as u32);
+                        let struct_ty = codegen
+                            .context
+                            .struct_type(&[header_ty.into(), len_ty.into(), data_ty.into()], false);
+
+                        let id = codegen.next_str_id.get();
+                        let name = format!("strlit.{}", id);
+                        codegen.next_str_id.set(id.wrapping_add(1));
+                        let gv = codegen.module.add_global(struct_ty, None, &name);
+
+                        // Initialize with static header
+                        let static_header = codegen.i64_t.const_int(1u64 << 32, false);
+                        let length_val = codegen.i64_t.const_int(str_len as u64, false);
+                        let data_val = codegen.context.const_string(bytes, true);
+
+                        let initializer = codegen.context.const_struct(
+                            &[static_header.into(), length_val.into(), data_val.into()],
+                            false,
+                        );
+                        gv.set_initializer(&initializer);
+
+                        // Return pointer to data section (offset +16, field index 2)
+                        let zero = codegen.i32_t.const_int(0, false);
+                        let two = codegen.i32_t.const_int(2, false);
+                        let indices = &[zero, two];
+                        let gep = unsafe {
+                            codegen.builder.build_gep(
+                                struct_ty,
+                                gv.as_pointer_value(),
+                                indices,
+                                "strptr",
+                            )
+                        };
+
+                        if let Ok(ptr) = gep {
+                            codegen.string_literals.borrow_mut().insert(key, ptr);
+                            Ok(ptr)
+                        } else {
+                            Err(Diagnostic::simple("failed to create string literal"))
+                        }
                     };
-                    
-                    if let Ok(ptr) = gep {
-                        codegen.string_literals.borrow_mut().insert(key, ptr);
-                        Ok(ptr)
-                    } else {
-                        Err(Diagnostic::simple("failed to create string literal"))
-                    }
-                };
-                
+
                 let mut result: Option<PointerValue<'a>> = None;
-                
+
                 // Template literals have quasis (string parts) and exprs (interpolated expressions)
                 // quasis.len() = exprs.len() + 1 (there's always one more quasi)
                 for (i, quasi) in tpl.quasis.iter().enumerate() {
                     // Add the string part
                     let quasi_str = quasi.raw.to_string();
                     let quasi_ptr = create_string_literal(self, &quasi_str)?;
-                    
+
                     // Concatenate with result so far
                     result = if let Some(prev) = result {
-                        let call_site = self.builder.build_call(
-                            concat_fn,
-                            &[prev.into(), quasi_ptr.into()],
-                            "tpl_concat_quasi",
-                        ).map_err(|_| Diagnostic::simple("failed to build call"))?;
-                        Some(call_site
-                            .try_as_basic_value()
-                            .left()
-                            .ok_or_else(|| Diagnostic::simple("concat call returned no value"))?
-                            .into_pointer_value())
+                        let call_site = self
+                            .builder
+                            .build_call(
+                                concat_fn,
+                                &[prev.into(), quasi_ptr.into()],
+                                "tpl_concat_quasi",
+                            )
+                            .map_err(|_| Diagnostic::simple("failed to build call"))?;
+                        Some(
+                            call_site
+                                .try_as_basic_value()
+                                .left()
+                                .ok_or_else(|| Diagnostic::simple("concat call returned no value"))?
+                                .into_pointer_value(),
+                        )
                     } else {
                         Some(quasi_ptr)
                     };
-                    
+
                     // If there's a corresponding expression, evaluate it and convert to string
                     if i < tpl.exprs.len() {
-                        let expr_val = self.lower_expr(&tpl.exprs[i], function, param_map, locals)?;
-                        
+                        let expr_val =
+                            self.lower_expr(&tpl.exprs[i], function, param_map, locals)?;
+
                         // Convert to string based on type
                         let expr_str = if expr_val.is_float_value() {
                             // Number: use number_to_string
                             let num_val = expr_val.into_float_value();
                             let num_to_str_fn = self.get_number_to_string();
-                            let call_site = self.builder.build_call(
-                                num_to_str_fn,
-                                &[num_val.into()],
-                                "num_to_str",
-                            ).map_err(|_| Diagnostic::simple("failed to build call"))?;
+                            let call_site = self
+                                .builder
+                                .build_call(num_to_str_fn, &[num_val.into()], "num_to_str")
+                                .map_err(|_| Diagnostic::simple("failed to build call"))?;
                             call_site
                                 .try_as_basic_value()
                                 .left()
@@ -1542,42 +1662,54 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             let bool_val = expr_val.into_int_value();
                             let true_str = create_string_literal(self, "true")?;
                             let false_str = create_string_literal(self, "false")?;
-                            
+
                             // Use select to pick the right string
-                            self.builder.build_select(bool_val, true_str, false_str, "bool_str")
+                            self.builder
+                                .build_select(bool_val, true_str, false_str, "bool_str")
                                 .map_err(|_| Diagnostic::simple("failed to build select"))?
                                 .into_pointer_value()
                         } else {
-                            return Err(Diagnostic::simple("unsupported value type in template literal"));
+                            return Err(Diagnostic::simple(
+                                "unsupported value type in template literal",
+                            ));
                         };
-                        
+
                         // Concatenate expression string with result
-                        let call_site = self.builder.build_call(
-                            concat_fn,
-                            &[result.unwrap().into(), expr_str.into()],
-                            "tpl_concat_expr",
-                        ).map_err(|_| Diagnostic::simple("failed to build call"))?;
-                        result = Some(call_site
-                            .try_as_basic_value()
-                            .left()
-                            .ok_or_else(|| Diagnostic::simple("concat call returned no value"))?
-                            .into_pointer_value());
+                        let call_site = self
+                            .builder
+                            .build_call(
+                                concat_fn,
+                                &[result.unwrap().into(), expr_str.into()],
+                                "tpl_concat_expr",
+                            )
+                            .map_err(|_| Diagnostic::simple("failed to build call"))?;
+                        result = Some(
+                            call_site
+                                .try_as_basic_value()
+                                .left()
+                                .ok_or_else(|| Diagnostic::simple("concat call returned no value"))?
+                                .into_pointer_value(),
+                        );
                     }
                 }
-                
-                Ok(result.ok_or_else(|| Diagnostic::simple("empty template literal"))?.as_basic_value_enum())
+
+                Ok(result
+                    .ok_or_else(|| Diagnostic::simple("empty template literal"))?
+                    .as_basic_value_enum())
             }
             ast::Expr::Unary(unary) => {
                 // Handle unary operators: -, +, !, ~
                 use deno_ast::swc::ast::UnaryOp;
-                
+
                 let arg_val = self.lower_expr(&unary.arg, function, param_map, locals)?;
-                
+
                 match unary.op {
                     UnaryOp::Minus => {
                         // Unary minus: negate the value
                         if let Some(fv) = self.coerce_to_f64(arg_val) {
-                            let neg = self.builder.build_float_neg(fv, "neg")
+                            let neg = self
+                                .builder
+                                .build_float_neg(fv, "neg")
                                 .map_err(|_| Diagnostic::simple("LLVM builder error"))?;
                             Ok(neg.as_basic_value_enum())
                         } else {
@@ -1594,9 +1726,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     }
                     UnaryOp::Bang => {
                         // Logical NOT: convert to boolean and negate
-                        let cond = self.to_condition_i1(arg_val)
+                        let cond = self
+                            .to_condition_i1(arg_val)
                             .ok_or_else(|| Diagnostic::simple("failed to convert to boolean"))?;
-                        let not = self.builder.build_not(cond, "not")
+                        let not = self
+                            .builder
+                            .build_not(cond, "not")
                             .map_err(|_| Diagnostic::simple("LLVM builder error"))?;
                         Ok(not.as_basic_value_enum())
                     }
@@ -1604,13 +1739,19 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         // Bitwise NOT: convert to integer, apply NOT, convert back
                         if let Some(fv) = self.coerce_to_f64(arg_val) {
                             // Convert to i32
-                            let iv = self.builder.build_float_to_signed_int(fv, self.context.i32_type(), "f2i")
+                            let iv = self
+                                .builder
+                                .build_float_to_signed_int(fv, self.context.i32_type(), "f2i")
                                 .map_err(|_| Diagnostic::simple("LLVM builder error"))?;
                             // Apply bitwise NOT
-                            let not_iv = self.builder.build_not(iv, "bnot")
+                            let not_iv = self
+                                .builder
+                                .build_not(iv, "bnot")
                                 .map_err(|_| Diagnostic::simple("LLVM builder error"))?;
                             // Convert back to f64
-                            let result_fv = self.builder.build_signed_int_to_float(not_iv, self.f64_t, "i2f")
+                            let result_fv = self
+                                .builder
+                                .build_signed_int_to_float(not_iv, self.f64_t, "i2f")
                                 .map_err(|_| Diagnostic::simple("LLVM builder error"))?;
                             Ok(result_fv.as_basic_value_enum())
                         } else {
@@ -1624,17 +1765,21 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 // Handle update operators: ++, --
                 // These modify the variable and return the old (postfix) or new (prefix) value
                 use deno_ast::swc::ast::UpdateOp;
-                
+
                 // Only support simple identifier updates for now
                 if let ast::Expr::Ident(ident) = &*update.arg {
                     let name = ident.sym.to_string();
-                    
+
                     // Find the variable (parameter or local)
                     let var_entry = if param_map.contains_key(&name) {
                         // It's a parameter - we can't update parameters directly
                         // Need to create a local shadow
-                        return Err(Diagnostic::simple("cannot update function parameter directly"));
-                    } else if let Some((ptr, ty, initialized, is_const)) = self.find_local(locals, &name) {
+                        return Err(Diagnostic::simple(
+                            "cannot update function parameter directly",
+                        ));
+                    } else if let Some((ptr, ty, initialized, is_const)) =
+                        self.find_local(locals, &name)
+                    {
                         if is_const {
                             return Err(Diagnostic::simple("cannot update immutable variable"));
                         }
@@ -1645,32 +1790,35 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     } else {
                         None
                     };
-                    
+
                     if let Some((ptr, ty)) = var_entry {
                         // Load current value
-                        let old_val = self.builder.build_load(ty, ptr, &name)
+                        let old_val = self
+                            .builder
+                            .build_load(ty, ptr, &name)
                             .map_err(|_| Diagnostic::simple("LLVM builder error"))?;
-                        
+
                         // Only support numeric updates
                         if let Some(old_fv) = self.coerce_to_f64(old_val) {
                             let one = self.f64_t.const_float(1.0);
-                            
+
                             // Compute new value based on operator
                             let new_fv = match update.op {
-                                UpdateOp::PlusPlus => {
-                                    self.builder.build_float_add(old_fv, one, "inc")
-                                        .map_err(|_| Diagnostic::simple("LLVM builder error"))?
-                                }
-                                UpdateOp::MinusMinus => {
-                                    self.builder.build_float_sub(old_fv, one, "dec")
-                                        .map_err(|_| Diagnostic::simple("LLVM builder error"))?
-                                }
+                                UpdateOp::PlusPlus => self
+                                    .builder
+                                    .build_float_add(old_fv, one, "inc")
+                                    .map_err(|_| Diagnostic::simple("LLVM builder error"))?,
+                                UpdateOp::MinusMinus => self
+                                    .builder
+                                    .build_float_sub(old_fv, one, "dec")
+                                    .map_err(|_| Diagnostic::simple("LLVM builder error"))?,
                             };
-                            
+
                             // Store new value
-                            self.builder.build_store(ptr, new_fv)
+                            self.builder
+                                .build_store(ptr, new_fv)
                                 .map_err(|_| Diagnostic::simple("LLVM builder error"))?;
-                            
+
                             // Return old value for postfix, new value for prefix
                             if update.prefix {
                                 Ok(new_fv.as_basic_value_enum())
@@ -1678,13 +1826,17 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 Ok(old_fv.as_basic_value_enum())
                             }
                         } else {
-                            Err(Diagnostic::simple("update operators require numeric operand"))
+                            Err(Diagnostic::simple(
+                                "update operators require numeric operand",
+                            ))
                         }
                     } else {
                         Err(Diagnostic::simple("variable not found"))
                     }
                 } else {
-                    Err(Diagnostic::simple("update operator only supports simple identifiers"))
+                    Err(Diagnostic::simple(
+                        "update operator only supports simple identifiers",
+                    ))
                 }
             }
             _ => Err(Diagnostic::simple("operation not supported")),

@@ -12,26 +12,6 @@ use oats::types::{SymbolTable, check_function_strictness};
 use inkwell::context::Context;
 use inkwell::targets::TargetMachine;
 
-fn map_ts_type_to_oats(ty: &deno_ast::swc::ast::TsType) -> Option<oats::types::OatsType> {
-    use deno_ast::swc::ast;
-    match ty {
-        ast::TsType::TsKeywordType(keyword) => match keyword.kind {
-            ast::TsKeywordTypeKind::TsNumberKeyword => Some(oats::types::OatsType::Number),
-            ast::TsKeywordTypeKind::TsVoidKeyword => Some(oats::types::OatsType::Void),
-            ast::TsKeywordTypeKind::TsBooleanKeyword => Some(oats::types::OatsType::Boolean),
-            ast::TsKeywordTypeKind::TsStringKeyword => Some(oats::types::OatsType::String),
-            _ => None,
-        },
-        ast::TsType::TsTypeRef(type_ref) => type_ref
-            .type_name
-            .as_ident()
-            .map(|type_name| oats::types::OatsType::NominalStruct(type_name.sym.to_string())),
-        ast::TsType::TsArrayType(arr) => map_ts_type_to_oats(&arr.elem_type)
-            .map(|elem| oats::types::OatsType::Array(Box::new(elem))),
-        _ => None,
-    }
-}
-
 fn main() -> Result<()> {
     // Read source from first CLI arg or from OATS_SRC_FILE env var.
     let args: Vec<String> = std::env::args().collect();
@@ -308,7 +288,7 @@ fn main() -> Result<()> {
                                 let ty = binding_ident
                                     .type_ann
                                     .as_ref()
-                                    .and_then(|ann| map_ts_type_to_oats(&ann.type_ann))
+                                    .and_then(|ann| oats::types::map_ts_type(&ann.type_ann))
                                     .unwrap_or(oats::types::OatsType::Number);
                                 fields.push((fname, ty));
                             }

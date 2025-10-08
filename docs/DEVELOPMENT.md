@@ -7,9 +7,10 @@ This document consolidates all development-focused information including current
 1. [Current Status](#current-status)
 2. [Technical Debt & Improvement Plan](#technical-debt--improvement-plan)
 3. [Error Handling Migration](#error-handling-migration)
-4. [Constructor Parameter Properties](#constructor-parameter-properties)
-5. [Development Workflow](#development-workflow)
-6. [Contributing Guidelines](#contributing-guidelines)
+4. [Recently Completed Tasks](#recently-completed-tasks)
+5. [Constructor Parameter Properties](#constructor-parameter-properties)
+6. [Development Workflow](#development-workflow)
+7. [Contributing Guidelines](#contributing-guidelines)
 
 ---
 
@@ -45,7 +46,7 @@ This document consolidates all development-focused information including current
 **High Priority (Technical Debt):**
 - ❌ Switch statements (1 of 6 short-term features remaining)
 - ✅ Eliminate ~25 panic sites in compiler (`.unwrap()`, `.expect()`) (initial work done)
-- ❌ Consolidate duplicate type mapping code
+- ✅ Consolidate duplicate type mapping code (completed)
 
 **Medium Priority (Quality):**
 - ❌ Module resolution and multi-file compilation
@@ -54,6 +55,17 @@ This document consolidates all development-focused information including current
 - ❌ Standard library basics (console.log, Math, Array methods)
 
 ---
+
+## Recently Completed Tasks
+
+The following items were recently completed and deserve a short summary here so contributors know what's landed and where to look for details.
+
+- Constructor parameter properties: `gen_constructor_ir` (in `crates/oats/src/codegen/emit.rs`) now auto-initializes fields declared via constructor parameter properties (for example `constructor(public name: string)`) and correctly increments reference counts for stored pointers. This fixes uninitialized fields for classes created with parameter-property shorthand.
+
+- Eliminate panics in compiler lowering: Initial migration removed several panic sites from `crates/oats/src/codegen/emit.rs` by converting fallible operations and builder calls to return `Result<_, Diagnostic>` and propagating diagnostics instead of calling `.unwrap()`/`.expect()`. Call sites were updated to handle the new `Result` types.
+
+- Test suite improvements: Tests were consolidated with a shared helper (`gen_ir_for_source`) in `crates/oats/tests/common/mod.rs`. Snapshot testing using `insta` was added and stronger integration tests were introduced to simplify maintenance and make regressions easier to catch.
+
 
 ## Technical Debt & Improvement Plan
 
@@ -125,6 +137,8 @@ Note: As a concrete first step, `gen_constructor_ir` in `crates/oats/src/codegen
 // After
 .and_then(|ann| oats::types::map_ts_type(&ann.type_ann))
 ```
+
+**Status:** Completed — `map_ts_type_to_oats()` has been removed from `crates/oats/src/bin/aot_run.rs` and the codebase now uses the consolidated `map_ts_type()` in `crates/oats/src/types.rs` (which includes `Promise<T>` support).
 
 **Estimated Effort:** 15 minutes
 **Impact:** Medium - Eliminates duplication, fixes Promise support

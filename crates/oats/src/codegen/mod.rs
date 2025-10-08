@@ -2340,12 +2340,7 @@ impl<'a> CodeGen<'a> {
                                                 deno_ast::swc::ast::VarDeclKind::Const
                                             );
                                             if let Some(init_expr) = &decl.init {
-                                                if let Some(val) = self.lower_expr(
-                                                    init_expr,
-                                                    function,
-                                                    &param_map,
-                                                    &mut locals_stack,
-                                                ) {
+                                                if let Some(val) = self.lower_expr_result(init_expr, function, &param_map, &mut locals_stack, Some(function.get_name().to_str().unwrap_or(""))).ok() {
                                                     match val {
                                                         BasicValueEnum::FloatValue(fv) => {
                                                             let alloca = self

@@ -56,6 +56,19 @@ impl<'a> super::CodeGen<'a> {
                 .builder
                 .build_signed_int_to_float(iv, self.f64_t, "i2f")
                 .ok(),
+            BasicValueEnum::PointerValue(pv) => {
+                // Attempt to unbox a union number from a boxed union pointer
+                let unbox_fn = self.get_union_unbox_f64();
+                if let Ok(cs) = self.builder.build_call(unbox_fn, &[pv.into()], "union_unbox_f64_call") {
+                    let either = cs.try_as_basic_value();
+                    if let inkwell::Either::Left(bv) = either {
+                        if let BasicValueEnum::FloatValue(fv) = bv {
+                            return Some(fv);
+                        }
+                    }
+                }
+                None
+            }
             _ => None,
         }
     }
@@ -86,6 +99,24 @@ impl<'a> super::CodeGen<'a> {
         &self,
         val: BasicValueEnum<'a>,
     ) -> Option<inkwell::values::IntValue<'a>> {
+        // Prefer numeric unboxing: if this value can be coerced to f64 (including union boxed numbers), use numeric truthiness
+        if let Some(fv) = self.coerce_to_f64(val) {
+            let zero = self.f64_t.const_float(0.0);
+            let is_not_zero = self
+                .builder
+                .build_float_compare(inkwell::FloatPredicate::ONE, fv, zero, "neq0")
+                .ok()?;
+            let is_not_nan = self
+                .builder
+                .build_float_compare(inkwell::FloatPredicate::OEQ, fv, fv, "not_nan")
+                .ok()?;
+            let cond = self
+                .builder
+                .build_and(is_not_zero, is_not_nan, "num_truth")
+                .ok()?;
+            return Some(cond);
+        }
+
         match val {
             BasicValueEnum::IntValue(iv) => {
                 // If it's already an i1 this is fine; otherwise compare != 0

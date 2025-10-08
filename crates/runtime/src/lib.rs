@@ -894,6 +894,17 @@ pub extern "C" fn union_unbox_ptr(u: *mut c_void) -> *mut c_void {
     }
 }
 
+#[unsafe(no_mangle)]
+pub extern "C" fn union_get_discriminant(u: *mut c_void) -> i64 {
+    if u.is_null() {
+        return -1;
+    }
+    unsafe {
+        let discrim_ptr = (u as *mut u8).add(16) as *mut u64;
+        *discrim_ptr as i64
+    }
+}
+
 // Unit tests for runtime. Placing these here (instead of `tests/`) ensures
 // they can call the runtime functions directly even when the crate is built
 // as a `staticlib` for linking into AOT outputs.

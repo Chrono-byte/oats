@@ -29,6 +29,34 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 use deno_ast::swc::ast::BinaryOp;
                 use inkwell::FloatPredicate;
 
+                // Special-case: typeof <expr> === "string"/"number" patterns
+                if let ast::Expr::Unary(unary) = &*bin.left
+                    && let deno_ast::swc::ast::UnaryOp::TypeOf = unary.op
+                    && let ast::Expr::Lit(deno_ast::swc::ast::Lit::Str(s)) = &*bin.right
+                {
+                    // Lower inner expression and then check union discriminant if it's a pointer
+                    let inner = self.lower_expr(&unary.arg, function, param_map, locals)?;
+                    if let BasicValueEnum::PointerValue(pv) = inner {
+                        // call union_get_discriminant(i8*) -> i64
+                        let get_disc = self.get_union_get_discriminant();
+                        let cs = self.builder.build_call(get_disc, &[pv.into()], "get_disc");
+                        if let Ok(cs) = cs {
+                            if let inkwell::Either::Left(bv) = cs.try_as_basic_value() {
+                                let disc = bv.into_int_value();
+                                let expected = match s.value.as_ref() {
+                                    "number" => self.i64_t.const_int(0, false),
+                                    "string" => self.i64_t.const_int(1, false),
+                                    _ => self.i64_t.const_int(2, false),
+                                };
+                                if let Ok(cmp_iv) = self.builder.build_int_compare(inkwell::IntPredicate::EQ, disc, expected, "typeof_eq") {
+                                    return Ok(cmp_iv.as_basic_value_enum());
+                                }
+                            }
+                        }
+                    }
+                    // fallback to general lowering below
+                }
+
                 let l = self.lower_expr(&bin.left, function, param_map, locals)?;
                 let r = self.lower_expr(&bin.right, function, param_map, locals)?;
 
@@ -2213,21 +2241,73 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 // Short-circuit typeof since it returns a string literal based on runtime kind
                 if matches!(unary.op, UnaryOp::TypeOf) {
                     let inner = self.lower_expr(&unary.arg, function, param_map, locals)?;
-                    // number -> "number"
+                    // If we can coerce to f64 (including union-unboxed numbers), it's a number
                     if self.coerce_to_f64(inner).is_some() {
                         let ptr = self.intern_string_literal("number");
                         return Ok(ptr.as_basic_value_enum());
                     }
-                    // pointer values -> "string" (simplified)
-                    if let BasicValueEnum::PointerValue(_pv) = inner {
+
+                    // If it's a pointer, try to consult the union discriminant helper to
+                    // determine the runtime kind (number/string/boolean/object). This
+                    // enables typeof guards to work on boxed union values.
+                    if let BasicValueEnum::PointerValue(pv) = inner {
+                        // call union_get_discriminant(i8*) -> i64
+                        let disc_fn = self.get_union_get_discriminant();
+                        let call_site = self
+                            .builder
+                            .build_call(disc_fn, &[pv.into()], "union_get_disc");
+                        let cs = call_site.map_err(|_| Diagnostic::simple("failed to call union_get_discriminant"))?;
+                        if let inkwell::Either::Left(bv) = cs.try_as_basic_value() {
+                            let disc = bv.into_int_value();
+                            // Compare disc to constants: 0 -> number, 1 -> string, 2 -> boolean
+                            let zero = self.i64_t.const_int(0, false);
+                            let one = self.i64_t.const_int(1, false);
+                            let two = self.i64_t.const_int(2, false);
+
+                            let cmp_num = self
+                                .builder
+                                .build_int_compare(inkwell::IntPredicate::EQ, disc, zero, "disc_eq_num")
+                                .map_err(|_| Diagnostic::simple("failed to build int compare for typeof"))?;
+                            let cmp_str = self
+                                .builder
+                                .build_int_compare(inkwell::IntPredicate::EQ, disc, one, "disc_eq_str")
+                                .map_err(|_| Diagnostic::simple("failed to build int compare for typeof"))?;
+                            let cmp_bool = self
+                                .builder
+                                .build_int_compare(inkwell::IntPredicate::EQ, disc, two, "disc_eq_bool")
+                                .map_err(|_| Diagnostic::simple("failed to build int compare for typeof"))?;
+
+                            let s_num = self.intern_string_literal("number");
+                            let s_str = self.intern_string_literal("string");
+                            let s_bool = self.intern_string_literal("boolean");
+                            let s_obj = self.intern_string_literal("object");
+
+                            // Build nested selects: if num -> s_num else if str -> s_str else if bool -> s_bool else s_obj
+                            let sel1 = self
+                                .builder
+                                .build_select(cmp_num, s_num.as_basic_value_enum(), s_str.as_basic_value_enum(), "sel_num_str")
+                                .map_err(|_| Diagnostic::simple("failed to build select for typeof"))?;
+                            let sel2 = self
+                                .builder
+                                .build_select(cmp_bool, s_bool.as_basic_value_enum(), s_obj.as_basic_value_enum(), "sel_bool_obj")
+                                .map_err(|_| Diagnostic::simple("failed to build select for typeof"))?;
+                            let final_sel = self
+                                .builder
+                                .build_select(cmp_str, sel1, sel2, "sel_final")
+                                .map_err(|_| Diagnostic::simple("failed to build select for typeof"))?;
+                            return Ok(final_sel);
+                        }
+                        // If the discriminant call failed, fall back to "string"
                         let ptr = self.intern_string_literal("string");
                         return Ok(ptr.as_basic_value_enum());
                     }
-                    // ints -> boolean
+
+                    // integer/boolean-like values -> "boolean"
                     if let BasicValueEnum::IntValue(_iv) = inner {
                         let ptr = self.intern_string_literal("boolean");
                         return Ok(ptr.as_basic_value_enum());
                     }
+
                     let ptr = self.intern_string_literal("object");
                     return Ok(ptr.as_basic_value_enum());
                 }

@@ -53,6 +53,7 @@ pub struct CodeGen<'a> {
     pub fn_union_box_ptr: RefCell<Option<FunctionValue<'a>>>,
     pub fn_union_unbox_f64: RefCell<Option<FunctionValue<'a>>>,
     pub fn_union_unbox_ptr: RefCell<Option<FunctionValue<'a>>>,
+    pub fn_union_get_discriminant: RefCell<Option<FunctionValue<'a>>>,
     pub class_fields: RefCell<HashMap<String, Vec<(String, crate::types::OatsType)>>>,
     pub fn_param_types: RefCell<HashMap<String, Vec<crate::types::OatsType>>>,
     pub loop_context_stack: RefCell<Vec<LoopContext<'a>>>,
@@ -160,6 +161,19 @@ impl<'a> CodeGen<'a> {
         let fn_type = self.i8ptr_t.fn_type(&[self.i8ptr_t.into()], false);
         let f = self.module.add_function("union_unbox_ptr", fn_type, None);
         *self.fn_union_unbox_ptr.borrow_mut() = Some(f);
+        f
+    }
+
+    fn get_union_get_discriminant(&self) -> FunctionValue<'a> {
+        if let Some(f) = *self.fn_union_get_discriminant.borrow() {
+            return f;
+        }
+        // declare union_get_discriminant(i8*) -> i64
+        let fn_type = self.i64_t.fn_type(&[self.i8ptr_t.into()], false);
+        let f = self
+            .module
+            .add_function("union_get_discriminant", fn_type, None);
+        *self.fn_union_get_discriminant.borrow_mut() = Some(f);
         f
     }
 
@@ -337,22 +351,70 @@ impl<'a> CodeGen<'a> {
         // Initialize an empty locals stack. Allocas for `let` and `const` will be added later.
         let locals_stack: LocalsStackLocal<'a> = vec![HashMap::new()];
 
-        // We no longer create allocas for parameters. Still, increment RC for
-        // pointer-typed parameters so ownership is consistent with previous behavior.
-        for &idx in param_map.values() {
-            if let Some(param_ty) = llvm_param_types.get(idx as usize)
-                && param_ty.is_pointer_type()
-                && let Some(pv) = function.get_nth_param(idx)
-            {
-                let rc_inc = self.get_rc_inc();
-                if self
-                    .builder
-                    .build_call(rc_inc, &[pv.into()], "rc_inc_param")
-                    .is_err()
-                {
-                    return Err(crate::diagnostics::Diagnostic::simple(
-                        "rc_inc param call failed",
-                    ));
+        // We no longer create allocas for parameters. Still, for parameters
+        // that have a union type and require pointer ABI, box numeric params
+        // into union objects and increment RC on the boxed value. We consult
+        // `fn_param_types` map to find the declared parameter types for this
+        // function (if present).
+        for idx_ref in param_map.values() {
+            let idx = *idx_ref;
+            if let Some(param_types) = self
+                .fn_param_types
+                .borrow()
+                .get(function.get_name().to_str().unwrap_or("")
+            ) {
+                let idx_usize = idx as usize;
+                if idx_usize < param_types.len() {
+                    let pty = &param_types[idx_usize];
+                    if let crate::types::OatsType::Union(parts) = pty {
+                        // If any part is pointer-like, the ABI for this param is i8*
+                        let any_ptr = parts.iter().any(|p| matches!(p, crate::types::OatsType::String | crate::types::OatsType::NominalStruct(_) | crate::types::OatsType::Array(_) | crate::types::OatsType::Promise(_)));
+                        if any_ptr {
+                            // Get the raw argument
+                            if let Some(arg_val) = function.get_nth_param(idx) {
+                                // If arg is float, box it
+                                if arg_val.get_type().is_float_type() {
+                                    let box_fn = self.get_union_box_f64();
+                                    let cs = self.builder.build_call(box_fn, &[arg_val.into()], "union_box_f64_param");
+                                    if let Ok(cs) = cs && let inkwell::Either::Left(bv) = cs.try_as_basic_value() {
+                                        if let inkwell::values::BasicValueEnum::PointerValue(pv) = bv {
+                                            let rc_inc = self.get_rc_inc();
+                                            let _ = self.builder.build_call(rc_inc, &[pv.into()], "rc_inc_param");
+                                        }
+                                    }
+                                } else if arg_val.get_type().is_pointer_type() {
+                                    // box pointer payload
+                                    let box_fn = self.get_union_box_ptr();
+                                    let cs = self.builder.build_call(box_fn, &[arg_val.into()], "union_box_ptr_param");
+                                    if let Ok(cs) = cs && let inkwell::Either::Left(bv) = cs.try_as_basic_value() {
+                                        if let inkwell::values::BasicValueEnum::PointerValue(pv) = bv {
+                                            let rc_inc = self.get_rc_inc();
+                                            let _ = self.builder.build_call(rc_inc, &[pv.into()], "rc_inc_param");
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            // union of numbers -> nothing special (f64 ABI)
+                        }
+                    } else {
+                        // non-union types: previous behavior only incremented RC for pointer types
+                        if let Some(param_ty) = llvm_param_types.get(idx as usize)
+                            && param_ty.is_pointer_type()
+                            && let Some(pv) = function.get_nth_param(idx)
+                        {
+                            let rc_inc = self.get_rc_inc();
+                            if self
+                                .builder
+                                .build_call(rc_inc, &[pv.into()], "rc_inc_param")
+                                .is_err()
+                            {
+                                return Err(crate::diagnostics::Diagnostic::simple(
+                                    "rc_inc param call failed",
+                                ));
+                            }
+                        }
+                    }
                 }
             }
         }

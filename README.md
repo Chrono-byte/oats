@@ -11,10 +11,6 @@ subset of TypeScript into native machine code. It leverages the power of LLVM to
 produce fast, standalone executables with deterministic memory management via
 reference counting.
 
-The goal is to explore the performance potential of TypeScript when freed from a
-JIT compiler and a traditional garbage collector, bringing it closer to the
-performance profile of systems languages like C++ and Rust.
-
 ## ✨ Features
 
 Oats is a work in progress, but it already supports a solid set of modern
@@ -48,11 +44,10 @@ language features:
 sudo apt-get update
 sudo apt-get install -y llvm-18-dev clang-18
 ```
-
-#### macOS (via Homebrew):
+#### Fedora:
 
 ```bash
-brew install llvm@18
+sudo dnf install llvm18 llvm18-devel clang18
 ```
 
 ### Compiling Your First Program

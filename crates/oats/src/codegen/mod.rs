@@ -8,9 +8,6 @@ use inkwell::values::{BasicValue, BasicValueEnum, FunctionValue, PointerValue};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
-type LocalEntry<'a> = (PointerValue<'a>, BasicTypeEnum<'a>, bool, bool);
-type LocalsStackLocal<'a> = Vec<HashMap<String, LocalEntry<'a>>>;
-
 pub mod helpers;
 pub mod expr;
 pub mod stmt;

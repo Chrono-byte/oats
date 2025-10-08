@@ -6,18 +6,11 @@ use std::collections::HashMap;
 
 use inkwell::AddressSpace;
 use inkwell::builder::Builder;
-use inkwell::context::Context;
-use inkwell::module::Module;
 use inkwell::types::BasicType;
 use inkwell::types::BasicTypeEnum;
-use inkwell::values::{BasicValue, BasicValueEnum, FunctionValue, PointerValue};
-use std::cell::{Cell, RefCell};
+use inkwell::values::{BasicValue, PointerValue};
 type LocalEntry<'a> = (PointerValue<'a>, BasicTypeEnum<'a>, bool, bool);
 type LocalsStackLocal<'a> = Vec<HashMap<String, LocalEntry<'a>>>;
-
-pub mod expr;
-pub mod helpers;
-pub mod stmt;
 
 impl<'a> crate::codegen::CodeGen<'a> {
     /// Thin adapter that converts the existing Option-based `lower_expr` into

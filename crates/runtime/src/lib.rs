@@ -27,39 +27,10 @@ const HEADER_STATIC_BIT: u64 = 1u64 << 32;
 const HEADER_RC_MASK: u64 = 0xffffffffu64;
 const HEADER_FLAGS_MASK: u64 = 0xffffffff00000000u64;
 
-/// Check if a pointer points to a static (immortal) object.
-/// Handles both object pointers (pointing to header) and string data pointers (at offset +16).
-#[inline]
-unsafe fn is_static_object(p: *mut c_void) -> bool {
-    if p.is_null() {
-        return false;
-    }
-    unsafe {
-        // First, try treating it as an object pointer (header at offset 0)
-        let header = p as *const AtomicU64;
-        let header_val = (*header).load(Ordering::Relaxed);
-        if (header_val & HEADER_STATIC_BIT) != 0 {
-            return true;
-        }
-        
-        // If that didn't work, try treating it as a string data pointer (header at offset -16)
-        // This handles the case where we're given a pointer to field 2 of a string literal struct
-        let obj_ptr = (p as *const u8).sub(16) as *const AtomicU64;
-        let obj_header = (*obj_ptr).load(Ordering::Relaxed);
-        (obj_header & HEADER_STATIC_BIT) != 0
-    }
-}
-
 /// Create a header value for a heap-allocated object with initial refcount
 #[inline]
 fn make_heap_header(initial_rc: u32) -> u64 {
     (initial_rc as u64) & HEADER_RC_MASK
-}
-
-/// Create a header value for a static/immortal object
-#[inline]
-fn make_static_header() -> u64 {
-    HEADER_STATIC_BIT
 }
 
 /// Allocate a heap string with RC header (refcount initialized to 1).

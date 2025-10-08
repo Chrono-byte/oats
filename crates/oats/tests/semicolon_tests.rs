@@ -19,13 +19,11 @@ fn semicolon_present_is_ok() -> Result<()> {
     // sanity: ensure exported function present
     let mut found = false;
     for item in parsed.program_ref().body() {
-        if let deno_ast::ModuleItemRef::ModuleDecl(md) = item {
-            if let deno_ast::swc::ast::ModuleDecl::ExportDecl(decl) = md {
-                if let deno_ast::swc::ast::Decl::Fn(_f) = &decl.decl {
+        if let deno_ast::ModuleItemRef::ModuleDecl(md) = item
+            && let deno_ast::swc::ast::ModuleDecl::ExportDecl(decl) = md
+                && let deno_ast::swc::ast::Decl::Fn(_f) = &decl.decl {
                     found = true;
                 }
-            }
-        }
     }
     assert!(found, "expected exported function to be present");
     Ok(())

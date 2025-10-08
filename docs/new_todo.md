@@ -15,12 +15,13 @@ These tasks are critical for making the compiler and the code it generates more 
         Notes: The abort path is intentionally minimal and dependency-free. A future enhancement could return error codes or raise a runtime trap value visible to generated code.
 
     [Security/Correctness] Eliminate panics in compiler
+        Status: In progress (incremental migration underway)
 
-        Status: In progress
+        Recent work: several panic-prone `.unwrap()` / `.expect()` calls were replaced with guarded checks and safe fallbacks. A small, safe migration was started in `crates/oats/src/codegen/mod.rs`: an adapter `lower_expr_result(...) -> Result<_, Diagnostic>` was added and many call-sites were converted one-by-one to `lower_expr_result(...).ok()` so callers keep receiving an Option while diagnostic capture is centralized.
 
-        What I changed: replaced several high-risk `.unwrap()` / `.expect()` usages with guarded checks to avoid panics in these hot spots (notably in `crates/oats/src/codegen/mod.rs` and `crates/oats/src/bin/aot_run.rs`). These changes make the compiler more robust against malformed AST inputs or missing IR values.
+        Safety/process notes: edits were intentionally tiny (one-line or a few lines), committed and build-verified after every change to avoid introducing syntax errors in the large lowering file. The active work branch used for these edits is `restore-93fb7b8` and `cargo build -p oats` was run after each commit during the migration.
 
-        Remaining: There are additional `.unwrap()` / `.expect()` uses across the codebase (especially short-lived builder operations in `helpers.rs`) that should be either converted to structured `Result`-based returns or guarded similarly. A proper long-term fix is to convert lowering functions to `Result<_, Diagnostic>` and propagate errors to a single emission/diagnostic site.
+        Remaining: finish converting lowering helpers to return `Result<_, Diagnostic>` (so callers can use `?`), sweep remaining `.unwrap()`/`.expect()` in `crates/oats/src/codegen/helpers.rs` and `crates/oats/src/bin/aot_run.rs`, and add integration tests that verify diagnostics are emitted instead of panics on lowering failures.
 
     [Performance/Security] Implement Memory Cycle Detection
 
@@ -53,6 +54,38 @@ These tasks are critical for making the compiler and the code it generates more 
     Improve for-of Loop Lowering
 
         Status: Basic for-of lowering implemented (checked)
+
+    [Maintenance] Modularize CodeGen (split large mod.rs)
+
+        Status: Not started
+
+        Problem: `crates/oats/src/codegen/mod.rs` is extremely large (~3000+ lines) and contains many responsibilities (expression lowering, statement lowering, function emission, helpers). This makes reviews, incremental edits, and safe refactors (like the Result-based migration) error-prone.
+
+        Goal: Break `codegen/mod.rs` into smaller, focused modules so each area is easier to read, test, and change. Keep the `CodeGen` struct in a small top-level `mod.rs` and move lowering responsibilities into submodules that implement `impl<'a> CodeGen<'a>` methods across files.
+
+        Recommended small-step plan:
+
+        - Audit & plan (1): scan `mod.rs` and produce a short map of logical sections (expr lowering, stmt lowering, function IR emission, helpers, runtime decls). Create a migration checklist mapping methods -> target files.
+        - Batch A (low risk, quick): Create `crates/oats/src/codegen/expr.rs` and `crates/oats/src/codegen/stmt.rs`. Move purely-local lowering functions (expression-only helpers and statement visitors) into those files as `impl<'a> CodeGen<'a>` methods. Leave `CodeGen` type and small public helpers in `mod.rs` that `pub mod expr; pub mod stmt;` can reference.
+        - Batch B (medium): Move function-level emission (`gen_function_ir`, `emit_host_main`) into `crates/oats/src/codegen/gen.rs` and create `helpers.rs` for smaller utilities currently in `mod.rs` that are reused across modules.
+        - Batch C (cleanup): Update `use`/visibility, run `cargo build -p oats` and `cargo test`, and tidy imports. Replace any `super::` cycles with explicit `pub(crate)` helpers where needed.
+
+        Safety rules while refactoring:
+
+        - Make only a few small file moves per commit (1–3 small edits). Run `cargo build -p oats` after each commit.
+        - Preserve public APIs (function symbol names used by runtime) and avoid changing semantics in the same commit as a move.
+        - Add a smoke-test (run `./target/debug/aot_run ./examples/class_field.oats`) after each major batch to ensure emitted IR still links and runs.
+
+        Quality gates per batch:
+
+        - Build: `cargo build -p oats` (must pass)
+        - Format: `cargo fmt` (apply before committing)
+        - Tests: `cargo test -p oats` (run quick unit/integration tests if present)
+        - Smoke: run the aot runner on one example to ensure no regressions.
+
+        Estimated effort: Batch A (1–3 hours), Batch B (1–2 hours), Batch C (0.5–1 hour) depending on cross-file dependencies and visibility fixes.
+
+        Why this helps now: modularizing the codegen makes the ongoing migration to `Result<_, Diagnostic>` and the removal of `.unwrap()` safer and easier because edits will be smaller, localized, and easier to compile-verify.
 
 3. Low-Priority: Long-Term & Ecosystem
 

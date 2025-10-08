@@ -150,6 +150,52 @@ pub fn check_function_strictness(
     })
 }
 
+/// Infer an OatsType from an AST expression (literals, arrays, etc.)
+/// Returns None if the expression type cannot be inferred.
+pub fn infer_type_from_expr(expr: &ast::Expr) -> Option<OatsType> {
+    match expr {
+        ast::Expr::Lit(lit) => match lit {
+            ast::Lit::Num(_) => Some(OatsType::Number),
+            ast::Lit::Str(_) => Some(OatsType::String),
+            ast::Lit::Bool(_) => Some(OatsType::Boolean),
+            _ => None,
+        },
+        ast::Expr::Array(arr) => {
+            // Infer array element type from first element
+            if let Some(Some(first_elem)) = arr.elems.first() {
+                infer_type_from_expr(&first_elem.expr)
+                    .map(|elem_type| OatsType::Array(Box::new(elem_type)))
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Comprehensive type inference that tries multiple sources:
+/// 1. TypeScript type annotations
+/// 2. Expression-based inference
+/// 3. Fallback to default
+pub fn infer_type(ts_type: Option<&ast::TsType>, expr: Option<&ast::Expr>) -> OatsType {
+    // First priority: explicit TypeScript type annotation
+    if let Some(ts_ty) = ts_type {
+        if let Some(oats_type) = map_ts_type(ts_ty) {
+            return oats_type;
+        }
+    }
+
+    // Second priority: infer from expression
+    if let Some(expr) = expr {
+        if let Some(oats_type) = infer_type_from_expr(expr) {
+            return oats_type;
+        }
+    }
+
+    // Fallback: default to Number (most common type)
+    OatsType::Number
+}
+
 impl OatsType {
     /// Check if this type is a Promise
     pub fn is_promise(&self) -> bool {

@@ -107,27 +107,7 @@ fn main() -> Result<()> {
     }
 
     // Helper: infer a simple OatsType from an expression (literals and simple arrays)
-    fn infer_from_expr(e: &deno_ast::swc::ast::Expr) -> Option<oats::types::OatsType> {
-        use deno_ast::swc::ast;
-        use deno_ast::swc::ast::Expr;
-        match e {
-            Expr::Lit(lit) => match lit {
-                ast::Lit::Num(_) => Some(oats::types::OatsType::Number),
-                ast::Lit::Str(_) => Some(oats::types::OatsType::String),
-                ast::Lit::Bool(_) => Some(oats::types::OatsType::Boolean),
-                _ => None,
-            },
-            Expr::Array(arr) => {
-                if let Some(Some(first)) = arr.elems.first() {
-                    infer_from_expr(&first.expr)
-                        .map(|et| oats::types::OatsType::Array(Box::new(et)))
-                } else {
-                    None
-                }
-            }
-            _ => None,
-        }
-    }
+    // NOTE: This function is now consolidated in oats::types::infer_type_from_expr
 
     // Walk top-level items and examine function bodies / declarations.
     for item in parsed.program_ref().body() {
@@ -285,11 +265,10 @@ fn main() -> Result<()> {
                         {
                             let fname = binding_ident.id.sym.to_string();
                             if fields.iter().all(|(n, _)| n != &fname) {
-                                let ty = binding_ident
-                                    .type_ann
-                                    .as_ref()
-                                    .and_then(|ann| oats::types::map_ts_type(&ann.type_ann))
-                                    .unwrap_or(oats::types::OatsType::Number);
+                                let ty = oats::types::infer_type(
+                                    binding_ident.type_ann.as_ref().map(|ann| &*ann.type_ann),
+                                    None
+                                );
                                 fields.push((fname, ty));
                             }
                         }
@@ -315,8 +294,7 @@ fn main() -> Result<()> {
                                 && let MemberProp::Ident(ident) = &mem.prop
                             {
                                 let name = ident.sym.to_string();
-                                let inferred = infer_from_expr(&assign.right)
-                                    .unwrap_or(oats::types::OatsType::Number);
+                                let inferred = oats::types::infer_type(None, Some(&assign.right));
                                 if fields.iter().all(|(n, _)| n != &name) {
                                     fields.push((name, inferred));
                                 }

@@ -40,6 +40,7 @@ pub struct CodeGen<'a> {
     pub fn_array_alloc: RefCell<Option<FunctionValue<'a>>>,
     pub fn_rc_inc: RefCell<Option<FunctionValue<'a>>>,
     pub fn_rc_dec: RefCell<Option<FunctionValue<'a>>>,
+    pub fn_number_to_string: RefCell<Option<FunctionValue<'a>>>,
     pub class_fields: RefCell<HashMap<String, Vec<(String, crate::types::OatsType)>>>,
     pub fn_param_types: RefCell<HashMap<String, Vec<crate::types::OatsType>>>,
     pub source: &'a str,
@@ -84,6 +85,17 @@ impl<'a> CodeGen<'a> {
             .fn_type(&[self.i8ptr_t.into()], false);
         let f = self.module.add_function("rc_dec", fn_type, None);
         *self.fn_rc_dec.borrow_mut() = Some(f);
+        f
+    }
+
+    fn get_number_to_string(&self) -> FunctionValue<'a> {
+        if let Some(f) = *self.fn_number_to_string.borrow() {
+            return f;
+        }
+        // number_to_string(f64) -> i8*
+        let fn_type = self.i8ptr_t.fn_type(&[self.f64_t.into()], false);
+        let f = self.module.add_function("number_to_string", fn_type, None);
+        *self.fn_number_to_string.borrow_mut() = Some(f);
         f
     }
 
@@ -360,6 +372,64 @@ impl<'a> CodeGen<'a> {
                 _locals_stack.pop();
                 terminated
             }
+            // Handle if statements: `if (cond) { ... } else { ... }`
+            ast::Stmt::If(ifstmt) => {
+                // Lower condition
+                if let Ok(cond_val) =
+                    self.lower_expr(&ifstmt.test, _function, _param_map, _locals_stack)
+                {
+                    if let Some(cond_bool) = self.to_condition_i1(cond_val) {
+                        let then_bb = self.context.append_basic_block(_function, "if.then");
+                        let else_bb = self.context.append_basic_block(_function, "if.else");
+                        let merge_bb = self.context.append_basic_block(_function, "if.merge");
+
+                        // Conditional branch
+                        let _ = self.builder.build_conditional_branch(
+                            cond_bool,
+                            then_bb,
+                            else_bb,
+                        );
+
+                        // Build then block
+                        self.builder.position_at_end(then_bb);
+                        let then_terminated = match &*ifstmt.cons {
+                            ast::Stmt::Block(block) => {
+                                self.lower_stmts(&block.stmts, _function, _param_map, _locals_stack)
+                            }
+                            _ => self.lower_stmt(&ifstmt.cons, _function, _param_map, _locals_stack),
+                        };
+                        if !then_terminated {
+                            let _ = self.builder.build_unconditional_branch(merge_bb);
+                        }
+
+                        // Build else block
+                        self.builder.position_at_end(else_bb);
+                        let else_terminated = if let Some(alt) = &ifstmt.alt {
+                            match &**alt {
+                                ast::Stmt::Block(block) => {
+                                    self.lower_stmts(&block.stmts, _function, _param_map, _locals_stack)
+                                }
+                                _ => self.lower_stmt(alt, _function, _param_map, _locals_stack),
+                            }
+                        } else {
+                            false // no else branch
+                        };
+                        if !else_terminated {
+                            let _ = self.builder.build_unconditional_branch(merge_bb);
+                        }
+
+                        // Position at merge
+                        self.builder.position_at_end(merge_bb);
+
+                        // If both branches terminated, the if statement terminates
+                        then_terminated && else_terminated
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            }
             // Minimal ForOf lowering: handle `for (let v of iterable) { body }`
             ast::Stmt::ForOf(forof) => {
                 // Only handle left as a var decl: `for (let v of rhs)`
@@ -554,6 +624,96 @@ impl<'a> CodeGen<'a> {
                     }
                 false
             }
+            // Handle regular for loops: `for (init; test; update) { body }`
+            ast::Stmt::For(forstmt) => {
+                // Push new scope for the loop (init vars live in this scope)
+                _locals_stack.push(HashMap::new());
+
+                // Lower init (can be VarDecl or Expr)
+                if let Some(init) = &forstmt.init {
+                    match init {
+                        ast::VarDeclOrExpr::VarDecl(var_decl) => {
+                            // Handle var declaration (e.g., let i = 0)
+                            let _ = self.lower_stmt(
+                                &ast::Stmt::Decl(ast::Decl::Var(Box::new((**var_decl).clone()))),
+                                _function,
+                                _param_map,
+                                _locals_stack,
+                            );
+                        }
+                        ast::VarDeclOrExpr::Expr(expr) => {
+                            // Handle expression (e.g., i = 0)
+                            let _ = self.lower_expr(expr, _function, _param_map, _locals_stack);
+                        }
+                    }
+                }
+
+                // Create basic blocks
+                let loop_cond_bb = self.context.append_basic_block(_function, "for.cond");
+                let loop_body_bb = self.context.append_basic_block(_function, "for.body");
+                let loop_incr_bb = self.context.append_basic_block(_function, "for.incr");
+                let loop_after_bb = self.context.append_basic_block(_function, "for.after");
+
+                // Branch to condition
+                let _ = self.builder.build_unconditional_branch(loop_cond_bb);
+
+                // Build condition block
+                self.builder.position_at_end(loop_cond_bb);
+                if let Some(test) = &forstmt.test {
+                    if let Ok(cond_val) =
+                        self.lower_expr(test, _function, _param_map, _locals_stack)
+                    {
+                        // Coerce to i1 boolean
+                        if let Some(cond_bool) = self.to_condition_i1(cond_val) {
+                            let _ = self.builder.build_conditional_branch(
+                                cond_bool,
+                                loop_body_bb,
+                                loop_after_bb,
+                            );
+                        } else {
+                            // Failed to coerce, bail out
+                            _locals_stack.pop();
+                            return false;
+                        }
+                    } else {
+                        // Failed to lower test, bail out
+                        _locals_stack.pop();
+                        return false;
+                    }
+                } else {
+                    // No test means infinite loop: always branch to body
+                    let _ = self.builder.build_unconditional_branch(loop_body_bb);
+                }
+
+                // Build body block
+                self.builder.position_at_end(loop_body_bb);
+                let body_terminated = match &*forstmt.body {
+                    ast::Stmt::Block(block) => {
+                        self.lower_stmts(&block.stmts, _function, _param_map, _locals_stack)
+                    }
+                    _ => self.lower_stmt(&forstmt.body, _function, _param_map, _locals_stack),
+                };
+
+                // If body didn't terminate, branch to increment
+                if !body_terminated {
+                    let _ = self.builder.build_unconditional_branch(loop_incr_bb);
+                }
+
+                // Build increment block
+                self.builder.position_at_end(loop_incr_bb);
+                if let Some(update) = &forstmt.update {
+                    let _ = self.lower_expr(update, _function, _param_map, _locals_stack);
+                }
+                let _ = self.builder.build_unconditional_branch(loop_cond_bb);
+
+                // Position after loop
+                self.builder.position_at_end(loop_after_bb);
+
+                // Pop loop scope
+                _locals_stack.pop();
+
+                false // loops don't terminate unless body always returns
+            }
             _ => false,
         }
     }
@@ -632,5 +792,202 @@ impl<'a> CodeGen<'a> {
         }
 
         true
+    }
+
+    /// Generate a complete constructor function for a class.
+    /// The constructor allocates memory for the header + fields, initializes the header
+    /// with refcount=1, and runs the constructor body (which may initialize fields via
+    /// assignments or use constructor parameters).
+    ///
+    /// # Arguments
+    /// * `class_name` - Name of the class (e.g., "Point")
+    /// * `ctor` - The constructor AST node
+    /// * `fields` - Ordered list of (field_name, field_type) tuples
+    ///
+    /// The emitted function signature is:
+    ///   `ClassName_ctor(param1, param2, ...) -> i8*`
+    pub fn gen_constructor_ir(
+        &self,
+        class_name: &str,
+        ctor: &deno_ast::swc::ast::Constructor,
+        fields: &[(String, crate::types::OatsType)],
+    ) {
+        use crate::types::OatsType;
+
+        let fname = format!("{}_ctor", class_name);
+
+        // Build param list from constructor parameters
+        let mut param_types_vec: Vec<crate::types::OatsType> = Vec::new();
+        let mut param_names: Vec<String> = Vec::new();
+
+        for param in &ctor.params {
+            use deno_ast::swc::ast::{ParamOrTsParamProp, TsParamPropParam};
+            match param {
+                ParamOrTsParamProp::TsParamProp(ts_param) => {
+                    if let TsParamPropParam::Ident(binding_ident) = &ts_param.param {
+                        let pname = binding_ident.id.sym.to_string();
+                        let pty = binding_ident
+                            .type_ann
+                            .as_ref()
+                            .and_then(|ann| crate::types::map_ts_type(&ann.type_ann))
+                            .unwrap_or(OatsType::Number);
+                        param_types_vec.push(pty);
+                        param_names.push(pname);
+                    }
+                }
+                ParamOrTsParamProp::Param(p) => {
+                    if let deno_ast::swc::ast::Pat::Ident(bind_ident) = &p.pat {
+                        let pname = bind_ident.id.sym.to_string();
+                        let pty = bind_ident
+                            .type_ann
+                            .as_ref()
+                            .and_then(|ann| crate::types::map_ts_type(&ann.type_ann))
+                            .unwrap_or(OatsType::Number);
+                        param_types_vec.push(pty);
+                        param_names.push(pname);
+                    }
+                }
+            }
+        }
+
+        // Store param types for later use (in case NewExpr needs them)
+        self.fn_param_types
+            .borrow_mut()
+            .insert(fname.clone(), param_types_vec.clone());
+
+        // Convert OatsType to LLVM types
+        let mut llvm_param_types: Vec<inkwell::types::BasicMetadataTypeEnum> = Vec::new();
+        for pty in &param_types_vec {
+            let llvm_ty = match pty {
+                OatsType::Number => self.f64_t.into(),
+                OatsType::String | OatsType::NominalStruct(_) | OatsType::Array(_) | OatsType::Promise(_) => {
+                    self.i8ptr_t.into()
+                }
+                OatsType::Boolean => self.bool_t.into(),
+                OatsType::Void => continue, // skip void params
+            };
+            llvm_param_types.push(llvm_ty);
+        }
+
+        // Function returns i8* (opaque pointer to the allocated object)
+        let fn_ty = self.i8ptr_t.fn_type(&llvm_param_types, false);
+        let f = self.module.add_function(&fname, fn_ty, None);
+
+        let entry = self.context.append_basic_block(f, "entry");
+        self.builder.position_at_end(entry);
+
+        // Calculate total size: header (8 bytes) + fields
+        // Each field is either 8 bytes (f64, i8*, bool stored as i64)
+        let header_size = 8u64;
+        let field_count = fields.len();
+        let total_size = header_size + (field_count as u64 * 8);
+
+        // Allocate memory
+        let malloc_fn = self.get_malloc();
+        let size_const = self.i64_t.const_int(total_size, false);
+        let call_site = self
+            .builder
+            .build_call(malloc_fn, &[size_const.into()], "call_malloc")
+            .expect("build_call failed");
+        let malloc_ret = call_site
+            .try_as_basic_value()
+            .left()
+            .unwrap()
+            .into_pointer_value();
+
+        // Initialize header (refcount = 1)
+        let header_ptr = self
+            .builder
+            .build_pointer_cast(malloc_ret, self.i8ptr_t, "hdr_ptr")
+            .expect("cast failed");
+        let header_val = self.i64_t.const_int(1u64, false);
+        let _ = self.builder.build_store(header_ptr, header_val);
+
+        // Create locals for constructor parameters and 'this'
+        let mut locals: Vec<std::collections::HashMap<String, LocalEntry<'a>>> = vec![];
+        let mut scope = std::collections::HashMap::new();
+
+        // Add 'this' to locals (points to the allocated object)
+        let this_alloca = self
+            .builder
+            .build_alloca(self.i8ptr_t, "this")
+            .expect("alloca failed");
+        let _ = self.builder.build_store(this_alloca, malloc_ret);
+        scope.insert(
+            "this".to_string(),
+            (this_alloca, self.i8ptr_t.into(), true, true),
+        );
+
+        // Build param_map: mapping param name -> param index
+        let mut param_map: HashMap<String, u32> = HashMap::new();
+
+        // Store constructor parameters into locals
+        for (i, pname) in param_names.iter().enumerate() {
+            let param_val = f.get_nth_param(i as u32).expect("param missing");
+            let param_ty = param_val.get_type();
+            let alloca = self
+                .builder
+                .build_alloca(param_ty, &format!("param_{}", pname))
+                .expect("alloca failed");
+            let _ = self.builder.build_store(alloca, param_val);
+            scope.insert(pname.clone(), (alloca, param_ty, true, true));
+            param_map.insert(pname.clone(), i as u32);
+        }
+
+        locals.push(scope);
+
+        // Auto-assign constructor parameters to matching fields
+        // (TypeScript shorthand: constructor(public name: string) creates and assigns a field)
+        for (field_idx, (field_name, _field_type)) in fields.iter().enumerate() {
+            if let Some(param_idx) = param_names.iter().position(|pn| pn == field_name) {
+                // This field matches a constructor parameter - auto-assign it
+                let param_val = f.get_nth_param(param_idx as u32).expect("param missing");
+                let field_offset = header_size + (field_idx as u64 * 8);
+                let field_ptr = self
+                    .builder
+                    .build_ptr_to_int(malloc_ret, self.i64_t, "obj_addr")
+                    .expect("ptr_to_int failed");
+                let offset_const = self.i64_t.const_int(field_offset, false);
+                let field_addr = self
+                    .builder
+                    .build_int_add(field_ptr, offset_const, "field_addr")
+                    .expect("int_add failed");
+                let field_ptr_cast = self
+                    .builder
+                    .build_int_to_ptr(field_addr, self.i8ptr_t, "field_ptr")
+                    .expect("int_to_ptr failed");
+                let _ = self.builder.build_store(field_ptr_cast, param_val);
+                
+                // If the field is a pointer type, increment its reference count
+                if param_val.get_type().is_pointer_type() {
+                    let rc_inc_fn = self.get_rc_inc();
+                    let _ = self.builder.build_call(
+                        rc_inc_fn,
+                        &[param_val.into()],
+                        "rc_inc_field",
+                    );
+                }
+            }
+        }
+
+        // Lower constructor body if present
+        if let Some(body) = &ctor.body {
+            for stmt in &body.stmts {
+                let _ = self.lower_stmt(stmt, f, &param_map, &mut locals);
+            }
+        }
+
+        // Return the allocated object pointer
+        let _ = self.builder.build_return(Some(&malloc_ret));
+    }
+
+    fn get_malloc(&self) -> FunctionValue<'a> {
+        if let Some(f) = *self.fn_malloc.borrow() {
+            return f;
+        }
+        let fn_type = self.i8ptr_t.fn_type(&[self.i64_t.into()], false);
+        let f = self.module.add_function("malloc", fn_type, None);
+        *self.fn_malloc.borrow_mut() = Some(f);
+        f
     }
 }

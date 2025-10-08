@@ -788,20 +788,44 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             return Ok(ptr_val.as_basic_value_enum());
                         }
 
-                        let array_ty = self.context.i8_type().array_type((bytes.len() + 1) as u32);
+                        // String literal layout with header:
+                        // [u64 header][u64 length][N x i8 data]
+                        // Header has static bit set (bit 32)
+                        let str_len = bytes.len();
+                        
+                        // Create a struct type: { i64, i64, [N x i8] }
+                        let header_ty = self.i64_t;
+                        let len_ty = self.i64_t;
+                        let data_ty = self.context.i8_type().array_type((str_len + 1) as u32);
+                        let struct_ty = self.context.struct_type(
+                            &[header_ty.into(), len_ty.into(), data_ty.into()],
+                            false,
+                        );
+                        
                         // generate a unique global name for this string literal
                         let id = self.next_str_id.get();
                         let name = format!("strlit.{}", id);
                         self.next_str_id.set(id.wrapping_add(1));
-                        let gv = self.module.add_global(array_ty, None, &name);
-                        let const_array = self.context.const_string(bytes, true);
-                        gv.set_initializer(&const_array);
+                        let gv = self.module.add_global(struct_ty, None, &name);
+                        
+                        // Initialize: header = (1 << 32) [static bit], length = str_len, data = bytes
+                        let static_header = self.i64_t.const_int(1u64 << 32, false);
+                        let length_val = self.i64_t.const_int(str_len as u64, false);
+                        let data_val = self.context.const_string(bytes, true);
+                        
+                        let initializer = self.context.const_struct(
+                            &[static_header.into(), length_val.into(), data_val.into()],
+                            false,
+                        );
+                        gv.set_initializer(&initializer);
 
+                        // Return pointer to the data section (offset +16 from base)
                         let zero = self.i32_t.const_int(0, false);
-                        let indices = &[zero, zero];
+                        let two = self.i32_t.const_int(2, false);
+                        let indices = &[zero, two];
                         let gep = unsafe {
                             self.builder.build_gep(
-                                array_ty,
+                                struct_ty,
                                 gv.as_pointer_value(),
                                 indices,
                                 "strptr",
@@ -1279,6 +1303,269 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 } else {
                     Err(Diagnostic::simple("unsupported expression"))
                 }
+            }
+            ast::Expr::Arrow(arrow) => {
+                // For now, only support non-capturing arrow functions
+                // They will be lowered to static functions and returned as function pointers
+                
+                // TODO: Detect captured variables and implement closure support
+                // For Phase 1, we only support arrows that don't capture variables
+                
+                // Generate a unique function name for this arrow
+                let arrow_fn_name = format!("arrow_fn_{}", self.next_str_id.get());
+                self.next_str_id.set(self.next_str_id.get() + 1);
+                
+                // Extract parameter types from arrow.params
+                let mut param_types = Vec::new();
+                for param in &arrow.params {
+                    match param {
+                        ast::Pat::Ident(ident) => {
+                            if let Some(type_ann) = &ident.type_ann {
+                                if let Some(mapped) = crate::types::map_ts_type(&type_ann.type_ann) {
+                                    param_types.push(mapped);
+                                } else {
+                                    return Err(Diagnostic::simple("Arrow parameter has unsupported type annotation"));
+                                }
+                            } else {
+                                return Err(Diagnostic::simple("Arrow parameter missing type annotation"));
+                            }
+                        }
+                        _ => return Err(Diagnostic::simple("Arrow function parameter pattern not supported")),
+                    }
+                }
+                
+                // Determine return type from arrow.return_type or infer from body
+                let ret_type = if let Some(return_type) = &arrow.return_type {
+                    if let Some(mapped) = crate::types::map_ts_type(&return_type.type_ann) {
+                        mapped
+                    } else {
+                        return Err(Diagnostic::simple("Arrow return type not supported"));
+                    }
+                } else {
+                    // If no return type annotation, default to Number for now
+                    // TODO: Implement type inference
+                    crate::types::OatsType::Number
+                };
+                
+                // Build LLVM function type
+                let llvm_param_types: Vec<BasicTypeEnum> = param_types
+                    .iter()
+                    .map(|t| self.map_type_to_llvm(t))
+                    .collect();
+                let fn_type = self.build_llvm_fn_type(&llvm_param_types, &ret_type);
+                
+                // Create the arrow function
+                let arrow_fn = self.module.add_function(&arrow_fn_name, fn_type, None);
+                
+                // Save current insert block so we can return to it
+                let current_block = self.builder.get_insert_block();
+                
+                // Build the function body
+                let entry_bb = self.context.append_basic_block(arrow_fn, "entry");
+                self.builder.position_at_end(entry_bb);
+                
+                // Create parameter map for arrow function
+                let mut arrow_param_map = HashMap::new();
+                for (idx, param) in arrow.params.iter().enumerate() {
+                    if let ast::Pat::Ident(ident) = param {
+                        arrow_param_map.insert(ident.id.sym.to_string(), idx as u32);
+                    }
+                }
+                
+                // Create locals stack for arrow function
+                let mut arrow_locals = vec![HashMap::new()];
+                
+                // Lower the body
+                if arrow.body.is_block_stmt() {
+                    // Block body: { statements }
+                    if let ast::BlockStmtOrExpr::BlockStmt(block) = &*arrow.body {
+                        let terminated = self.lower_stmts(&block.stmts, arrow_fn, &arrow_param_map, &mut arrow_locals);
+                        
+                        // If not terminated, add default return
+                        if !terminated {
+                            match ret_type {
+                                crate::types::OatsType::Void => {
+                                    let _ = self.builder.build_return(None);
+                                }
+                                crate::types::OatsType::Number => {
+                                    let zero = self.f64_t.const_float(0.0);
+                                    let _ = self.builder.build_return(Some(&zero));
+                                }
+                                _ => {
+                                    return Err(Diagnostic::simple("Cannot generate default return for arrow function"));
+                                }
+                            }
+                        }
+                    } else {
+                        return Err(Diagnostic::simple("Arrow body type mismatch"));
+                    }
+                } else {
+                    // Expression body: => expr (implicit return)
+                    if let ast::BlockStmtOrExpr::Expr(expr) = &*arrow.body {
+                        let result = self.lower_expr(expr, arrow_fn, &arrow_param_map, &mut arrow_locals)?;
+                        
+                        // RC cleanup for locals before return
+                        self.emit_rc_dec_for_locals(&mut arrow_locals);
+                        
+                        let _ = self.builder.build_return(Some(&result));
+                    } else {
+                        return Err(Diagnostic::simple("Arrow body type mismatch"));
+                    }
+                }
+                
+                // Position back to original function
+                if let Some(block) = current_block {
+                    self.builder.position_at_end(block);
+                }
+                
+                // Return the function pointer as a value
+                // For now, we return the function pointer directly
+                // TODO: Create proper closure struct when capturing is supported
+                Ok(arrow_fn.as_global_value().as_pointer_value().as_basic_value_enum())
+            }
+            ast::Expr::Tpl(tpl) => {
+                // Template literal: `hello ${name}!`
+                // Structure: quasis (string parts) and exprs (interpolated expressions)
+                // Build result by concatenating: quasis[0] + str(exprs[0]) + quasis[1] + str(exprs[1]) + ...
+                
+                // Ensure str_concat is declared
+                self.gen_str_concat();
+                let concat_fn = self.module.get_function("str_concat")
+                    .ok_or_else(|| Diagnostic::simple("str_concat not found"))?;
+                
+                // Helper to create a string literal (with header, same as Lit::Str)
+                let create_string_literal = |codegen: &Self, s: &str| -> Result<PointerValue<'a>, Diagnostic> {
+                    let bytes = s.as_bytes();
+                    let key = s.to_string();
+                    
+                    // Check cache first
+                    if let Some(ptr_val) = codegen.string_literals.borrow().get(&key) {
+                        return Ok(*ptr_val);
+                    }
+                    
+                    // String literal layout with header: [u64 header][u64 length][N x i8 data]
+                    let str_len = bytes.len();
+                    let header_ty = codegen.i64_t;
+                    let len_ty = codegen.i64_t;
+                    let data_ty = codegen.context.i8_type().array_type((str_len + 1) as u32);
+                    let struct_ty = codegen.context.struct_type(
+                        &[header_ty.into(), len_ty.into(), data_ty.into()],
+                        false,
+                    );
+                    
+                    let id = codegen.next_str_id.get();
+                    let name = format!("strlit.{}", id);
+                    codegen.next_str_id.set(id.wrapping_add(1));
+                    let gv = codegen.module.add_global(struct_ty, None, &name);
+                    
+                    // Initialize with static header
+                    let static_header = codegen.i64_t.const_int(1u64 << 32, false);
+                    let length_val = codegen.i64_t.const_int(str_len as u64, false);
+                    let data_val = codegen.context.const_string(bytes, true);
+                    
+                    let initializer = codegen.context.const_struct(
+                        &[static_header.into(), length_val.into(), data_val.into()],
+                        false,
+                    );
+                    gv.set_initializer(&initializer);
+                    
+                    // Return pointer to data section (offset +16, field index 2)
+                    let zero = codegen.i32_t.const_int(0, false);
+                    let two = codegen.i32_t.const_int(2, false);
+                    let indices = &[zero, two];
+                    let gep = unsafe {
+                        codegen.builder.build_gep(
+                            struct_ty,
+                            gv.as_pointer_value(),
+                            indices,
+                            "strptr",
+                        )
+                    };
+                    
+                    if let Ok(ptr) = gep {
+                        codegen.string_literals.borrow_mut().insert(key, ptr);
+                        Ok(ptr)
+                    } else {
+                        Err(Diagnostic::simple("failed to create string literal"))
+                    }
+                };
+                
+                let mut result: Option<PointerValue<'a>> = None;
+                
+                // Template literals have quasis (string parts) and exprs (interpolated expressions)
+                // quasis.len() = exprs.len() + 1 (there's always one more quasi)
+                for (i, quasi) in tpl.quasis.iter().enumerate() {
+                    // Add the string part
+                    let quasi_str = quasi.raw.to_string();
+                    let quasi_ptr = create_string_literal(self, &quasi_str)?;
+                    
+                    // Concatenate with result so far
+                    result = if let Some(prev) = result {
+                        let call_site = self.builder.build_call(
+                            concat_fn,
+                            &[prev.into(), quasi_ptr.into()],
+                            "tpl_concat_quasi",
+                        ).map_err(|_| Diagnostic::simple("failed to build call"))?;
+                        Some(call_site
+                            .try_as_basic_value()
+                            .left()
+                            .ok_or_else(|| Diagnostic::simple("concat call returned no value"))?
+                            .into_pointer_value())
+                    } else {
+                        Some(quasi_ptr)
+                    };
+                    
+                    // If there's a corresponding expression, evaluate it and convert to string
+                    if i < tpl.exprs.len() {
+                        let expr_val = self.lower_expr(&tpl.exprs[i], function, param_map, locals)?;
+                        
+                        // Convert to string based on type
+                        let expr_str = if expr_val.is_float_value() {
+                            // Number: use number_to_string
+                            let num_val = expr_val.into_float_value();
+                            let num_to_str_fn = self.get_number_to_string();
+                            let call_site = self.builder.build_call(
+                                num_to_str_fn,
+                                &[num_val.into()],
+                                "num_to_str",
+                            ).map_err(|_| Diagnostic::simple("failed to build call"))?;
+                            call_site
+                                .try_as_basic_value()
+                                .left()
+                                .ok_or_else(|| Diagnostic::simple("num_to_str returned no value"))?
+                                .into_pointer_value()
+                        } else if expr_val.is_pointer_value() {
+                            // Already a string (or object) - use as-is
+                            expr_val.into_pointer_value()
+                        } else if expr_val.is_int_value() {
+                            // Boolean: convert to "true" or "false"
+                            let bool_val = expr_val.into_int_value();
+                            let true_str = create_string_literal(self, "true")?;
+                            let false_str = create_string_literal(self, "false")?;
+                            
+                            // Use select to pick the right string
+                            self.builder.build_select(bool_val, true_str, false_str, "bool_str")
+                                .map_err(|_| Diagnostic::simple("failed to build select"))?
+                                .into_pointer_value()
+                        } else {
+                            return Err(Diagnostic::simple("unsupported value type in template literal"));
+                        };
+                        
+                        // Concatenate expression string with result
+                        let call_site = self.builder.build_call(
+                            concat_fn,
+                            &[result.unwrap().into(), expr_str.into()],
+                            "tpl_concat_expr",
+                        ).map_err(|_| Diagnostic::simple("failed to build call"))?;
+                        result = Some(call_site
+                            .try_as_basic_value()
+                            .left()
+                            .ok_or_else(|| Diagnostic::simple("concat call returned no value"))?
+                            .into_pointer_value());
+                    }
+                }
+                
+                Ok(result.ok_or_else(|| Diagnostic::simple("empty template literal"))?.as_basic_value_enum())
             }
             _ => Err(Diagnostic::simple("operation not supported")),
         }

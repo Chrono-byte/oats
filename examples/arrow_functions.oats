@@ -1,0 +1,11 @@
+// Test arrow function compilation
+
+export function main(): number {
+    // Use arrow functions inline (will be more complex, but let's see if lowering works)
+    let add = (x: number, y: number): number => x + y;
+    
+    let sum = add(2, 3);
+    print_f64(sum);
+    
+    return 0;
+}

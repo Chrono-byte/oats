@@ -1,0 +1,42 @@
+// Comprehensive test: strings, arrays, classes, and template literals all working together
+
+export class Person {
+    constructor(public name: string, public age: number) {}
+    
+    greet(): string {
+        return `Hello, I'm ${this.name}`;
+    }
+}
+
+export function main(): void {
+    // Test 1: String literals with RC
+    const greeting = "Hello";
+    const world = "World";
+    println(greeting);
+    
+    // Test 2: Template literals
+    const message = `${greeting}, ${world}!`;
+    println(message);
+    
+    // Test 3: Arrays with RC
+    const numbers: number[] = [1, 2, 3, 4, 5];
+    const sum = numbers[0] + numbers[1] + numbers[2];
+    const result = `Sum of first 3: ${sum}`;
+    println(result);
+    
+    // Test 4: Classes with RC
+    const person = new Person("Alice", 30);
+    const intro = person.greet();
+    println(intro);
+    
+    // Test 5: Complex template with calculations
+    const a = 10;
+    const b = 20;
+    const calc = `${a} + ${b} = ${a + b}`;
+    println(calc);
+    
+    // Test 6: Boolean in template
+    const flag = true;
+    const bool_msg = `Flag is ${flag}`;
+    println(bool_msg);
+}

@@ -9,10 +9,8 @@ use oats::diagnostics;
 use oats::parser;
 use oats::types::{SymbolTable, check_function_strictness};
 
-use inkwell::AddressSpace;
 use inkwell::context::Context;
 use inkwell::targets::TargetMachine;
-use inkwell::types::BasicType;
 
 fn map_ts_type_to_oats(ty: &deno_ast::swc::ast::TsType) -> Option<oats::types::OatsType> {
     use deno_ast::swc::ast;
@@ -31,23 +29,6 @@ fn map_ts_type_to_oats(ty: &deno_ast::swc::ast::TsType) -> Option<oats::types::O
         ast::TsType::TsArrayType(arr) => map_ts_type_to_oats(&arr.elem_type)
             .map(|elem| oats::types::OatsType::Array(Box::new(elem))),
         _ => None,
-    }
-}
-
-fn oats_type_to_basic_type<'ctx>(
-    codegen: &CodeGen<'ctx>,
-    ty: &oats::types::OatsType,
-) -> inkwell::types::BasicTypeEnum<'ctx> {
-    match ty {
-        oats::types::OatsType::Number => codegen.f64_t.as_basic_type_enum(),
-        oats::types::OatsType::Boolean => codegen.bool_t.as_basic_type_enum(),
-        oats::types::OatsType::String
-        | oats::types::OatsType::NominalStruct(_)
-        | oats::types::OatsType::Array(_) => codegen.i8ptr_t.as_basic_type_enum(),
-        oats::types::OatsType::Void => codegen
-            .context
-            .ptr_type(AddressSpace::default())
-            .as_basic_type_enum(),
     }
 }
 
@@ -286,6 +267,7 @@ fn main() -> Result<()> {
         fn_array_alloc: std::cell::RefCell::new(None),
         fn_rc_inc: std::cell::RefCell::new(None),
         fn_rc_dec: std::cell::RefCell::new(None),
+        fn_number_to_string: std::cell::RefCell::new(None),
         class_fields: std::cell::RefCell::new(std::collections::HashMap::new()),
         fn_param_types: std::cell::RefCell::new(std::collections::HashMap::new()),
         source: &parsed_mod.source,
@@ -318,17 +300,18 @@ fn main() -> Result<()> {
                     for param in &cons.params {
                         use deno_ast::swc::ast::{ParamOrTsParamProp, TsParamPropParam};
                         if let ParamOrTsParamProp::TsParamProp(ts_param) = param
-                            && let TsParamPropParam::Ident(binding_ident) = &ts_param.param {
-                                let fname = binding_ident.id.sym.to_string();
-                                if fields.iter().all(|(n, _)| n != &fname) {
-                                    let ty = binding_ident
-                                        .type_ann
-                                        .as_ref()
-                                        .and_then(|ann| map_ts_type_to_oats(&ann.type_ann))
-                                        .unwrap_or(oats::types::OatsType::Number);
-                                    fields.push((fname, ty));
-                                }
+                            && let TsParamPropParam::Ident(binding_ident) = &ts_param.param
+                        {
+                            let fname = binding_ident.id.sym.to_string();
+                            if fields.iter().all(|(n, _)| n != &fname) {
+                                let ty = binding_ident
+                                    .type_ann
+                                    .as_ref()
+                                    .and_then(|ann| map_ts_type_to_oats(&ann.type_ann))
+                                    .unwrap_or(oats::types::OatsType::Number);
+                                fields.push((fname, ty));
                             }
+                        }
                     }
                 }
             }
@@ -425,291 +408,14 @@ fn main() -> Result<()> {
                         }
                     }
                     ClassMember::Constructor(ctor) => {
-                        // Generate constructor function that allocates object and executes body
-                        let fname = format!("{}_ctor", class_name);
-
-                        use deno_ast::swc::ast::{ParamOrTsParamProp, Pat, TsParamPropParam};
-                        let mut param_infos: Vec<(String, oats::types::OatsType, bool)> =
-                            Vec::new();
-                        for param in &ctor.params {
-                            match param {
-                                ParamOrTsParamProp::Param(p) => {
-                                    if let Pat::Ident(ident) = &p.pat {
-                                        let ty = ident
-                                            .type_ann
-                                            .as_ref()
-                                            .and_then(|ann| map_ts_type_to_oats(&ann.type_ann))
-                                            .unwrap_or(oats::types::OatsType::Number);
-                                        param_infos.push((ident.id.sym.to_string(), ty, false));
-                                    }
-                                }
-                                ParamOrTsParamProp::TsParamProp(ts_param) => {
-                                    if let TsParamPropParam::Ident(binding_ident) = &ts_param.param
-                                    {
-                                        let ty = binding_ident
-                                            .type_ann
-                                            .as_ref()
-                                            .and_then(|ann| map_ts_type_to_oats(&ann.type_ann))
-                                            .unwrap_or(oats::types::OatsType::Number);
-                                        param_infos.push((
-                                            binding_ident.id.sym.to_string(),
-                                            ty,
-                                            true,
-                                        ));
-                                    }
-                                }
-                            }
-                        }
-
-                        let param_types: Vec<_> =
-                            param_infos.iter().map(|(_, ty, _)| ty.clone()).collect();
-                        let param_llvm_types: Vec<_> = param_types
-                            .iter()
-                            .map(|ty| oats_type_to_basic_type(&codegen, ty))
-                            .collect();
-                        let llvm_param_metadata: Vec<_> =
-                            param_llvm_types.iter().map(|ty| (*ty).into()).collect();
-
-                        let ctor_fn_type = codegen.i8ptr_t.fn_type(&llvm_param_metadata, false);
-                        let func = codegen.module.add_function(&fname, ctor_fn_type, None);
-                        let entry = codegen.context.append_basic_block(func, "entry");
-                        codegen.builder.position_at_end(entry);
-
-                        let mut fields_for_class = {
-                            let borrowed = codegen.class_fields.borrow();
-                            borrowed.get(&class_name).cloned().unwrap_or_default()
-                        };
-                        if fields_for_class.is_empty() {
-                            fields_for_class = param_infos
-                                .iter()
-                                .filter(|(_, _, is_prop)| *is_prop)
-                                .map(|(name, ty, _)| (name.clone(), ty.clone()))
-                                .collect();
-                            if !fields_for_class.is_empty() {
-                                codegen
-                                    .class_fields
-                                    .borrow_mut()
-                                    .insert(class_name.clone(), fields_for_class.clone());
-                            }
-                        }
-                        let header_bytes = std::mem::size_of::<u64>() as u64;
-                        let field_bytes =
-                            (fields_for_class.len() as u64) * (std::mem::size_of::<usize>() as u64);
-                        let obj_size = header_bytes + field_bytes;
-                        let size_const = codegen
-                            .i64_t
-                            .const_int(obj_size.max(header_bytes) as u64, false);
-
-                        if codegen.module.get_function("malloc").is_none() {
-                            let malloc_ty = codegen.i8ptr_t.fn_type(&[codegen.i64_t.into()], false);
-                            let _ = codegen.module.add_function("malloc", malloc_ty, None);
-                        }
-                        let obj_ptr = if let Some(malloc_fn) = codegen.module.get_function("malloc")
-                        {
-                            let call_malloc = codegen
-                                .builder
-                                .build_call(malloc_fn, &[size_const.into()], "call_malloc")
-                                .expect("build_call failed");
-                            if let inkwell::Either::Left(bv) = call_malloc.try_as_basic_value() {
-                                bv.into_pointer_value()
-                            } else {
-                                // fallback to null pointer if malloc didn't produce a value
-                                codegen
-                                    .context
-                                    .ptr_type(inkwell::AddressSpace::default())
-                                    .const_null()
-                            }
-                        } else {
-                            // If malloc isn't declared (shouldn't happen), return a null pointer
-                            codegen
-                                .context
-                                .ptr_type(inkwell::AddressSpace::default())
-                                .const_null()
-                        };
-
-                        let header_val = codegen.i64_t.const_int(1u64, false);
-                        let _ = codegen.builder.build_store(obj_ptr, header_val);
-
-                        let mut param_map = std::collections::HashMap::new();
-                        for (idx, (name, _, _)) in param_infos.iter().enumerate() {
-                            param_map.insert(name.clone(), idx as u32);
-                        }
-
-                        let mut locals_stack = vec![std::collections::HashMap::new()];
-
-                        use inkwell::types::BasicType;
-                        let this_alloca = codegen
-                            .builder
-                            .build_alloca(codegen.i8ptr_t, "this")
-                            .expect("alloca this");
-                        let _ = codegen.builder.build_store(this_alloca, obj_ptr);
-                        if let Some(last) = locals_stack.last_mut() {
-                            last.insert(
-                                "this".to_string(),
-                                (
-                                    this_alloca,
-                                    codegen.i8ptr_t.as_basic_type_enum(),
-                                    true,
-                                    false,
-                                ),
-                            );
-                        }
-
-                        let mut param_allocas: std::collections::HashMap<
-                            String,
-                            (inkwell::values::PointerValue, inkwell::types::BasicTypeEnum),
-                        > = std::collections::HashMap::new();
-                        for (idx, (name, _ty, _is_prop)) in param_infos.iter().enumerate() {
-                            let llvm_ty = param_llvm_types[idx];
-                            let param_alloca = match codegen.builder.build_alloca(llvm_ty, name) {
-                                Ok(a) => a,
-                                Err(_) => continue,
-                            };
-                            let param_val = match func.get_nth_param(idx as u32) {
-                                Some(p) => p,
-                                None => continue,
-                            };
-                            let _ = codegen.builder.build_store(param_alloca, param_val);
-                            if llvm_ty == codegen.i8ptr_t.as_basic_type_enum() {
-                                let rc_inc = codegen.get_rc_inc();
-                                let _ = codegen
-                                    .builder
-                                    .build_call(rc_inc, &[param_val.into()], "rc_inc_param")
-                                    .expect("rc_inc param");
-                            }
-                            if let Some(last) = locals_stack.last_mut() {
-                                last.insert(name.clone(), (param_alloca, llvm_ty, true, false));
-                            }
-                            param_allocas.insert(name.clone(), (param_alloca, llvm_ty));
-                        }
-
-                        let opaque_ptr_ty =
-                            codegen.context.ptr_type(inkwell::AddressSpace::default());
-                        let hdr_size_const = codegen.i64_t.const_int(header_bytes, false);
-                        let ptr_size_const = codegen
-                            .i64_t
-                            .const_int(std::mem::size_of::<usize>() as u64, false);
-
-                        for (name, _ty, is_prop) in &param_infos {
-                            if !*is_prop {
-                                continue;
-                            }
-                            let Some((field_idx, (_fname, field_ty))) = fields_for_class
-                                .iter()
-                                .enumerate()
-                                .find(|(_, (n, _))| n == name)
-                            else {
-                                continue;
-                            };
-                            let Some((alloca, alloc_ty)) = param_allocas.get(name) else {
-                                continue;
-                            };
-                            let loaded = codegen
-                                .builder
-                                .build_load(*alloc_ty, *alloca, &format!("{}_init", name))
-                                .expect("load param value");
-                            let idx_const = codegen.i64_t.const_int(field_idx as u64, false);
-                            let mul = codegen
-                                .builder
-                                .build_int_mul(idx_const, ptr_size_const, "field_off_mul")
-                                .expect("field mul");
-                            let offset = codegen
-                                .builder
-                                .build_int_add(hdr_size_const, mul, "field_off")
-                                .expect("field add");
-                            let offset_i32 = codegen
-                                .builder
-                                .build_int_cast(offset, codegen.context.i32_type(), "field_off_i32")
-                                .expect("field cast");
-                            let gep_res = unsafe {
-                                codegen.builder.build_gep(
-                                    codegen.context.i8_type(),
-                                    obj_ptr,
-                                    &[offset_i32],
-                                    "field_ptr",
-                                )
-                            };
-                            let Ok(field_ptr) = gep_res else { continue };
-
-                            match field_ty {
-                                oats::types::OatsType::Number => {
-                                    let slot_ptr = codegen
-                                        .builder
-                                        .build_pointer_cast(
-                                            field_ptr,
-                                            opaque_ptr_ty,
-                                            "field_f64_ptr",
-                                        )
-                                        .expect("cast field ptr");
-                                    let _ = codegen.builder.build_store(slot_ptr, loaded);
-                                }
-                                oats::types::OatsType::Boolean => {
-                                    let slot_ptr = codegen
-                                        .builder
-                                        .build_pointer_cast(
-                                            field_ptr,
-                                            opaque_ptr_ty,
-                                            "field_bool_ptr",
-                                        )
-                                        .expect("cast bool ptr");
-                                    let _ = codegen.builder.build_store(slot_ptr, loaded);
-                                }
-                                oats::types::OatsType::String
-                                | oats::types::OatsType::NominalStruct(_)
-                                | oats::types::OatsType::Array(_) => {
-                                    let slot_ptr = codegen
-                                        .builder
-                                        .build_pointer_cast(
-                                            field_ptr,
-                                            opaque_ptr_ty,
-                                            "field_ptr_slot",
-                                        )
-                                        .expect("cast ptr slot");
-                                    let _ = codegen.builder.build_store(slot_ptr, loaded);
-                                    if let inkwell::values::BasicValueEnum::PointerValue(pv) =
-                                        loaded
-                                    {
-                                        let rc_inc = codegen.get_rc_inc();
-                                        let _ = codegen
-                                            .builder
-                                            .build_call(rc_inc, &[pv.into()], "rc_inc_field_init")
-                                            .expect("rc_inc field");
-                                    }
-                                }
-                                _ => {
-                                    let slot_ptr = codegen
-                                        .builder
-                                        .build_pointer_cast(
-                                            field_ptr,
-                                            opaque_ptr_ty,
-                                            "field_generic_ptr",
-                                        )
-                                        .expect("cast generic ptr");
-                                    let _ = codegen.builder.build_store(slot_ptr, loaded);
-                                }
-                            }
-                        }
-
-                        if let Some(body) = &ctor.body {
-                            for stmt in &body.stmts {
-                                if let deno_ast::swc::ast::Stmt::Expr(expr_stmt) = stmt {
-                                    let _ = codegen.lower_expr(
-                                        &expr_stmt.expr,
-                                        func,
-                                        &param_map,
-                                        &mut locals_stack,
-                                    );
-                                }
-                            }
-                        }
-
-                        if let Some(last) = locals_stack.last_mut() {
-                            last.remove("this");
-                        }
-                        codegen.emit_rc_dec_for_locals(&locals_stack);
-
-                        let obj_bv: inkwell::values::BasicValueEnum = obj_ptr.into();
-                        let _ = codegen.builder.build_return(Some(&obj_bv));
+                        // Use the new unified constructor generation
+                        let fields = codegen
+                            .class_fields
+                            .borrow()
+                            .get(&class_name)
+                            .cloned()
+                            .unwrap_or_default();
+                        codegen.gen_constructor_ir(&class_name, ctor, &fields);
                     }
                     _ => {}
                 }

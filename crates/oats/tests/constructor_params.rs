@@ -113,7 +113,7 @@ fn constructor_with_params_allocates_and_initializes() -> Result<()> {
                             &params,
                             &sig.ret,
                             Some("this"),
-                        );
+                        ).expect("codegen should succeed");
                     }
                 }
             }
@@ -130,7 +130,7 @@ fn constructor_with_params_allocates_and_initializes() -> Result<()> {
             if name == "main" {
                 let mut symbols = SymbolTable::new();
                 let sig = check_function_strictness(&f.function, &mut symbols)?;
-                codegen.gen_function_ir("oats_main", &f.function, &sig.params, &sig.ret, None);
+                codegen.gen_function_ir("oats_main", &f.function, &sig.params, &sig.ret, None).expect("codegen should succeed");
             }
         }
     }

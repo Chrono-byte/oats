@@ -126,5 +126,5 @@ documentation in the `docs/` directory, especially:
 
 ## 📄 License
 
-This project is licensed under the **zlib License**. See the [LICENSE](LICENSE)
+This project is licensed under the **zlib/libpng License with Acknowledgement**. See the [LICENSE](LICENSE)
 file for details.

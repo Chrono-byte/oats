@@ -2,6 +2,9 @@
 name = "runtime"
 version = "0.1.0"
 edition = "2024"
+license = "zlib-acknowledgement"
+description = "Runtime library for Oats AOT TypeScript compiler"
+repository = "https://github.com/Chrono-byte/oats"
 
 [lib]
 crate-type = ["staticlib"]

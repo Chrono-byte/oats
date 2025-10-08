@@ -12,6 +12,8 @@ type LocalEntry<'a> = (PointerValue<'a>, BasicTypeEnum<'a>, bool, bool);
 type LocalsStackLocal<'a> = Vec<HashMap<String, LocalEntry<'a>>>;
 
 pub mod helpers;
+pub mod expr;
+pub mod stmt;
 /// Mapping from function name -> param OatsTypes vector. Stored so
 /// lowering can inspect the declared nominal type of `this` parameters
 /// (e.g. to resolve a `this.field` access to a concrete class name).
@@ -149,36 +151,7 @@ impl<'a> CodeGen<'a> {
         self.module.add_function("array_set_ptr", fn_type, None)
     }
 
-    /// Thin adapter that converts the existing Option-based `lower_expr` into
-    /// a Result carrying a `Diagnostic` so callers can centrally report errors.
-    fn lower_expr_result(
-        &self,
-        expr: &deno_ast::swc::ast::Expr,
-        function: inkwell::values::FunctionValue<'a>,
-        param_map: &HashMap<String, u32>,
-        locals: &mut Vec<
-            HashMap<
-                String,
-                (
-                    inkwell::values::PointerValue<'a>,
-                    BasicTypeEnum<'a>,
-                    bool,
-                    bool,
-                ),
-            >,
-        >,
-        ctx_name: Option<&str>,
-    ) -> Result<inkwell::values::BasicValueEnum<'a>, crate::diagnostics::Diagnostic> {
-        if let Some(v) = self.lower_expr(expr, function, param_map, locals) {
-            Ok(v)
-        } else {
-            let msg = format!(
-                "failed to lower expression in context '{}'",
-                ctx_name.unwrap_or("<unknown>")
-            );
-            Err(crate::diagnostics::Diagnostic::simple(msg))
-        }
-    }
+    // `lower_expr_result` moved to `codegen/expr.rs` to begin modularization.
 
     pub fn lower_expr(
         &self,

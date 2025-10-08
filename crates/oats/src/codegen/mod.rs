@@ -194,9 +194,9 @@ impl<'a> CodeGen<'a> {
                 && let Some(pv) = function.get_nth_param(idx)
             {
                 let rc_inc = self.get_rc_inc();
-                if let Err(_) = self
+                if self
                     .builder
-                    .build_call(rc_inc, &[pv.into()], "rc_inc_param")
+                    .build_call(rc_inc, &[pv.into()], "rc_inc_param").is_err()
                 {
                     return Err(crate::diagnostics::Diagnostic::simple(
                         "rc_inc param call failed",

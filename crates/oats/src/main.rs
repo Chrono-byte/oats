@@ -249,16 +249,12 @@ fn main() -> Result<()> {
                             params.extend(sig.params.into_iter());
                             let ret = sig.ret;
                             let fname = format!("{}_{}", class_name, mname);
-                            codegen.gen_function_ir(
-                                &fname,
-                                &m.function,
-                                &params,
-                                &ret,
-                                Some("this"),
-                            ).map_err(|d| {
-                                oats::diagnostics::emit_diagnostic(&d, Some(source.as_str()));
-                                anyhow::anyhow!("{}", d.message)
-                            })?;
+                            codegen
+                                .gen_function_ir(&fname, &m.function, &params, &ret, Some("this"))
+                                .map_err(|d| {
+                                    oats::diagnostics::emit_diagnostic(&d, Some(source.as_str()));
+                                    anyhow::anyhow!("{}", d.message)
+                                })?;
                         } else {
                             // If strict check failed (e.g., missing return annotation), try to emit with Void return
                             if let Ok(sig2) = check_function_strictness(&m.function, &mut symbols) {
@@ -267,16 +263,21 @@ fn main() -> Result<()> {
                                     .push(oats::types::OatsType::NominalStruct(class_name.clone()));
                                 params.extend(sig2.params.into_iter());
                                 let fname = format!("{}_{}", class_name, mname);
-                                codegen.gen_function_ir(
-                                    &fname,
-                                    &m.function,
-                                    &params,
-                                    &oats::types::OatsType::Void,
-                                    Some("this"),
-                                ).map_err(|d| {
-                                    oats::diagnostics::emit_diagnostic(&d, Some(source.as_str()));
-                                    anyhow::anyhow!("{}", d.message)
-                                })?;
+                                codegen
+                                    .gen_function_ir(
+                                        &fname,
+                                        &m.function,
+                                        &params,
+                                        &oats::types::OatsType::Void,
+                                        Some("this"),
+                                    )
+                                    .map_err(|d| {
+                                        oats::diagnostics::emit_diagnostic(
+                                            &d,
+                                            Some(source.as_str()),
+                                        );
+                                        anyhow::anyhow!("{}", d.message)
+                                    })?;
                             }
                         }
                     }
@@ -299,16 +300,18 @@ fn main() -> Result<()> {
     // conflicting with the C runtime entrypoint. The script must export
     // `main`, but we generate `oats_main` as the emitted symbol the host
     // runtime will call.
-    codegen.gen_function_ir(
-        "oats_main",
-        &func_decl,
-        &func_sig.params,
-        &func_sig.ret,
-        None,
-    ).map_err(|d| {
-        oats::diagnostics::emit_diagnostic(&d, Some(source.as_str()));
-        anyhow::anyhow!("{}", d.message)
-    })?;
+    codegen
+        .gen_function_ir(
+            "oats_main",
+            &func_decl,
+            &func_sig.params,
+            &func_sig.ret,
+            None,
+        )
+        .map_err(|d| {
+            oats::diagnostics::emit_diagnostic(&d, Some(source.as_str()));
+            anyhow::anyhow!("{}", d.message)
+        })?;
 
     // Print IR
     println!("{}", codegen.module.print_to_string().to_string());

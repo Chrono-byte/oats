@@ -116,13 +116,15 @@ fn gen_ir_for_source(src: &str) -> Result<String> {
         }
     }
 
-    codegen.gen_function_ir(
-        "oats_main",
-        &func_decl,
-        &func_sig.params,
-        &func_sig.ret,
-        None,
-    ).expect("codegen should succeed");
+    codegen
+        .gen_function_ir(
+            "oats_main",
+            &func_decl,
+            &func_sig.params,
+            &func_sig.ret,
+            None,
+        )
+        .expect("codegen should succeed");
 
     Ok(codegen.module.print_to_string().to_string())
 }

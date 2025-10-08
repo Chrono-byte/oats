@@ -107,13 +107,15 @@ fn class_simple_emits_ctor_and_method() -> Result<()> {
     }
 
     // Now emit main
-    codegen.gen_function_ir(
-        "oats_main",
-        &func_decl,
-        &func_sig.params,
-        &func_sig.ret,
-        None,
-    ).expect("codegen should succeed");
+    codegen
+        .gen_function_ir(
+            "oats_main",
+            &func_decl,
+            &func_sig.params,
+            &func_sig.ret,
+            None,
+        )
+        .expect("codegen should succeed");
 
     let ir = codegen.module.print_to_string().to_string();
 

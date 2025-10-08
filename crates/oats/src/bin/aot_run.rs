@@ -267,7 +267,7 @@ fn main() -> Result<()> {
                             if fields.iter().all(|(n, _)| n != &fname) {
                                 let ty = oats::types::infer_type(
                                     binding_ident.type_ann.as_ref().map(|ann| &*ann.type_ann),
-                                    None
+                                    None,
                                 );
                                 fields.push((fname, ty));
                             }
@@ -338,16 +338,12 @@ fn main() -> Result<()> {
                             params.extend(sig.params.into_iter());
                             let ret = sig.ret;
                             let fname = format!("{}_{}", class_name, mname);
-                            codegen.gen_function_ir(
-                                &fname,
-                                &m.function,
-                                &params,
-                                &ret,
-                                Some("this"),
-                            ).map_err(|d| {
-                                oats::diagnostics::emit_diagnostic(&d, Some(source.as_str()));
-                                anyhow::anyhow!("{}", d.message)
-                            })?;
+                            codegen
+                                .gen_function_ir(&fname, &m.function, &params, &ret, Some("this"))
+                                .map_err(|d| {
+                                    oats::diagnostics::emit_diagnostic(&d, Some(source.as_str()));
+                                    anyhow::anyhow!("{}", d.message)
+                                })?;
                         } else {
                             // If strict check failed (e.g., missing return annotation), try to emit with Void return
                             let mut method_symbols = SymbolTable::new();
@@ -359,16 +355,21 @@ fn main() -> Result<()> {
                                     .push(oats::types::OatsType::NominalStruct(class_name.clone()));
                                 params.extend(sig2.params.into_iter());
                                 let fname = format!("{}_{}", class_name, mname);
-                                codegen.gen_function_ir(
-                                    &fname,
-                                    &m.function,
-                                    &params,
-                                    &oats::types::OatsType::Void,
-                                    Some("this"),
-                                ).map_err(|d| {
-                                    oats::diagnostics::emit_diagnostic(&d, Some(source.as_str()));
-                                    anyhow::anyhow!("{}", d.message)
-                                })?;
+                                codegen
+                                    .gen_function_ir(
+                                        &fname,
+                                        &m.function,
+                                        &params,
+                                        &oats::types::OatsType::Void,
+                                        Some("this"),
+                                    )
+                                    .map_err(|d| {
+                                        oats::diagnostics::emit_diagnostic(
+                                            &d,
+                                            Some(source.as_str()),
+                                        );
+                                        anyhow::anyhow!("{}", d.message)
+                                    })?;
                             }
                         }
                     }
@@ -403,10 +404,12 @@ fn main() -> Result<()> {
             let fsig = check_function_strictness(&inner_func, &mut inner_symbols)?;
             // skip exported `main` (we handle exported main separately later)
             if fname != "main" {
-                codegen.gen_function_ir(&fname, &inner_func, &fsig.params, &fsig.ret, None).map_err(|d| {
-                    oats::diagnostics::emit_diagnostic(&d, Some(source.as_str()));
-                    anyhow::anyhow!("{}", d.message)
-                })?;
+                codegen
+                    .gen_function_ir(&fname, &inner_func, &fsig.params, &fsig.ret, None)
+                    .map_err(|d| {
+                        oats::diagnostics::emit_diagnostic(&d, Some(source.as_str()));
+                        anyhow::anyhow!("{}", d.message)
+                    })?;
             }
         }
 
@@ -420,10 +423,12 @@ fn main() -> Result<()> {
             let mut inner_symbols = SymbolTable::new();
             let fsig = check_function_strictness(&inner_func, &mut inner_symbols)?;
             if fname != "main" {
-                codegen.gen_function_ir(&fname, &inner_func, &fsig.params, &fsig.ret, None).map_err(|d| {
-                    oats::diagnostics::emit_diagnostic(&d, Some(source.as_str()));
-                    anyhow::anyhow!("{}", d.message)
-                })?;
+                codegen
+                    .gen_function_ir(&fname, &inner_func, &fsig.params, &fsig.ret, None)
+                    .map_err(|d| {
+                        oats::diagnostics::emit_diagnostic(&d, Some(source.as_str()));
+                        anyhow::anyhow!("{}", d.message)
+                    })?;
             }
         }
     }
@@ -432,16 +437,18 @@ fn main() -> Result<()> {
     // conflicting with the C runtime entrypoint. The script must export
     // `main`, but we generate `oats_main` as the emitted symbol the host
     // runtime will call.
-    codegen.gen_function_ir(
-        "oats_main",
-        &func_decl,
-        &func_sig.params,
-        &func_sig.ret,
-        None,
-    ).map_err(|d| {
-        oats::diagnostics::emit_diagnostic(&d, Some(source.as_str()));
-        anyhow::anyhow!("{}", d.message)
-    })?;
+    codegen
+        .gen_function_ir(
+            "oats_main",
+            &func_decl,
+            &func_sig.params,
+            &func_sig.ret,
+            None,
+        )
+        .map_err(|d| {
+            oats::diagnostics::emit_diagnostic(&d, Some(source.as_str()));
+            anyhow::anyhow!("{}", d.message)
+        })?;
 
     // Try to emit a host `main` into the module so no external shim is
     // required. Recompute IR after emission.

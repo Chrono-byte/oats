@@ -179,18 +179,16 @@ pub fn infer_type_from_expr(expr: &ast::Expr) -> Option<OatsType> {
 /// 3. Fallback to default
 pub fn infer_type(ts_type: Option<&ast::TsType>, expr: Option<&ast::Expr>) -> OatsType {
     // First priority: explicit TypeScript type annotation
-    if let Some(ts_ty) = ts_type {
-        if let Some(oats_type) = map_ts_type(ts_ty) {
+    if let Some(ts_ty) = ts_type
+        && let Some(oats_type) = map_ts_type(ts_ty) {
             return oats_type;
         }
-    }
 
     // Second priority: infer from expression
-    if let Some(expr) = expr {
-        if let Some(oats_type) = infer_type_from_expr(expr) {
+    if let Some(expr) = expr
+        && let Some(oats_type) = infer_type_from_expr(expr) {
             return oats_type;
         }
-    }
 
     // Fallback: default to Number (most common type)
     OatsType::Number

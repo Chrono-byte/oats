@@ -1,9 +1,9 @@
 // Statement lowering helpers
 // Moved from mod.rs during modularization
 
-use std::collections::HashMap;
-use inkwell::values::{BasicValueEnum, FunctionValue};
 use inkwell::types::BasicType;
+use inkwell::values::{BasicValueEnum, FunctionValue};
+use std::collections::HashMap;
 
 type LocalEntry<'a> = (
     inkwell::values::PointerValue<'a>,
@@ -213,9 +213,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         // Build then block
                         self.builder.position_at_end(then_bb);
                         let then_terminated: bool = match &*ifstmt.cons {
-                            deno_ast::swc::ast::Stmt::Block(block) => {
-                                self.lower_stmts(&block.stmts, _function, _param_map, _locals_stack)?
-                            }
+                            deno_ast::swc::ast::Stmt::Block(block) => self.lower_stmts(
+                                &block.stmts,
+                                _function,
+                                _param_map,
+                                _locals_stack,
+                            )?,
                             _ => {
                                 self.lower_stmt(&ifstmt.cons, _function, _param_map, _locals_stack)?
                             }
@@ -296,10 +299,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 self.context.append_basic_block(_function, "for.after");
 
                             // Push loop context (for-of: continue jumps to condition, break to after)
-                            self.loop_context_stack.borrow_mut().push(crate::codegen::LoopContext {
-                                continue_block: loop_cond_bb,
-                                break_block: loop_after_bb,
-                            });
+                            self.loop_context_stack.borrow_mut().push(
+                                crate::codegen::LoopContext {
+                                    continue_block: loop_cond_bb,
+                                    break_block: loop_after_bb,
+                                },
+                            );
 
                             let _ = self.builder.build_unconditional_branch(loop_cond_bb);
 
@@ -503,7 +508,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         deno_ast::swc::ast::VarDeclOrExpr::VarDecl(var_decl) => {
                             // Handle var declaration (e.g., let i = 0)
                             let _ = self.lower_stmt(
-                                &deno_ast::swc::ast::Stmt::Decl(deno_ast::swc::ast::Decl::Var(Box::new((**var_decl).clone()))),
+                                &deno_ast::swc::ast::Stmt::Decl(deno_ast::swc::ast::Decl::Var(
+                                    Box::new((**var_decl).clone()),
+                                )),
                                 _function,
                                 _param_map,
                                 _locals_stack,
@@ -523,10 +530,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 let loop_after_bb = self.context.append_basic_block(_function, "for.after");
 
                 // Push loop context (continue jumps to increment, break jumps to after)
-                self.loop_context_stack.borrow_mut().push(crate::codegen::LoopContext {
-                    continue_block: loop_incr_bb,
-                    break_block: loop_after_bb,
-                });
+                self.loop_context_stack
+                    .borrow_mut()
+                    .push(crate::codegen::LoopContext {
+                        continue_block: loop_incr_bb,
+                        break_block: loop_after_bb,
+                    });
 
                 // Branch to condition
                 let _ = self.builder.build_unconditional_branch(loop_cond_bb);
@@ -599,10 +608,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 let loop_after_bb = self.context.append_basic_block(_function, "while.after");
 
                 // Push loop context (continue jumps to condition, break jumps to after)
-                self.loop_context_stack.borrow_mut().push(crate::codegen::LoopContext {
-                    continue_block: loop_cond_bb,
-                    break_block: loop_after_bb,
-                });
+                self.loop_context_stack
+                    .borrow_mut()
+                    .push(crate::codegen::LoopContext {
+                        continue_block: loop_cond_bb,
+                        break_block: loop_after_bb,
+                    });
 
                 // Branch to condition
                 let _ = self.builder.build_unconditional_branch(loop_cond_bb);
@@ -658,10 +669,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 let loop_after_bb = self.context.append_basic_block(_function, "dowhile.after");
 
                 // Push loop context (continue jumps to condition, break jumps to after)
-                self.loop_context_stack.borrow_mut().push(crate::codegen::LoopContext {
-                    continue_block: loop_cond_bb,
-                    break_block: loop_after_bb,
-                });
+                self.loop_context_stack
+                    .borrow_mut()
+                    .push(crate::codegen::LoopContext {
+                        continue_block: loop_cond_bb,
+                        break_block: loop_after_bb,
+                    });
 
                 // Branch directly to body (execute at least once)
                 let _ = self.builder.build_unconditional_branch(loop_body_bb);
@@ -672,7 +685,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     deno_ast::swc::ast::Stmt::Block(block) => {
                         self.lower_stmts(&block.stmts, _function, _param_map, _locals_stack)?
                     }
-                    _ => self.lower_stmt(&dowhile_stmt.body, _function, _param_map, _locals_stack)?,
+                    _ => {
+                        self.lower_stmt(&dowhile_stmt.body, _function, _param_map, _locals_stack)?
+                    }
                 };
 
                 // If body didn't terminate, branch to condition check

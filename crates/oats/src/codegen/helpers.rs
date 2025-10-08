@@ -86,7 +86,9 @@ impl<'a> super::CodeGen<'a> {
                     let zero = self.i64_t.const_int(0, false);
                     // widen iv to i64 if needed
                     let iv_wide = if iv.get_type().get_bit_width() < 64 {
-                        self.builder.build_int_cast(iv, self.i64_t, "cast_i_wide").ok()? 
+                        self.builder
+                            .build_int_cast(iv, self.i64_t, "cast_i_wide")
+                            .ok()?
                     } else {
                         iv
                     };
@@ -128,7 +130,12 @@ impl<'a> super::CodeGen<'a> {
                         let zero64 = self.i64_t.const_int(0, false);
                         let len_nonzero = self
                             .builder
-                            .build_int_compare(inkwell::IntPredicate::NE, len, zero64, "len_nonzero")
+                            .build_int_compare(
+                                inkwell::IntPredicate::NE,
+                                len,
+                                zero64,
+                                "len_nonzero",
+                            )
                             .ok()?;
                         let cond = self
                             .builder
@@ -162,7 +169,10 @@ impl<'a> super::CodeGen<'a> {
         {
             let tv_f = match tv {
                 BasicValueEnum::FloatValue(fv) => fv,
-                BasicValueEnum::IntValue(iv) => match self.builder.build_signed_int_to_float(iv, self.f64_t, "i2f") {
+                BasicValueEnum::IntValue(iv) => match self
+                    .builder
+                    .build_signed_int_to_float(iv, self.f64_t, "i2f")
+                {
                     Ok(v) => v,
                     Err(_) => return None,
                 },
@@ -184,7 +194,10 @@ impl<'a> super::CodeGen<'a> {
         {
             let ev_f = match ev {
                 BasicValueEnum::FloatValue(fv) => fv,
-                BasicValueEnum::IntValue(iv) => match self.builder.build_signed_int_to_float(iv, self.f64_t, "i2f") {
+                BasicValueEnum::IntValue(iv) => match self
+                    .builder
+                    .build_signed_int_to_float(iv, self.f64_t, "i2f")
+                {
                     Ok(v) => v,
                     Err(_) => return None,
                 },

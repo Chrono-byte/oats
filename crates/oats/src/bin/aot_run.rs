@@ -505,7 +505,8 @@ fn main() -> Result<()> {
                             let malloc_ty = codegen.i8ptr_t.fn_type(&[codegen.i64_t.into()], false);
                             let _ = codegen.module.add_function("malloc", malloc_ty, None);
                         }
-                        let obj_ptr = if let Some(malloc_fn) = codegen.module.get_function("malloc") {
+                        let obj_ptr = if let Some(malloc_fn) = codegen.module.get_function("malloc")
+                        {
                             let call_malloc = codegen
                                 .builder
                                 .build_call(malloc_fn, &[size_const.into()], "call_malloc")
@@ -514,11 +515,17 @@ fn main() -> Result<()> {
                                 bv.into_pointer_value()
                             } else {
                                 // fallback to null pointer if malloc didn't produce a value
-                                codegen.context.ptr_type(inkwell::AddressSpace::default()).const_null()
+                                codegen
+                                    .context
+                                    .ptr_type(inkwell::AddressSpace::default())
+                                    .const_null()
                             }
                         } else {
                             // If malloc isn't declared (shouldn't happen), return a null pointer
-                            codegen.context.ptr_type(inkwell::AddressSpace::default()).const_null()
+                            codegen
+                                .context
+                                .ptr_type(inkwell::AddressSpace::default())
+                                .const_null()
                         };
 
                         let header_val = codegen.i64_t.const_int(1u64, false);
@@ -539,13 +546,13 @@ fn main() -> Result<()> {
                         let _ = codegen.builder.build_store(this_alloca, obj_ptr);
                         if let Some(last) = locals_stack.last_mut() {
                             last.insert(
-                            "this".to_string(),
-                            (
-                                this_alloca,
-                                codegen.i8ptr_t.as_basic_type_enum(),
-                                true,
-                                false,
-                            ),
+                                "this".to_string(),
+                                (
+                                    this_alloca,
+                                    codegen.i8ptr_t.as_basic_type_enum(),
+                                    true,
+                                    false,
+                                ),
                             );
                         }
 

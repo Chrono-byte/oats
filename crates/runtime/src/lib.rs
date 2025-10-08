@@ -11,9 +11,9 @@ use libc::{c_char, c_void, size_t};
 use std::ffi::CStr;
 use std::io::{self, Write};
 use std::mem;
+use std::process;
 use std::ptr;
 use std::sync::atomic::{AtomicPtr, AtomicU64, Ordering};
-use std::process;
 
 // --- Memory Management ---
 

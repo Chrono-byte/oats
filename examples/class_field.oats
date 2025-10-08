@@ -7,8 +7,11 @@ export class Point {
     }
 }
 
-export function main(): void {
+export function main(): number {
     let p = new Point(1.0, 2.0);
     let v = 0.0;
-    return;
+
+    println("p.x");
+
+    return 1;
 }

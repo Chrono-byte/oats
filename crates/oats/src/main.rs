@@ -119,6 +119,28 @@ fn main() -> Result<()> {
         source: &parsed_mod.preprocessed,
     };
 
+    // Helper: map a TypeScript type annotation to an OatsType
+    fn map_ts_type(ty: &deno_ast::swc::ast::TsType) -> Option<OatsType> {
+        use deno_ast::swc::ast;
+        match ty {
+            ast::TsType::TsKeywordType(keyword) => match keyword.kind {
+                ast::TsKeywordTypeKind::TsNumberKeyword => Some(OatsType::Number),
+                ast::TsKeywordTypeKind::TsVoidKeyword => Some(OatsType::Void),
+                ast::TsKeywordTypeKind::TsBooleanKeyword => Some(OatsType::Boolean),
+                ast::TsKeywordTypeKind::TsStringKeyword => Some(OatsType::String),
+                _ => None,
+            },
+            ast::TsType::TsTypeRef(type_ref) => type_ref
+                .type_name
+                .as_ident()
+                .map(|type_name| OatsType::NominalStruct(type_name.sym.to_string())),
+            ast::TsType::TsArrayType(arr) => {
+                map_ts_type(&arr.elem_type).map(|elem| OatsType::Array(Box::new(elem)))
+            }
+            _ => None,
+        }
+    }
+
     // Helper: infer a simple OatsType from an expression (literals and simple arrays)
     fn infer_from_expr(e: &deno_ast::swc::ast::Expr) -> Option<OatsType> {
         use deno_ast::swc::ast;
@@ -162,30 +184,50 @@ fn main() -> Result<()> {
                     }
                 }
             }
+            // Record constructor parameter properties (e.g., `public x: number`)
+            for member in &c.class.body {
+                if let ClassMember::Constructor(cons) = member {
+                    for param in &cons.params {
+                        use deno_ast::swc::ast::{ParamOrTsParamProp, TsParamPropParam};
+                        if let ParamOrTsParamProp::TsParamProp(ts_param) = param {
+                            if let TsParamPropParam::Ident(binding_ident) = &ts_param.param {
+                                let fname = binding_ident.id.sym.to_string();
+                                if fields.iter().all(|(n, _)| n != &fname) {
+                                    let ty = binding_ident
+                                        .type_ann
+                                        .as_ref()
+                                        .and_then(|ann| map_ts_type(&ann.type_ann))
+                                        .unwrap_or(OatsType::Number);
+                                    fields.push((fname, ty));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             // Scan constructor ASTs for `this.<ident> = <expr>` assignments
-            if fields.is_empty() {
-                for member in &c.class.body {
-                    if let ClassMember::Constructor(cons) = member
-                        && let Some(body) = &cons.body
-                    {
-                        for stmt in &body.stmts {
-                            if let Stmt::Expr(expr_stmt) = stmt
-                                && let Expr::Assign(assign) = &*expr_stmt.expr
-                                && let deno_ast::swc::ast::AssignTarget::Simple(simple_target) =
-                                    &assign.left
+            for member in &c.class.body {
+                if let ClassMember::Constructor(cons) = member
+                    && let Some(body) = &cons.body
+                {
+                    for stmt in &body.stmts {
+                        if let Stmt::Expr(expr_stmt) = stmt
+                            && let Expr::Assign(assign) = &*expr_stmt.expr
+                            && let deno_ast::swc::ast::AssignTarget::Simple(simple_target) =
+                                &assign.left
+                        {
+                            // Match a simple member assignment like `this.x = ...`
+                            if let deno_ast::swc::ast::SimpleAssignTarget::Member(mem) =
+                                simple_target
+                                && matches!(&*mem.obj, Expr::This(_))
+                                && let MemberProp::Ident(ident) = &mem.prop
                             {
-                                // Match a simple member assignment like `this.x = ...`
-                                if let deno_ast::swc::ast::SimpleAssignTarget::Member(mem) =
-                                    simple_target
-                                    && matches!(&*mem.obj, Expr::This(_))
-                                    && let MemberProp::Ident(ident) = &mem.prop
-                                {
-                                    let name = ident.sym.to_string();
-                                    let inferred =
-                                        infer_from_expr(&assign.right).unwrap_or(OatsType::Number);
-                                    if fields.iter().all(|(n, _)| n != &name) {
-                                        fields.push((name, inferred));
-                                    }
+                                let name = ident.sym.to_string();
+                                let inferred =
+                                    infer_from_expr(&assign.right).unwrap_or(OatsType::Number);
+                                if fields.iter().all(|(n, _)| n != &name) {
+                                    fields.push((name, inferred));
                                 }
                             }
                         }

@@ -71,7 +71,7 @@ impl<'a> CodeGen<'a> {
         f
     }
 
-    fn get_rc_inc(&self) -> FunctionValue<'a> {
+    pub fn get_rc_inc(&self) -> FunctionValue<'a> {
         if let Some(f) = *self.fn_rc_inc.borrow() {
             return f;
         }
@@ -815,6 +815,19 @@ impl<'a> CodeGen<'a> {
                     Some(arr_ptr.as_basic_value_enum())
                 }
             }
+            ast::Expr::This(_) => {
+                if let Some((ptr, ty, init, _)) = self.find_local(locals, "this") {
+                    if init {
+                        if let Ok(loaded) = self.builder.build_load(ty, ptr, "this_load") {
+                            return Some(loaded);
+                        }
+                    }
+                }
+                if let Some(idx) = param_map.get("this") {
+                    return Some(function.get_nth_param(*idx).unwrap());
+                }
+                None
+            }
             ast::Expr::Member(member) => {
                 // Support both computed member access (obj[expr]) and dot-member (obj.prop)
                 use deno_ast::swc::ast::MemberProp;
@@ -937,6 +950,17 @@ impl<'a> CodeGen<'a> {
                                         }
                                     }
                                 }
+                            } else if matches!(&*member.obj, deno_ast::swc::ast::Expr::This(_)) {
+                                if let Some(param_types) = self
+                                    .fn_param_types
+                                    .borrow()
+                                    .get(function.get_name().to_str().unwrap_or(""))
+                                    && !param_types.is_empty()
+                                    && let crate::types::OatsType::NominalStruct(n) =
+                                        &param_types[0]
+                                {
+                                    class_name_opt = Some(n.clone());
+                                }
                             }
 
                             if let Some(class_name) = class_name_opt {
@@ -993,21 +1017,32 @@ impl<'a> CodeGen<'a> {
                                         // Load based on field type
                                         match field_ty {
                                             crate::types::OatsType::Number => {
-                                                // Cast to f64* and load
-                                                let f64_ptr_ty = self.context.ptr_type(AddressSpace::default());
+                                                // Cast to opaque pointer and load as f64
                                                 let f64_ptr = self
                                                     .builder
-                                                    .build_pointer_cast(gep_ptr, f64_ptr_ty, "f64_ptr_cast")
+                                                    .build_pointer_cast(
+                                                        gep_ptr,
+                                                        self.context
+                                                            .ptr_type(AddressSpace::default()),
+                                                        "f64_ptr_cast",
+                                                    )
                                                     .expect("cast f64_ptr failed");
                                                 let loaded = self
                                                     .builder
-                                                    .build_load(self.f64_t, f64_ptr, "field_f64_load")
+                                                    .build_load(
+                                                        self.f64_t,
+                                                        f64_ptr,
+                                                        "field_f64_load",
+                                                    )
                                                     .expect("build_load failed");
                                                 return Some(loaded.as_basic_value_enum());
                                             }
-                                            crate::types::OatsType::String | crate::types::OatsType::NominalStruct(_) | crate::types::OatsType::Array(_) => {
+                                            crate::types::OatsType::String
+                                            | crate::types::OatsType::NominalStruct(_)
+                                            | crate::types::OatsType::Array(_) => {
                                                 // Cast to pointer type and load
-                                                let slot_ptr_ty = self.context.ptr_type(AddressSpace::default());
+                                                let slot_ptr_ty =
+                                                    self.context.ptr_type(AddressSpace::default());
                                                 let slot_ptr = self
                                                     .builder
                                                     .build_pointer_cast(
@@ -1019,7 +1054,11 @@ impl<'a> CodeGen<'a> {
                                                 // load slot (an i8*)
                                                 let loaded = self
                                                     .builder
-                                                    .build_load(self.i8ptr_t, slot_ptr, "field_load")
+                                                    .build_load(
+                                                        self.i8ptr_t,
+                                                        slot_ptr,
+                                                        "field_load",
+                                                    )
                                                     .expect("build_load failed");
                                                 return Some(loaded.as_basic_value_enum());
                                             }
@@ -1038,6 +1077,39 @@ impl<'a> CodeGen<'a> {
                     }
                 }
                 None
+            }
+            ast::Expr::New(new_expr) => {
+                if let ast::Expr::Ident(ident) = &*new_expr.callee {
+                    let ctor_name = format!("{}_ctor", ident.sym.to_string());
+                    if let Some(fv) = self.module.get_function(&ctor_name) {
+                        let mut lowered_args: Vec<inkwell::values::BasicMetadataValueEnum> =
+                            Vec::new();
+                        if let Some(args) = &new_expr.args {
+                            for a in args {
+                                if let Some(val) =
+                                    self.lower_expr(&a.expr, function, param_map, locals)
+                                {
+                                    lowered_args.push(val.into());
+                                } else {
+                                    return None;
+                                }
+                            }
+                        }
+                        let cs = self
+                            .builder
+                            .build_call(fv, &lowered_args, "new_call")
+                            .expect("build_call failed");
+                        let either = cs.try_as_basic_value();
+                        match either {
+                            inkwell::Either::Left(bv) => Some(bv),
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
             }
             _ => None,
         }
@@ -1372,8 +1444,16 @@ impl<'a> CodeGen<'a> {
                                                                         );
                                                                 }
                                                                 BasicValueEnum::FloatValue(fv) => {
-                                                                    // cast slot to f64* and store
-                                                                    let elem_ptr = self.builder.build_pointer_cast(gep_ptr, self.context.ptr_type(AddressSpace::default()), "elem_f64_ptr").expect("build_pointer_cast failed");
+                                                                    // cast slot to opaque pointer and store as f64
+                                                                    let elem_ptr = self
+                                                                        .builder
+                                                                        .build_pointer_cast(
+                                                                            gep_ptr,
+                                                                            self.context
+                                                                                .ptr_type(AddressSpace::default()),
+                                                                            "elem_f64_ptr",
+                                                                        )
+                                                                        .expect("build_pointer_cast failed");
                                                                     let _ = self
                                                                         .builder
                                                                         .build_store(elem_ptr, fv);

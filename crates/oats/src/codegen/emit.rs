@@ -1,8 +1,21 @@
-// Top-level IR emission helpers
-// Moved from mod.rs during modularization
+//! This module contains the logic for emitting top-level items, such as
+//! functions and constructors, into LLVM IR.
 
+use deno_ast::swc::ast;
 use inkwell::values::FunctionValue;
-use inkwell::types::BasicType;
+use std::collections::HashMap;
+
+type LocalsStackLocal<'a> = Vec<
+    HashMap<
+        String,
+        (
+            inkwell::values::PointerValue<'a>,
+            inkwell::types::BasicTypeEnum<'a>,
+            bool,
+            bool,
+        ),
+    >,
+>;
 
 impl<'a> crate::codegen::CodeGen<'a> {
     /// Generates LLVM IR for a function declaration.
@@ -10,7 +23,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
     pub fn gen_function_ir(
         &self,
         func_name: &str,
-        func_decl: &deno_ast::swc::ast::Function,
+        func_decl: &ast::Function,
         param_types: &[crate::types::OatsType],
         ret_type: &crate::types::OatsType,
         receiver_name: Option<&str>,
@@ -49,247 +62,169 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 .get_insert_block()
                 .is_none_or(|b| b.get_terminator().is_none())
         {
-            // Helpers live in helpers.rs; emit rc decs for locals before returning
             self.emit_rc_dec_for_locals(&locals_stack);
-            if let Err(_) = self.builder.build_return(None) {
-                crate::diagnostics::emit_diagnostic(
-                    &crate::diagnostics::Diagnostic::simple("failed to build implicit return"),
-                    Some(self.source),
-                );
-            }
+            self.builder
+                .build_return(None)
+                .expect("Failed to build implicit return");
         }
 
         Ok(function)
     }
 
-    pub fn emit_host_main(&self, main_fn_name: &str) {
-        // This emits a C-compatible main function that calls oats_main
-        let main_ty = self.context.void_type().fn_type(&[], false);
-        let main_fn = self.module.add_function("main", main_ty, None);
-        let entry = self.context.append_basic_block(main_fn, "entry");
-        self.builder.position_at_end(entry);
-
-        // Call oats_main (exported main)
-        let oats_main_fn = self.module.get_function(main_fn_name).unwrap();
-        let _ = self.builder.build_call(oats_main_fn, &[], "call_oats_main");
-
-        // Return void
-        let _ = self.builder.build_return(None);
-    }
-
-    // Helper methods for internal use (avoiding conflicts with helpers.rs)
-    fn map_type_to_llvm_basic(&self, t: &crate::types::OatsType) -> inkwell::types::BasicMetadataTypeEnum<'a> {
+    /// Generate a complete constructor function for a class.
+    pub fn gen_constructor_ir(
+        &self,
+        class_name: &str,
+        ctor: &deno_ast::swc::ast::Constructor,
+        fields: &[(String, crate::types::OatsType)],
+    ) {
         use crate::types::OatsType;
-        match t {
-            OatsType::Number => self.f64_t.into(),
-            OatsType::String | OatsType::NominalStruct(_) | OatsType::Array(_) | OatsType::Promise(_) => self.i8ptr_t.into(),
-            OatsType::Boolean => self.bool_t.into(),
-            OatsType::Void => self.i8ptr_t.into(), // fallback for void
-        }
-    }
 
-    fn build_llvm_fn_type_internal(
-        &self,
-        param_types: &[inkwell::types::BasicMetadataTypeEnum<'a>],
-        ret_type: &crate::types::OatsType
-    ) -> inkwell::types::FunctionType<'a> {
-        use crate::types::OatsType;
-        match ret_type {
-            OatsType::Number => self.f64_t.fn_type(param_types, false),
-            OatsType::String | OatsType::NominalStruct(_) | OatsType::Array(_) | OatsType::Promise(_) => self.i8ptr_t.fn_type(param_types, false),
-            OatsType::Boolean => self.bool_t.fn_type(param_types, false),
-            OatsType::Void => self.context.void_type().fn_type(param_types, false),
-        }
-    }
+        let fname = format!("{}_ctor", class_name);
 
-    fn create_param_allocas_internal(
-        &self,
-        function: inkwell::values::FunctionValue<'a>,
-        func_decl: &deno_ast::swc::ast::Function,
-        llvm_param_types: &[inkwell::types::BasicMetadataTypeEnum<'a>],
-        receiver_name: Option<&str>
-    ) -> Result<(
-        std::collections::HashMap<String, u32>,
-        Vec<std::collections::HashMap<String, crate::codegen::LocalEntry<'a>>>
-    ), crate::diagnostics::Diagnostic> {
-        let mut param_map = std::collections::HashMap::new();
-        let locals_stack = vec![std::collections::HashMap::new()];
+        let mut param_types_vec: Vec<crate::types::OatsType> = Vec::new();
+        let mut param_names: Vec<String> = Vec::new();
 
-        for (i, p) in func_decl.params.iter().enumerate() {
-            if let deno_ast::swc::ast::Pat::Ident(ident) = &p.pat {
-                let name = ident.id.sym.to_string();
-                let idx = (i + receiver_name.map_or(0, |_| 1)) as u32;
-                param_map.insert(name, idx);
-            }
-        }
-
-        Ok((param_map, locals_stack))
-    }
-}
-
-    // Helper methods for internal use (avoiding conflicts with helpers.rs)
-    fn map_type_to_llvm_basic(&self, t: &crate::types::OatsType) -> inkwell::types::BasicMetadataTypeEnum<'a> {
-        use crate::types::OatsType;
-        match t {
-            OatsType::Number => self.f64_t.into(),
-            OatsType::String | OatsType::NominalStruct(_) | OatsType::Array(_) | OatsType::Promise(_) => self.i8ptr_t.into(),
-            OatsType::Boolean => self.bool_t.into(),
-            OatsType::Void => self.i8ptr_t.into(), // fallback for void
-        }
-    }
-
-    fn build_llvm_fn_type_internal(
-        &self,
-        param_types: &[inkwell::types::BasicMetadataTypeEnum<'a>],
-        ret_type: &crate::types::OatsType
-    ) -> inkwell::types::FunctionType<'a> {
-        use crate::types::OatsType;
-        match ret_type {
-            OatsType::Number => self.f64_t.fn_type(param_types, false),
-            OatsType::String | OatsType::NominalStruct(_) | OatsType::Array(_) | OatsType::Promise(_) => self.i8ptr_t.fn_type(param_types, false),
-            OatsType::Boolean => self.bool_t.fn_type(param_types, false),
-            OatsType::Void => self.context.void_type().fn_type(param_types, false),
-        }
-    }
-
-    fn create_param_allocas_internal(
-        &self,
-        function: inkwell::values::FunctionValue<'a>,
-        func_decl: &deno_ast::swc::ast::Function,
-        llvm_param_types: &[inkwell::types::BasicMetadataTypeEnum<'a>],
-        receiver_name: Option<&str>
-    ) -> Result<(
-        std::collections::HashMap<String, u32>,
-        Vec<std::collections::HashMap<String, crate::codegen::LocalEntry<'a>>>
-    ), crate::diagnostics::Diagnostic> {
-        let mut param_map = std::collections::HashMap::new();
-        let locals_stack = vec![std::collections::HashMap::new()];
-
-        for (i, p) in func_decl.params.iter().enumerate() {
-            if let deno_ast::swc::ast::Pat::Ident(ident) = &p.pat {
-                let name = ident.id.sym.to_string();
-                let idx = (i + receiver_name.map_or(0, |_| 1)) as u32;
-                param_map.insert(name, idx);
-            }
-        }
-
-        Ok((param_map, locals_stack))
-    }
-
-    fn lower_stmts_internal(
-        &self,
-        stmts: &[deno_ast::swc::ast::Stmt],
-        function: inkwell::values::FunctionValue<'a>,
-        param_map: &std::collections::HashMap<String, u32>,
-        locals_stack: &mut Vec<std::collections::HashMap<String, crate::codegen::LocalEntry<'a>>>
-    ) -> Result<bool, crate::diagnostics::Diagnostic> {
-        // Delegate to the actual implementation in stmt.rs
-        self.lower_stmts(stmts, function, param_map, locals_stack)
-    }
-
-    fn emit_rc_dec_for_locals_internal(&self, locals_stack: &Vec<std::collections::HashMap<String, crate::codegen::LocalEntry<'a>>>) {
-        // Delegate to the actual implementation in helpers.rs
-        self.emit_rc_dec_for_locals(locals_stack)
-    }
-}
-    pub fn emit_host_main(
-        &self,
-        _params: &[crate::types::OatsType],
-        _ret: &crate::types::OatsType,
-    ) -> bool {
-        // Emit a simple C-compatible `main` function that calls the
-        // generated `oats_main` symbol. This covers the common case where
-        // user scripts export `function main(): number` with no params.
-        // Return `true` to indicate we emitted a host main so the driver
-        // will skip linking an external `rt_main.o`.
-
-        // Only handle the simple case: no params, integer return or void.
-        // Build: int main(int argc, char** argv) { int r = oats_main(); return r; }
-        let i32_t = self.i32_t;
-        let i8ptr_t = self.i8ptr_t;
-
-        // Build function type: i32 (int) with (i32, i8**) params
-        let fn_type = i32_t.fn_type(&[i32_t.into(), i8ptr_t.as_basic_type_enum().into()], false);
-        let main_fn = self.module.add_function("main", fn_type, None);
-        let entry = self.context.append_basic_block(main_fn, "entry");
-        self.builder.position_at_end(entry);
-
-        // Try to look up oats_main; it should be present if gen_function_ir emitted it.
-        let oats_main_fn = match self.module.get_function("oats_main") {
-            Some(f) => f,
-            None => {
-                // No oats_main available; emit an empty main that returns 1
-                let const_one = i32_t.const_int(1, false);
-                let _ = self.builder.build_return(Some(&const_one));
-                return true;
-            }
-        };
-
-        // Call oats_main(); we only support a no-arg oats_main here.
-        let call_site = match self.builder.build_call(oats_main_fn, &[], "call_oats_main") {
-            Ok(cs) => cs,
-            Err(_) => {
-                crate::diagnostics::emit_diagnostic(
-                    &crate::diagnostics::Diagnostic::simple("failed to build call to oats_main"),
-                    Some(self.source),
-                );
-                let const_zero = i32_t.const_int(0, false);
-                let _ = self.builder.build_return(Some(&const_zero));
-                return true;
-            }
-        };
-        // Interpret the result depending on its type. If the function returns an i64 or f64
-        // we coerce/truncate to i32; if void, return 0.
-        let either = call_site.try_as_basic_value();
-        if let inkwell::Either::Left(bv) = either {
-            let ret_val = if bv.get_type().is_int_type() {
-                // Truncate or bitcast to i32 if needed
-                let rv_int = bv.into_int_value();
-                let cast = match self
-                    .builder
-                    .build_int_truncate_or_bit_cast(rv_int, i32_t, "ret_i32")
-                {
-                    Ok(c) => c,
-                    Err(_) => {
-                        crate::diagnostics::emit_diagnostic(
-                            &crate::diagnostics::Diagnostic::simple(
-                                "int cast failed when building host main",
-                            ),
-                            Some(self.source),
-                        );
-                        i32_t.const_int(0, false)
+        for param in &ctor.params {
+            use deno_ast::swc::ast::{ParamOrTsParamProp, TsParamPropParam};
+            match param {
+                ParamOrTsParamProp::TsParamProp(ts_param) => {
+                    if let TsParamPropParam::Ident(binding_ident) = &ts_param.param {
+                        let pname = binding_ident.id.sym.to_string();
+                        let pty = binding_ident
+                            .type_ann
+                            .as_ref()
+                            .and_then(|ann| crate::types::map_ts_type(&ann.type_ann))
+                            .unwrap_or(OatsType::Number);
+                        param_types_vec.push(pty);
+                        param_names.push(pname);
                     }
-                };
-                inkwell::values::BasicValueEnum::IntValue(cast)
-            } else if bv.get_type().is_float_type() {
-                // cast float to i32 via fptosi
-                let fv = bv.into_float_value();
-                let conv = match self.builder.build_float_to_signed_int(fv, i32_t, "f_to_i") {
-                    Ok(c) => c,
-                    Err(_) => {
-                        crate::diagnostics::emit_diagnostic(
-                            &crate::diagnostics::Diagnostic::simple(
-                                "float->int conversion failed in host main",
-                            ),
-                            Some(self.source),
-                        );
-                        i32_t.const_int(0, false)
+                }
+                ParamOrTsParamProp::Param(p) => {
+                    if let deno_ast::swc::ast::Pat::Ident(bind_ident) = &p.pat {
+                        let pname = bind_ident.id.sym.to_string();
+                        let pty = bind_ident
+                            .type_ann
+                            .as_ref()
+                            .and_then(|ann| crate::types::map_ts_type(&ann.type_ann))
+                            .unwrap_or(OatsType::Number);
+                        param_types_vec.push(pty);
+                        param_names.push(pname);
                     }
-                };
-                inkwell::values::BasicValueEnum::IntValue(conv)
-            } else if bv.get_type().is_pointer_type() {
-                // pointer return -> return 0
-                inkwell::values::BasicValueEnum::IntValue(i32_t.const_int(0, false))
-            } else {
-                inkwell::values::BasicValueEnum::IntValue(i32_t.const_int(0, false))
+                }
+            }
+        }
+
+        self.fn_param_types
+            .borrow_mut()
+            .insert(fname.clone(), param_types_vec.clone());
+
+        let mut llvm_param_types: Vec<inkwell::types::BasicMetadataTypeEnum> = Vec::new();
+        for pty in &param_types_vec {
+            let llvm_ty = match pty {
+                OatsType::Number => self.f64_t.into(),
+                OatsType::String
+                | OatsType::NominalStruct(_)
+                | OatsType::Array(_)
+                | OatsType::Promise(_) => self.i8ptr_t.into(),
+                OatsType::Boolean => self.bool_t.into(),
+                OatsType::Void => continue,
             };
-            let _ = self.builder.build_return(Some(&ret_val));
-        } else {
-            // No basic return (void), return 0
-            let const_zero = i32_t.const_int(0, false);
-            let _ = self.builder.build_return(Some(&const_zero));
+            llvm_param_types.push(llvm_ty);
         }
 
-        true
+        let fn_ty = self.i8ptr_t.fn_type(&llvm_param_types, false);
+        let f = self.module.add_function(&fname, fn_ty, None);
+
+        let entry = self.context.append_basic_block(f, "entry");
+        self.builder.position_at_end(entry);
+
+        let header_size = 8u64;
+        let field_count = fields.len();
+        let total_size = header_size + (field_count as u64 * 8);
+
+        let malloc_fn = self.get_malloc();
+        let size_const = self.i64_t.const_int(total_size, false);
+        let call_site = self
+            .builder
+            .build_call(malloc_fn, &[size_const.into()], "call_malloc")
+            .expect("build_call failed");
+        let malloc_ret = call_site
+            .try_as_basic_value()
+            .left()
+            .unwrap()
+            .into_pointer_value();
+
+        let header_ptr = self
+            .builder
+            .build_pointer_cast(malloc_ret, self.i8ptr_t, "hdr_ptr")
+            .expect("cast failed");
+        let header_val = self.i64_t.const_int(1u64, false);
+        let _ = self.builder.build_store(header_ptr, header_val);
+
+        let mut locals: LocalsStackLocal = vec![];
+        let mut scope = HashMap::new();
+
+        let this_alloca = self
+            .builder
+            .build_alloca(self.i8ptr_t, "this")
+            .expect("alloca failed");
+        let _ = self.builder.build_store(this_alloca, malloc_ret);
+        scope.insert(
+            "this".to_string(),
+            (this_alloca, self.i8ptr_t.into(), true, true),
+        );
+
+        let mut param_map: HashMap<String, u32> = HashMap::new();
+
+        for (i, pname) in param_names.iter().enumerate() {
+            let param_val = f.get_nth_param(i as u32).expect("param missing");
+            let param_ty = param_val.get_type();
+            let alloca = self
+                .builder
+                .build_alloca(param_ty, &format!("param_{}", pname))
+                .expect("alloca failed");
+            let _ = self.builder.build_store(alloca, param_val);
+            scope.insert(pname.clone(), (alloca, param_ty, true, true));
+            param_map.insert(pname.clone(), i as u32);
+        }
+
+        locals.push(scope);
+
+        for (field_idx, (field_name, _field_type)) in fields.iter().enumerate() {
+            if let Some(param_idx) = param_names.iter().position(|pn| pn == field_name) {
+                let param_val = f.get_nth_param(param_idx as u32).expect("param missing");
+                let field_offset = header_size + (field_idx as u64 * 8);
+                let field_ptr_int = self
+                    .builder
+                    .build_ptr_to_int(malloc_ret, self.i64_t, "obj_addr")
+                    .expect("ptr_to_int failed");
+                let offset_const = self.i64_t.const_int(field_offset, false);
+                let field_addr = self
+                    .builder
+                    .build_int_add(field_ptr_int, offset_const, "field_addr")
+                    .expect("int_add failed");
+                let field_ptr_cast = self
+                    .builder
+                    .build_int_to_ptr(field_addr, self.i8ptr_t, "field_ptr")
+                    .expect("int_to_ptr failed");
+                let _ = self.builder.build_store(field_ptr_cast, param_val);
+
+                if param_val.get_type().is_pointer_type() {
+                    let rc_inc_fn = self.get_rc_inc();
+                    let _ = self
+                        .builder
+                        .build_call(rc_inc_fn, &[param_val.into()], "rc_inc_field");
+                }
+            }
+        }
+
+        if let Some(body) = &ctor.body {
+            for stmt in &body.stmts {
+                let _ = self.lower_stmt(stmt, f, &param_map, &mut locals);
+            }
+        }
+
+        let _ = self.builder.build_return(Some(&malloc_ret));
     }
 }

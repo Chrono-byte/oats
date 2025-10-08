@@ -1,3 +1,4 @@
+use deno_ast::swc::ast;
 use inkwell::builder::Builder;
 use inkwell::context::Context;
 use inkwell::module::Module;
@@ -7,10 +8,10 @@ use inkwell::values::PointerValue;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
+pub mod emit;
 pub mod expr;
 pub mod helpers;
 pub mod stmt;
-pub mod emit;
 
 // Locals are represented as a tuple (ptr, ty, initialized, is_const) in many
 // helper modules. Use the same alias here so different files agree on the
@@ -70,17 +71,140 @@ impl<'a> CodeGen<'a> {
         f
     }
 
-    /// Corrected get_rc_inc implementation: simply returns or creates the helper function.
     pub fn get_rc_inc(&self) -> FunctionValue<'a> {
         if let Some(f) = *self.fn_rc_inc.borrow() {
             return f;
         }
-        // Create a function with signature: void (i8*)
-        let void_type = self.context.void_type();
-        let fn_type = void_type.fn_type(&[self.i8ptr_t.into()], false);
+        let fn_type = self
+            .context
+            .void_type()
+            .fn_type(&[self.i8ptr_t.into()], false);
         let f = self.module.add_function("rc_inc", fn_type, None);
         *self.fn_rc_inc.borrow_mut() = Some(f);
         f
+    }
+
+    fn get_rc_dec(&self) -> FunctionValue<'a> {
+        if let Some(f) = *self.fn_rc_dec.borrow() {
+            return f;
+        }
+        let fn_type = self
+            .context
+            .void_type()
+            .fn_type(&[self.i8ptr_t.into()], false);
+        let f = self.module.add_function("rc_dec", fn_type, None);
+        *self.fn_rc_dec.borrow_mut() = Some(f);
+        f
+    }
+
+    fn get_number_to_string(&self) -> FunctionValue<'a> {
+        if let Some(f) = *self.fn_number_to_string.borrow() {
+            return f;
+        }
+        // number_to_string(f64) -> i8*
+        let fn_type = self.i8ptr_t.fn_type(&[self.f64_t.into()], false);
+        let f = self.module.add_function("number_to_string", fn_type, None);
+        *self.fn_number_to_string.borrow_mut() = Some(f);
+        f
+    }
+
+    fn get_array_get_f64(&self) -> FunctionValue<'a> {
+        self.module
+            .get_function("array_get_f64")
+            .unwrap_or_else(|| {
+                let fn_type = self
+                    .f64_t
+                    .fn_type(&[self.i8ptr_t.into(), self.i64_t.into()], false);
+                self.module.add_function("array_get_f64", fn_type, None)
+            })
+    }
+
+    fn get_array_get_ptr(&self) -> FunctionValue<'a> {
+        self.module
+            .get_function("array_get_ptr")
+            .unwrap_or_else(|| {
+                let fn_type = self
+                    .i8ptr_t
+                    .fn_type(&[self.i8ptr_t.into(), self.i64_t.into()], false);
+                self.module.add_function("array_get_ptr", fn_type, None)
+            })
+    }
+
+    fn get_array_set_ptr(&self) -> FunctionValue<'a> {
+        self.module
+            .get_function("array_set_ptr")
+            .unwrap_or_else(|| {
+                // array_set_ptr(arr: i8*, idx: i64, p: i8*) -> void
+                let fn_type = self.context.void_type().fn_type(
+                    &[self.i8ptr_t.into(), self.i64_t.into(), self.i8ptr_t.into()],
+                    false,
+                );
+                self.module.add_function("array_set_ptr", fn_type, None)
+            })
+    }
+
+    // --- Main Function Generation ---
+
+    // Function generation moved to emit.rs
+
+    // --- Function Generation Helpers ---
+
+    /// Helper to build the LLVM function type from parameter and return types.
+    fn build_llvm_fn_type(
+        &self,
+        llvm_param_types: &[BasicTypeEnum<'a>],
+        ret_type: &crate::types::OatsType,
+    ) -> inkwell::types::FunctionType<'a> {
+        let args: Vec<_> = llvm_param_types.iter().map(|&t| t.into()).collect();
+        match ret_type {
+            crate::types::OatsType::Void => self.context.void_type().fn_type(&args, false),
+            _ => self.map_type_to_llvm(ret_type).fn_type(&args, false),
+        }
+    }
+
+    /// Creates stack allocations (`alloca`) for all function parameters, making them
+    /// accessible like local variables and handling initial reference counting.
+    fn create_param_allocas(
+        &self,
+        function: FunctionValue<'a>,
+        func_decl: &ast::Function,
+        llvm_param_types: &[BasicTypeEnum<'a>],
+        receiver_name: Option<&str>,
+    ) -> Result<(HashMap<String, u32>, LocalsStackLocal<'a>), crate::diagnostics::Diagnostic> {
+        let mut param_map = HashMap::new();
+        if let Some(rname) = receiver_name {
+            param_map.insert(rname.to_string(), 0u32);
+        }
+        for (i, p) in func_decl.params.iter().enumerate() {
+            if let ast::Pat::Ident(ident) = &p.pat {
+                let name = ident.id.sym.to_string();
+                let idx = (i + receiver_name.map_or(0, |_| 1)) as u32;
+                param_map.insert(name, idx);
+            }
+        }
+
+        // Initialize an empty locals stack. Allocas for `let` and `const` will be added later.
+        let locals_stack: LocalsStackLocal<'a> = vec![HashMap::new()];
+
+        // We no longer create allocas for parameters. Still, increment RC for
+        // pointer-typed parameters so ownership is consistent with previous behavior.
+        for &idx in param_map.values() {
+            if let Some(param_ty) = llvm_param_types.get(idx as usize)
+                && param_ty.is_pointer_type()
+                && let Some(pv) = function.get_nth_param(idx)
+            {
+                let rc_inc = self.get_rc_inc();
+                if let Err(_) = self
+                    .builder
+                    .build_call(rc_inc, &[pv.into()], "rc_inc_param")
+                {
+                    return Err(crate::diagnostics::Diagnostic::simple(
+                        "rc_inc param call failed",
+                    ));
+                }
+            }
+        }
+        Ok((param_map, locals_stack))
     }
 
     /// Lowers a slice of AST statements into the current basic block.
@@ -209,60 +333,6 @@ impl<'a> CodeGen<'a> {
         let fn_type = self.i8ptr_t.fn_type(&[self.i64_t.into()], false);
         let f = self.module.add_function("malloc", fn_type, None);
         *self.fn_malloc.borrow_mut() = Some(f);
-        f
-    }
-
-    pub fn get_rc_dec(&self) -> FunctionValue<'a> {
-        if let Some(f) = *self.fn_rc_dec.borrow() {
-            return f;
-        }
-        let void_type = self.context.void_type();
-        let fn_type = void_type.fn_type(&[self.i8ptr_t.into()], false);
-        let f = self.module.add_function("rc_dec", fn_type, None);
-        *self.fn_rc_dec.borrow_mut() = Some(f);
-        f
-    }
-
-    pub fn get_array_set_ptr(&self) -> FunctionValue<'a> {
-        if let Some(f) = *self.fn_array_alloc.borrow() {
-            // Reuse the field for array_set_ptr
-            return f;
-        }
-        let void_type = self.context.void_type();
-        let fn_type = void_type.fn_type(&[
-            self.i8ptr_t.into(),  // array pointer
-            self.i64_t.into(),    // index
-            self.i8ptr_t.into(),  // value pointer
-        ], false);
-        let f = self.module.add_function("array_set_ptr", fn_type, None);
-        f
-    }
-
-    pub fn get_array_get_f64(&self) -> FunctionValue<'a> {
-        let fn_type = self.f64_t.fn_type(&[
-            self.i8ptr_t.into(),  // array pointer
-            self.i64_t.into(),    // index
-        ], false);
-        let f = self.module.add_function("array_get_f64", fn_type, None);
-        f
-    }
-
-    pub fn get_array_get_ptr(&self) -> FunctionValue<'a> {
-        let fn_type = self.i8ptr_t.fn_type(&[
-            self.i8ptr_t.into(),  // array pointer
-            self.i64_t.into(),    // index
-        ], false);
-        let f = self.module.add_function("array_get_ptr", fn_type, None);
-        f
-    }
-
-    pub fn get_number_to_string(&self) -> FunctionValue<'a> {
-        if let Some(f) = *self.fn_number_to_string.borrow() {
-            return f;
-        }
-        let fn_type = self.i8ptr_t.fn_type(&[self.f64_t.into()], false);
-        let f = self.module.add_function("number_to_string", fn_type, None);
-        *self.fn_number_to_string.borrow_mut() = Some(f);
         f
     }
 }

@@ -166,7 +166,7 @@ impl<'a> CodeGen<'a> {
             && self
                 .builder
                 .get_insert_block()
-                .map_or(true, |b| b.get_terminator().is_none())
+                .is_none_or(|b| b.get_terminator().is_none())
         {
             // Helpers live in helpers.rs; emit rc decs for locals before returning
             self.emit_rc_dec_for_locals(&locals_stack);
@@ -219,17 +219,15 @@ impl<'a> CodeGen<'a> {
 
         // We no longer create allocas for parameters. Still, increment RC for
         // pointer-typed parameters so ownership is consistent with previous behavior.
-        for (_name, &idx) in &param_map {
-            if let Some(param_ty) = llvm_param_types.get(idx as usize) {
-                if param_ty.is_pointer_type() {
-                    if let Some(pv) = function.get_nth_param(idx) {
+        for &idx in param_map.values() {
+            if let Some(param_ty) = llvm_param_types.get(idx as usize)
+                && param_ty.is_pointer_type()
+                    && let Some(pv) = function.get_nth_param(idx) {
                         let rc_inc = self.get_rc_inc();
                         self.builder
                             .build_call(rc_inc, &[pv.into()], "rc_inc_param")
                             .unwrap();
                     }
-                }
-            }
         }
         (param_map, locals_stack)
     }
@@ -280,7 +278,7 @@ impl<'a> CodeGen<'a> {
                             if let Some(init) = &decl.init {
                                 // `init` is an Option<Box<Expr>> (deno_ast wrapper); use `.as_ref()`
                                 if let Some(val) =
-                                    self.lower_expr(&*init, _function, _param_map, _locals_stack)
+                                    self.lower_expr(init, _function, _param_map, _locals_stack)
                                 {
                                     let ty = val.get_type().as_basic_type_enum();
                                     let alloca = self
@@ -290,8 +288,8 @@ impl<'a> CodeGen<'a> {
                                     // store lowered value
                                     let _ = self.builder.build_store(alloca, val);
                                     // If pointer type, increment RC for stored pointer
-                                    if let inkwell::types::BasicTypeEnum::PointerType(_) = ty {
-                                        if let BasicValueEnum::PointerValue(pv) = val {
+                                    if let inkwell::types::BasicTypeEnum::PointerType(_) = ty
+                                        && let BasicValueEnum::PointerValue(pv) = val {
                                             let rc_inc = self.get_rc_inc();
                                             let _ = self.builder.build_call(
                                                 rc_inc,
@@ -299,7 +297,6 @@ impl<'a> CodeGen<'a> {
                                                 "rc_inc_local",
                                             );
                                         }
-                                    }
                                     // mark initialized in locals; is_const=false for now
                                     self.insert_local_current_scope(
                                         _locals_stack,
@@ -339,7 +336,7 @@ impl<'a> CodeGen<'a> {
             ast::Stmt::Return(ret) => {
                 // Lower return expression, emit rc_decs for locals then return
                 if let Some(arg) = &ret.arg {
-                    if let Some(val) = self.lower_expr(&*arg, _function, _param_map, _locals_stack)
+                    if let Some(val) = self.lower_expr(arg, _function, _param_map, _locals_stack)
                     {
                         // emit rc decs for locals
                         self.emit_rc_dec_for_locals(_locals_stack);
@@ -367,16 +364,15 @@ impl<'a> CodeGen<'a> {
             ast::Stmt::ForOf(forof) => {
                 // Only handle left as a var decl: `for (let v of rhs)`
                 // forof.left can be either a VarDecl or a Pat; we match on VarDecl
-                if let ast::ForHead::VarDecl(var_decl) = &forof.left {
-                    if var_decl.decls.len() == 1 {
+                if let ast::ForHead::VarDecl(var_decl) = &forof.left
+                    && var_decl.decls.len() == 1 {
                         let decl = &var_decl.decls[0];
                         if let ast::Pat::Ident(ident) = &decl.name {
                             let loop_var_name = ident.id.sym.to_string();
                             // Lower RHS (iterable)
                             if let Some(iter_val) =
-                                self.lower_expr(&*forof.right, _function, _param_map, _locals_stack)
-                            {
-                                if let BasicValueEnum::PointerValue(arr_ptr) = iter_val {
+                                self.lower_expr(&forof.right, _function, _param_map, _locals_stack)
+                                && let BasicValueEnum::PointerValue(arr_ptr) = iter_val {
                                     // create index
                                     let idx_alloca = self
                                         .builder
@@ -424,27 +420,22 @@ impl<'a> CodeGen<'a> {
                                                 Ok(v) => v,
                                                 Err(_) => return false,
                                             };
-                                            if let Err(_) = self.builder.build_conditional_branch(
+                                            if self.builder.build_conditional_branch(
                                                 cmp,
                                                 loop_body_bb,
                                                 loop_after_bb,
-                                            ) {
+                                            ).is_err() {
                                                 return false;
                                             }
-                                        } else {
-                                            if let Err(_) = self
-                                                .builder
-                                                .build_unconditional_branch(loop_after_bb)
-                                            {
-                                                return false;
-                                            }
-                                        }
-                                    } else {
-                                        if let Err(_) =
-                                            self.builder.build_unconditional_branch(loop_after_bb)
+                                        } else if self
+                                            .builder
+                                            .build_unconditional_branch(loop_after_bb).is_err()
                                         {
                                             return false;
                                         }
+                                    } else if self.builder.build_unconditional_branch(loop_after_bb).is_err()
+                                    {
+                                        return false;
                                     }
 
                                     // body
@@ -551,20 +542,16 @@ impl<'a> CodeGen<'a> {
                                             Err(_) => return false,
                                         };
                                     let _ = self.builder.build_store(idx_alloca, next_idx);
-                                    if !terminated {
-                                        if let Err(_) =
-                                            self.builder.build_unconditional_branch(loop_cond_bb)
+                                    if !terminated
+                                        && self.builder.build_unconditional_branch(loop_cond_bb).is_err()
                                         {
                                             return false;
                                         }
-                                    }
                                     self.builder.position_at_end(loop_after_bb);
                                     return terminated;
                                 }
-                            }
                         }
                     }
-                }
                 false
             }
             _ => false,

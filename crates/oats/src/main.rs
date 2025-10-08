@@ -188,8 +188,8 @@ fn main() -> Result<()> {
                 if let ClassMember::Constructor(cons) = member {
                     for param in &cons.params {
                         use deno_ast::swc::ast::{ParamOrTsParamProp, TsParamPropParam};
-                        if let ParamOrTsParamProp::TsParamProp(ts_param) = param {
-                            if let TsParamPropParam::Ident(binding_ident) = &ts_param.param {
+                        if let ParamOrTsParamProp::TsParamProp(ts_param) = param
+                            && let TsParamPropParam::Ident(binding_ident) = &ts_param.param {
                                 let fname = binding_ident.id.sym.to_string();
                                 if fields.iter().all(|(n, _)| n != &fname) {
                                     let ty = binding_ident
@@ -200,7 +200,6 @@ fn main() -> Result<()> {
                                     fields.push((fname, ty));
                                 }
                             }
-                        }
                     }
                 }
             }

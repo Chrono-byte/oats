@@ -1,0 +1,48 @@
+export function main(): number {
+    // Unary minus
+    let x: number = 5;
+    let neg: number = -x;
+    println(neg);  // -5
+    
+    // Unary plus
+    let pos: number = +x;
+    println(pos);  // 5
+    
+    // Logical NOT
+    let t: boolean = !false;
+    let f: boolean = !true;
+    if (t) {
+        println(1);  // Should print
+    }
+    if (f) {
+        println(0);  // Should NOT print
+    }
+    
+    // Bitwise NOT
+    let bits: number = ~5;  // ~5 = -6 in two's complement
+    println(bits);
+    
+    // Update operators - postfix
+    let a: number = 10;
+    let old_a: number = a++;  // old_a = 10, a = 11
+    println(old_a);  // 10
+    println(a);      // 11
+    
+    let b: number = 10;
+    let old_b: number = b--;  // old_b = 10, b = 9
+    println(old_b);  // 10
+    println(b);      // 9
+    
+    // Update operators - prefix
+    let c: number = 10;
+    let new_c: number = ++c;  // c = 11, new_c = 11
+    println(new_c);  // 11
+    println(c);      // 11
+    
+    let d: number = 10;
+    let new_d: number = --d;  // d = 9, new_d = 9
+    println(new_d);  // 9
+    println(d);      // 9
+    
+    return 0;
+}

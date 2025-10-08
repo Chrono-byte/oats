@@ -2206,12 +2206,7 @@ impl<'a> CodeGen<'a> {
                                     }
                                     ast::Stmt::Return(ret) => {
                                         if let Some(arg) = &ret.arg {
-                                            if let Some(val) = self.lower_expr(
-                                                arg,
-                                                function,
-                                                &param_map,
-                                                &mut locals_stack,
-                                            ) {
+                                            if let Some(val) = self.lower_expr_result(arg, function, &param_map, &mut locals_stack, Some(function.get_name().to_str().unwrap_or(""))).ok() {
                                                 let _ = self.builder.build_return(Some(&val));
                                             } else {
                                                 let _ = self.builder.build_return(None);

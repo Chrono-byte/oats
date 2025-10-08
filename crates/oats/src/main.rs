@@ -251,12 +251,11 @@ fn main() -> Result<()> {
                     // prop.key is an Expr boxed; match Identifier expressions
                     if let deno_ast::swc::ast::Expr::Ident(id) = &*prop.key {
                         let fname = id.sym.to_string();
-                        if let Some(type_ann) = &prop.type_ann {
-                            if let Some(mapped) = oats::types::map_ts_type(&type_ann.type_ann) {
+                        if let Some(type_ann) = &prop.type_ann
+                            && let Some(mapped) = oats::types::map_ts_type(&type_ann.type_ann) {
                                 fields.push((fname, mapped));
                                 continue;
                             }
-                        }
                         // default to Number when type not specified or not mappable
                         fields.push((fname, OatsType::Number));
                     }

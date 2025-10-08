@@ -335,10 +335,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 // Special-case Math.random() -> call runtime math_random()
                                 if method_name == "random" {
                                     // If the object expression is the identifier `Math` and there are no args
-                                    if call.args.is_empty() {
-                                        if let deno_ast::swc::ast::Expr::Ident(ident) = &*member.obj
-                                        {
-                                            if ident.sym.to_string() == "Math" {
+                                    if call.args.is_empty()
+                                        && let deno_ast::swc::ast::Expr::Ident(ident) = &*member.obj
+                                            && ident.sym == "Math" {
                                                 let f = self.get_math_random();
                                                 let cs = match self.builder.build_call(
                                                     f,
@@ -361,8 +360,6 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                     ));
                                                 }
                                             }
-                                        }
-                                    }
                                 }
 
                                 if let Ok(obj_val) =

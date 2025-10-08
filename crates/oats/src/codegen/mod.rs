@@ -1447,7 +1447,16 @@ impl<'a> CodeGen<'a> {
                                     let obj_name = obj_ident.sym.to_string();
                                     if obj_name == "this" {
                                         // Lower RHS value
-                                        if let Some(val) = self.lower_expr_result(&assign.right, function, &param_map, &mut locals_stack, Some(function.get_name().to_str().unwrap_or(""))).ok() {
+                                        if let Some(val) = self
+                                            .lower_expr_result(
+                                                &assign.right,
+                                                function,
+                                                &param_map,
+                                                &mut locals_stack,
+                                                Some(function.get_name().to_str().unwrap_or("")),
+                                            )
+                                            .ok()
+                                        {
                                             // If we have a `this` parameter, the function param map should
                                             // contain its index (usually 0). Use the incoming parameter
                                             // value rather than the alloca to obtain the object pointer.
@@ -1699,12 +1708,7 @@ impl<'a> CodeGen<'a> {
                                 // Create an alloca for this local at function entry
                                 // and insert it into the current scope as uninitialized
                                 if let Some(init) = &decl.init {
-                                    if let Some(val) = self.lower_expr(
-                                        init,
-                                        function,
-                                        &param_map,
-                                        &mut locals_stack,
-                                    ) {
+                                    if let Some(val) = self.lower_expr_result(init, function, &param_map, &mut locals_stack, Some(function.get_name().to_str().unwrap_or(""))).ok() {
                                         match val {
                                             BasicValueEnum::FloatValue(fv) => {
                                                 let alloca = match self

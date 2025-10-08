@@ -13,6 +13,7 @@ use std::io::{self, Write};
 use std::mem;
 use std::ptr;
 use std::sync::atomic::{AtomicPtr, AtomicU64, Ordering};
+use std::process;
 
 // --- Memory Management ---
 
@@ -105,6 +106,22 @@ pub extern "C" fn print_i32(v: i32) {
 // The header offset for data is consistently 16 bytes (2 * u64).
 const ARRAY_HEADER_SIZE: usize = mem::size_of::<u64>() * 2;
 
+/// Called when an array index is out-of-bounds. Prints a helpful message
+/// to stderr and aborts the process to avoid undefined behavior.
+fn runtime_index_oob_abort(_arr: *mut c_void, idx: usize, len: usize) -> ! {
+    // Try to print a best-effort diagnostic. Avoid panicking inside the
+    // runtime; just write to stderr and abort.
+    let _ = io::stderr().write_all(b"OATS runtime: array index out of bounds\n");
+    let _ = io::stderr().write_all(b"Index: ");
+    let s = idx.to_string();
+    let _ = io::stderr().write_all(s.as_bytes());
+    let _ = io::stderr().write_all(b"\nLength: ");
+    let s2 = len.to_string();
+    let _ = io::stderr().write_all(s2.as_bytes());
+    let _ = io::stderr().write_all(b"\n");
+    process::abort();
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn array_alloc(len: usize, elem_size: usize, elem_is_number: i32) -> *mut c_void {
     let data_bytes = len * elem_size;
@@ -135,6 +152,11 @@ pub extern "C" fn array_get_f64(arr: *mut c_void, idx: usize) -> f64 {
         return 0.0;
     }
     unsafe {
+        let len_ptr = (arr as *mut u8).add(mem::size_of::<u64>()) as *const u64;
+        let len = *len_ptr as usize;
+        if idx >= len {
+            runtime_index_oob_abort(arr, idx, len);
+        }
         let data_start = (arr as *mut u8).add(ARRAY_HEADER_SIZE);
         let elem_ptr = data_start.add(idx * mem::size_of::<f64>()) as *const f64;
         *elem_ptr
@@ -152,6 +174,11 @@ pub extern "C" fn array_get_ptr(arr: *mut c_void, idx: usize) -> *mut c_void {
         return ptr::null_mut();
     }
     unsafe {
+        let len_ptr = (arr as *mut u8).add(mem::size_of::<u64>()) as *const u64;
+        let len = *len_ptr as usize;
+        if idx >= len {
+            runtime_index_oob_abort(arr, idx, len);
+        }
         let data_start = (arr as *mut u8).add(ARRAY_HEADER_SIZE);
         let elem_ptr = data_start.add(idx * mem::size_of::<*mut c_void>()) as *const *mut c_void;
         let p = *elem_ptr;
@@ -173,6 +200,11 @@ pub extern "C" fn array_get_ptr_borrow(arr: *mut c_void, idx: usize) -> *mut c_v
         return ptr::null_mut();
     }
     unsafe {
+        let len_ptr = (arr as *mut u8).add(mem::size_of::<u64>()) as *const u64;
+        let len = *len_ptr as usize;
+        if idx >= len {
+            runtime_index_oob_abort(arr, idx, len);
+        }
         let data_start = (arr as *mut u8).add(ARRAY_HEADER_SIZE);
         let elem_ptr = data_start.add(idx * mem::size_of::<*mut c_void>()) as *const *mut c_void;
         *elem_ptr
@@ -185,6 +217,11 @@ pub extern "C" fn array_set_f64(arr: *mut c_void, idx: usize, v: f64) {
         return;
     }
     unsafe {
+        let len_ptr = (arr as *mut u8).add(mem::size_of::<u64>()) as *const u64;
+        let len = *len_ptr as usize;
+        if idx >= len {
+            runtime_index_oob_abort(arr, idx, len);
+        }
         let data_start = (arr as *mut u8).add(ARRAY_HEADER_SIZE);
         let elem_ptr = data_start.add(idx * mem::size_of::<f64>()) as *mut f64;
         *elem_ptr = v;
@@ -201,6 +238,11 @@ pub extern "C" fn array_set_ptr(arr: *mut c_void, idx: usize, p: *mut c_void) {
         return;
     }
     unsafe {
+        let len_ptr = (arr as *mut u8).add(mem::size_of::<u64>()) as *const u64;
+        let len = *len_ptr as usize;
+        if idx >= len {
+            runtime_index_oob_abort(arr, idx, len);
+        }
         let data_start = (arr as *mut u8).add(ARRAY_HEADER_SIZE);
         let elem_ptr =
             data_start.add(idx * mem::size_of::<*mut c_void>()) as *mut AtomicPtr<c_void>;

@@ -1,7 +1,7 @@
 use anyhow::Result;
 use oats::parser;
 /// Unit tests for Promise type support in the type system
-use oats::types::{OatsType, map_ts_type};
+use oats::types::{OatsType, map_ts_type, infer_type_from_expr, infer_type};
 
 #[test]
 fn promise_type_creation() {
@@ -231,4 +231,100 @@ fn promise_type_equality() {
 
     assert_eq!(p1, p2);
     assert_ne!(p1, p3);
+}
+
+#[test]
+fn infer_type_from_expr_literals() -> Result<()> {
+    let source = r#"
+export function main(): number {
+    return 42;
+}
+"#;
+    let parsed = parser::parse_oats_module(source, None)?;
+    let program = parsed.parsed.program_ref();
+
+    // Find the return statement with literal 42
+    for item in program.body() {
+        if let deno_ast::ModuleItemRef::ModuleDecl(module_decl) = item {
+            if let deno_ast::swc::ast::ModuleDecl::ExportDecl(decl) = module_decl {
+                if let deno_ast::swc::ast::Decl::Fn(f) = &decl.decl {
+                    if let Some(body) = &f.function.body {
+                        for stmt in &body.stmts {
+                            if let deno_ast::swc::ast::Stmt::Return(ret) = stmt {
+                                if let Some(expr) = &ret.arg {
+                                    let inferred = infer_type_from_expr(expr);
+                                    assert_eq!(inferred, Some(OatsType::Number));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
+fn infer_type_from_expr_arrays() -> Result<()> {
+    let source = r#"
+export function main(): number {
+    let arr = [1, 2, 3];
+    return 0;
+}
+"#;
+    let parsed = parser::parse_oats_module(source, None)?;
+    let program = parsed.parsed.program_ref();
+
+    // Find the array literal [1, 2, 3]
+    for item in program.body() {
+        if let deno_ast::ModuleItemRef::Stmt(stmt) = item {
+            if let deno_ast::swc::ast::Stmt::Decl(decl) = stmt {
+                if let deno_ast::swc::ast::Decl::Var(var_decl) = decl {
+                    for decl in &var_decl.decls {
+                        if let Some(init) = &decl.init {
+                            if let deno_ast::swc::ast::Expr::Array(_) = &**init {
+                                let inferred = infer_type_from_expr(init);
+                                assert_eq!(inferred, Some(OatsType::Array(Box::new(OatsType::Number))));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
+fn infer_type_combined() {
+    // Test the combined infer_type function with TypeScript annotations
+    // Create a simple number type annotation
+    use deno_ast::swc::ast::{TsKeywordType, TsKeywordTypeKind, TsType};
+
+    let ts_number = TsType::TsKeywordType(TsKeywordType {
+        span: Default::default(),
+        kind: TsKeywordTypeKind::TsNumberKeyword,
+    });
+
+    // Test with TypeScript type only
+    let inferred = infer_type(Some(&ts_number), None);
+    assert_eq!(inferred, OatsType::Number);
+
+    // Test with expression only (should fallback to Number)
+    use deno_ast::swc::ast::{Expr, Lit};
+    let expr = Expr::Lit(Lit::Str(deno_ast::swc::ast::Str {
+        span: Default::default(),
+        value: "hello".into(),
+        raw: None,
+    }));
+
+    let inferred_expr = infer_type(None, Some(&expr));
+    assert_eq!(inferred_expr, OatsType::String);
+
+    // Test fallback when both are None
+    let inferred_fallback = infer_type(None, None);
+    assert_eq!(inferred_fallback, OatsType::Number);
 }

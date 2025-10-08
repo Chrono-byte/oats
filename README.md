@@ -1,83 +1,96 @@
-# Oats AOT prototype
+Oats 🌾
+An Ahead-of-Time (AOT) Compiler for TypeScript
 
-This repository contains a minimal prototype AOT compiler pipeline for "Oats" using `deno_ast` for parsing and `inkwell` for IR generation (LLVM 18).
+Oats is an experimental Ahead-of-Time (AOT) compiler that transforms a strict subset of TypeScript into native machine code. It leverages the power of LLVM to produce fast, standalone executables with deterministic memory management via reference counting.
 
-Quick start (local)
+The goal is to explore the performance potential of TypeScript when freed from a JIT compiler and a traditional garbage collector, bringing it closer to the performance profile of systems languages like C++ and Rust.
+Features
 
-1. Source the environment setup (POSIX):
+Oats is a work in progress, but it already supports a solid set of modern language features:
 
-```sh
-. ./scripts/setup_env.sh
-```
+    Type System: number, boolean, string, void, and typed arrays (number[], string[]).
 
-Or for Zsh users:
+    Classes: Full support for class declarations with constructors, methods, fields, and this binding.
 
-```zsh
-source ./scripts/setup_env.zsh
-```
+    Control Flow: if/else, for loops, while loops, do-while loops, and for-of loops.
 
-2. Build & run the AOT runner in a temporary directory:
+    Operators: Full support for binary and unary operators.
 
-```sh
-./scripts/run_aot_tempdir.sh    # deletes artifacts after run
-./scripts/run_aot_tempdir.sh --keep  # keeps artifacts
-```
+    Memory Management: A robust, automatic reference counting (RC) system for all heap-allocated objects (strings, arrays, classes), ensuring deterministic memory cleanup.
 
-3. Or use the helper from the zsh script after sourcing:
+    Toolchain: A complete build driver that compiles Oats code into a standalone native executable.
 
-```zsh
-oats_build
-oats_run_aot
-```
+Getting Started
+Prerequisites
 
-Notes and CI
+    Rust Toolchain: Install Rust via rustup.
 
-- The project requires LLVM 18 installed on the system. The scripts try to auto-detect common prefixes such as `/usr/lib64/llvm18`. If auto-detection fails, set `LLVM_SYS_181_PREFIX` manually.
-- For CI, ensure the runner installs LLVM 18 and sets `LLVM_SYS_181_PREFIX` in the environment before running `cargo build` or tests.
+    LLVM 18: Oats requires LLVM version 18.
 
-Design choices
+Installing LLVM 18
 
-- Currently the project emits IR using `inkwell` and compiles IR with `clang`. The runtime helpers (strings) are provided by a Rust staticlib in `crates/runtime` and linked in the AOT pipeline.
-- Next improvements: emit libc-only helpers in the IR so no in-repo runtime is required (see TODO list).
-# Oats (AOT compiler prototype)
+    Ubuntu / Debian:
 
-This repository contains a minimal Rust prototype for the Oats AOT compiler. It uses `deno_ast` for parsing TypeScript-like syntax and `inkwell` for LLVM IR generation.
+    sudo apt-get update
+    sudo apt-get install -y llvm-18-dev clang-18
 
-Files:
-- `src/parser.rs` — parsing helper using `deno_ast::parse_module`
-- `src/types.rs` — `OatsType`, `SymbolTable`, and a strictness checker
-- `src/codegen.rs` — minimal `CodeGen` with type mapping and a function IR generator
-- `src/main.rs` — orchestrator that parses a sample source, runs the checker, and prints LLVM IR
+    macOS (via Homebrew):
 
-Try it:
+    brew install llvm@18
 
-```bash
-cd /home/ellie/Dev/oats
-cargo run
-```
+Compiling Your First Program
 
-Notes about LLVM / inkwell:
+    Clone the Repository:
 
-- `inkwell` is a Rust wrapper over LLVM. Building it requires a system LLVM installation with `llvm-config` available on PATH.
-- On Debian/Ubuntu you can install a recent LLVM (for example 18) with:
+    git clone [https://github.com/your-username/oats.git](https://github.com/your-username/oats.git)
+    cd oats
 
-```bash
-sudo apt install llvm-18-dev llvm-18
-sudo ln -sfn /usr/bin/llvm-config-18 /usr/bin/llvm-config
-```
+    Write Your Oats Program:
+    Create a file named hello.oats:
 
-- On macOS with Homebrew:
+    // hello.oats
+    export function main(): void {
+        println("Hello from Oats! 🌾");
+    }
 
-```bash
-brew install llvm
-export PATH="$(brew --prefix llvm)/bin:$PATH"
-```
+    Compile and Run:
+    Use the aot_run binary to compile your program into a native executable. This single command handles everything: compiling your Oats code, building the runtime, and linking the final binary.
 
-- After installing LLVM, re-run:
+    # This will create an executable at ./aot_out/hello
+    cargo run -p oats --bin aot_run -- ./hello.oats
 
-```bash
-cargo build
-cargo run
-```
+    # Run your compiled program!
+    ./aot_out/hello
 
-If you don't have LLVM installed locally, the repository will still contain the source scaffold, but the build will fail when compiling `inkwell` until `llvm-config` and the matching LLVM libraries are available.
+    You should see Hello from Oats! 🌾 printed to your console.
+
+Project Structure
+
+The Oats compiler is organized as a Rust workspace with two main crates:
+
+    crates/oats: The core compiler, responsible for parsing, type checking, and generating LLVM IR from Oats source code.
+
+    crates/runtime: A small, C-callable runtime library written in Rust. It provides essential services like memory allocation, reference counting, and helpers for string and array manipulation.
+
+Contributing
+
+Contributions are welcome! Oats is an ambitious project with a lot of exciting work ahead. The best place to start is by reading through the extensive internal documentation in the docs/ directory, especially:
+
+    docs/ROADMAP_TO_REAL_TYPESCRIPT.md: The long-term vision and feature plan.
+
+    docs/IMPROVEMENT_PLAN.md: A list of immediate technical debt and refactoring opportunities.
+
+Development Workflow
+
+    Set up your environment: The scripts/setup_env.sh script can help configure your shell with the necessary environment variables for LLVM.
+
+    source ./scripts/setup_env.sh
+
+    Build and test:
+
+    cargo build
+    cargo test --workspace
+
+License
+
+This project is licensed under the zlib License. See the LICENSE file for details

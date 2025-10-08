@@ -59,6 +59,7 @@ fn gen_ir_for_source(src: &str) -> Result<String> {
         class_fields: std::cell::RefCell::new(std::collections::HashMap::new()),
         fn_param_types: std::cell::RefCell::new(std::collections::HashMap::new()),
         source: &parsed_mod.source,
+        loop_context_stack: std::cell::RefCell::new(Vec::new()),
     };
 
     // Populate class_fields for exported classes by examining ClassProp

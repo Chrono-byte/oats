@@ -593,10 +593,11 @@ pub extern "C" fn rc_dec(p: *mut c_void) {
                         // If the high 32 bits encode a type tag that indicates a
                         // per-object destructor pointer is present, call it before
                         // freeing. We use a simple convention for now: a type tag
-                        // value of 1 (in the high 32 bits) means the second word
+                        // value of 1 (in bits 33-63) means the second word
                         // at offset sizeof(u64) holds a function pointer with
                         // signature `extern "C" fn(*mut c_void)`.
-                        let type_tag = (old_header >> 32) as u32;
+                        // Extract type tag from bits 33-63 (shift by 33, not 32)
+                        let type_tag = (old_header >> 33) as u32;
                         if type_tag == 1 {
                             // Read the destructor pointer from the second word.
                             let dtor_ptr_ptr =
@@ -647,9 +648,12 @@ mod tests {
             let mem = runtime_malloc(size) as *mut u8;
             assert!(!mem.is_null());
 
-            // set header: type_tag=1 << 32, refcount=1
+            // set header: type_tag=1 (bits 33-63), refcount=1 (bits 0-31)
+            // Note: bit 32 is the static bit and should be 0 for heap objects
             let header_ptr = mem as *mut u64;
-            let header_val: u64 = ((1u64) << 32) | 1u64;
+            let type_tag: u64 = 1u64 << 33; // Type tag starts at bit 33, not bit 32
+            let refcount: u64 = 1u64;
+            let header_val: u64 = type_tag | refcount;
             *header_ptr = header_val;
 
             // store destructor pointer at second word

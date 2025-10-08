@@ -116,6 +116,7 @@ fn main() -> Result<()> {
         fn_number_to_string: std::cell::RefCell::new(None),
         class_fields: std::cell::RefCell::new(std::collections::HashMap::new()),
         fn_param_types: std::cell::RefCell::new(std::collections::HashMap::new()),
+        loop_context_stack: std::cell::RefCell::new(Vec::new()),
         source: &parsed_mod.source,
     };
 
@@ -300,7 +301,7 @@ fn main() -> Result<()> {
     );
 
     // Print IR
-    // println!("{}", codegen.module.print_to_string().to_string());
+    println!("{}", codegen.module.print_to_string().to_string());
 
     Ok(())
 }

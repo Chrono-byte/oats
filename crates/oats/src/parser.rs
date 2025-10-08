@@ -6,14 +6,14 @@ use url::Url;
 
 pub struct ParsedModule {
     pub parsed: ParsedSource,
-    /// Original source text (no preprocessing)
+    // Original source text (no preprocessing)
     pub source: String,
 }
 
 pub fn parse_oats_module(source_code: &str, file_path: Option<&str>) -> Result<ParsedModule> {
     let sti = SourceTextInfo::from_string(source_code.to_string());
     let params = ParseParams {
-        specifier: Url::parse("file:///file.ts")?,
+        specifier: Url::parse("file://file.ts")?,
         text: sti.text().clone(),
         media_type: MediaType::TypeScript,
         // Capture tokens so we can validate semicolon presence if needed.

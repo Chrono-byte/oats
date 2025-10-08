@@ -23,6 +23,15 @@ impl<'a> super::CodeGen<'a> {
             | OatsType::NominalStruct(_)
             | OatsType::Array(_)
             | OatsType::Promise(_) => self.i8ptr_t.as_basic_type_enum(),
+            OatsType::Union(parts) => {
+                // If any part is pointer-like, treat as pointer; otherwise number.
+                let any_ptr = parts.iter().any(|p| matches!(p, OatsType::String | OatsType::NominalStruct(_) | OatsType::Array(_) | OatsType::Promise(_)));
+                if any_ptr {
+                    self.i8ptr_t.as_basic_type_enum()
+                } else {
+                    self.f64_t.as_basic_type_enum()
+                }
+            }
             OatsType::Void => panic!("Void cannot be mapped to a BasicTypeEnum for params"),
         }
     }

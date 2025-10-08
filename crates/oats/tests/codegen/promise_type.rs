@@ -1,6 +1,6 @@
 use anyhow::Result;
 use oats::parser;
-/// Unit tests for Promise type support in the type system
+// Unit tests for Promise type support in the type system
 use oats::types::{OatsType, infer_type, infer_type_from_expr, map_ts_type};
 
 #[test]

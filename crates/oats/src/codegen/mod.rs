@@ -49,6 +49,10 @@ pub struct CodeGen<'a> {
     pub fn_rc_inc: RefCell<Option<FunctionValue<'a>>>,
     pub fn_rc_dec: RefCell<Option<FunctionValue<'a>>>,
     pub fn_number_to_string: RefCell<Option<FunctionValue<'a>>>,
+    pub fn_union_box_f64: RefCell<Option<FunctionValue<'a>>>,
+    pub fn_union_box_ptr: RefCell<Option<FunctionValue<'a>>>,
+    pub fn_union_unbox_f64: RefCell<Option<FunctionValue<'a>>>,
+    pub fn_union_unbox_ptr: RefCell<Option<FunctionValue<'a>>>,
     pub class_fields: RefCell<HashMap<String, Vec<(String, crate::types::OatsType)>>>,
     pub fn_param_types: RefCell<HashMap<String, Vec<crate::types::OatsType>>>,
     pub loop_context_stack: RefCell<Vec<LoopContext<'a>>>,
@@ -112,6 +116,50 @@ impl<'a> CodeGen<'a> {
         let fn_type = self.i8ptr_t.fn_type(&[self.f64_t.into()], false);
         let f = self.module.add_function("number_to_string", fn_type, None);
         *self.fn_number_to_string.borrow_mut() = Some(f);
+        f
+    }
+
+    fn get_union_box_f64(&self) -> FunctionValue<'a> {
+        if let Some(f) = *self.fn_union_box_f64.borrow() {
+            return f;
+        }
+        // union_box_f64(f64) -> i8*
+        let fn_type = self.i8ptr_t.fn_type(&[self.f64_t.into()], false);
+        let f = self.module.add_function("union_box_f64", fn_type, None);
+        *self.fn_union_box_f64.borrow_mut() = Some(f);
+        f
+    }
+
+    fn get_union_box_ptr(&self) -> FunctionValue<'a> {
+        if let Some(f) = *self.fn_union_box_ptr.borrow() {
+            return f;
+        }
+        // union_box_ptr(i8*) -> i8*
+        let fn_type = self.i8ptr_t.fn_type(&[self.i8ptr_t.into()], false);
+        let f = self.module.add_function("union_box_ptr", fn_type, None);
+        *self.fn_union_box_ptr.borrow_mut() = Some(f);
+        f
+    }
+
+    fn get_union_unbox_f64(&self) -> FunctionValue<'a> {
+        if let Some(f) = *self.fn_union_unbox_f64.borrow() {
+            return f;
+        }
+        // union_unbox_f64(i8*) -> f64
+        let fn_type = self.f64_t.fn_type(&[self.i8ptr_t.into()], false);
+        let f = self.module.add_function("union_unbox_f64", fn_type, None);
+        *self.fn_union_unbox_f64.borrow_mut() = Some(f);
+        f
+    }
+
+    fn get_union_unbox_ptr(&self) -> FunctionValue<'a> {
+        if let Some(f) = *self.fn_union_unbox_ptr.borrow() {
+            return f;
+        }
+        // union_unbox_ptr(i8*) -> i8*
+        let fn_type = self.i8ptr_t.fn_type(&[self.i8ptr_t.into()], false);
+        let f = self.module.add_function("union_unbox_ptr", fn_type, None);
+        *self.fn_union_unbox_ptr.borrow_mut() = Some(f);
         f
     }
 

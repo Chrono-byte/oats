@@ -27,15 +27,15 @@ const HEADER_STATIC_BIT: u64 = 1u64 << 32;
 const HEADER_RC_MASK: u64 = 0xffffffffu64;
 const HEADER_FLAGS_MASK: u64 = 0xffffffff00000000u64;
 
-/// Create a header value for a heap-allocated object with initial refcount
+// Create a header value for a heap-allocated object with initial refcount
 #[inline]
 fn make_heap_header(initial_rc: u32) -> u64 {
     (initial_rc as u64) & HEADER_RC_MASK
 }
 
-/// Allocate a heap string with RC header (refcount initialized to 1).
-/// Layout: [u64 header][u64 length][char data + null terminator]
-/// Returns pointer to the header (caller should offset by 16 bytes to get char* for C compatibility).
+// Allocate a heap string with RC header (refcount initialized to 1).
+// Layout: [u64 header][u64 length][char data + null terminator]
+// Returns pointer to the header (caller should offset by 16 bytes to get char* for C compatibility).
 #[unsafe(no_mangle)]
 pub extern "C" fn heap_str_alloc(str_len: size_t) -> *mut c_void {
     unsafe {
@@ -58,12 +58,12 @@ pub extern "C" fn heap_str_alloc(str_len: size_t) -> *mut c_void {
     }
 }
 
-/// Copy a C string into a heap-allocated string with RC header.
-/// Returns pointer to the data section (offset +16 from header) for C compatibility.
-///
-/// # Safety
-/// The argument `s` must be a valid, nul-terminated C string pointer. Passing
-/// an invalid or non-nul-terminated pointer is undefined behavior.
+// Copy a C string into a heap-allocated string with RC header.
+// Returns pointer to the data section (offset +16 from header) for C compatibility.
+//
+// # Safety
+// The argument `s` must be a valid, nul-terminated C string pointer. Passing
+// an invalid or non-nul-terminated pointer is undefined behavior.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn heap_str_from_cstr(s: *const c_char) -> *mut c_char {
     if s.is_null() {
@@ -84,8 +84,8 @@ pub unsafe extern "C" fn heap_str_from_cstr(s: *const c_char) -> *mut c_char {
     }
 }
 
-/// Get the object pointer from a heap string data pointer
-/// (reverse the +16 offset to get back to the header)
+// Get the object pointer from a heap string data pointer
+// (reverse the +16 offset to get back to the header)
 #[inline]
 unsafe fn heap_str_to_obj(data: *const c_char) -> *mut c_void {
     if data.is_null() {
@@ -94,13 +94,13 @@ unsafe fn heap_str_to_obj(data: *const c_char) -> *mut c_void {
     unsafe { (data as *mut u8).sub(16) as *mut c_void }
 }
 
-/// RC increment for string pointers (handles both static and heap strings)
-/// For heap strings, the data pointer is at offset +16 from the object header.
-///
-/// # Safety
-/// `data` must be a pointer previously returned by the runtime for a string
-/// (either a static literal or a heap-allocated string). Passing arbitrary
-/// pointers is undefined behavior.
+// RC increment for string pointers (handles both static and heap strings)
+// For heap strings, the data pointer is at offset +16 from the object header.
+//
+// # Safety
+// `data` must be a pointer previously returned by the runtime for a string
+// (either a static literal or a heap-allocated string). Passing arbitrary
+// pointers is undefined behavior.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rc_inc_str(data: *mut c_char) {
     if data.is_null() {
@@ -114,12 +114,12 @@ pub unsafe extern "C" fn rc_inc_str(data: *mut c_char) {
     }
 }
 
-/// RC decrement for string pointers (handles both static and heap strings)
-///
-/// # Safety
-/// `data` must be a pointer previously returned by the runtime for a string
-/// (either a static literal or a heap-allocated string). Passing arbitrary
-/// pointers or double-dropping a pointer is undefined behavior.
+// RC decrement for string pointers (handles both static and heap strings)
+//
+// # Safety
+// `data` must be a pointer previously returned by the runtime for a string
+// (either a static literal or a heap-allocated string). Passing arbitrary
+// pointers or double-dropping a pointer is undefined behavior.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rc_dec_str(data: *mut c_char) {
     if data.is_null() {
@@ -138,11 +138,11 @@ pub extern "C" fn runtime_malloc(size: size_t) -> *mut c_void {
     unsafe { libc::malloc(size) }
 }
 
-/// Free memory previously allocated by the runtime (or compatible allocator).
-///
-/// # Safety
-/// The pointer `p` must have been allocated by the runtime allocator and not
-/// already freed. Freeing invalid or non-owned pointers is undefined behavior.
+// Free memory previously allocated by the runtime (or compatible allocator).
+//
+// # Safety
+// The pointer `p` must have been allocated by the runtime allocator and not
+// already freed. Freeing invalid or non-owned pointers is undefined behavior.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn runtime_free(p: *mut c_void) {
     unsafe { libc::free(p) }
@@ -150,11 +150,11 @@ pub unsafe extern "C" fn runtime_free(p: *mut c_void) {
 
 // --- String Operations ---
 
-/// Compute the length of a nul-terminated C string.
-///
-/// # Safety
-/// `s` must be a valid pointer to a nul-terminated C string. Passing an
-/// invalid pointer or non-nul-terminated memory is undefined behavior.
+// Compute the length of a nul-terminated C string.
+//
+// # Safety
+// `s` must be a valid pointer to a nul-terminated C string. Passing an
+// invalid pointer or non-nul-terminated memory is undefined behavior.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn runtime_strlen(s: *const c_char) -> size_t {
     if s.is_null() {
@@ -163,11 +163,11 @@ pub unsafe extern "C" fn runtime_strlen(s: *const c_char) -> size_t {
     unsafe { libc::strlen(s) }
 }
 
-/// Duplicate a nul-terminated C string into a newly allocated buffer.
-///
-/// # Safety
-/// `s` must point to a valid nul-terminated C string. The caller is
-/// responsible for freeing the returned buffer when no longer needed.
+// Duplicate a nul-terminated C string into a newly allocated buffer.
+//
+// # Safety
+// `s` must point to a valid nul-terminated C string. The caller is
+// responsible for freeing the returned buffer when no longer needed.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn str_dup(s: *const c_char) -> *mut c_char {
     if s.is_null() {
@@ -184,11 +184,11 @@ pub unsafe extern "C" fn str_dup(s: *const c_char) -> *mut c_char {
     }
 }
 
-/// Concatenate two nul-terminated C strings into a newly allocated runtime string.
-///
-/// # Safety
-/// Both `a` and `b` must be valid pointers to nul-terminated C strings. The
-/// caller is responsible for freeing the returned buffer.
+// Concatenate two nul-terminated C strings into a newly allocated runtime string.
+//
+// # Safety
+// Both `a` and `b` must be valid pointers to nul-terminated C strings. The
+// caller is responsible for freeing the returned buffer.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn str_concat(a: *const c_char, b: *const c_char) -> *mut c_char {
     if a.is_null() || b.is_null() {
@@ -231,11 +231,11 @@ pub extern "C" fn print_f64(v: f64) {
     }
 }
 
-/// Print a nul-terminated C string to stdout (with newline).
-///
-/// # Safety
-/// `s` must be a valid pointer to a nul-terminated C string. Passing an
-/// invalid pointer is undefined behavior.
+// Print a nul-terminated C string to stdout (with newline).
+//
+// # Safety
+// `s` must be a valid pointer to a nul-terminated C string. Passing an
+// invalid pointer is undefined behavior.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn print_str(s: *const c_char) {
     if s.is_null() {
@@ -252,8 +252,8 @@ pub extern "C" fn print_i32(v: i32) {
     }
 }
 
-/// Convert a number (f64) to a string with RC header
-/// Returns a heap-allocated string (data pointer, header is at offset -16)
+// Convert a number (f64) to a string with RC header
+// Returns a heap-allocated string (data pointer, header is at offset -16)
 #[unsafe(no_mangle)]
 pub extern "C" fn number_to_string(num: f64) -> *mut c_char {
     // Format the number using libc's snprintf
@@ -286,7 +286,7 @@ pub extern "C" fn number_to_string(num: f64) -> *mut c_char {
     }
 }
 
-/// Math.random() -> f64 in [0, 1)
+// Math.random() -> f64 in [0, 1)
 #[unsafe(no_mangle)]
 pub extern "C" fn math_random() -> f64 {
     // Seed libc PRNG once per process to avoid deterministic output across runs.
@@ -332,8 +332,8 @@ pub extern "C" fn math_random() -> f64 {
 // The header offset for data is consistently 16 bytes (2 * u64).
 const ARRAY_HEADER_SIZE: usize = mem::size_of::<u64>() * 2;
 
-/// Called when an array index is out-of-bounds. Prints a helpful message
-/// to stderr and aborts the process to avoid undefined behavior.
+// Called when an array index is out-of-bounds. Prints a helpful message
+// to stderr and aborts the process to avoid undefined behavior.
 fn runtime_index_oob_abort(_arr: *mut c_void, idx: usize, len: usize) -> ! {
     // Try to print a best-effort diagnostic. Avoid panicking inside the
     // runtime; just write to stderr and abort.
@@ -348,12 +348,12 @@ fn runtime_index_oob_abort(_arr: *mut c_void, idx: usize, len: usize) -> ! {
     process::abort();
 }
 
-/// Allocate an array on the runtime heap.
-///
-/// # Safety
-/// This function performs raw memory allocation and writes to raw pointers.
-/// Callers must ensure the returned pointer is handled correctly and not
-/// dereferenced from safe Rust code without proper checks.
+// Allocate an array on the runtime heap.
+//
+// # Safety
+// This function performs raw memory allocation and writes to raw pointers.
+// Callers must ensure the returned pointer is handled correctly and not
+// dereferenced from safe Rust code without proper checks.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn array_alloc(
     len: usize,
@@ -385,11 +385,11 @@ pub unsafe extern "C" fn array_alloc(
     }
 }
 
-/// Load a f64 element from an array.
-///
-/// # Safety
-/// Caller must ensure `arr` is a valid array pointer returned by `array_alloc` and
-/// `idx` is within bounds. Undefined behavior may occur otherwise.
+// Load a f64 element from an array.
+//
+// # Safety
+// Caller must ensure `arr` is a valid array pointer returned by `array_alloc` and
+// `idx` is within bounds. Undefined behavior may occur otherwise.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn array_get_f64(arr: *mut c_void, idx: usize) -> f64 {
     if arr.is_null() {
@@ -407,17 +407,17 @@ pub unsafe extern "C" fn array_get_f64(arr: *mut c_void, idx: usize) -> f64 {
     }
 }
 
-/// Loads an element from a pointer-typed array and returns an owned pointer.
-///
-/// This helper increments the referenced object's refcount before returning
-/// so the caller receives an owning reference. The caller is responsible for
-/// eventually calling `rc_dec` on the returned pointer.
-/// Load a pointer element from a pointer-typed array and return an owned pointer.
-///
-/// # Safety
-/// Caller must ensure `arr` is a valid pointer-typed array. The returned pointer
-/// is an owning reference (its refcount has been incremented) and must be
-/// eventually released with `rc_dec`.
+// Loads an element from a pointer-typed array and returns an owned pointer.
+//
+// This helper increments the referenced object's refcount before returning
+// so the caller receives an owning reference. The caller is responsible for
+// eventually calling `rc_dec` on the returned pointer.
+// Load a pointer element from a pointer-typed array and return an owned pointer.
+//
+// # Safety
+// Caller must ensure `arr` is a valid pointer-typed array. The returned pointer
+// is an owning reference (its refcount has been incremented) and must be
+// eventually released with `rc_dec`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn array_get_ptr(arr: *mut c_void, idx: usize) -> *mut c_void {
     if arr.is_null() {
@@ -439,16 +439,16 @@ pub unsafe extern "C" fn array_get_ptr(arr: *mut c_void, idx: usize) -> *mut c_v
     }
 }
 
-/// Returns a borrowed pointer from a pointer-typed array without changing refcounts.
-///
-/// The caller must not store the returned pointer into any long-lived location
-/// without first manually calling `rc_inc`. This is useful for short-lived,
-/// read-only access where the pointer's lifetime is guaranteed to be short.
-/// Borrow a pointer from a pointer-typed array without changing refcounts.
-///
-/// # Safety
-/// Caller must ensure `arr` is valid and the borrowed pointer is not stored into
-/// long-lived locations without calling `rc_inc` first.
+// Returns a borrowed pointer from a pointer-typed array without changing refcounts.
+//
+// The caller must not store the returned pointer into any long-lived location
+// without first manually calling `rc_inc`. This is useful for short-lived,
+// read-only access where the pointer's lifetime is guaranteed to be short.
+// Borrow a pointer from a pointer-typed array without changing refcounts.
+//
+// # Safety
+// Caller must ensure `arr` is valid and the borrowed pointer is not stored into
+// long-lived locations without calling `rc_inc` first.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn array_get_ptr_borrow(arr: *mut c_void, idx: usize) -> *mut c_void {
     if arr.is_null() {
@@ -466,10 +466,10 @@ pub unsafe extern "C" fn array_get_ptr_borrow(arr: *mut c_void, idx: usize) -> *
     }
 }
 
-/// Set a f64 element in an array.
-///
-/// # Safety
-/// Caller must ensure `arr` is a valid array pointer and `idx` is within bounds.
+// Set a f64 element in an array.
+//
+// # Safety
+// Caller must ensure `arr` is a valid array pointer and `idx` is within bounds.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn array_set_f64(arr: *mut c_void, idx: usize, v: f64) {
     if arr.is_null() {
@@ -487,14 +487,14 @@ pub unsafe extern "C" fn array_set_f64(arr: *mut c_void, idx: usize, v: f64) {
     }
 }
 
-/// Sets a pointer in a pointer-typed array, managing refcounts correctly.
-///
-/// It increments the new pointer's refcount (if not null) and decrements
-/// the old pointer's refcount (if not null) that was replaced.
-/// Set a pointer into a pointer-typed array, managing refcounts.
-///
-/// # Safety
-/// Caller must ensure `arr` is a valid pointer-typed array and `idx` is within bounds.
+// Sets a pointer in a pointer-typed array, managing refcounts correctly.
+//
+// It increments the new pointer's refcount (if not null) and decrements
+// the old pointer's refcount (if not null) that was replaced.
+// Set a pointer into a pointer-typed array, managing refcounts.
+//
+// # Safety
+// Caller must ensure `arr` is a valid pointer-typed array and `idx` is within bounds.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn array_set_ptr(arr: *mut c_void, idx: usize, p: *mut c_void) {
     if arr.is_null() {
@@ -525,91 +525,99 @@ pub unsafe extern "C" fn array_set_ptr(arr: *mut c_void, idx: usize, p: *mut c_v
     }
 }
 
-/// Push a f64 value onto an existing array.
-/// Note: this does not perform capacity checks or reallocation. The caller
-/// must ensure the array was allocated with sufficient space.
+// Push a f64 value onto an existing array.
+// Note: this does not perform capacity checks or reallocation. The caller
+// must ensure the array was allocated with sufficient space.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn array_push_f64(arr: *mut c_void, value: f64) {
     if arr.is_null() {
         return;
     }
-    let len_ptr = (arr as *mut u8).add(mem::size_of::<u64>()) as *mut u64;
-    let len = *len_ptr as usize;
-    let data_start = (arr as *mut u8).add(ARRAY_HEADER_SIZE);
-    let elem_ptr = data_start.add(len * mem::size_of::<f64>()) as *mut f64;
-    *elem_ptr = value;
-    *len_ptr = (len + 1) as u64;
+    unsafe {
+        let len_ptr = (arr as *mut u8).add(mem::size_of::<u64>()) as *mut u64;
+        let len = *len_ptr as usize;
+        let data_start = (arr as *mut u8).add(ARRAY_HEADER_SIZE);
+        let elem_ptr = data_start.add(len * mem::size_of::<f64>()) as *mut f64;
+        *elem_ptr = value;
+        *len_ptr = (len + 1) as u64;
+    }
 }
 
-/// Pop a f64 value from an array and return it. If the array is empty,
-/// returns 0.0.
+// Pop a f64 value from an array and return it. If the array is empty,
+// returns 0.0.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn array_pop_f64(arr: *mut c_void) -> f64 {
     if arr.is_null() {
         return 0.0;
     }
-    let len_ptr = (arr as *mut u8).add(mem::size_of::<u64>()) as *mut u64;
-    let len = *len_ptr as isize;
-    if len <= 0 {
-        return 0.0;
+    unsafe {
+        let len_ptr = (arr as *mut u8).add(mem::size_of::<u64>()) as *mut u64;
+        let len = *len_ptr as isize;
+        if len <= 0 {
+            return 0.0;
+        }
+        let new_len = (len - 1) as usize;
+        let data_start = (arr as *mut u8).add(ARRAY_HEADER_SIZE);
+        let elem_ptr = data_start.add(new_len * mem::size_of::<f64>()) as *mut f64;
+        let val = *elem_ptr;
+        // Optionally zero the slot
+        *elem_ptr = 0.0;
+        *len_ptr = new_len as u64;
+        val
     }
-    let new_len = (len - 1) as usize;
-    let data_start = (arr as *mut u8).add(ARRAY_HEADER_SIZE);
-    let elem_ptr = data_start.add(new_len * mem::size_of::<f64>()) as *mut f64;
-    let val = *elem_ptr;
-    // Optionally zero the slot
-    *elem_ptr = 0.0;
-    *len_ptr = new_len as u64;
-    val
 }
 
-/// Push a pointer-sized element into a pointer-typed array. Increments the
-/// pushed pointer's refcount to reflect array ownership. Caller must ensure
-/// sufficient capacity.
+// Push a pointer-sized element into a pointer-typed array. Increments the
+// pushed pointer's refcount to reflect array ownership. Caller must ensure
+// sufficient capacity.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn array_push_ptr(arr: *mut c_void, value: *mut c_void) {
     if arr.is_null() {
         return;
     }
-    let len_ptr = (arr as *mut u8).add(mem::size_of::<u64>()) as *mut u64;
-    let len = *len_ptr as usize;
-    let data_start = (arr as *mut u8).add(ARRAY_HEADER_SIZE);
-    let elem_ptr = data_start.add(len * mem::size_of::<*mut c_void>()) as *mut *mut c_void;
-    *elem_ptr = value;
-    if !value.is_null() {
-        rc_inc(value);
+    unsafe {
+        let len_ptr = (arr as *mut u8).add(mem::size_of::<u64>()) as *mut u64;
+        let len = *len_ptr as usize;
+        let data_start = (arr as *mut u8).add(ARRAY_HEADER_SIZE);
+        let elem_ptr = data_start.add(len * mem::size_of::<*mut c_void>()) as *mut *mut c_void;
+        *elem_ptr = value;
+        if !value.is_null() {
+            rc_inc(value);
+        }
+        *len_ptr = (len + 1) as u64;
     }
-    *len_ptr = (len + 1) as u64;
 }
 
-/// Pop a pointer element from a pointer-typed array and return it. Returns
-/// NULL if the array is empty. Ownership of the returned pointer is
-/// transferred to the caller (no refcount change is performed).
+// Pop a pointer element from a pointer-typed array and return it. Returns
+// NULL if the array is empty. Ownership of the returned pointer is
+// transferred to the caller (no refcount change is performed).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn array_pop_ptr(arr: *mut c_void) -> *mut c_void {
     if arr.is_null() {
         return ptr::null_mut();
     }
-    let len_ptr = (arr as *mut u8).add(mem::size_of::<u64>()) as *mut u64;
-    let len = *len_ptr as isize;
-    if len <= 0 {
-        return ptr::null_mut();
+    unsafe {
+        let len_ptr = (arr as *mut u8).add(mem::size_of::<u64>()) as *mut u64;
+        let len = *len_ptr as isize;
+        if len <= 0 {
+            return ptr::null_mut();
+        }
+        let new_len = (len - 1) as usize;
+        let data_start = (arr as *mut u8).add(ARRAY_HEADER_SIZE);
+        let elem_ptr = data_start.add(new_len * mem::size_of::<*mut c_void>()) as *mut *mut c_void;
+        let raw = *elem_ptr;
+        // Clear the slot to avoid dangling references in the array buffer.
+        *elem_ptr = ptr::null_mut();
+        *len_ptr = new_len as u64;
+        raw
     }
-    let new_len = (len - 1) as usize;
-    let data_start = (arr as *mut u8).add(ARRAY_HEADER_SIZE);
-    let elem_ptr = data_start.add(new_len * mem::size_of::<*mut c_void>()) as *mut *mut c_void;
-    let raw = *elem_ptr;
-    // Clear the slot to avoid dangling references in the array buffer.
-    *elem_ptr = ptr::null_mut();
-    *len_ptr = new_len as u64;
-    raw
 }
 
 // --- Atomic Reference Counting ---
 
-/// Atomically increments the reference count of a heap-allocated object.
-/// No-op for static/immortal objects.
-/// Handles both object pointers and string data pointers (at offset +16 from header).
+// Atomically increments the reference count of a heap-allocated object.
+// No-op for static/immortal objects.
+// Handles both object pointers and string data pointers (at offset +16 from header).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rc_inc(p: *mut c_void) {
     if p.is_null() {
@@ -648,9 +656,9 @@ pub unsafe extern "C" fn rc_inc(p: *mut c_void) {
     }
 }
 
-/// Get the base object pointer from a pointer that might be either:
-/// - An object pointer (points to header at offset 0)
-/// - A string data pointer (points to data at offset +16 from header)
+// Get the base object pointer from a pointer that might be either:
+// - An object pointer (points to header at offset 0)
+// - A string data pointer (points to data at offset +16 from header)
 #[inline]
 unsafe fn get_object_base(p: *mut c_void) -> *mut c_void {
     if p.is_null() {
@@ -688,9 +696,9 @@ unsafe fn get_object_base(p: *mut c_void) -> *mut c_void {
     }
 }
 
-/// Atomically decrements the reference count and frees the object if the count reaches zero.
-/// No-op for static/immortal objects.
-/// Handles both object pointers and string data pointers (at offset +16 from header).
+// Atomically decrements the reference count and frees the object if the count reaches zero.
+// No-op for static/immortal objects.
+// Handles both object pointers and string data pointers (at offset +16 from header).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rc_dec(p: *mut c_void) {
     if p.is_null() {
@@ -772,6 +780,121 @@ pub unsafe extern "C" fn rc_dec(p: *mut c_void) {
                 Err(_) => continue, // Spin on contention
             }
         }
+    }
+}
+
+// --- Union helpers ---
+
+// Destructor for union objects: reads discriminant at offset +16 and if the
+// payload is a pointer (discriminant == 1) calls rc_dec on the stored pointer.
+extern "C" fn union_dtor(obj_ptr: *mut c_void) {
+    if obj_ptr.is_null() {
+        return;
+    }
+    unsafe {
+        // discriminant stored at offset +16
+        let discrim_ptr = (obj_ptr as *mut u8).add(16) as *mut u64;
+        let discrim = *discrim_ptr;
+        if discrim == 1 {
+            // pointer payload at offset +24
+            let payload_ptr_ptr = (obj_ptr as *mut u8).add(24) as *mut *mut c_void;
+            let payload_raw = *payload_ptr_ptr;
+            if !payload_raw.is_null() {
+                rc_dec(payload_raw);
+            }
+        }
+        // nothing to do for f64 payload
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn union_box_f64(v: f64) -> *mut c_void {
+    unsafe {
+        // layout: header(8) | dtor_ptr(8) | discrim(8) | payload(8)
+        let total = 8 * 4;
+        let mem = runtime_malloc(total as size_t) as *mut u8;
+        if mem.is_null() {
+            return ptr::null_mut();
+        }
+
+        // header: type_tag=1 (dtor present) | rc=1
+        let header_ptr = mem as *mut u64;
+        let type_tag: u64 = 1u64 << 33;
+        let refcount: u64 = 1u64;
+        *header_ptr = type_tag | refcount;
+
+        // store dtor pointer at offset +8
+        let dtor_ptr = mem.add(8) as *mut *mut c_void;
+        *dtor_ptr = union_dtor as *mut c_void;
+
+        // discriminant = 0 for f64
+        let discrim_ptr = mem.add(16) as *mut u64;
+        *discrim_ptr = 0u64;
+
+        // payload f64 at offset +24
+        let payload = mem.add(24) as *mut f64;
+        *payload = v;
+
+        mem as *mut c_void
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn union_box_ptr(p: *mut c_void) -> *mut c_void {
+    unsafe {
+        let total = 8 * 4;
+        let mem = runtime_malloc(total as size_t) as *mut u8;
+        if mem.is_null() {
+            return ptr::null_mut();
+        }
+
+        let header_ptr = mem as *mut u64;
+        let type_tag: u64 = 1u64 << 33;
+        let refcount: u64 = 1u64;
+        *header_ptr = type_tag | refcount;
+
+        // store dtor
+        let dtor_ptr = mem.add(8) as *mut *mut c_void;
+        *dtor_ptr = union_dtor as *mut c_void;
+
+        // discriminant = 1 for pointer
+        let discrim_ptr = mem.add(16) as *mut u64;
+        *discrim_ptr = 1u64;
+
+        // payload pointer at offset +24
+        let payload_ptr_ptr = mem.add(24) as *mut *mut c_void;
+        *payload_ptr_ptr = p;
+        if !p.is_null() {
+            rc_inc(p);
+        }
+
+        mem as *mut c_void
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn union_unbox_f64(u: *mut c_void) -> f64 {
+    if u.is_null() {
+        return 0.0;
+    }
+    unsafe {
+        let payload = (u as *mut u8).add(24) as *mut f64;
+        *payload
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn union_unbox_ptr(u: *mut c_void) -> *mut c_void {
+    if u.is_null() {
+        return ptr::null_mut();
+    }
+    unsafe {
+        let payload_ptr_ptr = (u as *mut u8).add(24) as *mut *mut c_void;
+        let p = *payload_ptr_ptr;
+        if !p.is_null() {
+            rc_inc(p);
+        }
+        p
     }
 }
 

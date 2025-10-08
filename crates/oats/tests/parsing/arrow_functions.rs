@@ -1,4 +1,4 @@
-/// Test arrow function parsing and lowering
+// Test arrow function parsing and lowering
 use anyhow::Result;
 
 #[test]

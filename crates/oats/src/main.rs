@@ -74,6 +74,22 @@ fn main() -> Result<()> {
                 _ => {}
             }
         }
+        // Also handle top-level statements that declare TS-only constructs
+        if let deno_ast::ModuleItemRef::Stmt(stmt) = item_ref {
+            // Interfaces: `interface Name { ... }` -> register as nominal struct placeholder
+            if let deno_ast::swc::ast::Stmt::Decl(deno_ast::swc::ast::Decl::TsInterface(interface_decl)) = stmt {
+                let name = interface_decl.id.sym.to_string();
+                pre_symbols.insert(name.clone(), OatsType::NominalStruct(name));
+            }
+            // Type aliases: `type Alias = ...` -> try to map RHS to an OatsType and insert
+            if let deno_ast::swc::ast::Stmt::Decl(deno_ast::swc::ast::Decl::TsTypeAlias(type_alias)) = stmt {
+                let name = type_alias.id.sym.to_string();
+                // Attempt to map the aliased type to an OatsType
+                if let Some(mapped) = oats::types::map_ts_type(&type_alias.type_ann) {
+                    pre_symbols.insert(name.clone(), mapped);
+                }
+            }
+        }
     }
 
     let func_decl = func_decl_opt.ok_or_else(|| {
@@ -113,6 +129,10 @@ fn main() -> Result<()> {
         fn_rc_inc: std::cell::RefCell::new(None),
         fn_rc_dec: std::cell::RefCell::new(None),
         fn_number_to_string: std::cell::RefCell::new(None),
+    fn_union_box_f64: std::cell::RefCell::new(None),
+    fn_union_box_ptr: std::cell::RefCell::new(None),
+    fn_union_unbox_f64: std::cell::RefCell::new(None),
+    fn_union_unbox_ptr: std::cell::RefCell::new(None),
         class_fields: std::cell::RefCell::new(std::collections::HashMap::new()),
         fn_param_types: std::cell::RefCell::new(std::collections::HashMap::new()),
         loop_context_stack: std::cell::RefCell::new(Vec::new()),
@@ -214,6 +234,36 @@ fn main() -> Result<()> {
             }
             if !fields.is_empty() {
                 codegen.class_fields.borrow_mut().insert(class_name, fields);
+            }
+        }
+    }
+
+    // Also process top-level interface declarations to populate class_fields
+    for item_ref in parsed.program_ref().body() {
+        if let deno_ast::ModuleItemRef::Stmt(deno_ast::swc::ast::Stmt::Decl(
+            deno_ast::swc::ast::Decl::TsInterface(iface),
+        )) = item_ref
+        {
+            let name = iface.id.sym.to_string();
+            let mut fields: Vec<(String, OatsType)> = Vec::new();
+            for member in &iface.body.body {
+                if let deno_ast::swc::ast::TsTypeElement::TsPropertySignature(prop) = member {
+                    // prop.key is an Expr boxed; match Identifier expressions
+                    if let deno_ast::swc::ast::Expr::Ident(id) = &*prop.key {
+                        let fname = id.sym.to_string();
+                        if let Some(type_ann) = &prop.type_ann {
+                            if let Some(mapped) = oats::types::map_ts_type(&type_ann.type_ann) {
+                                fields.push((fname, mapped));
+                                continue;
+                            }
+                        }
+                        // default to Number when type not specified or not mappable
+                        fields.push((fname, OatsType::Number));
+                    }
+                }
+            }
+            if !fields.is_empty() {
+                codegen.class_fields.borrow_mut().insert(name, fields);
             }
         }
     }

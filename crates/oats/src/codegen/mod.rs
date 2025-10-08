@@ -8,8 +8,8 @@ use inkwell::values::{BasicValue, BasicValueEnum, FunctionValue, PointerValue};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
-pub mod helpers;
 pub mod expr;
+pub mod helpers;
 pub mod stmt;
 /// Mapping from function name -> param OatsTypes vector. Stored so
 /// lowering can inspect the declared nominal type of `this` parameters
@@ -150,7 +150,6 @@ impl<'a> CodeGen<'a> {
 
     // `lower_expr_result` moved to `codegen/expr.rs` to begin modularization.
 
-    
     pub fn gen_function_ir(
         &self,
         func_name: &str,
@@ -1028,7 +1027,21 @@ impl<'a> CodeGen<'a> {
                                             match s {
                                                 ast::Stmt::Return(ret) => {
                                                     if let Some(arg) = &ret.arg {
-                                                        if let Some(val) = self.lower_expr_result(arg, function, &param_map, &mut locals_stack, Some(function.get_name().to_str().unwrap_or(""))).ok() {
+                                                        if let Some(val) = self
+                                                            .lower_expr_result(
+                                                                arg,
+                                                                function,
+                                                                &param_map,
+                                                                &mut locals_stack,
+                                                                Some(
+                                                                    function
+                                                                        .get_name()
+                                                                        .to_str()
+                                                                        .unwrap_or(""),
+                                                                ),
+                                                            )
+                                                            .ok()
+                                                        {
                                                             let _ = self
                                                                 .builder
                                                                 .build_return(Some(&val));
@@ -1093,7 +1106,18 @@ impl<'a> CodeGen<'a> {
                                     }
                                     ast::Stmt::Return(ret) => {
                                         if let Some(arg) = &ret.arg {
-                                            if let Some(val) = self.lower_expr_result(arg, function, &param_map, &mut locals_stack, Some(function.get_name().to_str().unwrap_or(""))).ok() {
+                                            if let Some(val) = self
+                                                .lower_expr_result(
+                                                    arg,
+                                                    function,
+                                                    &param_map,
+                                                    &mut locals_stack,
+                                                    Some(
+                                                        function.get_name().to_str().unwrap_or(""),
+                                                    ),
+                                                )
+                                                .ok()
+                                            {
                                                 let _ = self.builder.build_return(Some(&val));
                                             } else {
                                                 let _ = self.builder.build_return(None);
@@ -1227,7 +1251,21 @@ impl<'a> CodeGen<'a> {
                                                 deno_ast::swc::ast::VarDeclKind::Const
                                             );
                                             if let Some(init_expr) = &decl.init {
-                                                if let Some(val) = self.lower_expr_result(init_expr, function, &param_map, &mut locals_stack, Some(function.get_name().to_str().unwrap_or(""))).ok() {
+                                                if let Some(val) = self
+                                                    .lower_expr_result(
+                                                        init_expr,
+                                                        function,
+                                                        &param_map,
+                                                        &mut locals_stack,
+                                                        Some(
+                                                            function
+                                                                .get_name()
+                                                                .to_str()
+                                                                .unwrap_or(""),
+                                                        ),
+                                                    )
+                                                    .ok()
+                                                {
                                                     match val {
                                                         BasicValueEnum::FloatValue(fv) => {
                                                             let alloca = self
@@ -1496,7 +1534,16 @@ impl<'a> CodeGen<'a> {
                             }
                             ast::Stmt::Return(ret) => {
                                 if let Some(arg) = &ret.arg {
-                                    if let Some(val) = self.lower_expr_result(arg, function, &param_map, &mut locals_stack, Some(function.get_name().to_str().unwrap_or(""))).ok() {
+                                    if let Some(val) = self
+                                        .lower_expr_result(
+                                            arg,
+                                            function,
+                                            &param_map,
+                                            &mut locals_stack,
+                                            Some(function.get_name().to_str().unwrap_or("")),
+                                        )
+                                        .ok()
+                                    {
                                         self.emit_rc_dec_for_locals(&locals_stack);
                                         let _ = self.builder.build_return(Some(&val));
                                     } else {

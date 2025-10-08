@@ -1847,13 +1847,8 @@ impl<'a> CodeGen<'a> {
                                     for s in &block.stmts {
                                         match s {
                                             ast::Stmt::Return(ret) => {
-                                                if let Some(arg) = &ret.arg {
-                                                    if let Some(val) = self.lower_expr(
-                                                        arg,
-                                                        function,
-                                                        &param_map,
-                                                        &mut locals_stack,
-                                                    ) {
+                            if let Some(arg) = &ret.arg {
+                                if let Some(val) = self.lower_expr_result(arg, function, &param_map, &mut locals_stack, Some(function.get_name().to_str().unwrap_or(""))).ok() {
                                                         self.emit_rc_dec_for_locals(&locals_stack);
                                                         let _ =
                                                             self.builder.build_return(Some(&val));

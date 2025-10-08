@@ -187,7 +187,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
         for (i, pname) in param_names.iter().enumerate() {
             let param_val = f.get_nth_param(i as u32).ok_or_else(|| {
-                crate::diagnostics::Diagnostic::simple(&format!(
+                crate::diagnostics::Diagnostic::simple(format!(
                     "missing parameter {} for constructor {}",
                     pname, class_name
                 ))
@@ -197,7 +197,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 .builder
                 .build_alloca(param_ty, &format!("param_{}", pname))
                 .map_err(|_| {
-                    crate::diagnostics::Diagnostic::simple(&format!(
+                    crate::diagnostics::Diagnostic::simple(format!(
                         "alloca failed for param {} in constructor {}",
                         pname, class_name
                     ))
@@ -212,7 +212,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         for (field_idx, (field_name, _field_type)) in fields.iter().enumerate() {
             if let Some(param_idx) = param_names.iter().position(|pn| pn == field_name) {
                 let param_val = f.get_nth_param(param_idx as u32).ok_or_else(|| {
-                    crate::diagnostics::Diagnostic::simple(&format!(
+                    crate::diagnostics::Diagnostic::simple(format!(
                         "missing parameter {} for constructor {}",
                         field_name, class_name
                     ))
@@ -241,28 +241,26 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             let cs = self
                                 .builder
                                 .build_call(box_fn, &[unboxed_f.into()], "union_box_f64_ctor");
-                            if let Ok(cs) = cs {
-                                    if let inkwell::Either::Left(bv) = cs.try_as_basic_value() {
+                            if let Ok(cs) = cs
+                                    && let inkwell::Either::Left(bv) = cs.try_as_basic_value() {
                                     let boxed_ptr = bv.into_pointer_value();
                                     let boxed_bv = inkwell::values::BasicValueEnum::PointerValue(boxed_ptr);
                                     let _ = self.builder.build_store(field_ptr_cast, boxed_bv);
                                     let rc_inc_fn = self.get_rc_inc();
                                     let _ = self.builder.build_call(rc_inc_fn, &[boxed_ptr.into()], "rc_inc_field");
                                 }
-                            }
                         } else if param_val.get_type().is_pointer_type() {
                             // box the pointer payload
                             let box_fn = self.get_union_box_ptr();
                             let cs = self.builder.build_call(box_fn, &[param_val.into()], "union_box_ptr_ctor");
-                            if let Ok(cs) = cs {
-                                if let inkwell::Either::Left(bv) = cs.try_as_basic_value() {
+                            if let Ok(cs) = cs
+                                && let inkwell::Either::Left(bv) = cs.try_as_basic_value() {
                                     let boxed_ptr = bv.into_pointer_value();
                                     let boxed_bv = inkwell::values::BasicValueEnum::PointerValue(boxed_ptr);
                                     let _ = self.builder.build_store(field_ptr_cast, boxed_bv);
                                     let rc_inc_fn = self.get_rc_inc();
                                     let _ = self.builder.build_call(rc_inc_fn, &[boxed_ptr.into()], "rc_inc_field");
                                 }
-                            }
                         } else {
                             // other param ABI not expected for unions
                             let _ = self.builder.build_store(field_ptr_cast, param_val);

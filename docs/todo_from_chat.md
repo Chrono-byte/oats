@@ -1,27 +1,123 @@
+
 # Oats — remaining TODO (from compiler chat)
 
-This file summarizes remaining work discussed in the compiler chat and the repository notes, updated to reflect the short-term changes that were just implemented (diagnostics improvements + a couple of focused tests). Use this as a living, prioritized checklist.
+This file is a living, prioritized checklist summarizing remaining work and the short/medium/long-term roadmap. It was updated to reflect recent feature work already present in the codebase.
 
 ## Summary (high level)
 
-- Short-term items (easy): mostly done — diagnostics improved and a few focused tests added. A small set of extra tests and diagnostics unit tests remain.
-- Medium-term items (moderate): design + implement richer type system, class lowering, and a basic module/import model.
-- Long-term items (hard): closures + captures, a GC or improved memory management, and async/await + promise/runtime.
+- Short-term: many short items are done — arrays, array literals, computed indexing, `for-of` lowering, runtime helpers, RC helpers, TDZ modeling, and several focused tests are implemented. Remaining short items are small and well-scoped.
+- Medium-term: class lowering, dot-member access, and an improved type-system are the next larger efforts.
+- Long-term: closures with captured environments, stronger memory management (GC or hybrid), and async/await are still research/large-engineering tasks.
 
 ---
 
-## Short-term (remaining / follow-ups)
+## Short-term (implemented / follow-ups)
 
-These short-term items were the focus of the recent changes. Below is a concise status update — the detailed task list was intentionally removed and the Medium/Long-term sections below have been shifted up.
+Implemented (already in repo):
 
-- Diagnostics improvements: Done (help hints added; `report_error_span_and_bail` includes hint text for tests).
-- Focused tests: Done (added diagnostics + for-of tests; targeted tests pass locally).
-- Member-write lowering (e.g. `this.x = ...`): Pending — requires a small, careful AST-based lowering change and a focused test asserting emitted IR for RC helpers.
-- CI / infra (LLVM-18 job, aot_run smoke test): Pending (recommended next step after finishing member-write lowering).
+- Arrays & array literals: lowering to runtime-backed arrays and helper calls (`array_alloc`, `array_set_ptr`, ...).
+- Computed indexing: `a[expr]` lowering with numeric/pointer coercion and appropriate runtime helper calls.
+- for-of lowering: implemented for arrays using runtime layout and element-kind branching.
+- Runtime helpers declared and used: `malloc`, `free`, `memcpy`, `strlen`, `print_f64`, `print_str`, `str_concat`, plus array helpers.
+- RC helpers wired: `rc_inc` / `rc_dec` are used on stores/returns and for local cleanup.
+- TDZ/local model: params/locals are entry `alloca`'d with initialization flags and uninitialized reads trap.
+- Expression lowering: binary numeric ops, comparisons, logical short-circuiting, and phi merges with coercion.
+- Focused tests: several tests under `crates/oats/tests/` (arrays/loops, for-of, diagnostics) validate lowering paths and emitted IR.
 
-Estimated effort to finish remaining short-term item (member-write lowering + test): ~0.5–1 day.
+Pending short-term items (small, actionable):
+
+- Member-write lowering (`this.x = ...` / direct field stores): needs AST lowering and a focused test asserting IR uses field-store patterns and RC helpers. Estimated effort: 0.5–1 day.
+- More targeted unit tests: add a small set (diagnostic unit tests, member-write IR test, and a couple of loop-edge cases) to lock behavior.
+- CI wiring: add a GitHub Action that installs LLVM-18 and runs `cargo test -p oats`. (1 day estimate.)
+
+Note: existing integration tests and scripts (see `scripts/setup_env.sh` and `scripts/run_aot_tempdir.sh`) explain how maintainers run the runner and set `LLVM_SYS_181_PREFIX`.
 
 ---
+
+## Medium-term (design + implementation)
+
+Prioritized medium work:
+
+- Dot-member access & nominal struct fields
+  - Implement direct `obj.field` lowering and a simple object layout for `NominalStruct`.
+  - Add tests that assert correct `getelementptr` offsets / field loads/stores in IR.
+
+- Class lowering and constructors/methods
+  - Lower `ClassDecl` into `NominalStruct` with field layout, constructor emission, and method symbols.
+  - Ensure `this` receiver handling and RC semantics for fields.
+
+- Type-system expansion
+  - Sketch and implement unions/tuples and a plan for generics (erasure vs monomorphization).
+  - Update `types.rs`, `map_ts_type`, and coercion rules, and add codegen mappings.
+
+These changes touch parsing, type-mapping, and codegen; expect multiple small integration tests to validate ABI/runtime helper compatibility.
+
+Estimated effort: days → couple of weeks depending on scope and design choices.
+
+---
+
+## Long-term (hard / research + engineering)
+
+- Closures & capture lowering: boxed environments, capture analysis, and RC semantics for captured boxes.
+- Memory management: evaluate cycle-handling (tracing GC or hybrid with RC + cycle-collector) and a migration plan for runtime and codegen.
+- Async/await: lowering to state machines and a runtime scheduler/event loop in `crates/runtime`.
+
+These are large efforts that require design, benchmarks, and careful testing (weeks → months).
+
+---
+
+## Concrete next steps (recommended, short-to-medium)
+
+1. Implement member-write lowering + unit test (0.5–1 day). This unlocks class-field tests and reduces regressions.
+2. Add CI job for LLVM-18 + `cargo test -p oats` (1 day). Use `scripts/setup_env.sh` as guidance for environment setup.
+3. Implement dot-member access and a small class-lowering prototype (2–5 days). Add integration tests that inspect emitted IR for field offsets and stores.
+4. Sketch `OatsType` extension plan and implement the smallest necessary type-system changes incrementally.
+
+If you want, I can implement step 1 (member-write lowering test) now.
+
+---
+
+## Suggested priority ordering
+
+1. Member-write lowering + tests (short)
+2. CI with LLVM-18 (infra)
+3. Dot-member access + class lowering (medium)
+4. Type system expansion (medium)
+5. Closures / memory / async (long)
+
+---
+
+## Quick checklist (status)
+
+- [x] Arrays & array literals — implemented
+- [x] Computed indexing — implemented
+- [x] for-of lowering — implemented
+- [x] Runtime helpers declared/used — implemented
+- [x] RC helpers (`rc_inc`/`rc_dec`) — implemented
+- [x] TDZ/local model — implemented
+- [x] Expression lowering (ops, comparisons, short-circuit) — implemented
+- [x] Focused integration tests (arrays/loops/for-of/diagnostics) — present
+- [ ] Member-write lowering (pending)
+- [ ] Dot-member lowering (pending)
+- [ ] Class lowering (pending)
+- [ ] Type-system expansion (pending)
+- [ ] CI (LLVM-18 job) (pending)
+
+---
+
+## Notes / references
+
+- Runtime helpers and names to keep in sync: `malloc`, `free`, `memcpy`, `strlen`, `print_f64`, `print_str`, `str_concat`, `array_alloc`, `array_get_f64`, `array_get_ptr`, `array_set_ptr`, `rc_inc`, `rc_dec`.
+- See `scripts/setup_env.sh` and `scripts/run_aot_tempdir.sh` for local run instructions and expected environment variables (`LLVM_SYS_181_PREFIX`, `LD_LIBRARY_PATH`).
+- Tests to use as templates: `crates/oats/tests/arrays_and_loops.rs`, `crates/oats/tests/loops_and_fields.rs`, `crates/oats/tests/class_fields.rs`, `crates/oats/tests/aot_runner_integration.rs`.
+
+---
+
+File updated by: automated edit (requested by user) — path: `docs/todo_from_chat.md`
+
+If you'd like, I can now:
+- Run the full test suite and report failures; or
+- Implement the short, high-leverage item: member-write lowering + a focused test (I can do that next).
 
 ## Medium-term (design + implementation)
 

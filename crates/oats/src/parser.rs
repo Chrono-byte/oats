@@ -2,69 +2,16 @@ use crate::diagnostics;
 use anyhow::Result;
 use deno_ast::swc::ast;
 use deno_ast::{MediaType, ParseParams, ParsedSource, SourceTextInfo, parse_module};
-use std::collections::HashSet;
 use url::Url;
 
 pub struct ParsedModule {
     pub parsed: ParsedSource,
-    /// Preprocessed source (with markers inserted)
-    pub preprocessed: String,
-    /// Set of identifier names that were annotated `mut` via the preprocessor
-    pub mut_decls: HashSet<String>,
+    /// Original source text (no preprocessing)
+    pub source: String,
 }
 
 pub fn parse_oats_module(source_code: &str, file_path: Option<&str>) -> Result<ParsedModule> {
-    // Preprocess Rust-like `let mut` surface syntax into a comment marker
-    // so the TypeScript parser accepts it. We transform `let mut NAME` ->
-    // `let /*@__MUT__*/ NAME` and record NAME in `mut_decls`.
-    let mut mut_decls = std::collections::HashSet::new();
-    let mut preprocessed = String::with_capacity(source_code.len());
-    {
-        let mut i = 0usize;
-        let s = source_code.as_bytes();
-        while i < s.len() {
-            // try to match the sequence 'let' followed by whitespace and 'mut'
-            if i + 3 < s.len() && &s[i..i + 3] == b"let" {
-                // ensure word boundary
-                let after = i + 3;
-                if after == s.len() || s[after].is_ascii_whitespace() {
-                    // copy 'let'
-                    preprocessed.push_str("let");
-                    i = after;
-                    // skip whitespace
-                    while i < s.len() && s[i].is_ascii_whitespace() {
-                        preprocessed.push(s[i] as char);
-                        i += 1;
-                    }
-                    // check for 'mut'
-                    if i + 3 <= s.len() && &s[i..i + 3] == b"mut" {
-                        // replace with comment marker
-                        preprocessed.push_str("/*@__MUT__*/");
-                        i += 3;
-                        // skip any whitespace after mut
-                        while i < s.len() && s[i].is_ascii_whitespace() {
-                            i += 1;
-                        }
-                        // collect identifier name following
-                        let start = i;
-                        while i < s.len() && (s[i].is_ascii_alphanumeric() || s[i] == b'_') {
-                            i += 1;
-                        }
-                        if start < i {
-                            let name = String::from_utf8_lossy(&s[start..i]).into_owned();
-                            mut_decls.insert(name.clone());
-                            preprocessed.push_str(&name);
-                        }
-                        continue;
-                    }
-                }
-            }
-            preprocessed.push(s[i] as char);
-            i += 1;
-        }
-    }
-
-    let sti = SourceTextInfo::from_string(preprocessed.clone());
+    let sti = SourceTextInfo::from_string(source_code.to_string());
     let params = ParseParams {
         specifier: Url::parse("file:///file.ts")?,
         text: sti.text().clone(),
@@ -207,7 +154,7 @@ pub fn parse_oats_module(source_code: &str, file_path: Option<&str>) -> Result<P
                     );
                 }
             }
-            // Reject usage of the legacy `var` keyword: require `let` or `let mut`/`const`.
+            // Reject usage of the legacy `var` keyword: require `let` or `const`.
             if let ast::Stmt::Decl(ast::Decl::Var(vdecl)) = stmt
                 && matches!(vdecl.kind, deno_ast::swc::ast::VarDeclKind::Var)
             {
@@ -216,9 +163,9 @@ pub fn parse_oats_module(source_code: &str, file_path: Option<&str>) -> Result<P
                     file_path,
                     source_code,
                     start,
-                    "the `var` keyword is not allowed; use `let` or `let mut` instead",
+                    "the `var` keyword is not allowed; use `let` or `const` instead",
                     Some(
-                        "`var` is disallowed in this project to encourage Rust-like immutability; use `let mut` to declare mutable variables.",
+                        "`var` is disallowed in this project; use `let` for mutable locals or `const` for immutable ones.",
                     ),
                 );
             }
@@ -259,9 +206,9 @@ pub fn parse_oats_module(source_code: &str, file_path: Option<&str>) -> Result<P
                                 file_path,
                                 source_code,
                                 start,
-                                "the `var` keyword is not allowed; use `let` or `let mut` instead",
+                                "the `var` keyword is not allowed; use `let` or `const` instead",
                                 Some(
-                                    "`var` is disallowed in this project to encourage Rust-like immutability; use `let mut` to declare mutable variables.",
+                                    "`var` is disallowed in this project; use `let` for mutable locals or `const` for immutable ones.",
                                 ),
                             );
                         }
@@ -282,9 +229,9 @@ pub fn parse_oats_module(source_code: &str, file_path: Option<&str>) -> Result<P
                         file_path,
                         source_code,
                         start,
-                        "the `var` keyword is not allowed; use `let` or `let mut` instead",
+                        "the `var` keyword is not allowed; use `let` or `const` instead",
                         Some(
-                            "`var` is disallowed in this project to encourage Rust-like immutability; use `let mut` to declare mutable variables.",
+                            "`var` is disallowed in this project; use `let` for mutable locals or `const` for immutable ones.",
                         ),
                     );
                 }
@@ -335,7 +282,6 @@ pub fn parse_oats_module(source_code: &str, file_path: Option<&str>) -> Result<P
     }
     Ok(ParsedModule {
         parsed,
-        preprocessed,
-        mut_decls,
+        source: source_code.to_string(),
     })
 }

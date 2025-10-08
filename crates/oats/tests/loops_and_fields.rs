@@ -59,8 +59,7 @@ fn gen_ir_for_source(src: &str) -> Result<String> {
         fn_rc_dec: std::cell::RefCell::new(None),
         class_fields: std::cell::RefCell::new(std::collections::HashMap::new()),
         fn_param_types: std::cell::RefCell::new(std::collections::HashMap::new()),
-        mut_decls: &parsed_mod.mut_decls,
-        source: &parsed_mod.preprocessed,
+        source: &parsed_mod.source,
     };
 
     // Populate class_fields for exported classes by examining ClassProp
@@ -169,8 +168,8 @@ export function main(p: Foo): number { return p.x; }
     let ir = gen_ir_for_source(src)?;
     // Field access lowering uses a named load "field_load"
     assert!(
-        ir.contains("field_load"),
-        "expected field_load in IR: {}",
+        ir.contains("field_f64_load") || ir.contains("field_load"),
+        "expected field load in IR: {}",
         ir
     );
     Ok(())

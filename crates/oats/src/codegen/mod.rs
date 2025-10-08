@@ -156,13 +156,26 @@ impl<'a> CodeGen<'a> {
         expr: &deno_ast::swc::ast::Expr,
         function: inkwell::values::FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
-        locals: &mut Vec<HashMap<String, (inkwell::values::PointerValue<'a>, BasicTypeEnum<'a>, bool, bool)>>,
+        locals: &mut Vec<
+            HashMap<
+                String,
+                (
+                    inkwell::values::PointerValue<'a>,
+                    BasicTypeEnum<'a>,
+                    bool,
+                    bool,
+                ),
+            >,
+        >,
         ctx_name: Option<&str>,
     ) -> Result<inkwell::values::BasicValueEnum<'a>, crate::diagnostics::Diagnostic> {
         if let Some(v) = self.lower_expr(expr, function, param_map, locals) {
             Ok(v)
         } else {
-            let msg = format!("failed to lower expression in context '{}'", ctx_name.unwrap_or("<unknown>"));
+            let msg = format!(
+                "failed to lower expression in context '{}'",
+                ctx_name.unwrap_or("<unknown>")
+            );
             Err(crate::diagnostics::Diagnostic::simple(msg))
         }
     }
@@ -615,28 +628,30 @@ impl<'a> CodeGen<'a> {
                     BasicValueEnum::FloatValue(fv) => {
                         // JS-like truthiness for numbers: false for +0, -0, and NaN
                         let zero = self.f64_t.const_float(0.0);
-                        let is_not_zero = match self
-                            .builder
-                            .build_float_compare(inkwell::FloatPredicate::ONE, fv, zero, "neq0")
-                        {
+                        let is_not_zero = match self.builder.build_float_compare(
+                            inkwell::FloatPredicate::ONE,
+                            fv,
+                            zero,
+                            "neq0",
+                        ) {
                             Ok(v) => v,
                             Err(_) => return None,
                         };
                         // check not NaN: fv == fv
-                        let is_not_nan = match self
-                            .builder
-                            .build_float_compare(inkwell::FloatPredicate::OEQ, fv, fv, "not_nan")
-                        {
+                        let is_not_nan = match self.builder.build_float_compare(
+                            inkwell::FloatPredicate::OEQ,
+                            fv,
+                            fv,
+                            "not_nan",
+                        ) {
                             Ok(v) => v,
                             Err(_) => return None,
                         };
-                        let cond = match self
-                            .builder
-                            .build_and(is_not_zero, is_not_nan, "num_truth")
-                        {
-                            Ok(v) => v,
-                            Err(_) => return None,
-                        };
+                        let cond =
+                            match self.builder.build_and(is_not_zero, is_not_nan, "num_truth") {
+                                Ok(v) => v,
+                                Err(_) => return None,
+                            };
                         cond.as_basic_value_enum()
                     }
                     BasicValueEnum::PointerValue(pv) => {
@@ -651,10 +666,11 @@ impl<'a> CodeGen<'a> {
                         };
                         // call strlen(ptr) and check != 0
                         if let Some(strlen_fn) = self.module.get_function("strlen") {
-                            let cs = match self
-                                .builder
-                                .build_call(strlen_fn, &[pv.into()], "strlen_call")
-                            {
+                            let cs = match self.builder.build_call(
+                                strlen_fn,
+                                &[pv.into()],
+                                "strlen_call",
+                            ) {
                                 Ok(cs) => cs,
                                 Err(_) => return None,
                             };
@@ -671,10 +687,11 @@ impl<'a> CodeGen<'a> {
                                     Ok(v) => v,
                                     Err(_) => return None,
                                 };
-                                let cond = match self
-                                    .builder
-                                    .build_and(is_not_null, len_nonzero, "ptr_truth")
-                                {
+                                let cond = match self.builder.build_and(
+                                    is_not_null,
+                                    len_nonzero,
+                                    "ptr_truth",
+                                ) {
                                     Ok(v) => v,
                                     Err(_) => return None,
                                 };
@@ -1386,7 +1403,13 @@ impl<'a> CodeGen<'a> {
                     ast::Stmt::Return(ret) => {
                         if let Some(arg) = &ret.arg {
                             // Use result-based lowering so we can emit diagnostics centrally
-                            match self.lower_expr_result(arg, function, &param_map, &mut locals_stack, Some(function.get_name().to_str().unwrap_or(""))) {
+                            match self.lower_expr_result(
+                                arg,
+                                function,
+                                &param_map,
+                                &mut locals_stack,
+                                Some(function.get_name().to_str().unwrap_or("")),
+                            ) {
                                 Ok(val) => {
                                     self.emit_rc_dec_for_locals(&locals_stack);
                                     let _ = self.builder.build_return(Some(&val));
@@ -1424,12 +1447,7 @@ impl<'a> CodeGen<'a> {
                                     let obj_name = obj_ident.sym.to_string();
                                     if obj_name == "this" {
                                         // Lower RHS value
-                                        if let Some(val) = self.lower_expr(
-                                            &assign.right,
-                                            function,
-                                            &param_map,
-                                            &mut locals_stack,
-                                        ) {
+                                        if let Some(val) = self.lower_expr_result(&assign.right, function, &param_map, &mut locals_stack, Some(function.get_name().to_str().unwrap_or(""))).ok() {
                                             // If we have a `this` parameter, the function param map should
                                             // contain its index (usually 0). Use the incoming parameter
                                             // value rather than the alloca to obtain the object pointer.
@@ -1522,14 +1540,18 @@ impl<'a> CodeGen<'a> {
                                                             let slot_ptr_ty = self
                                                                 .context
                                                                 .ptr_type(AddressSpace::default());
-                                                            let slot_ptr = match self.builder.build_pointer_cast(
-                                                                gep_ptr,
-                                                                slot_ptr_ty,
-                                                                "slot_ptr_cast",
-                                                            ) {
+                                                            let slot_ptr = match self
+                                                                .builder
+                                                                .build_pointer_cast(
+                                                                    gep_ptr,
+                                                                    slot_ptr_ty,
+                                                                    "slot_ptr_cast",
+                                                                ) {
                                                                 Ok(p) => p,
                                                                 Err(_) => {
-                                                                    let _ = self.builder.build_unreachable();
+                                                                    let _ = self
+                                                                        .builder
+                                                                        .build_unreachable();
                                                                     // fallback to normal lowering
                                                                     self.lower_expr(
                                                                         &expr_stmt.expr,
@@ -1545,14 +1567,19 @@ impl<'a> CodeGen<'a> {
                                                                     newpv,
                                                                 ) => {
                                                                     // load old value
-                                                                    let old = match self.builder.build_load(
-                                                                        self.i8ptr_t,
-                                                                        slot_ptr,
-                                                                        "old_field",
-                                                                    ) {
+                                                                    let old = match self
+                                                                        .builder
+                                                                        .build_load(
+                                                                            self.i8ptr_t,
+                                                                            slot_ptr,
+                                                                            "old_field",
+                                                                        ) {
                                                                         Ok(v) => v,
                                                                         Err(_) => {
-                                                                            let _ = self.builder.build_unreachable();
+                                                                            let _ = self
+                                                                                .builder
+                                                                                .build_unreachable(
+                                                                                );
                                                                             // fallback
                                                                             self.lower_expr(
                                                                                 &expr_stmt.expr,
@@ -1565,14 +1592,19 @@ impl<'a> CodeGen<'a> {
                                                                     };
                                                                     // call rc_dec on old (runtime should handle null)
                                                                     let rc_dec = self.get_rc_dec();
-                                                                    let _ = match self.builder.build_call(
-                                                                        rc_dec,
-                                                                        &[old.into()],
-                                                                        "rc_dec_old_field",
-                                                                    ) {
+                                                                    let _ = match self
+                                                                        .builder
+                                                                        .build_call(
+                                                                            rc_dec,
+                                                                            &[old.into()],
+                                                                            "rc_dec_old_field",
+                                                                        ) {
                                                                         Ok(_) => (),
                                                                         Err(_) => {
-                                                                            let _ = self.builder.build_unreachable();
+                                                                            let _ = self
+                                                                                .builder
+                                                                                .build_unreachable(
+                                                                                );
                                                                             continue;
                                                                         }
                                                                     };
@@ -1585,14 +1617,19 @@ impl<'a> CodeGen<'a> {
                                                                     );
                                                                     // increment refcount of new value
                                                                     let rc_inc = self.get_rc_inc();
-                                                                    let _ = match self.builder.build_call(
-                                                                        rc_inc,
-                                                                        &[newpv.into()],
-                                                                        "rc_inc_field",
-                                                                    ) {
+                                                                    let _ = match self
+                                                                        .builder
+                                                                        .build_call(
+                                                                            rc_inc,
+                                                                            &[newpv.into()],
+                                                                            "rc_inc_field",
+                                                                        ) {
                                                                         Ok(_) => (),
                                                                         Err(_) => {
-                                                                            let _ = self.builder.build_unreachable();
+                                                                            let _ = self
+                                                                                .builder
+                                                                                .build_unreachable(
+                                                                                );
                                                                             continue;
                                                                         }
                                                                     };
@@ -1616,7 +1653,9 @@ impl<'a> CodeGen<'a> {
                                                                             continue;
                                                                         }
                                                                     };
-                                                                    let _ = self.builder.build_store(elem_ptr, fv);
+                                                                    let _ = self
+                                                                        .builder
+                                                                        .build_store(elem_ptr, fv);
                                                                 }
                                                                 _ => {
                                                                     // unsupported RHS type for member write: fallback to normal lowering
@@ -1734,16 +1773,15 @@ impl<'a> CodeGen<'a> {
                                             }
                                             BasicValueEnum::IntValue(iv) => {
                                                 let boolt = self.bool_t;
-                                                let alloca = match self
-                                                    .builder
-                                                    .build_alloca(boolt, &name)
-                                                {
-                                                    Ok(a) => a,
-                                                    Err(_) => {
-                                                        let _ = self.builder.build_unreachable();
-                                                        continue;
-                                                    }
-                                                };
+                                                let alloca =
+                                                    match self.builder.build_alloca(boolt, &name) {
+                                                        Ok(a) => a,
+                                                        Err(_) => {
+                                                            let _ =
+                                                                self.builder.build_unreachable();
+                                                            continue;
+                                                        }
+                                                    };
                                                 self.insert_local_current_scope(
                                                     &mut locals_stack,
                                                     name.clone(),
@@ -1783,10 +1821,7 @@ impl<'a> CodeGen<'a> {
                                     // No initializer: for const this is a syntax error in JS/TS
                                     // For now, insert uninitialized const/local and let later checks catch usage.
                                     let ptr_ty = self.context.ptr_type(AddressSpace::default());
-                                    let alloca = match self
-                                        .builder
-                                        .build_alloca(ptr_ty, &name)
-                                    {
+                                    let alloca = match self.builder.build_alloca(ptr_ty, &name) {
                                         Ok(a) => a,
                                         Err(_) => {
                                             let _ = self.builder.build_unreachable();
@@ -1809,8 +1844,15 @@ impl<'a> CodeGen<'a> {
                         // Lower an if statement: create then/else/merge blocks and
                         // lower the consequent/alternative as statements.
                         // Lower the test to i1
-                        if let Some(test_val) =
-                            self.lower_expr_result(&if_stmt.test, function, &param_map, &mut locals_stack, Some(function.get_name().to_str().unwrap_or(""))).ok()
+                        if let Some(test_val) = self
+                            .lower_expr_result(
+                                &if_stmt.test,
+                                function,
+                                &param_map,
+                                &mut locals_stack,
+                                Some(function.get_name().to_str().unwrap_or("")),
+                            )
+                            .ok()
                         {
                             let cond_i1 = match test_val {
                                 BasicValueEnum::IntValue(iv) => iv,
@@ -1847,8 +1889,22 @@ impl<'a> CodeGen<'a> {
                                     for s in &block.stmts {
                                         match s {
                                             ast::Stmt::Return(ret) => {
-                            if let Some(arg) = &ret.arg {
-                                if let Some(val) = self.lower_expr_result(arg, function, &param_map, &mut locals_stack, Some(function.get_name().to_str().unwrap_or(""))).ok() {
+                                                if let Some(arg) = &ret.arg {
+                                                    if let Some(val) = self
+                                                        .lower_expr_result(
+                                                            arg,
+                                                            function,
+                                                            &param_map,
+                                                            &mut locals_stack,
+                                                            Some(
+                                                                function
+                                                                    .get_name()
+                                                                    .to_str()
+                                                                    .unwrap_or(""),
+                                                            ),
+                                                        )
+                                                        .ok()
+                                                    {
                                                         self.emit_rc_dec_for_locals(&locals_stack);
                                                         let _ =
                                                             self.builder.build_return(Some(&val));
@@ -1946,7 +2002,16 @@ impl<'a> CodeGen<'a> {
                                 }
                                 ast::Stmt::Return(ret) => {
                                     if let Some(arg) = &ret.arg {
-                                        if let Some(val) = self.lower_expr_result(arg, function, &param_map, &mut locals_stack, Some(function.get_name().to_str().unwrap_or(""))).ok() {
+                                        if let Some(val) = self
+                                            .lower_expr_result(
+                                                arg,
+                                                function,
+                                                &param_map,
+                                                &mut locals_stack,
+                                                Some(function.get_name().to_str().unwrap_or("")),
+                                            )
+                                            .ok()
+                                        {
                                             self.emit_rc_dec_for_locals(&locals_stack);
                                             let _ = self.builder.build_return(Some(&val));
                                         } else {
@@ -2426,7 +2491,21 @@ impl<'a> CodeGen<'a> {
                                     match s {
                                         ast::Stmt::Return(ret) => {
                                             if let Some(arg) = &ret.arg {
-                                                if let Some(val) = self.lower_expr_result(arg, function, &param_map, &mut locals_stack, Some(function.get_name().to_str().unwrap_or(""))).ok() {
+                                                if let Some(val) = self
+                                                    .lower_expr_result(
+                                                        arg,
+                                                        function,
+                                                        &param_map,
+                                                        &mut locals_stack,
+                                                        Some(
+                                                            function
+                                                                .get_name()
+                                                                .to_str()
+                                                                .unwrap_or(""),
+                                                        ),
+                                                    )
+                                                    .ok()
+                                                {
                                                     self.emit_rc_dec_for_locals(&locals_stack);
                                                     let _ = self.builder.build_return(Some(&val));
                                                 } else {
@@ -2730,15 +2809,19 @@ impl<'a> CodeGen<'a> {
                                     continue;
                                 }
                             };
-                            let header_loaded = match self.builder.build_load(self.i64_t, header_ptr, "header_load") {
-                                Ok(v) => v.into_int_value(),
-                                Err(_) => {
-                                    self.builder
-                                        .build_unconditional_branch(end_bb)
-                                        .expect("build_unconditional_branch failed");
-                                    continue;
-                                }
-                            };
+                            let header_loaded =
+                                match self
+                                    .builder
+                                    .build_load(self.i64_t, header_ptr, "header_load")
+                                {
+                                    Ok(v) => v.into_int_value(),
+                                    Err(_) => {
+                                        self.builder
+                                            .build_unconditional_branch(end_bb)
+                                            .expect("build_unconditional_branch failed");
+                                        continue;
+                                    }
+                                };
                             // shift right by 32
                             let shift_amt = self.i64_t.const_int(32, false);
                             let header_shr = self

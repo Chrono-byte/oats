@@ -29,7 +29,7 @@ fn parse_simple_arrow_function() -> Result<()> {
             for decl in &var_decl.decls {
                 if let Some(init) = &decl.init {
                     // Check if init is an arrow function
-                    if let deno_ast::swc::ast::Expr::Arrow(arrow) = &**init {
+                    if let deno_ast::swc::ast::Expr::Arrow(_arrow) = &**init {
                         found_arrow = true;
                         // println!("Found arrow function!");
                         // println!("  Params: {:?}", arrow.params.len());

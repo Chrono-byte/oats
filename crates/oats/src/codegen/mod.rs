@@ -281,6 +281,7 @@ impl<'a> CodeGen<'a> {
             })
     }
 
+    #[allow(dead_code)]
     fn get_array_push_ptr_weak(&self) -> FunctionValue<'a> {
         self.module
             .get_function("array_push_ptr_weak")
@@ -316,6 +317,7 @@ impl<'a> CodeGen<'a> {
             })
     }
 
+    #[allow(dead_code)]
     fn get_array_set_ptr_weak(&self) -> FunctionValue<'a> {
         self.module
             .get_function("array_set_ptr_weak")

@@ -28,4 +28,6 @@ mod promise_type;
 mod unary_operators;
 #[path = "codegen/closure_weak_capture.rs"]
 mod closure_weak_capture;
+#[path = "codegen/weak_helper_direct.rs"]
+mod weak_helper_direct;
 

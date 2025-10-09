@@ -58,10 +58,11 @@ fn test_heap_alloc_with_ptr_fields_weak_emits_rc_weak_inc() -> Result<()> {
     codegen.declare_libc();
     let null_ptr = codegen.i8ptr_t.const_null().as_basic_value_enum();
     let args = [(null_ptr, true)];
-    let _ = codegen.heap_alloc_with_ptr_fields(&args)?;
+    let _ = codegen
+        .heap_alloc_with_ptr_fields(&args)
+        .map_err(|d| anyhow::anyhow!(d.message))?;
 
     let ir = codegen.module.print_to_string().to_string();
-    println!("IR:\n{}", ir);
     assert!(ir.contains("rc_weak_inc"), "IR should contain rc_weak_inc");
     Ok(())
 }

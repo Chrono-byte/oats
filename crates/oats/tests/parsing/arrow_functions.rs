@@ -31,11 +31,11 @@ fn parse_simple_arrow_function() -> Result<()> {
                     // Check if init is an arrow function
                     if let deno_ast::swc::ast::Expr::Arrow(arrow) = &**init {
                         found_arrow = true;
-                        println!("Found arrow function!");
-                        println!("  Params: {:?}", arrow.params.len());
-                        println!("  Body is block: {}", arrow.body.is_block_stmt());
-                        println!("  Is async: {}", arrow.is_async);
-                        println!("  Is generator: {}", arrow.is_generator);
+                        // println!("Found arrow function!");
+                        // println!("  Params: {:?}", arrow.params.len());
+                        // println!("  Body is block: {}", arrow.body.is_block_stmt());
+                        // println!("  Is async: {}", arrow.is_async);
+                        // println!("  Is generator: {}", arrow.is_generator);
                         break;
                     }
                 }

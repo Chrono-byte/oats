@@ -1013,11 +1013,11 @@ pub extern "C" fn union_box_f64(v: f64) -> *mut c_void {
             return ptr::null_mut();
         }
 
-    // header: type_tag=1 (dtor present) | rc=1
-    let header_ptr = mem as *mut u64;
-    let type_tag: u64 = 1u64 << HEADER_TYPE_TAG_SHIFT;
-    let refcount: u64 = 1u64;
-    *header_ptr = header_with_weak(type_tag | refcount, 0);
+        // header: type_tag=1 (dtor present) | rc=1
+        let header_ptr = mem as *mut u64;
+        let type_tag: u64 = 1u64 << HEADER_TYPE_TAG_SHIFT;
+        let refcount: u64 = 1u64;
+        *header_ptr = header_with_weak(type_tag | refcount, 0);
 
         // store dtor pointer at offset +8
         let dtor_ptr = mem.add(8) as *mut *mut c_void;
@@ -1044,10 +1044,10 @@ pub extern "C" fn union_box_ptr(p: *mut c_void) -> *mut c_void {
             return ptr::null_mut();
         }
 
-    let header_ptr = mem as *mut u64;
-    let type_tag: u64 = 1u64 << HEADER_TYPE_TAG_SHIFT;
-    let refcount: u64 = 1u64;
-    *header_ptr = header_with_weak(type_tag | refcount, 0);
+        let header_ptr = mem as *mut u64;
+        let type_tag: u64 = 1u64 << HEADER_TYPE_TAG_SHIFT;
+        let refcount: u64 = 1u64;
+        *header_ptr = header_with_weak(type_tag | refcount, 0);
 
         // store dtor
         let dtor_ptr = mem.add(8) as *mut *mut c_void;

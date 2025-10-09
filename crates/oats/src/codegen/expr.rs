@@ -2100,14 +2100,6 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     }
                 }
 
-                if !captures.is_empty() {
-                    let msg = format!(
-                        "arrow function captures variables not yet supported: {:?}",
-                        captures
-                    );
-                    return Err(Diagnostic::simple(&msg));
-                }
-
                 // Generate a unique function name for this arrow
                 let arrow_fn_name = format!("arrow_fn_{}", self.next_str_id.get());
                 self.next_str_id.set(self.next_str_id.get() + 1);
@@ -2153,14 +2145,16 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     crate::types::OatsType::Number
                 };
 
-                // Build LLVM function type
-                let llvm_param_types: Vec<BasicTypeEnum> = param_types
-                    .iter()
-                    .map(|t| self.map_type_to_llvm(t))
-                    .collect();
+                // Build LLVM function type. If captures are present, the first
+                // parameter is the environment pointer (i8*).
+                let mut llvm_param_types: Vec<BasicTypeEnum> = Vec::new();
+                if !captures.is_empty() {
+                    llvm_param_types.push(self.i8ptr_t.as_basic_type_enum());
+                }
+                llvm_param_types.extend(param_types.iter().map(|t| self.map_type_to_llvm(t)));
                 let fn_type = self.build_llvm_fn_type(&llvm_param_types, &ret_type);
 
-                // Create the arrow function
+                // Create the arrow function (may accept env param as first arg)
                 let arrow_fn = self.module.add_function(&arrow_fn_name, fn_type, None);
 
                 // Record parameter types for the generated arrow function so
@@ -2178,16 +2172,210 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 let entry_bb = self.context.append_basic_block(arrow_fn, "entry");
                 self.builder.position_at_end(entry_bb);
 
-                // Create parameter map for arrow function
+
+                // Create parameter map for arrow function. If env param exists,
+                // shift user parameters by +1.
                 let mut arrow_param_map = HashMap::new();
                 for (idx, param) in arrow.params.iter().enumerate() {
                     if let ast::Pat::Ident(ident) = param {
-                        arrow_param_map.insert(ident.id.sym.to_string(), idx as u32);
+                        let mapped_idx = if !captures.is_empty() { (idx as u32) + 1 } else { idx as u32 };
+                        arrow_param_map.insert(ident.id.sym.to_string(), mapped_idx);
                     }
                 }
 
                 // Create locals stack for arrow function
                 let mut arrow_locals = vec![HashMap::new()];
+
+                // If the arrow accepts an env param (captures exist), bind env fields
+                // to locals so body references to captured names resolve.
+                if !captures.is_empty() {
+                    // env is the first parameter of arrow_fn
+                    let env_param = arrow_fn.get_nth_param(0).ok_or_else(|| Diagnostic::simple("missing env parameter for arrow"))?;
+                    let env_ptr = env_param.into_pointer_value();
+                    // Convert env pointer to integer for offset math
+                    let obj_ptr_int = self.builder.build_ptr_to_int(env_ptr, self.i64_t, "env_addr").map_err(|_| Diagnostic::simple("ptr_to_int failed"))?;
+                    let header_size = 8u64;
+                    let meta_slot = 8u64;
+
+                    for (i, cname) in captures.iter().enumerate() {
+                        let field_offset = header_size + meta_slot + (i as u64 * 8);
+                        let off_const = self.i64_t.const_int(field_offset, false);
+                        let field_addr = self.builder.build_int_add(obj_ptr_int, off_const, "cap_field_addr").map_err(|_| Diagnostic::simple("int_add failed"))?;
+                        let field_ptr = self.builder.build_int_to_ptr(field_addr, self.i8ptr_t, "cap_field_ptr").map_err(|_| Diagnostic::simple("int_to_ptr failed"))?;
+                        let loaded = self.builder.build_load(self.i8ptr_t, field_ptr, &format!("cap_load_{}", cname)).map_err(|_| Diagnostic::simple("load failed"))?;
+
+                        // Create an alloca for the captured local inside the arrow function and store the loaded value
+                        let alloca = self.builder.build_alloca(self.i8ptr_t, &format!("cap_{}", cname)).map_err(|_| Diagnostic::simple("alloca failed"))?;
+                        let _ = self.builder.build_store(alloca, loaded);
+                        // Insert into arrow_locals so later identifier lookups resolve to this alloca
+                        if let Some(scope) = arrow_locals.last_mut() {
+                            scope.insert(cname.clone(), (alloca, self.i8ptr_t.as_basic_type_enum(), true, true, false, None));
+                        }
+                    }
+                }
+
+                // If there are captures, allocate environment in the outer function
+                // and construct a boxed closure object to return here.
+                if !captures.is_empty() {
+                    // Collect current values of captured variables from outer scope
+                    // Store tuples of (value, is_weak) so env allocation can use weak increments
+                    let mut captured_vals: Vec<(inkwell::values::BasicValueEnum, bool)> = Vec::new();
+                    for cname in &captures {
+                        // First check if it's a parameter in the outer function
+                            if let Some(idx) = param_map.get(cname) {
+                            if let Some(pv) = function.get_nth_param(*idx) {
+                                // Determine whether this parameter was declared Weak<T>
+                                let mut is_weak = false;
+                                if let Some(param_types) = self.fn_param_types.borrow().get(function.get_name().to_str().unwrap_or("")) {
+                                    let idx_usize = *idx as usize;
+                                    if idx_usize < param_types.len() {
+                                        if let crate::types::OatsType::Weak(_) = &param_types[idx_usize] {
+                                            is_weak = true;
+                                        }
+                                    }
+                                }
+                                // If parameter is pointer-like, use directly. If numeric, box it.
+                                if pv.get_type().is_pointer_type() {
+                                    captured_vals.push((pv.as_basic_value_enum(), is_weak));
+                                } else if pv.get_type().is_float_type() {
+                                    // box f64
+                                    let box_fn = self.get_union_box_f64();
+                                    let cs = self.builder.build_call(box_fn, &[pv.into()], "union_box_f64_ctor");
+                                    if let Ok(cs) = cs && let inkwell::Either::Left(bv) = cs.try_as_basic_value() {
+                                        let boxed_ptr = bv.into_pointer_value();
+                                        captured_vals.push((boxed_ptr.as_basic_value_enum(), is_weak));
+                                    } else {
+                                        return Err(Diagnostic::simple("failed to box numeric capture"));
+                                    }
+                                } else if pv.get_type().is_int_type() {
+                                    // convert int->f64 then box
+                                    let iv = pv.into_int_value();
+                                    let fconv = self.builder.build_signed_int_to_float(iv, self.f64_t, "i_to_f").map_err(|_| Diagnostic::simple("int->float cast failed"))?;
+                                    let box_fn = self.get_union_box_f64();
+                                    let cs = self.builder.build_call(box_fn, &[fconv.into()], "union_box_f64_ctor");
+                                    if let Ok(cs) = cs && let inkwell::Either::Left(bv) = cs.try_as_basic_value() {
+                                        let boxed_ptr = bv.into_pointer_value();
+                                        captured_vals.push((boxed_ptr.as_basic_value_enum(), is_weak));
+                                    } else {
+                                        return Err(Diagnostic::simple("failed to box numeric capture"));
+                                    }
+                                } else {
+                                    return Err(Diagnostic::simple("unsupported capture type: non-pointer parameter"));
+                                }
+                                continue;
+                            }
+                        }
+
+                        // Otherwise look up local variable
+                            if let Some((alloca_ptr, ty, initialized, _is_const, is_weak_flag, _nominal)) = self.find_local(locals, cname) {
+                            if !initialized {
+                                return Err(Diagnostic::simple("cannot capture uninitialized local"));
+                            }
+                            // load current value
+                            let loaded = match self.builder.build_load(ty, alloca_ptr, &format!("cap_load_{}", cname)) {
+                                Ok(v) => v,
+                                Err(_) => return Err(Diagnostic::simple("failed to load captured local")),
+                            };
+                            // If pointer, use directly. If float/int, box into union object.
+                                match loaded {
+                                BasicValueEnum::PointerValue(_) => captured_vals.push((loaded, is_weak_flag)),
+                                BasicValueEnum::FloatValue(fv) => {
+                                    let box_fn = self.get_union_box_f64();
+                                    let cs = self.builder.build_call(box_fn, &[fv.into()], "union_box_f64_ctor");
+                                    if let Ok(cs) = cs && let inkwell::Either::Left(bv) = cs.try_as_basic_value() {
+                                        let boxed_ptr = bv.into_pointer_value();
+                                        captured_vals.push((boxed_ptr.as_basic_value_enum(), is_weak_flag));
+                                    } else {
+                                        return Err(Diagnostic::simple("failed to box numeric capture"));
+                                    }
+                                }
+                                BasicValueEnum::IntValue(iv) => {
+                                    let fconv = self.builder.build_signed_int_to_float(iv, self.f64_t, "i_to_f").map_err(|_| Diagnostic::simple("int->float cast failed"))?;
+                                    let box_fn = self.get_union_box_f64();
+                                    let cs = self.builder.build_call(box_fn, &[fconv.into()], "union_box_f64_ctor");
+                                    if let Ok(cs) = cs && let inkwell::Either::Left(bv) = cs.try_as_basic_value() {
+                                        let boxed_ptr = bv.into_pointer_value();
+                                        captured_vals.push((boxed_ptr.as_basic_value_enum(), is_weak_flag));
+                                    } else {
+                                        return Err(Diagnostic::simple("failed to box numeric capture"));
+                                    }
+                                }
+                                _ => return Err(Diagnostic::simple("unsupported capture type: non-pointer local")),
+                            }
+                        } else {
+                            return Err(Diagnostic::simple("capture not found in outer scope"));
+                        }
+                    }
+
+                    // Allocate environment object (heap) storing captured pointer fields
+                    // captured_vals is Vec<(BasicValueEnum, bool)> where bool indicates is_weak
+                    let env_ptr = self
+                        .heap_alloc_with_ptr_fields(captured_vals.as_slice())
+                        .map_err(|_| Diagnostic::simple("failed to allocate env object"))?;
+
+                    // Emit field_map global for env and store pointer into env.meta slot
+                    let env_gv_name = format!("{}_env_field_map", arrow_fn_name);
+                    // offsets are header + meta_slot + idx*8
+                    let mut env_offsets: Vec<u64> = Vec::new();
+                    let header_size = 8u64;
+                    let meta_slot = 8u64;
+                    for i in 0..captured_vals.len() {
+                        env_offsets.push(header_size + meta_slot + (i as u64 * 8));
+                    }
+                    let env_gv_i8 = self.emit_field_map_global(&env_gv_name, &env_offsets)
+                        .map_err(|_| Diagnostic::simple("failed to emit env field_map"))?;
+                    // store into env meta slot
+                    let env_ptr_int = self.builder.build_ptr_to_int(env_ptr, self.i64_t, "env_addr_for_meta").map_err(|_| Diagnostic::simple("ptr_to_int failed"))?;
+                    let off_const = self.i64_t.const_int(8, false);
+                    let meta_addr = self.builder.build_int_add(env_ptr_int, off_const, "env_meta_addr").map_err(|_| Diagnostic::simple("int_add failed"))?;
+                    let meta_ptr = self.builder.build_int_to_ptr(meta_addr, self.i8ptr_t, "env_meta_ptr").map_err(|_| Diagnostic::simple("int_to_ptr failed"))?;
+                    let _ = self.builder.build_store(meta_ptr, env_gv_i8.as_basic_value_enum());
+
+                    // Build closure object: store function pointer and env pointer into a 2-field heap object
+                    let fn_ptr_bv = arrow_fn.as_global_value().as_pointer_value().as_basic_value_enum();
+                    let env_bv = env_ptr.as_basic_value_enum();
+                    let closure_obj = self.heap_alloc_with_ptr_fields_simple(&[fn_ptr_bv, env_bv])
+                        .map_err(|_| Diagnostic::simple("failed to allocate closure object"))?;
+
+                    // Emit field_map for closure object (two pointer fields at offsets 16 and 24)
+                    let closure_gv_name = format!("{}_closure_field_map", arrow_fn_name);
+                    let mut closure_offsets: Vec<u64> = Vec::new();
+                    // fields start after header + meta_slot; fn_ptr at idx 0, env_ptr at idx 1
+                    closure_offsets.push(header_size + meta_slot + (0u64 * 8));
+                    closure_offsets.push(header_size + meta_slot + (1u64 * 8));
+                    let closure_gv_i8 = self.emit_field_map_global(&closure_gv_name, &closure_offsets)
+                        .map_err(|_| Diagnostic::simple("failed to emit closure field_map"))?;
+                    // store into closure meta slot
+                    let closure_ptr_int = self.builder.build_ptr_to_int(closure_obj, self.i64_t, "closure_addr_for_meta").map_err(|_| Diagnostic::simple("ptr_to_int failed"))?;
+                    let closure_meta_addr = self.builder.build_int_add(closure_ptr_int, off_const, "closure_meta_addr").map_err(|_| Diagnostic::simple("int_add failed"))?;
+                    let closure_meta_ptr = self.builder.build_int_to_ptr(closure_meta_addr, self.i8ptr_t, "closure_meta_ptr").map_err(|_| Diagnostic::simple("int_to_ptr failed"))?;
+                    let _ = self.builder.build_store(closure_meta_ptr, closure_gv_i8.as_basic_value_enum());
+
+                    // At this point, we'll return the closure object pointer (i8*) from the outer lowering
+                    // after we finish constructing the arrow function. To keep the surrounding code path simple,
+                    // create a pointer value representing the closure object and return it at the end of this arm.
+                    // NOTE: we will still generate the arrow function body below which expects an env param.
+
+                    // Insert a special local mapping in the outer function to indicate the closure value
+                    // will be returned (handled below). We'll store the closure_obj into a temp alloca so
+                    // it can be returned as BasicValueEnum.
+                    let closure_ret = closure_obj.as_basic_value_enum();
+
+                    // Lowering will continue to generate the arrow function body which expects an env param.
+                    // After building the arrow function, we'll return `closure_ret` as the expression result.
+
+                    // Save closure_ret in a temporary variable on the stack of the outer function so the
+                    // code below (after function body generation) can return it. We'll use a simple trick:
+                    // create an alloca, store the pointer, and later load it for the `Ok(...)` return.
+                    let tmp_alloca = self.builder.build_alloca(self.i8ptr_t, "closure_tmp")
+                        .map_err(|_| Diagnostic::simple("alloca failed"))?;
+                    let _ = self.builder.build_store(tmp_alloca, closure_ret);
+                    // remember where to load it later by adding an entry to locals stack
+                    // mark initialized=true so emit_rc_dec_for_locals knows about it
+                    if let Some(scope) = locals.last_mut() {
+                        scope.insert("__closure_tmp".to_string(), (tmp_alloca, self.i8ptr_t.as_basic_type_enum(), true, true, false, None));
+                    }
+                }
 
                 // Lower the body
                 if arrow.body.is_block_stmt() {
@@ -2242,9 +2430,24 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     self.builder.position_at_end(block);
                 }
 
-                // Return the function pointer as a value
-                // For now, we return the function pointer directly
-                // TODO: Create proper closure struct when capturing is supported
+                // If captures were present we previously stored a closure tmp in the outer locals
+                if !captures.is_empty() {
+                    // load tmp and return it
+                    if let Some((tmp_ptr, _ty, init, _is_const, _is_weak, _nominal)) = self.find_local(locals, "__closure_tmp") {
+                        if !init {
+                            return Err(Diagnostic::simple("closure tmp uninitialized"));
+                        }
+                        let loaded = match self.builder.build_load(self.i8ptr_t, tmp_ptr, "closure_load") {
+                            Ok(v) => v,
+                            Err(_) => return Err(Diagnostic::simple("failed to load closure tmp")),
+                        };
+                        return Ok(loaded);
+                    } else {
+                        return Err(Diagnostic::simple("closure tmp missing"));
+                    }
+                }
+
+                // No captures: return the function pointer as a value
                 Ok(arrow_fn
                     .as_global_value()
                     .as_pointer_value()

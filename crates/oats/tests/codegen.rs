@@ -26,3 +26,6 @@ mod loops_and_fields;
 mod promise_type;
 #[path = "codegen/unary_operators.rs"]
 mod unary_operators;
+#[path = "codegen/closure_weak_capture.rs"]
+mod closure_weak_capture;
+

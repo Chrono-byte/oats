@@ -56,7 +56,7 @@ impl<'a> super::CodeGen<'a> {
     // Supports FloatValue and IntValue (including i1/bool).
     pub(crate) fn coerce_to_f64(
         &self,
-        val: BasicValueEnum<'a>,
+        val: inkwell::values::BasicValueEnum<'a>,
     ) -> Option<inkwell::values::FloatValue<'a>> {
         match val {
             BasicValueEnum::FloatValue(fv) => Some(fv),
@@ -67,15 +67,12 @@ impl<'a> super::CodeGen<'a> {
             BasicValueEnum::PointerValue(pv) => {
                 // Attempt to unbox a union number from a boxed union pointer
                 let unbox_fn = self.get_union_unbox_f64();
-                if let Ok(cs) =
-                    self.builder
-                        .build_call(unbox_fn, &[pv.into()], "union_unbox_f64_call")
-                {
+                if let Ok(cs) = self.builder.build_call(unbox_fn, &[pv.into()], "union_unbox_f64_call") {
                     let either = cs.try_as_basic_value();
-                    if let inkwell::Either::Left(bv) = either
-                        && let BasicValueEnum::FloatValue(fv) = bv
-                    {
-                        return Some(fv);
+                    if let inkwell::Either::Left(bv) = either {
+                        if let BasicValueEnum::FloatValue(fv) = bv {
+                            return Some(fv);
+                        }
                     }
                 }
                 None
@@ -349,7 +346,7 @@ impl<'a> super::CodeGen<'a> {
             }
         }
     }
-    pub(crate) fn declare_libc(&self) {
+    pub fn declare_libc(&self) {
         // declare malloc(i64) -> i8*
         if self.module.get_function("malloc").is_none() {
             let i8ptr = self.i8ptr_t;
@@ -511,9 +508,9 @@ impl<'a> super::CodeGen<'a> {
     // All values must be BasicValueEnum with pointer type (i8*). Numeric
     // values should be boxed by the caller (e.g., via union_box_f64).
     // Returns the allocated object base pointer (i8*).
-    pub(crate) fn heap_alloc_with_ptr_fields(
+    pub fn heap_alloc_with_ptr_fields(
         &self,
-        field_ptrs: &[inkwell::values::BasicValueEnum<'a>],
+        field_ptrs: &[(inkwell::values::BasicValueEnum<'a>, bool)],
     ) -> Result<inkwell::values::PointerValue<'a>, crate::diagnostics::Diagnostic> {
         let field_count = field_ptrs.len();
         let header_size = 8u64;
@@ -565,7 +562,7 @@ impl<'a> super::CodeGen<'a> {
             .build_store(meta_ptr, null_ptr.as_basic_value_enum());
 
         // Store each field (as i8* word) at offset header+meta_slot + idx*8
-        for (i, val) in field_ptrs.iter().enumerate() {
+        for (i, (val, is_weak)) in field_ptrs.iter().enumerate() {
             // compute offset
             let field_offset = header_size + meta_slot + (i as u64 * 8);
             let off_const = self.i64_t.const_int(field_offset, false);
@@ -581,15 +578,81 @@ impl<'a> super::CodeGen<'a> {
             // Ensure val is pointer-like; if it's not, cast could fail — caller responsibility
             let _ = self.builder.build_store(field_ptr_cast, *val);
 
-            // If value is pointer, increment RC to claim ownership in env
+            // If value is pointer, increment RC to claim ownership in env. Use weak inc when requested.
             if val.get_type().is_pointer_type()
                 && let inkwell::values::BasicValueEnum::PointerValue(pv) = *val
             {
-                let rc_inc = self.get_rc_inc();
-                let _ = self.builder.build_call(rc_inc, &[pv.into()], "rc_inc_env");
+                if *is_weak {
+                    let rc_weak_inc = self.get_rc_weak_inc();
+                    let _ = self
+                        .builder
+                        .build_call(rc_weak_inc, &[pv.into()], "rc_weak_inc_env");
+                } else {
+                    let rc_inc = self.get_rc_inc();
+                    let _ = self.builder.build_call(rc_inc, &[pv.into()], "rc_inc_env");
+                }
             }
         }
 
         Ok(obj_ptr)
+    }
+
+    // Emit a packed field_map global named `gv_name` containing meta0 and i32 offsets.
+    // Returns an i8* pointer value to the global (suitable for storing into meta slot).
+    pub(crate) fn emit_field_map_global(
+        &self,
+        gv_name: &str,
+        offsets: &[u64],
+    ) -> Result<inkwell::values::PointerValue<'a>, crate::diagnostics::Diagnostic> {
+        // If global already exists, cast and return pointer
+        if let Some(g) = self.module.get_global(gv_name) {
+            let gv_ptr = g.as_pointer_value();
+            let gv_i8 = self
+                .builder
+                .build_pointer_cast(gv_ptr, self.i8ptr_t, "field_map_i8ptr")
+                .map_err(|_| crate::diagnostics::Diagnostic::simple("pointer cast failed"))?;
+            return Ok(gv_i8);
+        }
+
+        let len = offsets.len();
+        let arr_i32_ty = self.context.i32_type().array_type(len as u32);
+        let struct_ty = self.context.struct_type(&[self.i64_t.into(), arr_i32_ty.into()], false);
+
+        let magic_u64 = 0x4F415453u64; // 'OATS'
+        let meta0_val = (magic_u64 << 32) | (len as u64 & 0xffffffffu64);
+        let meta0_const = self.i64_t.const_int(meta0_val, false);
+
+        let mut int32_vals: Vec<inkwell::values::IntValue<'a>> = Vec::new();
+        for &off in offsets {
+            let v = off & 0xffffffffu64;
+            int32_vals.push(self.i32_t.const_int(v, false));
+        }
+        let array_const = self.i32_t.const_array(&int32_vals);
+        let initializer = self.context.const_struct(&[meta0_const.into(), array_const.into()], false);
+
+        let gv = self.module.add_global(struct_ty, None, gv_name);
+        gv.set_initializer(&initializer);
+        gv.set_constant(true);
+
+        let gv_ptr = gv.as_pointer_value();
+        let gv_i8 = self
+            .builder
+            .build_pointer_cast(gv_ptr, self.i8ptr_t, "field_map_i8ptr")
+            .map_err(|_| crate::diagnostics::Diagnostic::simple("pointer cast failed"))?;
+        Ok(gv_i8)
+    }
+
+    // Compatibility wrapper: accept a simple slice of BasicValueEnum and treat all
+    // fields as strong (is_weak = false). This avoids changing many call sites
+    // at once when migrating to the per-field weak flag API.
+    pub fn heap_alloc_with_ptr_fields_simple(
+        &self,
+        field_ptrs: &[inkwell::values::BasicValueEnum<'a>],
+    ) -> Result<inkwell::values::PointerValue<'a>, crate::diagnostics::Diagnostic> {
+        let mut vec: Vec<(inkwell::values::BasicValueEnum<'a>, bool)> = Vec::new();
+        for v in field_ptrs.iter() {
+            vec.push((*v, false));
+        }
+        self.heap_alloc_with_ptr_fields(vec.as_slice())
     }
 }

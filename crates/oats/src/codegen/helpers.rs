@@ -67,11 +67,10 @@ impl<'a> super::CodeGen<'a> {
                 let unbox_fn = self.get_union_unbox_f64();
                 if let Ok(cs) = self.builder.build_call(unbox_fn, &[pv.into()], "union_unbox_f64_call") {
                     let either = cs.try_as_basic_value();
-                    if let inkwell::Either::Left(bv) = either {
-                        if let BasicValueEnum::FloatValue(fv) = bv {
+                    if let inkwell::Either::Left(bv) = either
+                        && let BasicValueEnum::FloatValue(fv) = bv {
                             return Some(fv);
                         }
-                    }
                 }
                 None
             }

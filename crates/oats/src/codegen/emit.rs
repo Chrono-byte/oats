@@ -393,7 +393,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             // Create global struct constant containing length + offsets if there are any pointer fields
             if !ptr_field_offsets.is_empty() {
                 let len = ptr_field_offsets.len();
-                let arr_ty = self.i64_t.array_type(len as u32);
+                let _arr_ty = self.i64_t.array_type(len as u32);
                 // Convert BasicValueEnum::IntValue items into IntValue vector
                 let int_vals: Vec<inkwell::values::IntValue> = ptr_field_offsets
                     .into_iter()
@@ -416,7 +416,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     .into_iter()
                     .map(|iv| {
                         // Try to extract a constant; fall back to zero if not available.
-                        let v = iv.get_zero_extended_constant().unwrap_or(0) as u64;
+                        let v = iv.get_zero_extended_constant().unwrap_or(0);
                         self.i32_t.const_int(v & 0xffffffffu64, false)
                     })
                     .collect();

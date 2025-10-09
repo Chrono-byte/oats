@@ -142,13 +142,11 @@ pub fn map_ts_type(ty: &ast::TsType) -> Option<OatsType> {
                         }
                         other = Some(t);
                     }
-                    if seen_null {
-                        if let Some(o) = other {
-                            if let Some(mapped) = map_ts_type(o) {
+                    if seen_null
+                        && let Some(o) = other
+                            && let Some(mapped) = map_ts_type(o) {
                                 return Some(OatsType::Option(Box::new(mapped)));
                             }
-                        }
-                    }
 
                 }
 

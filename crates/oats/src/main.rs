@@ -44,8 +44,8 @@ fn main() -> Result<()> {
         // enqueue discovered relative imports found in this module
         // look for Import declarations and resolve relative specifiers
         for item_ref in parsed.parsed.program_ref().body() {
-            if let deno_ast::ModuleItemRef::ModuleDecl(module_decl) = item_ref {
-                if let deno_ast::swc::ast::ModuleDecl::Import(import_decl) = module_decl {
+            if let deno_ast::ModuleItemRef::ModuleDecl(module_decl) = item_ref
+                && let deno_ast::swc::ast::ModuleDecl::Import(import_decl) = module_decl {
                     let src_val = import_decl.src.value.to_string();
                     // Only handle relative paths for now
                     if src_val.starts_with("./") || src_val.starts_with("../") {
@@ -58,24 +58,21 @@ fn main() -> Result<()> {
                         let exts = [".ts", ".oats", ""]; // prefer .ts then .oats then raw
                         for ext in &exts {
                             let mut c = candidate.clone();
-                            if !c.extension().is_some() && !ext.is_empty() {
+                            if c.extension().is_none() && !ext.is_empty() {
                                 c.set_extension(ext.trim_start_matches('.'));
                             }
-                            if c.exists() {
-                                if let Ok(cabs) = std::fs::canonicalize(&c) {
+                            if c.exists()
+                                && let Ok(cabs) = std::fs::canonicalize(&c) {
                                     found = Some(cabs.to_string_lossy().to_string());
                                     break;
                                 }
-                            }
                         }
-                        if let Some(fpath) = found {
-                            if !modules.contains_key(&fpath) {
+                        if let Some(fpath) = found
+                            && !modules.contains_key(&fpath) {
                                 queue.push_back(fpath);
                             }
-                        }
                     }
                 }
-            }
         }
         modules.insert(path.clone(), parsed);
     }
@@ -107,8 +104,8 @@ fn main() -> Result<()> {
             std::collections::HashMap::new();
         let pm = &parsed_module.parsed;
         for item_ref in pm.program_ref().body() {
-            if let deno_ast::ModuleItemRef::ModuleDecl(module_decl) = item_ref {
-                if let deno_ast::swc::ast::ModuleDecl::ExportDecl(decl) = module_decl {
+            if let deno_ast::ModuleItemRef::ModuleDecl(module_decl) = item_ref
+                && let deno_ast::swc::ast::ModuleDecl::ExportDecl(decl) = module_decl {
                     // Handle exported declarations
                     match &decl.decl {
                         deno_ast::swc::ast::Decl::Class(c) => {
@@ -135,7 +132,6 @@ fn main() -> Result<()> {
                         _ => {}
                     }
                 }
-            }
         }
         if !emap.is_empty() {
             exports_map.insert(mkey.clone(), emap);
@@ -147,8 +143,8 @@ fn main() -> Result<()> {
     for (mkey, parsed_module) in modules.iter() {
         let pm = &parsed_module.parsed;
         for item_ref in pm.program_ref().body() {
-            if let deno_ast::ModuleItemRef::ModuleDecl(module_decl) = item_ref {
-                if let deno_ast::swc::ast::ModuleDecl::Import(import_decl) = module_decl {
+            if let deno_ast::ModuleItemRef::ModuleDecl(module_decl) = item_ref
+                && let deno_ast::swc::ast::ModuleDecl::Import(import_decl) = module_decl {
                     // Resolve import source to a canonicalized path (if relative)
                     let src_val = import_decl.src.value.to_string();
                     let mut resolved_mod: Option<String> = None;
@@ -160,15 +156,14 @@ fn main() -> Result<()> {
                         let exts = [".ts", ".oats", ""]; // same resolution order as loader
                         for ext in &exts {
                             let mut c = candidate.clone();
-                            if !c.extension().is_some() && !ext.is_empty() {
+                            if c.extension().is_none() && !ext.is_empty() {
                                 c.set_extension(ext.trim_start_matches('.'));
                             }
-                            if c.exists() {
-                                if let Ok(cabs) = std::fs::canonicalize(&c) {
+                            if c.exists()
+                                && let Ok(cabs) = std::fs::canonicalize(&c) {
                                     resolved_mod = Some(cabs.to_string_lossy().to_string());
                                     break;
                                 }
-                            }
                         }
                     }
 
@@ -191,28 +186,24 @@ fn main() -> Result<()> {
                                     local.clone()
                                 };
                                 // Try to lookup in resolved_mod's exports
-                                if let Some(rm) = &resolved_mod {
-                                    if let Some(em) = exports_map.get(rm) {
-                                        if let Some(exported_ty) = em.get(&imported_name) {
+                                if let Some(rm) = &resolved_mod
+                                    && let Some(em) = exports_map.get(rm)
+                                        && let Some(exported_ty) = em.get(&imported_name) {
                                             pre_symbols.insert(local.clone(), exported_ty.clone());
                                             continue;
                                         }
-                                    }
-                                }
                                 // Fallback: placeholder nominal type
                                 pre_symbols.insert(local.clone(), OatsType::NominalStruct(local));
                             }
                             deno_ast::swc::ast::ImportSpecifier::Default(d) => {
                                 let local = d.local.sym.to_string();
                                 // Default import: try to map to an `default` export if present
-                                if let Some(rm) = &resolved_mod {
-                                    if let Some(em) = exports_map.get(rm) {
-                                        if let Some(exported_ty) = em.get("default") {
+                                if let Some(rm) = &resolved_mod
+                                    && let Some(em) = exports_map.get(rm)
+                                        && let Some(exported_ty) = em.get("default") {
                                             pre_symbols.insert(local.clone(), exported_ty.clone());
                                             continue;
                                         }
-                                    }
-                                }
                                 pre_symbols.insert(local.clone(), OatsType::NominalStruct(local));
                             }
                             deno_ast::swc::ast::ImportSpecifier::Namespace(ns) => {
@@ -222,7 +213,6 @@ fn main() -> Result<()> {
                         }
                     }
                 }
-            }
             // Also capture top-level exported TS constructs that appear as statements
             if let deno_ast::ModuleItemRef::Stmt(stmt) = item_ref {
                 if let deno_ast::swc::ast::Stmt::Decl(deno_ast::swc::ast::Decl::TsInterface(

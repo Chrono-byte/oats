@@ -17,7 +17,15 @@ pub mod stmt;
 // helper modules. Use the same alias here so different files agree on the
 // in-memory representation of the locals stack.
 // LocalEntry now includes an `is_weak` bool as the fifth element.
-type LocalEntry<'a> = (PointerValue<'a>, BasicTypeEnum<'a>, bool, bool, bool);
+// LocalEntry now carries an optional nominal type name as the sixth element
+type LocalEntry<'a> = (
+    PointerValue<'a>,
+    BasicTypeEnum<'a>,
+    bool,
+    bool,
+    bool,
+    Option<String>,
+);
 type LocalsStackLocal<'a> = Vec<std::collections::HashMap<String, LocalEntry<'a>>>;
 
 // Loop context for tracking break/continue targets
@@ -267,6 +275,7 @@ impl<'a> CodeGen<'a> {
             })
     }
 
+    
     fn get_array_push_ptr_weak(&self) -> FunctionValue<'a> {
         self.module
             .get_function("array_push_ptr_weak")
@@ -301,6 +310,7 @@ impl<'a> CodeGen<'a> {
             })
     }
 
+    
     fn get_array_set_ptr_weak(&self) -> FunctionValue<'a> {
         self.module
             .get_function("array_set_ptr_weak")

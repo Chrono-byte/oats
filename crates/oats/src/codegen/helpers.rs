@@ -10,6 +10,7 @@ type LocalEntry<'a> = (
     bool,
     bool,
     bool, // is_weak
+    Option<String>,
 );
 type LocalsStackLocal<'a> = Vec<HashMap<String, LocalEntry<'a>>>;
 
@@ -303,8 +304,8 @@ impl<'a> super::CodeGen<'a> {
         name: &str,
     ) -> Option<LocalEntry<'a>> {
         for scope in locals.iter().rev() {
-            if let Some((ptr, ty, init, is_const, is_weak)) = scope.get(name) {
-                return Some((*ptr, *ty, *init, *is_const, *is_weak));
+            if let Some((ptr, ty, init, is_const, is_weak, nominal)) = scope.get(name) {
+                return Some((*ptr, *ty, *init, *is_const, *is_weak, nominal.clone()));
             }
         }
         None
@@ -319,17 +320,18 @@ impl<'a> super::CodeGen<'a> {
         initialized: bool,
         is_const: bool,
         is_weak: bool,
+        nominal: Option<String>,
     ) {
         if locals.is_empty() {
             locals.push(HashMap::new());
         }
         // Safe: we just ensured locals is not empty above
         if let Some(scope) = locals.last_mut() {
-            scope.insert(name, (ptr, ty, initialized, is_const, is_weak));
+            scope.insert(name, (ptr, ty, initialized, is_const, is_weak, nominal));
         }
     }
 
-    #[allow(dead_code)]
+    
     pub(crate) fn set_local_initialized(
         &self,
         locals: &mut LocalsStackLocal<'a>,
@@ -417,7 +419,7 @@ impl<'a> super::CodeGen<'a> {
         let rc_dec = self.get_rc_dec();
         let rc_weak_dec = self.get_rc_weak_dec();
         for scope in locals.iter().rev() {
-            for (_name, (ptr, ty, init, _is_const, is_weak)) in scope.iter() {
+            for (_name, (ptr, ty, init, _is_const, is_weak, _nominal)) in scope.iter() {
                 if *init && let inkwell::types::BasicTypeEnum::PointerType(_) = ty {
                     // load current pointer value
                     if let Ok(loaded) = self.builder.build_load(*ty, *ptr, "drop_load")
@@ -453,7 +455,7 @@ impl<'a> super::CodeGen<'a> {
         // iterate from innermost scope down to start_index
         let rc_weak_dec = self.get_rc_weak_dec();
         for scope in locals.iter().rev().take(locals.len() - start_index) {
-            for (_name, (ptr, ty, init, _is_const, is_weak)) in scope.iter() {
+            for (_name, (ptr, ty, init, _is_const, is_weak, _nominal)) in scope.iter() {
                 if *init
                     && let inkwell::types::BasicTypeEnum::PointerType(_) = ty
                     && let Ok(loaded) = self.builder.build_load(*ty, *ptr, "drop_load")

@@ -9,7 +9,7 @@ use inkwell::context::Context;
 use inkwell::targets::TargetMachine;
 
 #[cfg(test)]
-#[allow(dead_code)]
+
 pub fn gen_ir_for_source(src: &str) -> Result<String> {
     let parsed_mod = parser::parse_oats_module(src, None)?;
     let parsed = &parsed_mod.parsed;

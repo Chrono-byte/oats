@@ -11,6 +11,7 @@ type LocalEntry<'a> = (
     bool,
     bool,
     bool,
+    Option<String>,
 );
 type LocalsStackLocal<'a> = Vec<HashMap<String, LocalEntry<'a>>>;
 
@@ -53,9 +54,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             // Determine if the identifier has an explicit type annotation
                             // (do this regardless of whether there's an initializer so we
                             // know whether the local should be treated as Weak<T> even
-                            // for uninitialized locals)
+                            // for uninitialized locals). Also capture a nominal struct
+                            // name if the annotation maps to a NominalStruct so member
+                            // lowering can use it.
                             let mut declared_union: Option<crate::types::OatsType> = None;
                             let mut declared_is_weak = false;
+                            let mut declared_nominal: Option<String> = None;
                             if let Some(type_ann) = &ident.type_ann {
                                 if let Some(mapped) = crate::types::map_ts_type(&type_ann.type_ann)
                                 {
@@ -64,6 +68,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     }
                                     if let crate::types::OatsType::Weak(_) = &mapped {
                                         declared_is_weak = true;
+                                    }
+                                    if let crate::types::OatsType::NominalStruct(n) = &mapped {
+                                        declared_nominal = Some(n.clone());
                                     }
                                 }
                             }
@@ -150,6 +157,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             true,
                                             false,
                                             declared_is_weak,
+                                            declared_nominal.clone(),
                                         );
                                     }
                             } else {
@@ -175,6 +183,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     false,
                                     false,
                                     declared_is_weak,
+                                    declared_nominal.clone(),
                                 );
                             }
                         }
@@ -191,9 +200,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 match self.lower_expr(&expr_stmt.expr, _function, _param_map, _locals_stack) {
                     Ok(_val) => { /* success, continue */ }
                     Err(d) => {
-                        crate::diagnostics::emit_diagnostic(&d, Some(self.source));
-                        // don't propagate error further; continue lowering
-                    }
+                            crate::diagnostics::emit_diagnostic(&d, Some(self.source));
+                            // don't propagate error further; continue lowering
+                        }
                 }
                 Ok(false)
             }
@@ -339,6 +348,15 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     let decl = &var_decl.decls[0];
                     if let deno_ast::swc::ast::Pat::Ident(ident) = &decl.name {
                         let loop_var_name = ident.id.sym.to_string();
+                        // capture nominal type for the loop variable if annotated
+                        let mut declared_nominal: Option<String> = None;
+                        if let Some(type_ann) = &ident.type_ann {
+                            if let Some(mapped) = crate::types::map_ts_type(&type_ann.type_ann) {
+                                if let crate::types::OatsType::NominalStruct(n) = &mapped {
+                                    declared_nominal = Some(n.clone());
+                                }
+                            }
+                        }
                         // Lower RHS (iterable)
                         if let Ok(iter_val) =
                             self.lower_expr(&forof.right, _function, _param_map, _locals_stack)
@@ -475,6 +493,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         true,
                                         false,
                                         false,
+                                        declared_nominal.clone(),
                                     );
                                 }
                             } else if let Some(array_get_ptr_fn) =
@@ -519,6 +538,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         true,
                                         false,
                                         false,
+                                        declared_nominal.clone(),
                                     );
                                 }
                             }

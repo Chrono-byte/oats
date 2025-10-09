@@ -125,6 +125,33 @@ pub fn map_ts_type(ty: &ast::TsType) -> Option<OatsType> {
             // SWC wraps unions and intersections in TsUnionOrIntersectionType;
             // try to extract union types specifically.
             if let ast::TsUnionOrIntersectionType::TsUnionType(un) = ut {
+                // Special-case common pattern: `T | null` -> Option<T>
+                if un.types.len() == 2 {
+                    // Try to detect `null` in one of the union arms and map the other
+                    // arm to an OatsType; if successful, return Option<that_type>.
+                    let mut seen_null = false;
+                    let mut other: Option<&ast::TsType> = None;
+                    for tbox in &un.types {
+                        let t = &**tbox;
+                        if let ast::TsType::TsKeywordType(k) = t {
+                            use deno_ast::swc::ast::TsKeywordTypeKind;
+                            if matches!(k.kind, TsKeywordTypeKind::TsNullKeyword) {
+                                seen_null = true;
+                                continue;
+                            }
+                        }
+                        other = Some(t);
+                    }
+                    if seen_null {
+                        if let Some(o) = other {
+                            if let Some(mapped) = map_ts_type(o) {
+                                return Some(OatsType::Option(Box::new(mapped)));
+                            }
+                        }
+                    }
+
+                }
+
                 let mut parts = Vec::new();
                 for t in &un.types {
                     if let Some(mapped) = map_ts_type(t) {

@@ -1,8 +1,5 @@
 Technical Design: Cycle-Collecting Reference Counting for Oats
 
-Author: Gemini
-Status: Proposed
-Date: October 7, 2025
 1. Executive Summary
 
 The current Automatic Reference Counting (ARC) system in Oats provides fast, deterministic memory management but has a critical weakness: it cannot reclaim memory consumed by reference cycles. This document proposes a hybrid memory management system to solve this problem, making Oats's memory management as robust as a traditional garbage collector while retaining the performance benefits of deterministic cleanup.
@@ -14,6 +11,14 @@ The proposed solution has two components:
     Automatic Cycle Collector: A runtime component that periodically detects and reclaims cyclical garbage that was not manually broken.
 
 This hybrid approach provides a "best of both worlds" model: most objects are freed instantly, performance is predictable, and memory leaks from cycles are eliminated.
+
+**Important implementation note:** The cycle collector depends on the compiler emitting
+correct per-class `field_map` metadata and storing the pointer into the object's
+meta slot at byte offset +8. A recent codegen fix standardized byte-offset
+pointer arithmetic (ptr->int + add(i64) + int->ptr) across constructors and
+field load/store code paths to guarantee that metadata is not corrupted by
+field stores. When extending codegen to emit new offset calculations, follow
+that pattern so the collector can safely traverse object fields.
 2. Background and Motivation
 
 Oats currently uses ARC, where the compiler injects rc_inc and rc_dec calls into the generated code [cite: chrono-byte/oats/Chrono-byte-oats-1d369636b8fe52f2d5246b067be5bf8651ddfc75/docs/ARCHITECTURE.md]. When an object's reference count (RC) drops to zero, its memory is immediately freed [cite: chrono-byte/oats/Chrono-byte-oats-1d369636b8fe52f2d5246b067be5bf8651ddfc75/crates/runtime/src/lib.rs].

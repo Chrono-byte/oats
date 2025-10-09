@@ -19,6 +19,18 @@ What we completed
   - Unit tests for runtime and codegen passed
   - Integration test `regress_cycle_reclaim` (AOT compile + run) passed
 
+Notes on recent fixes
+
+- A pointer-arithmetic mismatch was fixed by standardizing offset computation
+  to use ptr->int + add(i64) + int->ptr which prevents field stores from
+  overwriting the meta slot at offset +8. When adding new lowering code that
+  computes byte offsets, use the same approach.
+
+- Closure lowering prototype now records a best-effort mapping of closure-local
+  return types into `CodeGen.closure_local_rettype` so the compiler can emit a
+  compact closure layout where safe. See `crates/oats/src/codegen/expr.rs` and
+  `helpers.rs` for the implementation pattern.
+
 Quick verification commands
 
 Run all tests:

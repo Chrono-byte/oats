@@ -69,6 +69,15 @@ pub struct CodeGen<'a> {
     pub class_fields: RefCell<HashMap<String, Vec<(String, crate::types::OatsType)>>>,
     pub fn_param_types: RefCell<HashMap<String, Vec<crate::types::OatsType>>>,
     pub loop_context_stack: RefCell<Vec<LoopContext<'a>>>,
+    // Map local names (alloca/local identifiers) that currently hold a
+    // freshly-created closure object to the closure's return type. This lets
+    // call-lowering emit statically-typed indirect calls when the callee is a
+    // local variable referencing a known closure.
+    pub closure_local_rettype: RefCell<HashMap<String, crate::types::OatsType>>,
+    // Helper to record the origin local name for the last-lowered expression
+    // when that expression was a simple load from a local. Used to propagate
+    // closure-local typing across assignments.
+    pub last_expr_origin_local: RefCell<Option<String>>,
     pub source: &'a str,
 }
 

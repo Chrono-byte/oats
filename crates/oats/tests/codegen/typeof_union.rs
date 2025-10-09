@@ -36,7 +36,8 @@ export function main(x: number | string): string {
         }
     }
 
-    let (func_name, func_decl) = func_decl_opt.ok_or_else(|| anyhow::anyhow!("No exported function found"))?;
+    let (func_name, func_decl) =
+        func_decl_opt.ok_or_else(|| anyhow::anyhow!("No exported function found"))?;
 
     let mut symbols = SymbolTable::new();
     let func_sig = check_function_strictness(&func_decl, &mut symbols)?;
@@ -72,11 +73,13 @@ export function main(x: number | string): string {
         fn_union_box_ptr: std::cell::RefCell::new(None),
         fn_union_unbox_f64: std::cell::RefCell::new(None),
         fn_union_unbox_ptr: std::cell::RefCell::new(None),
-    fn_rc_weak_inc: std::cell::RefCell::new(None),
-    fn_rc_weak_dec: std::cell::RefCell::new(None),
-    fn_rc_weak_upgrade: std::cell::RefCell::new(None),
-    fn_union_get_discriminant: std::cell::RefCell::new(None),
+        fn_rc_weak_inc: std::cell::RefCell::new(None),
+        fn_rc_weak_dec: std::cell::RefCell::new(None),
+        fn_rc_weak_upgrade: std::cell::RefCell::new(None),
+        fn_union_get_discriminant: std::cell::RefCell::new(None),
         class_fields: std::cell::RefCell::new(std::collections::HashMap::new()),
+        closure_local_rettype: std::cell::RefCell::new(std::collections::HashMap::new()),
+        last_expr_origin_local: std::cell::RefCell::new(None),
         fn_param_types: std::cell::RefCell::new(std::collections::HashMap::new()),
         source: &parsed_mod.source,
         loop_context_stack: std::cell::RefCell::new(Vec::new()),
@@ -95,10 +98,16 @@ export function main(x: number | string): string {
     let ir = codegen.module.print_to_string().to_string();
 
     // Expect the discriminant helper to be referenced in the IR
-    assert!(ir.contains("union_get_discriminant") || ir.contains("union_get_disc"), "IR should call the union discriminant helper");
+    assert!(
+        ir.contains("union_get_discriminant") || ir.contains("union_get_disc"),
+        "IR should call the union discriminant helper"
+    );
 
     // Expect interned string literal globals for "number" and "string"
-    assert!(ir.contains("strlit") , "IR should contain string literal globals (interned strings)");
+    assert!(
+        ir.contains("strlit"),
+        "IR should contain string literal globals (interned strings)"
+    );
 
     Ok(())
 }

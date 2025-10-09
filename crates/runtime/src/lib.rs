@@ -78,6 +78,23 @@ static COLLECTOR: OnceLock<Arc<Collector>> = OnceLock::new();
 // OATS_COLLECTOR_LOG=1 before running the generated binary.
 static COLLECTOR_LOG: AtomicBool = AtomicBool::new(false);
 
+// Global runtime logging flag for ad-hoc diagnostics. Disabled by default.
+// Set OATS_RUNTIME_LOG=1 in the environment to enable.
+static RUNTIME_LOG: AtomicBool = AtomicBool::new(false);
+
+fn init_runtime_log() {
+    // Fast-path: if already enabled, do nothing
+    if RUNTIME_LOG.load(Ordering::Relaxed) {
+        return;
+    }
+    if std::env::var("OATS_RUNTIME_LOG")
+        .map(|v| !v.is_empty() && v != "0")
+        .unwrap_or(false)
+    {
+        RUNTIME_LOG.store(true, Ordering::Relaxed);
+    }
+}
+
 fn init_collector() -> Arc<Collector> {
     COLLECTOR
         .get_or_init(|| {
@@ -514,6 +531,8 @@ fn add_root_candidate(p: *mut c_void) {
 }
 
 // Test helper: allocate a tiny control block and enqueue it for collector inspection.
+// This helper is only included when the `collector-test` Cargo feature is enabled.
+#[cfg(feature = "collector-test")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn collector_test_enqueue() {
     // Allocate minimal heap block: header + one u64 word
@@ -533,6 +552,9 @@ pub unsafe extern "C" fn collector_test_enqueue() {
 
     add_root_candidate(mem as *mut c_void);
 }
+
+// When the feature is disabled, provide no symbol. This keeps release builds
+// free of test-only helpers.
 
 // Allocate a heap string with RC header (refcount initialized to 1).
 // Layout: [u64 header][u64 length][char data + null terminator]
@@ -1260,22 +1282,27 @@ pub unsafe extern "C" fn rc_dec(p: *mut c_void) {
         return;
     }
     unsafe {
-        // Diagnostic: print pointer being decremented to help debug crashes.
-        // Use libc::printf as it avoids higher-level allocation that could
-        // interfere with runtime state during a bug investigation.
-        let _ = libc::printf(
-            b"[oats runtime] rc_dec called p=%p\n\0".as_ptr() as *const c_char,
-            p,
-        );
+        // Initialize runtime logging flag lazily and print diagnostic only
+        // when OATS_RUNTIME_LOG=1 is set in the environment.
+        init_runtime_log();
+        if RUNTIME_LOG.load(Ordering::Relaxed) {
+            let _ = libc::printf(
+                b"[oats runtime] rc_dec called p=%p\n\0".as_ptr() as *const c_char,
+                p,
+            );
+        }
         // Quick plausibility check to avoid dereferencing obviously invalid
         // pointers (small integers or near-null values). This prevents the
         // collector or codegen bug from crashing the process while we debug.
         let p_addr = p as usize;
         if !is_plausible_addr(p_addr) {
-            let _ = libc::printf(
-                b"[oats runtime] rc_dec: implausible p=%p, ignoring\n\0".as_ptr() as *const c_char,
-                p,
-            );
+            if RUNTIME_LOG.load(Ordering::Relaxed) {
+                let _ = libc::printf(
+                    b"[oats runtime] rc_dec: implausible p=%p, ignoring\n\0".as_ptr()
+                        as *const c_char,
+                    p,
+                );
+            }
             return;
         }
         // Get the actual object pointer

@@ -19,3 +19,4 @@ libc = "0.2"
 # link time. When disabled (default) the binary uses dlsym and does not
 # require the symbol at link time.
 link_entry = []
+collector-test = []

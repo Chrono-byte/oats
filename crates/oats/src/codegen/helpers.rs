@@ -568,12 +568,11 @@ impl<'a> super::CodeGen<'a> {
             let _ = self.builder.build_store(field_ptr_cast, *val);
 
             // If value is pointer, increment RC to claim ownership in env
-            if val.get_type().is_pointer_type() {
-                if let inkwell::values::BasicValueEnum::PointerValue(pv) = *val {
+            if val.get_type().is_pointer_type()
+                && let inkwell::values::BasicValueEnum::PointerValue(pv) = *val {
                     let rc_inc = self.get_rc_inc();
                     let _ = self.builder.build_call(rc_inc, &[pv.into()], "rc_inc_env");
                 }
-            }
         }
 
         Ok(obj_ptr)

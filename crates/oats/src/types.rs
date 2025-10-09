@@ -173,8 +173,8 @@ pub fn map_ts_type(ty: &ast::TsType) -> Option<OatsType> {
             use deno_ast::swc::ast;
             let mut fields: Vec<(String, OatsType)> = Vec::new();
             for member in &typelit.members {
-                if let ast::TsTypeElement::TsPropertySignature(prop) = member {
-                    if let ast::Expr::Ident(id) = &*prop.key {
+                if let ast::TsTypeElement::TsPropertySignature(prop) = member
+                    && let ast::Expr::Ident(id) = &*prop.key {
                         let fname = id.sym.to_string();
                         if let Some(type_ann) = &prop.type_ann
                             && let Some(mapped) = map_ts_type(&type_ann.type_ann)
@@ -185,7 +185,6 @@ pub fn map_ts_type(ty: &ast::TsType) -> Option<OatsType> {
                         // default when type can't be mapped
                         fields.push((fname, OatsType::Number));
                     }
-                }
             }
             Some(OatsType::StructLiteral(fields))
         }

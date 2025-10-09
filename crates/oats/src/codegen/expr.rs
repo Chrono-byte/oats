@@ -1847,7 +1847,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         ast::Expr::Call(c) => {
                             use deno_ast::swc::ast::Callee;
                             match &c.callee {
-                                Callee::Expr(e) => collect_idents_in_expr(&*e, out),
+                                Callee::Expr(e) => collect_idents_in_expr(e, out),
                                 Callee::Super(_) => {}
                                 Callee::Import(_) => {}
                             }
@@ -1875,18 +1875,15 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         }
                         ast::Expr::Object(o) => {
                             for prop in &o.props {
-                                if let deno_ast::swc::ast::PropOrSpread::Prop(p) = prop {
-                                    if let deno_ast::swc::ast::Prop::KeyValue(kv) = &**p {
+                                if let deno_ast::swc::ast::PropOrSpread::Prop(p) = prop
+                                    && let deno_ast::swc::ast::Prop::KeyValue(kv) = &**p {
                                         collect_idents_in_expr(&kv.value, out);
                                     }
-                                }
                             }
                         }
                         ast::Expr::Array(a) => {
-                            for e in &a.elems {
-                                if let Some(elem) = e {
-                                    collect_idents_in_expr(&elem.expr, out);
-                                }
+                            for elem in a.elems.iter().flatten() {
+                                collect_idents_in_expr(&elem.expr, out);
                             }
                         }
                         ast::Expr::Assign(asg) => {

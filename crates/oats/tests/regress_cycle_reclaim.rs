@@ -29,12 +29,17 @@ fn aot_cycle_reclaim_runs_and_exits() {
 
     // Path to the built aot_run binary
     let aot_run_bin = repo_root.join("target/debug/aot_run");
-    assert!(aot_run_bin.exists(), "aot_run binary not found at {:?}", aot_run_bin);
+    assert!(
+        aot_run_bin.exists(),
+        "aot_run binary not found at {:?}",
+        aot_run_bin
+    );
 
     // Run aot_run to compile the example into the out_dir
     let example = repo_root.join("examples/cycle_reclaim.oats");
     let mut aot_cmd = Command::new(aot_run_bin);
-    aot_cmd.current_dir(&repo_root)
+    aot_cmd
+        .current_dir(&repo_root)
         .arg(example)
         .env("OATS_OUT_DIR", &out_dir);
 
@@ -43,7 +48,11 @@ fn aot_cycle_reclaim_runs_and_exits() {
 
     // Run the produced binary
     let produced = out_dir.join("cycle_reclaim");
-    assert!(produced.exists(), "produced binary not found: {:?}", produced);
+    assert!(
+        produced.exists(),
+        "produced binary not found: {:?}",
+        produced
+    );
 
     let mut child = Command::new(&produced)
         .current_dir(&repo_root)

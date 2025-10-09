@@ -52,17 +52,23 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         let get_disc = self.get_union_get_discriminant();
                         let cs = self.builder.build_call(get_disc, &[pv.into()], "get_disc");
                         if let Ok(cs) = cs
-                            && let inkwell::Either::Left(bv) = cs.try_as_basic_value() {
-                                let disc = bv.into_int_value();
-                                let expected = match s.value.as_ref() {
-                                    "number" => self.i64_t.const_int(0, false),
-                                    "string" => self.i64_t.const_int(1, false),
-                                    _ => self.i64_t.const_int(2, false),
-                                };
-                                if let Ok(cmp_iv) = self.builder.build_int_compare(inkwell::IntPredicate::EQ, disc, expected, "typeof_eq") {
-                                    return Ok(cmp_iv.as_basic_value_enum());
-                                }
+                            && let inkwell::Either::Left(bv) = cs.try_as_basic_value()
+                        {
+                            let disc = bv.into_int_value();
+                            let expected = match s.value.as_ref() {
+                                "number" => self.i64_t.const_int(0, false),
+                                "string" => self.i64_t.const_int(1, false),
+                                _ => self.i64_t.const_int(2, false),
+                            };
+                            if let Ok(cmp_iv) = self.builder.build_int_compare(
+                                inkwell::IntPredicate::EQ,
+                                disc,
+                                expected,
+                                "typeof_eq",
+                            ) {
+                                return Ok(cmp_iv.as_basic_value_enum());
                             }
+                        }
                     }
                     // fallback to general lowering below
                 }
@@ -237,7 +243,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 let either = call_site.try_as_basic_value();
                                 match either {
                                     inkwell::Either::Left(bv) => Ok(bv),
-                                    _ => Err(Diagnostic::simple("operation not supported (bin strcat result)")),
+                                    _ => Err(Diagnostic::simple(
+                                        "operation not supported (bin strcat result)",
+                                    )),
                                 }
                             } else {
                                 Err(Diagnostic::simple("unsupported expression"))
@@ -260,7 +268,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 }
 
                 // If not a parameter, then it must be a local variable (`let` or `const`).
-                if let Some((ptr, ty, initialized, _is_const, _extra, _nominal)) = self.find_local(locals, &name) {
+                if let Some((ptr, ty, initialized, _is_const, _extra, _nominal)) =
+                    self.find_local(locals, &name)
+                {
                     // If not initialized -> TDZ: generate a trap (unreachable)
                     if !initialized {
                         // Emit a call to unreachable to trap at runtime
@@ -365,7 +375,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     Ok(zero.as_basic_value_enum())
                                 }
                             } else {
-                                Err(Diagnostic::simple("unsupported expression (call_ident fallback)"))
+                                Err(Diagnostic::simple(
+                                    "unsupported expression (call_ident fallback)",
+                                ))
                             }
                         }
                         ast::Expr::Member(member) => {
@@ -403,41 +415,63 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 if let Ok(obj_val) =
                                     self.lower_expr(&member.obj, function, param_map, locals)
                                 {
-                                        // Support weak reference helpers: downgrade() and upgrade()
-                                        if method_name == "downgrade" {
-                                            // Expect no args
-                                            if !call.args.is_empty() {
-                                                return Err(Diagnostic::simple("expression lowering failed"))?;
-                                            }
-                                            if let BasicValueEnum::PointerValue(pv) = obj_val {
-                                                let f = self.get_rc_weak_inc();
-                                                let _ = self.builder.build_call(f, &[pv.into()], "rc_weak_inc_call");
-                                                return Ok(pv.as_basic_value_enum());
-                                            } else {
-                                                return Err(Diagnostic::simple("downgrade on non-pointer"))?;
-                                            }
+                                    // Support weak reference helpers: downgrade() and upgrade()
+                                    if method_name == "downgrade" {
+                                        // Expect no args
+                                        if !call.args.is_empty() {
+                                            return Err(Diagnostic::simple(
+                                                "expression lowering failed",
+                                            ))?;
                                         }
-                                        if method_name == "upgrade" {
-                                            // Expect no args
-                                            if !call.args.is_empty() {
-                                                return Err(Diagnostic::simple("expression lowering failed"))?;
-                                            }
-                                            if let BasicValueEnum::PointerValue(pv) = obj_val {
-                                                let f = self.get_rc_weak_upgrade();
-                                                let cs = match self.builder.build_call(f, &[pv.into()], "rc_weak_upgrade_call") {
-                                                    Ok(cs) => cs,
-                                                    Err(_) => return Err(Diagnostic::simple("operation failed")),
-                                                };
-                                                let either = cs.try_as_basic_value();
-                                                if let inkwell::Either::Left(bv) = either {
-                                                    return Ok(bv);
-                                                } else {
-                                                    return Err(Diagnostic::simple("operation not supported"));
+                                        if let BasicValueEnum::PointerValue(pv) = obj_val {
+                                            let f = self.get_rc_weak_inc();
+                                            let _ = self.builder.build_call(
+                                                f,
+                                                &[pv.into()],
+                                                "rc_weak_inc_call",
+                                            );
+                                            return Ok(pv.as_basic_value_enum());
+                                        } else {
+                                            return Err(Diagnostic::simple(
+                                                "downgrade on non-pointer",
+                                            ))?;
+                                        }
+                                    }
+                                    if method_name == "upgrade" {
+                                        // Expect no args
+                                        if !call.args.is_empty() {
+                                            return Err(Diagnostic::simple(
+                                                "expression lowering failed",
+                                            ))?;
+                                        }
+                                        if let BasicValueEnum::PointerValue(pv) = obj_val {
+                                            let f = self.get_rc_weak_upgrade();
+                                            let cs = match self.builder.build_call(
+                                                f,
+                                                &[pv.into()],
+                                                "rc_weak_upgrade_call",
+                                            ) {
+                                                Ok(cs) => cs,
+                                                Err(_) => {
+                                                    return Err(Diagnostic::simple(
+                                                        "operation failed",
+                                                    ));
                                                 }
+                                            };
+                                            let either = cs.try_as_basic_value();
+                                            if let inkwell::Either::Left(bv) = either {
+                                                return Ok(bv);
                                             } else {
-                                                return Err(Diagnostic::simple("upgrade on non-pointer"))?;
+                                                return Err(Diagnostic::simple(
+                                                    "operation not supported",
+                                                ));
                                             }
+                                        } else {
+                                            return Err(Diagnostic::simple(
+                                                "upgrade on non-pointer",
+                                            ))?;
                                         }
+                                    }
                                     // Special-case: arr.push(x) / arr.pop()
                                     if method_name == "push" {
                                         // Expect one argument
@@ -536,12 +570,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             let fname = function.get_name().to_str().unwrap_or("");
                                             if let Some(cls) = fname.strip_suffix("_ctor") {
                                                 class_name_opt = Some(cls.to_string());
-                                            } else if let Some(param_types) = self
-                                                .fn_param_types
-                                                .borrow()
-                                                .get(fname)
+                                            } else if let Some(param_types) =
+                                                self.fn_param_types.borrow().get(fname)
                                                 && !param_types.is_empty()
-                                                && let crate::types::OatsType::NominalStruct(n) = &param_types[0]
+                                                && let crate::types::OatsType::NominalStruct(n) =
+                                                    &param_types[0]
                                             {
                                                 class_name_opt = Some(n.clone());
                                             }
@@ -549,29 +582,39 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             && let Some(param_types) = self
                                                 .fn_param_types
                                                 .borrow()
-                                                .get(function.get_name().to_str().unwrap_or("") )
+                                                .get(function.get_name().to_str().unwrap_or(""))
                                         {
                                             let idx = *param_idx as usize;
                                             if idx < param_types.len()
-                                                && let crate::types::OatsType::NominalStruct(n) = &param_types[idx]
+                                                && let crate::types::OatsType::NominalStruct(n) =
+                                                    &param_types[idx]
                                             {
                                                 class_name_opt = Some(n.clone());
                                             }
-                                        } else if let Some((_, _ty, _init, _is_const, _is_weak, nominal)) =
-                                            self.find_local(locals, &ident_name)
-                                            && let Some(nom) = nominal {
-                                                class_name_opt = Some(nom);
-                                            }
-                                    } else if matches!(&*member.obj, deno_ast::swc::ast::Expr::This(_)) {
+                                        } else if let Some((
+                                            _,
+                                            _ty,
+                                            _init,
+                                            _is_const,
+                                            _is_weak,
+                                            nominal,
+                                        )) = self.find_local(locals, &ident_name)
+                                            && let Some(nom) = nominal
+                                        {
+                                            class_name_opt = Some(nom);
+                                        }
+                                    } else if matches!(
+                                        &*member.obj,
+                                        deno_ast::swc::ast::Expr::This(_)
+                                    ) {
                                         let fname = function.get_name().to_str().unwrap_or("");
                                         if let Some(cls) = fname.strip_suffix("_ctor") {
                                             class_name_opt = Some(cls.to_string());
-                                        } else if let Some(param_types) = self
-                                            .fn_param_types
-                                            .borrow()
-                                            .get(fname)
+                                        } else if let Some(param_types) =
+                                            self.fn_param_types.borrow().get(fname)
                                             && !param_types.is_empty()
-                                            && let crate::types::OatsType::NominalStruct(n) = &param_types[0]
+                                            && let crate::types::OatsType::NominalStruct(n) =
+                                                &param_types[0]
                                         {
                                             class_name_opt = Some(n.clone());
                                         }
@@ -592,9 +635,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             inkwell::values::BasicMetadataValueEnum,
                                         > = Vec::new();
                                         for a in &call.args {
-                                            if let Ok(v) = self.lower_expr(
-                                                &a.expr, function, param_map, locals,
-                                            ) {
+                                            if let Ok(v) = self
+                                                .lower_expr(&a.expr, function, param_map, locals)
+                                            {
                                                 user_args.push(v.into());
                                             } else {
                                                 return Err(Diagnostic::simple(
@@ -605,9 +648,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
                                         // if the method expects an extra param (likely `this`), prepend obj_val
                                         let param_count = method_f.count_params() as usize;
-                                        let mut args: Vec<
-                                            inkwell::values::BasicMetadataValueEnum,
-                                        > = Vec::new();
+                                        let mut args: Vec<inkwell::values::BasicMetadataValueEnum> =
+                                            Vec::new();
                                         if param_count > user_args.len() {
                                             args.push(obj_val.into());
                                             args.extend(user_args);
@@ -622,9 +664,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         ) {
                                             Ok(cs) => cs,
                                             Err(_) => {
-                                                return Err(Diagnostic::simple(
-                                                    "operation failed",
-                                                ));
+                                                return Err(Diagnostic::simple("operation failed"));
                                             }
                                         };
                                         let either = cs.try_as_basic_value();
@@ -638,9 +678,13 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     }
                                 }
                             }
-                            Err(Diagnostic::simple("unsupported expression (member call fallback)"))
+                            Err(Diagnostic::simple(
+                                "unsupported expression (member call fallback)",
+                            ))
                         }
-                        _ => Err(Diagnostic::simple("operation not supported (member top-level)")),
+                        _ => Err(Diagnostic::simple(
+                            "operation not supported (member top-level)",
+                        )),
                     }
                 } else {
                     Err(Diagnostic::simple("unsupported expression"))
@@ -650,7 +694,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 // support simple assignments `ident = expr` where the left side is an identifier
                 if let Some(bid) = assign.left.as_ident() {
                     let name = bid.id.sym.to_string();
-                    if let Some((ptr, _ty, _init, is_const, _extra, _nominal)) = self.find_local(locals, &name) {
+                    if let Some((ptr, _ty, _init, is_const, _extra, _nominal)) =
+                        self.find_local(locals, &name)
+                    {
                         // Disallow assigning to immutable locals at compile-time
                         if is_const {
                             // Use span-aware diagnostic: assign.span.lo is a BytePos wrapper
@@ -731,9 +777,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             let field_name = prop_ident.sym.to_string();
 
                             // Lower the object to get its pointer
-                            let lowered_obj_res = self.lower_expr(&member.obj, function, param_map, locals);
-                            if let Ok(BasicValueEnum::PointerValue(obj_ptr)) = lowered_obj_res
-                            {
+                            let lowered_obj_res =
+                                self.lower_expr(&member.obj, function, param_map, locals);
+                            if let Ok(BasicValueEnum::PointerValue(obj_ptr)) = lowered_obj_res {
                                 // Determine the class name from the object expression
                                 let mut class_name_opt: Option<String> = None;
 
@@ -747,10 +793,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         let fname = function.get_name().to_str().unwrap_or("");
                                         if let Some(cls) = fname.strip_suffix("_ctor") {
                                             class_name_opt = Some(cls.to_string());
-                                        } else if let Some(param_types) = self
-                                            .fn_param_types
-                                            .borrow()
-                                            .get(fname)
+                                        } else if let Some(param_types) =
+                                            self.fn_param_types.borrow().get(fname)
                                             && !param_types.is_empty()
                                             && let crate::types::OatsType::NominalStruct(n) =
                                                 &param_types[0]
@@ -777,20 +821,21 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         // annotation to be used for member lowering.
                                         if let Some((_, _ty, _init, _is_const, _is_weak, nominal)) =
                                             self.find_local(locals, &ident_name)
-                                            && let Some(nom) = nominal {
-                                                class_name_opt = Some(nom);
-                                            }
+                                            && let Some(nom) = nominal
+                                        {
+                                            class_name_opt = Some(nom);
+                                        }
                                     }
-                                } else if matches!(&*member.obj, deno_ast::swc::ast::Expr::This(_)) {
+                                } else if matches!(&*member.obj, deno_ast::swc::ast::Expr::This(_))
+                                {
                                     let fname = function.get_name().to_str().unwrap_or("");
                                     if let Some(cls) = fname.strip_suffix("_ctor") {
                                         class_name_opt = Some(cls.to_string());
-                                    } else if let Some(param_types) = self
-                                        .fn_param_types
-                                        .borrow()
-                                        .get(fname)
+                                    } else if let Some(param_types) =
+                                        self.fn_param_types.borrow().get(fname)
                                         && !param_types.is_empty()
-                                        && let crate::types::OatsType::NominalStruct(n) = &param_types[0]
+                                        && let crate::types::OatsType::NominalStruct(n) =
+                                            &param_types[0]
                                     {
                                         class_name_opt = Some(n.clone());
                                     }
@@ -819,30 +864,35 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         .find(|(_, (n, _))| n == &field_name)
                                     {
                                         // Compute field offset: header (u64) + field_idx * sizeof(ptr)
-                                        let hdr_size = self.i64_t.const_int(
-                                            std::mem::size_of::<u64>() as u64,
-                                            false,
-                                        );
-                                        let ptr_sz = self.i64_t.const_int(
-                                            std::mem::size_of::<usize>() as u64,
-                                            false,
-                                        );
-                                        let idx_const = self.i64_t.const_int(field_idx as u64, false);
+                                        let hdr_size = self
+                                            .i64_t
+                                            .const_int(std::mem::size_of::<u64>() as u64, false);
+                                        let ptr_sz = self
+                                            .i64_t
+                                            .const_int(std::mem::size_of::<usize>() as u64, false);
+                                        let idx_const =
+                                            self.i64_t.const_int(field_idx as u64, false);
                                         let mul = self
                                             .builder
                                             .build_int_mul(idx_const, ptr_sz, "fld_off_mul")
-                                            .map_err(|_| Diagnostic::simple("LLVM builder error"))?;
+                                            .map_err(|_| {
+                                                Diagnostic::simple("LLVM builder error")
+                                            })?;
                                         // Reserve an 8-byte metadata slot after the header so field
                                         // offsets are computed as: header_size + meta_slot + idx * ptr_size
                                         let meta_slot = self.i64_t.const_int(8u64, false);
                                         let tmp = self
                                             .builder
                                             .build_int_add(hdr_size, meta_slot, "hdr_plus_meta")
-                                            .map_err(|_| Diagnostic::simple("LLVM builder error"))?;
+                                            .map_err(|_| {
+                                                Diagnostic::simple("LLVM builder error")
+                                            })?;
                                         let offset = self
                                             .builder
                                             .build_int_add(tmp, mul, "fld_off")
-                                            .map_err(|_| Diagnostic::simple("LLVM builder error"))?;
+                                            .map_err(|_| {
+                                                Diagnostic::simple("LLVM builder error")
+                                            })?;
                                         let offset_i32 = self
                                             .builder
                                             .build_int_cast(
@@ -850,7 +900,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                 self.context.i32_type(),
                                                 "off_i32",
                                             )
-                                            .map_err(|_| Diagnostic::simple("LLVM builder error"))?;
+                                            .map_err(|_| {
+                                                Diagnostic::simple("LLVM builder error")
+                                            })?;
 
                                         // GEP to field location
                                         let gep_ptr = unsafe {
@@ -873,7 +925,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             crate::types::OatsType::Number => {
                                                 // Coerce RHS to f64 then store into an f64* slot
                                                 if let Some(fv) = self.coerce_to_f64(new_val) {
-                                                    let f64_ptr_ty = self.context.ptr_type(AddressSpace::default());
+                                                    let f64_ptr_ty = self
+                                                        .context
+                                                        .ptr_type(AddressSpace::default());
                                                     let f64_ptr = self
                                                         .builder
                                                         .build_pointer_cast(
@@ -881,11 +935,18 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                             f64_ptr_ty,
                                                             "f64_ptr_cast_store",
                                                         )
-                                                        .map_err(|_| Diagnostic::simple("LLVM builder error"))?;
-                                                    let _ = self.builder.build_store(f64_ptr, fv.as_basic_value_enum());
+                                                        .map_err(|_| {
+                                                            Diagnostic::simple("LLVM builder error")
+                                                        })?;
+                                                    let _ = self.builder.build_store(
+                                                        f64_ptr,
+                                                        fv.as_basic_value_enum(),
+                                                    );
                                                     return Ok(fv.as_basic_value_enum());
                                                 } else {
-                                                    return Err(Diagnostic::simple("expected numeric value for number field"));
+                                                    return Err(Diagnostic::simple(
+                                                        "expected numeric value for number field",
+                                                    ));
                                                 }
                                             }
                                             crate::types::OatsType::Union(_) => {
@@ -893,17 +954,21 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                 // Always store an i8* pointing to a small heap object produced by union_box_*.
                                                 // Slot for unions is stored as an i8* value in memory.
                                                 // The slot pointer therefore has type i8** (pointer-to-i8*).
-                                                let slot_ptr_ty = self.context.ptr_type(AddressSpace::default());
-                                                let slot_ptr = match self.builder.build_pointer_cast(
-                                                    gep_ptr,
-                                                    slot_ptr_ty,
-                                                    "slot_ptr_cast_store",
-                                                ) {
-                                                    Ok(p) => p,
-                                                    Err(_) => {
-                                                        return Err(Diagnostic::simple("operation failed"));
-                                                    }
-                                                };
+                                                let slot_ptr_ty =
+                                                    self.context.ptr_type(AddressSpace::default());
+                                                let slot_ptr =
+                                                    match self.builder.build_pointer_cast(
+                                                        gep_ptr,
+                                                        slot_ptr_ty,
+                                                        "slot_ptr_cast_store",
+                                                    ) {
+                                                        Ok(p) => p,
+                                                        Err(_) => {
+                                                            return Err(Diagnostic::simple(
+                                                                "operation failed",
+                                                            ));
+                                                        }
+                                                    };
 
                                                 // Load old boxed union pointer and rc_dec if present
                                                 let old_val = match self.builder.build_load(
@@ -913,10 +978,14 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                 ) {
                                                     Ok(v) => v,
                                                     Err(_) => {
-                                                        return Err(Diagnostic::simple("operation failed"));
+                                                        return Err(Diagnostic::simple(
+                                                            "operation failed",
+                                                        ));
                                                     }
                                                 };
-                                                if let BasicValueEnum::PointerValue(old_pv) = old_val {
+                                                if let BasicValueEnum::PointerValue(old_pv) =
+                                                    old_val
+                                                {
                                                     let rc_dec = self.get_rc_dec();
                                                     let _ = match self.builder.build_call(
                                                         rc_dec,
@@ -925,44 +994,87 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                     ) {
                                                         Ok(cs) => cs,
                                                         Err(_) => {
-                                                            return Err(Diagnostic::simple("operation failed"));
+                                                            return Err(Diagnostic::simple(
+                                                                "operation failed",
+                                                            ));
                                                         }
                                                     };
                                                 }
 
                                                 // If new_val is a number, box it with union_box_f64; if pointer, box with union_box_ptr.
-                                                let boxed_new = if let BasicValueEnum::FloatValue(fv) = new_val {
-                                                    let box_fn = self.get_union_box_f64();
-                                                    let cs = match self.builder.build_call(box_fn, &[fv.into()], "union_box_f64_call") {
-                                                        Ok(cs) => cs,
-                                                        Err(_) => return Err(Diagnostic::simple("operation failed")),
+                                                let boxed_new =
+                                                    if let BasicValueEnum::FloatValue(fv) = new_val
+                                                    {
+                                                        let box_fn = self.get_union_box_f64();
+                                                        let cs = match self.builder.build_call(
+                                                            box_fn,
+                                                            &[fv.into()],
+                                                            "union_box_f64_call",
+                                                        ) {
+                                                            Ok(cs) => cs,
+                                                            Err(_) => {
+                                                                return Err(Diagnostic::simple(
+                                                                    "operation failed",
+                                                                ));
+                                                            }
+                                                        };
+                                                        match cs.try_as_basic_value() {
+                                                            inkwell::Either::Left(bv) => bv,
+                                                            _ => {
+                                                                return Err(Diagnostic::simple(
+                                                                    "operation failed",
+                                                                ));
+                                                            }
+                                                        }
+                                                    } else if let BasicValueEnum::PointerValue(pv) =
+                                                        new_val
+                                                    {
+                                                        let box_fn = self.get_union_box_ptr();
+                                                        let cs = match self.builder.build_call(
+                                                            box_fn,
+                                                            &[pv.into()],
+                                                            "union_box_ptr_call",
+                                                        ) {
+                                                            Ok(cs) => cs,
+                                                            Err(_) => {
+                                                                return Err(Diagnostic::simple(
+                                                                    "operation failed",
+                                                                ));
+                                                            }
+                                                        };
+                                                        match cs.try_as_basic_value() {
+                                                            inkwell::Either::Left(bv) => bv,
+                                                            _ => {
+                                                                return Err(Diagnostic::simple(
+                                                                    "operation failed",
+                                                                ));
+                                                            }
+                                                        }
+                                                    } else {
+                                                        return Err(Diagnostic::simple(
+                                                            "unsupported union payload type",
+                                                        ));
                                                     };
-                                                    match cs.try_as_basic_value() {
-                                                        inkwell::Either::Left(bv) => bv,
-                                                        _ => return Err(Diagnostic::simple("operation failed")),
-                                                    }
-                                                } else if let BasicValueEnum::PointerValue(pv) = new_val {
-                                                    let box_fn = self.get_union_box_ptr();
-                                                    let cs = match self.builder.build_call(box_fn, &[pv.into()], "union_box_ptr_call") {
-                                                        Ok(cs) => cs,
-                                                        Err(_) => return Err(Diagnostic::simple("operation failed")),
-                                                    };
-                                                    match cs.try_as_basic_value() {
-                                                        inkwell::Either::Left(bv) => bv,
-                                                        _ => return Err(Diagnostic::simple("operation failed")),
-                                                    }
-                                                } else {
-                                                    return Err(Diagnostic::simple("unsupported union payload type"));
-                                                };
 
                                                 // Store the boxed pointer into the field slot
-                                                let _ = self.builder.build_store(slot_ptr, boxed_new);
+                                                let _ =
+                                                    self.builder.build_store(slot_ptr, boxed_new);
                                                 // Increment refcount of the boxed union object
-                                                if let BasicValueEnum::PointerValue(new_pv) = boxed_new {
+                                                if let BasicValueEnum::PointerValue(new_pv) =
+                                                    boxed_new
+                                                {
                                                     let rc_inc = self.get_rc_inc();
-                                                    let _ = match self.builder.build_call(rc_inc, &[new_pv.into()], "rc_inc_new_field") {
+                                                    let _ = match self.builder.build_call(
+                                                        rc_inc,
+                                                        &[new_pv.into()],
+                                                        "rc_inc_new_field",
+                                                    ) {
                                                         Ok(cs) => cs,
-                                                        Err(_) => return Err(Diagnostic::simple("operation failed")),
+                                                        Err(_) => {
+                                                            return Err(Diagnostic::simple(
+                                                                "operation failed",
+                                                            ));
+                                                        }
                                                     };
                                                 }
                                                 return Ok(boxed_new);
@@ -976,45 +1088,88 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                 // Cast to pointer type for slot
                                                 // Slot for ref-like fields (string/struct/array) stores an i8* value.
                                                 // The slot pointer therefore has type i8** (pointer-to-i8*).
-                                                let slot_ptr_ty = self.context.ptr_type(AddressSpace::default());
-                                                let slot_ptr = match self.builder.build_pointer_cast(gep_ptr, slot_ptr_ty, "slot_ptr_cast_store") {
-                                                    Ok(p) => p,
-                                                    Err(_) => return Err(Diagnostic::simple("operation failed")),
-                                                };
+                                                let slot_ptr_ty =
+                                                    self.context.ptr_type(AddressSpace::default());
+                                                let slot_ptr =
+                                                    match self.builder.build_pointer_cast(
+                                                        gep_ptr,
+                                                        slot_ptr_ty,
+                                                        "slot_ptr_cast_store",
+                                                    ) {
+                                                        Ok(p) => p,
+                                                        Err(_) => {
+                                                            return Err(Diagnostic::simple(
+                                                                "operation failed",
+                                                            ));
+                                                        }
+                                                    };
 
                                                 // Load old value for RC decrement
-                                                let old_val = match self.builder.build_load(self.i8ptr_t, slot_ptr, "old_field_val") {
+                                                let old_val = match self.builder.build_load(
+                                                    self.i8ptr_t,
+                                                    slot_ptr,
+                                                    "old_field_val",
+                                                ) {
                                                     Ok(v) => v,
-                                                    Err(_) => return Err(Diagnostic::simple("operation failed")),
+                                                    Err(_) => {
+                                                        return Err(Diagnostic::simple(
+                                                            "operation failed",
+                                                        ));
+                                                    }
                                                 };
 
                                                 // Decrement old value's refcount
-                                                if let BasicValueEnum::PointerValue(old_pv) = old_val {
+                                                if let BasicValueEnum::PointerValue(old_pv) =
+                                                    old_val
+                                                {
                                                     let rc_dec = self.get_rc_dec();
-                                                    let _ = match self.builder.build_call(rc_dec, &[old_pv.into()], "rc_dec_old_field") {
+                                                    let _ = match self.builder.build_call(
+                                                        rc_dec,
+                                                        &[old_pv.into()],
+                                                        "rc_dec_old_field",
+                                                    ) {
                                                         Ok(cs) => cs,
-                                                        Err(_) => return Err(Diagnostic::simple("operation failed")),
+                                                        Err(_) => {
+                                                            return Err(Diagnostic::simple(
+                                                                "operation failed",
+                                                            ));
+                                                        }
                                                     };
                                                 }
 
                                                 // Store new value
                                                 // Ensure new_val is a pointer before storing
-                                                if let BasicValueEnum::PointerValue(new_pv) = new_val {
-                                                    let _ = self.builder.build_store(slot_ptr, new_val);
+                                                if let BasicValueEnum::PointerValue(new_pv) =
+                                                    new_val
+                                                {
+                                                    let _ =
+                                                        self.builder.build_store(slot_ptr, new_val);
                                                     // Increment new value's refcount
                                                     let rc_inc = self.get_rc_inc();
-                                                    let _ = match self.builder.build_call(rc_inc, &[new_pv.into()], "rc_inc_new_field") {
+                                                    let _ = match self.builder.build_call(
+                                                        rc_inc,
+                                                        &[new_pv.into()],
+                                                        "rc_inc_new_field",
+                                                    ) {
                                                         Ok(cs) => cs,
-                                                        Err(_) => return Err(Diagnostic::simple("operation failed")),
+                                                        Err(_) => {
+                                                            return Err(Diagnostic::simple(
+                                                                "operation failed",
+                                                            ));
+                                                        }
                                                     };
                                                     return Ok(new_val);
                                                 } else {
-                                                    return Err(Diagnostic::simple("expected pointer value for reference field"));
+                                                    return Err(Diagnostic::simple(
+                                                        "expected pointer value for reference field",
+                                                    ));
                                                 }
                                             }
                                             _ => {
                                                 // Unsupported field type
-                                                return Err(Diagnostic::simple("expression lowering failed"))?;
+                                                return Err(Diagnostic::simple(
+                                                    "expression lowering failed",
+                                                ))?;
                                             }
                                         }
                                     }
@@ -1402,7 +1557,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 }
             }
             ast::Expr::This(_) => {
-                if let Some((ptr, ty, init, _ignore, _extra, _nominal)) = self.find_local(locals, "this")
+                if let Some((ptr, ty, init, _ignore, _extra, _nominal)) =
+                    self.find_local(locals, "this")
                     && init
                     && let Ok(loaded) = self.builder.build_load(ty, ptr, "this_load")
                 {
@@ -1588,11 +1744,15 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         let tmp = self
                                             .builder
                                             .build_int_add(hdr_size, meta_slot, "hdr_plus_meta")
-                                            .map_err(|_| Diagnostic::simple("LLVM builder error"))?;
+                                            .map_err(|_| {
+                                                Diagnostic::simple("LLVM builder error")
+                                            })?;
                                         let offset = self
                                             .builder
                                             .build_int_add(tmp, mul, "fld_off")
-                                            .map_err(|_| Diagnostic::simple("LLVM builder error"))?;
+                                            .map_err(|_| {
+                                                Diagnostic::simple("LLVM builder error")
+                                            })?;
                                         // We need a i32 index sequence for gep on i8 pointer: cast offset to i64->i32 for index
                                         let offset_i64 = offset;
                                         let offset_i32 = self
@@ -1802,7 +1962,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         } else if call_args.len() < expected {
                             // pad with null pointers
                             while call_args.len() < expected {
-                                call_args.push(self.i8ptr_t.const_null().as_basic_value_enum().into());
+                                call_args
+                                    .push(self.i8ptr_t.const_null().as_basic_value_enum().into());
                             }
                         }
 
@@ -1861,7 +2022,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         ast::Expr::Arrow(a) => {
                             // nested arrow: scan body
                             if a.body.is_block_stmt() {
-                                if let deno_ast::swc::ast::BlockStmtOrExpr::BlockStmt(b) = &*a.body {
+                                if let deno_ast::swc::ast::BlockStmtOrExpr::BlockStmt(b) = &*a.body
+                                {
                                     for s in &b.stmts {
                                         use deno_ast::swc::ast::Stmt;
                                         if let Stmt::Expr(es) = s {
@@ -1876,9 +2038,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         ast::Expr::Object(o) => {
                             for prop in &o.props {
                                 if let deno_ast::swc::ast::PropOrSpread::Prop(p) = prop
-                                    && let deno_ast::swc::ast::Prop::KeyValue(kv) = &**p {
-                                        collect_idents_in_expr(&kv.value, out);
-                                    }
+                                    && let deno_ast::swc::ast::Prop::KeyValue(kv) = &**p
+                                {
+                                    collect_idents_in_expr(&kv.value, out);
+                                }
                             }
                         }
                         ast::Expr::Array(a) => {
@@ -1899,7 +2062,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 }
 
                 // Build a set of names visible in the surrounding locals stack
-                let mut outer_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+                let mut outer_names: std::collections::HashSet<String> =
+                    std::collections::HashSet::new();
                 for scope in locals.iter() {
                     for k in scope.keys() {
                         outer_names.insert(k.clone());
@@ -1937,7 +2101,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 }
 
                 if !captures.is_empty() {
-                    let msg = format!("arrow function captures variables not yet supported: {:?}", captures);
+                    let msg = format!(
+                        "arrow function captures variables not yet supported: {:?}",
+                        captures
+                    );
                     return Err(Diagnostic::simple(&msg));
                 }
 
@@ -2121,7 +2288,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             "failed to find shorthand param",
                                         ));
                                     }
-                                } else if let Some((ptr, ty, _init, _is_const, _extra, _nominal)) = self.find_local(locals, &name)
+                                } else if let Some((ptr, ty, _init, _is_const, _extra, _nominal)) =
+                                    self.find_local(locals, &name)
                                 {
                                     // load local value
                                     let loaded = match self.builder.build_load(
@@ -2446,10 +2614,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         // helper to distinguish number/string/boolean/object at runtime.
                         // This keeps `typeof` semantics consistent for boxed union values.
                         let disc_fn = self.get_union_get_discriminant();
-                        let call_site = self
-                            .builder
-                            .build_call(disc_fn, &[pv.into()], "union_get_disc");
-                        let cs = call_site.map_err(|_| Diagnostic::simple("failed to call union_get_discriminant"))?;
+                        let call_site =
+                            self.builder
+                                .build_call(disc_fn, &[pv.into()], "union_get_disc");
+                        let cs = call_site.map_err(|_| {
+                            Diagnostic::simple("failed to call union_get_discriminant")
+                        })?;
                         if let inkwell::Either::Left(bv) = cs.try_as_basic_value() {
                             let disc = bv.into_int_value();
                             // Compare disc to constants: 0 -> number, 1 -> string, 2 -> boolean
@@ -2459,16 +2629,37 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
                             let cmp_num = self
                                 .builder
-                                .build_int_compare(inkwell::IntPredicate::EQ, disc, zero, "disc_eq_num")
-                                .map_err(|_| Diagnostic::simple("failed to build int compare for typeof"))?;
+                                .build_int_compare(
+                                    inkwell::IntPredicate::EQ,
+                                    disc,
+                                    zero,
+                                    "disc_eq_num",
+                                )
+                                .map_err(|_| {
+                                    Diagnostic::simple("failed to build int compare for typeof")
+                                })?;
                             let cmp_str = self
                                 .builder
-                                .build_int_compare(inkwell::IntPredicate::EQ, disc, one, "disc_eq_str")
-                                .map_err(|_| Diagnostic::simple("failed to build int compare for typeof"))?;
+                                .build_int_compare(
+                                    inkwell::IntPredicate::EQ,
+                                    disc,
+                                    one,
+                                    "disc_eq_str",
+                                )
+                                .map_err(|_| {
+                                    Diagnostic::simple("failed to build int compare for typeof")
+                                })?;
                             let cmp_bool = self
                                 .builder
-                                .build_int_compare(inkwell::IntPredicate::EQ, disc, two, "disc_eq_bool")
-                                .map_err(|_| Diagnostic::simple("failed to build int compare for typeof"))?;
+                                .build_int_compare(
+                                    inkwell::IntPredicate::EQ,
+                                    disc,
+                                    two,
+                                    "disc_eq_bool",
+                                )
+                                .map_err(|_| {
+                                    Diagnostic::simple("failed to build int compare for typeof")
+                                })?;
 
                             let s_num = self.intern_string_literal("number");
                             let s_str = self.intern_string_literal("string");
@@ -2478,16 +2669,32 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             // Build nested selects: if num -> s_num else if str -> s_str else if bool -> s_bool else s_obj
                             let sel1 = self
                                 .builder
-                                .build_select(cmp_num, s_num.as_basic_value_enum(), s_str.as_basic_value_enum(), "sel_num_str")
-                                .map_err(|_| Diagnostic::simple("failed to build select for typeof"))?;
+                                .build_select(
+                                    cmp_num,
+                                    s_num.as_basic_value_enum(),
+                                    s_str.as_basic_value_enum(),
+                                    "sel_num_str",
+                                )
+                                .map_err(|_| {
+                                    Diagnostic::simple("failed to build select for typeof")
+                                })?;
                             let sel2 = self
                                 .builder
-                                .build_select(cmp_bool, s_bool.as_basic_value_enum(), s_obj.as_basic_value_enum(), "sel_bool_obj")
-                                .map_err(|_| Diagnostic::simple("failed to build select for typeof"))?;
+                                .build_select(
+                                    cmp_bool,
+                                    s_bool.as_basic_value_enum(),
+                                    s_obj.as_basic_value_enum(),
+                                    "sel_bool_obj",
+                                )
+                                .map_err(|_| {
+                                    Diagnostic::simple("failed to build select for typeof")
+                                })?;
                             let final_sel = self
                                 .builder
                                 .build_select(cmp_str, sel1, sel2, "sel_final")
-                                .map_err(|_| Diagnostic::simple("failed to build select for typeof"))?;
+                                .map_err(|_| {
+                                    Diagnostic::simple("failed to build select for typeof")
+                                })?;
                             return Ok(final_sel);
                         }
                         // If the discriminant call failed, fall back to "string"

@@ -395,6 +395,18 @@ impl<'a> super::CodeGen<'a> {
             let f = self.module.add_function("print_str", print_str_ty, None);
             self.fn_print_str.borrow_mut().replace(f);
         }
+        // declare sleep_ms(f64) -> void so examples can pause to allow background collector to run
+        if self.module.get_function("sleep_ms").is_none() {
+            let sleep_ty = self.context.void_type().fn_type(&[self.f64_t.into()], false);
+            let f = self.module.add_function("sleep_ms", sleep_ty, None);
+            // no dedicated RefCell for this helper; declaration is sufficient
+            let _ = f;
+        }
+        // declare collector_test_enqueue() -> void for demo/testing
+        if self.module.get_function("collector_test_enqueue").is_none() {
+            let ty = self.context.void_type().fn_type(&[], false);
+            let _f = self.module.add_function("collector_test_enqueue", ty, None);
+        }
     }
 
     // Emit rc_dec calls for any initialized pointer locals in the provided

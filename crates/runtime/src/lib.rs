@@ -21,6 +21,9 @@ use std::mem;
 use std::process;
 use std::ptr;
 use std::sync::atomic::{AtomicPtr, AtomicU64, Ordering};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
+use std::thread;
+use std::time::Duration;
 
 // Header flag constants
 // New header layout reserves 16 bits for a weak reference count in bits 33-48.
@@ -52,6 +55,127 @@ fn header_get_weak_bits(h: u64) -> u64 {
 fn header_with_weak(h: u64, weak: u64) -> u64 {
     let cleared = h & !HEADER_WEAK_MASK;
     cleared | ((weak & 0xffffu64) << HEADER_WEAK_SHIFT)
+}
+
+// --- Cycle collector scaffold (root list) ---
+// This provides a simple, thread-safe root list used by the future
+// cycle-collector. For Milestone 1 we implement a background thread
+// that periodically drains the root list and logs activity. The full
+// trial-deletion algorithm will be implemented later.
+
+struct Collector {
+    // store raw pointers as usize to satisfy Send/Sync requirements for static storage
+    queue: Mutex<Vec<usize>>,
+    cv: Condvar,
+}
+
+static COLLECTOR: OnceLock<Arc<Collector>> = OnceLock::new();
+
+fn init_collector() -> Arc<Collector> {
+    COLLECTOR.get_or_init(|| {
+        let collector = Arc::new(Collector {
+            queue: Mutex::new(Vec::new()),
+            cv: Condvar::new(),
+        });
+
+        // Spawn background thread to process root candidates.
+        let c = collector.clone();
+        thread::spawn(move || collector_thread(c));
+
+        collector
+    })
+    .clone()
+}
+
+fn collector_thread(col: Arc<Collector>) {
+    loop {
+        // Wait for work or timeout
+        let mut guard = col.queue.lock().unwrap();
+        while guard.is_empty() {
+            let (g, timeout_res) = col
+                .cv
+                .wait_timeout(guard, Duration::from_secs(1))
+                .unwrap();
+            guard = g;
+            if timeout_res.timed_out() && guard.is_empty() {
+                // timed out with no work; loop around and wait again
+                continue;
+            }
+        }
+
+        // Drain the queue into a local vector to minimize lock hold time
+    let mut drained_usize: Vec<usize> = Vec::new();
+    std::mem::swap(&mut drained_usize, &mut *guard);
+    // cast back to pointers for local use
+    let drained: Vec<*mut c_void> = drained_usize.into_iter().map(|u| u as *mut c_void).collect();
+        drop(guard);
+
+        // Inspect each candidate non-destructively: resolve base, read header and log counts.
+        for obj_ptr in drained.iter() {
+            if obj_ptr.is_null() {
+                continue;
+            }
+            unsafe {
+                // Resolve base pointer (handles string data pointers)
+                let base = get_object_base(*obj_ptr);
+                if base.is_null() {
+                    let _ = io::stderr().write_all(b"[oats runtime] collector: invalid object pointer\n");
+                    continue;
+                }
+
+                let header = base as *const AtomicU64;
+                // Load header atomically (relaxed for inspection)
+                let h = (*header).load(Ordering::Relaxed);
+                let strong = h & HEADER_RC_MASK;
+                let is_static = (h & HEADER_STATIC_BIT) != 0;
+                let weak = header_get_weak_bits(h);
+                let type_tag = (h >> HEADER_TYPE_TAG_SHIFT) as u32;
+
+                let _ = io::stderr().write_all(
+                    format!(
+                        "[oats runtime] collector: obj={:p} base={:p} strong={} weak={} static={} type_tag={}\n",
+                        *obj_ptr, base, strong, weak, is_static, type_tag
+                    )
+                    .as_bytes(),
+                );
+            }
+        }
+
+        // TODO: implement trial-deletion mark/sweep/restore here.
+        // For now we just inspected and logged candidates non-destructively.
+    }
+}
+
+fn add_root_candidate(p: *mut c_void) {
+    if p.is_null() {
+        return;
+    }
+    let col = init_collector();
+    let mut guard = col.queue.lock().unwrap();
+    guard.push(p as usize);
+    // Wake the collector to process candidates in a timely manner.
+    col.cv.notify_one();
+}
+
+// Test helper: allocate a tiny control block and enqueue it for collector inspection.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn collector_test_enqueue() {
+    // Allocate minimal heap block: header + one u64 word
+    let size = std::mem::size_of::<u64>() * 2;
+    let mem = runtime_malloc(size as size_t) as *mut u8;
+    if mem.is_null() {
+        return;
+    }
+    // initialize header: refcount=1, no flags
+    unsafe {
+        let header_ptr = mem as *mut u64;
+        *header_ptr = make_heap_header(1);
+        // zero next word
+        let second = mem.add(std::mem::size_of::<u64>()) as *mut u64;
+        *second = 0u64;
+    }
+
+    add_root_candidate(mem as *mut c_void);
 }
 
 // Allocate a heap string with RC header (refcount initialized to 1).
@@ -844,6 +968,11 @@ pub unsafe extern "C" fn rc_dec(p: *mut c_void) {
                         rc_weak_dec(obj_ptr);
                         // rc_weak_dec is responsible for freeing when weak count reaches zero.
                     }
+                    else {
+                        // The object did not reach zero: it is a candidate for cycle collection.
+                        // Add to root list so the background collector can analyze cycles later.
+                        add_root_candidate(obj_ptr);
+                    }
                     break;
                 }
                 Err(_) => continue, // Spin on contention
@@ -1102,6 +1231,31 @@ pub extern "C" fn union_get_discriminant(u: *mut c_void) -> i64 {
     unsafe {
         let discrim_ptr = (u as *mut u8).add(16) as *mut u64;
         *discrim_ptr as i64
+    }
+}
+
+// Sleep helper: sleep for the given number of milliseconds.
+// Accepts a double (f64) to match the language `number` type and
+// avoid ABI mismatches when calling from generated code.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sleep_ms(ms: f64) {
+    if ms <= 0.0 {
+        return;
+    }
+    // Convert to microseconds for libc::usleep; clamp to reasonable range
+    let mut usec = (ms * 1000.0) as u64;
+    if usec > 10_000_000u64 {
+        // cap at 10s to avoid very long sleeps
+        usec = 10_000_000u64;
+    }
+    unsafe {
+        // usleep takes useconds_t (usually u32), so saturate if necessary
+        let to_call = if usec > std::u32::MAX as u64 {
+            std::u32::MAX
+        } else {
+            usec as u32
+        };
+        libc::usleep(to_call);
     }
 }
 

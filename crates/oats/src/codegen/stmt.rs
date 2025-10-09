@@ -60,8 +60,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             let mut declared_union: Option<crate::types::OatsType> = None;
                             let mut declared_is_weak = false;
                             let mut declared_nominal: Option<String> = None;
-                            if let Some(type_ann) = &ident.type_ann {
-                                if let Some(mapped) = crate::types::map_ts_type(&type_ann.type_ann)
+                            if let Some(type_ann) = &ident.type_ann
+                                && let Some(mapped) = crate::types::map_ts_type(&type_ann.type_ann)
                                 {
                                     if let crate::types::OatsType::Union(_) = &mapped {
                                         declared_union = Some(mapped.clone());
@@ -73,7 +73,6 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         declared_nominal = Some(n.clone());
                                     }
                                 }
-                            }
 
                             // If there is an initializer, lower it and allocate a
                             // matching alloca for its type. If the declared identifier
@@ -114,11 +113,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                 allocated_ty = self.f64_t.as_basic_type_enum();
                                                 if val.get_type().is_int_type() {
                                                     // coerce int to float
-                                                    if let BasicValueEnum::IntValue(iv) = val {
-                                                        if let Ok(fv_val) = self.builder.build_signed_int_to_float(iv, self.f64_t, "i2f") {
+                                                    if let BasicValueEnum::IntValue(iv) = val
+                                                        && let Ok(fv_val) = self.builder.build_signed_int_to_float(iv, self.f64_t, "i2f") {
                                                             val = inkwell::values::BasicValueEnum::FloatValue(fv_val);
                                                         }
-                                                    }
                                                 }
                                             }
                                         }
@@ -350,13 +348,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         let loop_var_name = ident.id.sym.to_string();
                         // capture nominal type for the loop variable if annotated
                         let mut declared_nominal: Option<String> = None;
-                        if let Some(type_ann) = &ident.type_ann {
-                            if let Some(mapped) = crate::types::map_ts_type(&type_ann.type_ann) {
-                                if let crate::types::OatsType::NominalStruct(n) = &mapped {
+                        if let Some(type_ann) = &ident.type_ann
+                            && let Some(mapped) = crate::types::map_ts_type(&type_ann.type_ann)
+                                && let crate::types::OatsType::NominalStruct(n) = &mapped {
                                     declared_nominal = Some(n.clone());
                                 }
-                            }
-                        }
                         // Lower RHS (iterable)
                         if let Ok(iter_val) =
                             self.lower_expr(&forof.right, _function, _param_map, _locals_stack)

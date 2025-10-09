@@ -446,22 +446,20 @@ impl<'a> CodeGen<'a> {
                                 if arg_val.get_type().is_float_type() {
                                     let box_fn = self.get_union_box_f64();
                                     let cs = self.builder.build_call(box_fn, &[arg_val.into()], "union_box_f64_param");
-                                    if let Ok(cs) = cs && let inkwell::Either::Left(bv) = cs.try_as_basic_value() {
-                                        if let inkwell::values::BasicValueEnum::PointerValue(pv) = bv {
+                                    if let Ok(cs) = cs && let inkwell::Either::Left(bv) = cs.try_as_basic_value()
+                                        && let inkwell::values::BasicValueEnum::PointerValue(pv) = bv {
                                             let rc_inc = self.get_rc_inc();
                                             let _ = self.builder.build_call(rc_inc, &[pv.into()], "rc_inc_param");
                                         }
-                                    }
                                 } else if arg_val.get_type().is_pointer_type() {
                                     // box pointer payload
                                     let box_fn = self.get_union_box_ptr();
                                     let cs = self.builder.build_call(box_fn, &[arg_val.into()], "union_box_ptr_param");
-                                    if let Ok(cs) = cs && let inkwell::Either::Left(bv) = cs.try_as_basic_value() {
-                                        if let inkwell::values::BasicValueEnum::PointerValue(pv) = bv {
+                                    if let Ok(cs) = cs && let inkwell::Either::Left(bv) = cs.try_as_basic_value()
+                                        && let inkwell::values::BasicValueEnum::PointerValue(pv) = bv {
                                             let rc_inc = self.get_rc_inc();
                                             let _ = self.builder.build_call(rc_inc, &[pv.into()], "rc_inc_param");
                                         }
-                                    }
                                 }
                             }
                         } else {

@@ -51,8 +51,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         // allows `typeof` guards and comparisons to work on boxed unions.
                         let get_disc = self.get_union_get_discriminant();
                         let cs = self.builder.build_call(get_disc, &[pv.into()], "get_disc");
-                        if let Ok(cs) = cs {
-                            if let inkwell::Either::Left(bv) = cs.try_as_basic_value() {
+                        if let Ok(cs) = cs
+                            && let inkwell::Either::Left(bv) = cs.try_as_basic_value() {
                                 let disc = bv.into_int_value();
                                 let expected = match s.value.as_ref() {
                                     "number" => self.i64_t.const_int(0, false),
@@ -63,7 +63,6 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     return Ok(cmp_iv.as_basic_value_enum());
                                 }
                             }
-                        }
                     }
                     // fallback to general lowering below
                 }
@@ -560,11 +559,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             }
                                         } else if let Some((_, _ty, _init, _is_const, _is_weak, nominal)) =
                                             self.find_local(locals, &ident_name)
-                                        {
-                                            if let Some(nom) = nominal {
+                                            && let Some(nom) = nominal {
                                                 class_name_opt = Some(nom);
                                             }
-                                        }
                                     } else if matches!(&*member.obj, deno_ast::swc::ast::Expr::This(_)) {
                                         let fname = function.get_name().to_str().unwrap_or("");
                                         if let Some(cls) = fname.strip_suffix("_ctor") {
@@ -613,7 +610,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         > = Vec::new();
                                         if param_count > user_args.len() {
                                             args.push(obj_val.into());
-                                            args.extend(user_args.into_iter());
+                                            args.extend(user_args);
                                         } else {
                                             args = user_args;
                                         }
@@ -780,11 +777,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         // annotation to be used for member lowering.
                                         if let Some((_, _ty, _init, _is_const, _is_weak, nominal)) =
                                             self.find_local(locals, &ident_name)
-                                        {
-                                            if let Some(nom) = nominal {
+                                            && let Some(nom) = nominal {
                                                 class_name_opt = Some(nom);
                                             }
-                                        }
                                     }
                                 } else if matches!(&*member.obj, deno_ast::swc::ast::Expr::This(_)) {
                                     let fname = function.get_name().to_str().unwrap_or("");
@@ -1168,7 +1163,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         // Represent `null` as a null i8* pointer so it can be
                         // stored into pointer-typed fields (strings, objects, arrays).
                         let null_ptr = self.i8ptr_t.const_null();
-                        return Ok(null_ptr.as_basic_value_enum());
+                        Ok(null_ptr.as_basic_value_enum())
                     }
                     Lit::Bool(b) => {
                         let iv = self.bool_t.const_int(if b.value { 1 } else { 0 }, false);
@@ -2038,10 +2033,13 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     }
                 }
 
-                // Allocate object: header (8) + N * 8 bytes
+                // Allocate object: layout = [header (8) | meta_slot (8) | fields...]
+                // Reserve an 8-byte metadata slot after the header so collector
+                // metadata can be stored at offset 8 when appropriate.
                 let header_size = 8u64;
+                let meta_slot = 8u64;
                 let field_count = field_values.len();
-                let total_size = header_size + (field_count as u64 * 8);
+                let total_size = header_size + meta_slot + (field_count as u64 * 8);
 
                 let malloc_fn = self.get_malloc();
                 let size_const = self.i64_t.const_int(total_size, false);
@@ -2063,9 +2061,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 let header_val = self.i64_t.const_int(1u64, false);
                 let _ = self.builder.build_store(header_ptr, header_val);
 
-                // Store fields sequentially
+                // Store fields sequentially (fields start after header+meta_slot)
                 for (idx, fv) in field_values.into_iter().enumerate() {
-                    let offset = header_size + (idx as u64 * 8);
+                    let offset = header_size + meta_slot + (idx as u64 * 8);
                     let obj_addr = self
                         .builder
                         .build_ptr_to_int(malloc_ret, self.i64_t, "obj_addr")

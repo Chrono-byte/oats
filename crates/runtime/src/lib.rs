@@ -295,7 +295,7 @@ fn collector_thread(col: Arc<Collector>) {
                     }
                     // meta[0] = magic, meta[1] = len, offsets start at meta[2]
                     let meta_i32_ptr = meta.add(1) as *const i32;
-                    let len = (*meta >> 0) as u32 as usize & 0xffffffffusize; // len encoded in low 32 bits of meta0
+                    let len = *meta as u32 as usize & 0xffffffffusize; // len encoded in low 32 bits of meta0
                     if COLLECTOR_LOG.load(Ordering::Relaxed) {
                         let _ = io::stderr().write_all(
                             format!("[oats runtime] collector: meta at {:p} len={}\n", meta, len).as_bytes(),
@@ -403,7 +403,7 @@ fn collector_thread(col: Arc<Collector>) {
                             // already zero (someone else claimed/collected)
                             break;
                         }
-                        let new_header = (old_header & HEADER_FLAGS_MASK) | 0u64;
+                        let new_header = old_header & HEADER_FLAGS_MASK;
                         match (*header_ptr).compare_exchange_weak(
                             old_header,
                             new_header,
@@ -429,7 +429,7 @@ fn collector_thread(col: Arc<Collector>) {
                                         // no metadata; nothing we can do safely
                                     } else if validate_meta_block(meta, 256) {
                                         let meta_i32_ptr = meta.add(1) as *const i32;
-                                        let len = (*meta >> 0) as u32 as usize & 0xffffffffusize;
+                                        let len = *meta as u32 as usize & 0xffffffffusize;
                                         for i in 0..len {
                                             let off_i32 = *meta_i32_ptr.add(i);
                                             let off = off_i32 as isize as usize;
@@ -1590,8 +1590,8 @@ pub unsafe extern "C" fn sleep_ms(ms: f64) {
     }
     unsafe {
         // usleep takes useconds_t (usually u32), so saturate if necessary
-        let to_call = if usec > std::u32::MAX as u64 {
-            std::u32::MAX
+        let to_call = if usec > u32::MAX as u64 {
+            u32::MAX
         } else {
             usec as u32
         };

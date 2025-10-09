@@ -360,8 +360,7 @@ fn main() -> Result<()> {
                                 if let Stmt::Expr(expr_stmt) = stmt
                                     && let Expr::Assign(assign) = &*expr_stmt.expr
                                     && let deno_ast::swc::ast::AssignTarget::Simple(simple_target) = &assign.left
-                                {
-                                    if let deno_ast::swc::ast::SimpleAssignTarget::Member(mem) = simple_target
+                                    && let deno_ast::swc::ast::SimpleAssignTarget::Member(mem) = simple_target
                                         && matches!(&*mem.obj, Expr::This(_))
                                         && let MemberProp::Ident(ident) = &mem.prop
                                     {
@@ -372,44 +371,36 @@ fn main() -> Result<()> {
                                         let mut inferred = oats::types::infer_type(None, Some(&assign.right));
                                         // If RHS is an identifier, try to look up a matching
                                         // constructor parameter and use its annotation.
-                                        if let oats::types::OatsType::Number = inferred {
-                                            if let Expr::Ident(rhs_ident) = &*assign.right {
+                                        if let oats::types::OatsType::Number = inferred
+                                            && let Expr::Ident(rhs_ident) = &*assign.right {
                                                 for p in &ctor.params {
                                                     use deno_ast::swc::ast::{ParamOrTsParamProp, TsParamPropParam};
                                                     match p {
                                                         ParamOrTsParamProp::Param(param) => {
-                                                            if let deno_ast::swc::ast::Pat::Ident(bind_ident) = &param.pat {
-                                                                if bind_ident.id.sym == rhs_ident.sym {
-                                                                    if let Some(type_ann) = &bind_ident.type_ann {
-                                                                        if let Some(mt) = oats::types::map_ts_type(&type_ann.type_ann) {
+                                                            if let deno_ast::swc::ast::Pat::Ident(bind_ident) = &param.pat
+                                                                && bind_ident.id.sym == rhs_ident.sym
+                                                                    && let Some(type_ann) = &bind_ident.type_ann
+                                                                        && let Some(mt) = oats::types::map_ts_type(&type_ann.type_ann) {
                                                                             inferred = mt;
                                                                             break;
                                                                         }
-                                                                    }
-                                                                }
-                                                            }
                                                         }
                                                         ParamOrTsParamProp::TsParamProp(ts_param) => {
-                                                            if let TsParamPropParam::Ident(binding_ident) = &ts_param.param {
-                                                                if binding_ident.id.sym == rhs_ident.sym {
-                                                                    if let Some(type_ann) = &binding_ident.type_ann {
-                                                                        if let Some(mt) = oats::types::map_ts_type(&type_ann.type_ann) {
+                                                            if let TsParamPropParam::Ident(binding_ident) = &ts_param.param
+                                                                && binding_ident.id.sym == rhs_ident.sym
+                                                                    && let Some(type_ann) = &binding_ident.type_ann
+                                                                        && let Some(mt) = oats::types::map_ts_type(&type_ann.type_ann) {
                                                                             inferred = mt;
                                                                             break;
                                                                         }
-                                                                    }
-                                                                }
-                                                            }
                                                         }
                                                     }
                                                 }
                                             }
-                                        }
                                         if fields.iter().all(|(n, _)| n != &name) {
                                             fields.push((name, inferred));
                                         }
                                     }
-                                }
                             }
                         }
                         // Register computed fields so lowering can reference them
@@ -522,8 +513,7 @@ fn main() -> Result<()> {
                                 if let Stmt::Expr(expr_stmt) = stmt
                                     && let Expr::Assign(assign) = &*expr_stmt.expr
                                     && let deno_ast::swc::ast::AssignTarget::Simple(simple_target) = &assign.left
-                                {
-                                    if let deno_ast::swc::ast::SimpleAssignTarget::Member(mem) = simple_target
+                                    && let deno_ast::swc::ast::SimpleAssignTarget::Member(mem) = simple_target
                                         && matches!(&*mem.obj, Expr::This(_))
                                         && let MemberProp::Ident(ident) = &mem.prop
                                     {
@@ -533,7 +523,6 @@ fn main() -> Result<()> {
                                             fields.push((name, inferred));
                                         }
                                     }
-                                }
                             }
                         }
                         codegen.class_fields.borrow_mut().insert(class_name.clone(), fields.clone());

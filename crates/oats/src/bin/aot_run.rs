@@ -317,15 +317,17 @@ fn main() -> Result<()> {
         }
     }
 
-    // Generate IR for class methods/constructors
+    // Emit IR for class methods/constructors. Emit for both exported and
+    // non-exported class declarations so constructors are available for
+    // `new` expressions regardless of export status.
     for item_ref in parsed.program_ref().body() {
+        // Handle exported class declarations: `export class Foo {}`
         if let deno_ast::ModuleItemRef::ModuleDecl(module_decl) = item_ref
             && let deno_ast::swc::ast::ModuleDecl::ExportDecl(decl) = module_decl
             && let deno_ast::swc::ast::Decl::Class(c) = &decl.decl
         {
             let class_name = c.ident.sym.to_string();
-            // `ClassDecl` contains an inner `class: Class` field; iterate
-            // over `c.class.body` to access members.
+            // Emit members for this class
             for member in &c.class.body {
                 use deno_ast::swc::ast::ClassMember;
                 match member {
@@ -350,7 +352,7 @@ fn main() -> Result<()> {
                                 .gen_function_ir(&fname, &m.function, &params, &ret, Some("this"))
                                 .map_err(|d| {
                                     oats::diagnostics::emit_diagnostic(&d, Some(source.as_str()));
-                                    anyhow::anyhow!("{}", d.message)
+                                    anyhow::anyhow!(d.message)
                                 })?;
                         } else {
                             // If strict check failed (e.g., missing return annotation), try to emit with Void return
@@ -376,13 +378,86 @@ fn main() -> Result<()> {
                                             &d,
                                             Some(source.as_str()),
                                         );
-                                        anyhow::anyhow!("{}", d.message)
+                                        anyhow::anyhow!(d.message)
                                     })?;
                             }
                         }
                     }
                     ClassMember::Constructor(ctor) => {
                         // Use the new unified constructor generation
+                        let fields = codegen
+                            .class_fields
+                            .borrow()
+                            .get(&class_name)
+                            .cloned()
+                            .unwrap_or_default();
+                        if let Err(d) = codegen.gen_constructor_ir(&class_name, ctor, &fields) {
+                            diagnostics::emit_diagnostic(&d, Some(parsed_mod.source.as_str()));
+                            return Err(anyhow::anyhow!(d.message));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        // Also handle non-exported top-level class declarations: `class Foo {}`
+        if let deno_ast::ModuleItemRef::Stmt(stmt) = item_ref
+            && let deno_ast::swc::ast::Stmt::Decl(deno_ast::swc::ast::Decl::Class(c)) = stmt
+        {
+            let class_name = c.ident.sym.to_string();
+            for member in &c.class.body {
+                use deno_ast::swc::ast::ClassMember;
+                match member {
+                    ClassMember::Method(m) => {
+                        let mname = match &m.key {
+                            deno_ast::swc::ast::PropName::Ident(id) => id.sym.to_string(),
+                            deno_ast::swc::ast::PropName::Str(s) => s.value.to_string(),
+                            _ => continue,
+                        };
+                        let mut method_symbols = SymbolTable::new();
+                        if let Ok(sig) = check_function_strictness(&m.function, &mut method_symbols)
+                        {
+                            let mut params = Vec::new();
+                            params.push(oats::types::OatsType::NominalStruct(class_name.clone()));
+                            params.extend(sig.params.into_iter());
+                            let ret = sig.ret;
+                            let fname = format!("{}_{}", class_name, mname);
+                            codegen
+                                .gen_function_ir(&fname, &m.function, &params, &ret, Some("this"))
+                                .map_err(|d| {
+                                    oats::diagnostics::emit_diagnostic(&d, Some(source.as_str()));
+                                    anyhow::anyhow!(d.message)
+                                })?;
+                        } else {
+                            let mut method_symbols = SymbolTable::new();
+                            if let Ok(sig2) =
+                                check_function_strictness(&m.function, &mut method_symbols)
+                            {
+                                let mut params = Vec::new();
+                                params
+                                    .push(oats::types::OatsType::NominalStruct(class_name.clone()));
+                                params.extend(sig2.params.into_iter());
+                                let fname = format!("{}_{}", class_name, mname);
+                                codegen
+                                    .gen_function_ir(
+                                        &fname,
+                                        &m.function,
+                                        &params,
+                                        &oats::types::OatsType::Void,
+                                        Some("this"),
+                                    )
+                                    .map_err(|d| {
+                                        oats::diagnostics::emit_diagnostic(
+                                            &d,
+                                            Some(source.as_str()),
+                                        );
+                                        anyhow::anyhow!(d.message)
+                                    })?;
+                            }
+                        }
+                    }
+                    ClassMember::Constructor(ctor) => {
                         let fields = codegen
                             .class_fields
                             .borrow()

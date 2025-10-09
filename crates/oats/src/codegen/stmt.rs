@@ -183,8 +183,18 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 Ok(false)
             }
             deno_ast::swc::ast::Stmt::Expr(expr_stmt) => {
-                // Evaluate expression for side-effects; ignore result
-                let _ = self.lower_expr(&expr_stmt.expr, _function, _param_map, _locals_stack);
+                // Evaluate expression for side-effects. If lowering fails,
+                // emit a diagnostic and continue rather than aborting the
+                // whole compile. This avoids silent empty functions while
+                // keeping compilation resilient for constructs like
+                // `this.x = ...` during constructor emission.
+                match self.lower_expr(&expr_stmt.expr, _function, _param_map, _locals_stack) {
+                    Ok(_val) => { /* success, continue */ }
+                    Err(d) => {
+                        crate::diagnostics::emit_diagnostic(&d, Some(self.source));
+                        // don't propagate error further; continue lowering
+                    }
+                }
                 Ok(false)
             }
             deno_ast::swc::ast::Stmt::Return(ret) => {

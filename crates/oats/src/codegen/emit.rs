@@ -3,6 +3,7 @@
 
 use deno_ast::swc::ast;
 use inkwell::values::FunctionValue;
+use inkwell::values::BasicValue;
 use std::collections::HashMap;
 
 type LocalsStackLocal<'a> = Vec<
@@ -11,6 +12,7 @@ type LocalsStackLocal<'a> = Vec<
         (
             inkwell::values::PointerValue<'a>,
             inkwell::types::BasicTypeEnum<'a>,
+            bool,
             bool,
             bool,
         ),
@@ -194,7 +196,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         let _ = self.builder.build_store(this_alloca, malloc_ret);
         scope.insert(
             "this".to_string(),
-            (this_alloca, self.i8ptr_t.into(), true, true),
+            (this_alloca, self.i8ptr_t.into(), true, true, false),
         );
 
         let mut param_map: HashMap<String, u32> = HashMap::new();
@@ -217,7 +219,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     ))
                 })?;
             let _ = self.builder.build_store(alloca, param_val);
-            scope.insert(pname.clone(), (alloca, param_ty, true, true));
+            // Mark parameter as weak if its declared OatsType is Weak(_)
+            let is_param_weak = matches!(param_types_vec.get(i), Some(OatsType::Weak(_)));
+            scope.insert(pname.clone(), (alloca, param_ty, true, true, is_param_weak));
             param_map.insert(pname.clone(), i as u32);
         }
 
@@ -257,13 +261,16 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 &[unboxed_f.into()],
                                 "union_box_f64_ctor",
                             );
-                            if let Ok(cs) = cs
+                                if let Ok(cs) = cs
                                 && let inkwell::Either::Left(bv) = cs.try_as_basic_value()
                             {
                                 let boxed_ptr = bv.into_pointer_value();
                                 let boxed_bv =
                                     inkwell::values::BasicValueEnum::PointerValue(boxed_ptr);
                                 let _ = self.builder.build_store(field_ptr_cast, boxed_bv);
+                                // For union-boxed pointers we treat the stored pointer as strong by default.
+                                // If the declared field type within the union is Weak, more refined handling
+                                // will be added later. For now, use strong rc_inc.
                                 let rc_inc_fn = self.get_rc_inc();
                                 let _ = self.builder.build_call(
                                     rc_inc_fn,
@@ -302,15 +309,68 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         let _ = self.builder.build_store(field_ptr_cast, param_val);
 
                         if param_val.get_type().is_pointer_type() {
-                            let rc_inc_fn = self.get_rc_inc();
-                            let _ = self.builder.build_call(
-                                rc_inc_fn,
-                                &[param_val.into()],
-                                "rc_inc_field",
-                            );
+                            // If the declared field type is Weak<T>, use rc_weak_inc; otherwise rc_inc
+                            match _field_type {
+                                OatsType::Weak(_) => {
+                                    let rc_weak_inc = self.get_rc_weak_inc();
+                                    let _ = self.builder.build_call(
+                                        rc_weak_inc,
+                                        &[param_val.into()],
+                                        "rc_weak_inc_field",
+                                    );
+                                }
+                                _ => {
+                                    let rc_inc_fn = self.get_rc_inc();
+                                    let _ = self.builder.build_call(
+                                        rc_inc_fn,
+                                        &[param_val.into()],
+                                        "rc_inc_field",
+                                    );
+                                }
+                            }
                         }
                     }
                 }
+            }
+        }
+
+        // Emit metadata: list of byte offsets for pointer-like fields so the runtime
+        // can traverse object pointer fields. This is a simple array of i64 offsets
+        // named `<class_name>_field_map` and will be used by the cycle collector.
+        {
+            let mut ptr_field_offsets: Vec<inkwell::values::BasicValueEnum> = Vec::new();
+            for (field_idx, (_field_name, field_type)) in fields.iter().enumerate() {
+                // Determine if this field is pointer-like
+                let is_ptr = matches!(field_type,
+                    crate::types::OatsType::String
+                    | crate::types::OatsType::NominalStruct(_)
+                    | crate::types::OatsType::Array(_)
+                    | crate::types::OatsType::Promise(_)
+                    | crate::types::OatsType::Weak(_)
+                    | crate::types::OatsType::Option(_)
+                    | crate::types::OatsType::Union(_)
+                );
+                if is_ptr {
+                    let offset = header_size + (field_idx as u64 * 8);
+                    let const_off = self.i64_t.const_int(offset, false);
+                    ptr_field_offsets.push(const_off.as_basic_value_enum());
+                }
+            }
+
+            // Create global array constant if there are any pointer fields
+            if !ptr_field_offsets.is_empty() {
+                let arr_ty = self.i64_t.array_type(ptr_field_offsets.len() as u32);
+                // Convert BasicValueEnum::IntValue items into IntValue vector
+                let int_vals: Vec<inkwell::values::IntValue> = ptr_field_offsets
+                    .into_iter()
+                    .map(|bv| bv.into_int_value())
+                    .collect();
+                let const_struct = self.i64_t.const_array(&int_vals);
+                let gv_name = format!("{}_field_map", class_name);
+                let gv = self.module.add_global(arr_ty, None, &gv_name);
+                gv.set_initializer(&const_struct);
+                // mark global as constant
+                gv.set_constant(true);
             }
         }
 

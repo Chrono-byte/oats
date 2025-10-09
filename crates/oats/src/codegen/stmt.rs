@@ -10,6 +10,7 @@ type LocalEntry<'a> = (
     inkwell::types::BasicTypeEnum<'a>,
     bool,
     bool,
+    bool,
 );
 type LocalsStackLocal<'a> = Vec<HashMap<String, LocalEntry<'a>>>;
 
@@ -49,6 +50,24 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         if let deno_ast::swc::ast::Pat::Ident(ident) = &decl.name {
                             let name = ident.id.sym.to_string();
 
+                            // Determine if the identifier has an explicit type annotation
+                            // (do this regardless of whether there's an initializer so we
+                            // know whether the local should be treated as Weak<T> even
+                            // for uninitialized locals)
+                            let mut declared_union: Option<crate::types::OatsType> = None;
+                            let mut declared_is_weak = false;
+                            if let Some(type_ann) = &ident.type_ann {
+                                if let Some(mapped) = crate::types::map_ts_type(&type_ann.type_ann)
+                                {
+                                    if let crate::types::OatsType::Union(_) = &mapped {
+                                        declared_union = Some(mapped.clone());
+                                    }
+                                    if let crate::types::OatsType::Weak(_) = &mapped {
+                                        declared_is_weak = true;
+                                    }
+                                }
+                            }
+
                             // If there is an initializer, lower it and allocate a
                             // matching alloca for its type. If the declared identifier
                             // has a TypeScript type annotation that maps to a union,
@@ -56,20 +75,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             // payloads into union objects.
                             if let Some(init) = &decl.init {
                                 // `init` is an Option<Box<Expr>> (deno_ast wrapper); use `.as_ref()`
-                                    if let Ok(mut val) =
-                                        self.lower_expr(init, _function, _param_map, _locals_stack)
-                                    {
-                                        // Determine if the identifier has an explicit type annotation
-                                        let mut declared_union: Option<crate::types::OatsType> = None;
-                                        if let Some(type_ann) = &ident.type_ann {
-                                            if let Some(mapped) =
-                                                crate::types::map_ts_type(&type_ann.type_ann)
-                                            {
-                                                if let crate::types::OatsType::Union(_) = &mapped {
-                                                    declared_union = Some(mapped);
-                                                }
-                                            }
-                                        }
+                                if let Ok(mut val) =
+                                    self.lower_expr(init, _function, _param_map, _locals_stack)
+                                {
 
                                         // If declared as a Union that includes pointer-like parts,
                                         // we store an i8* slot and box numeric initializers.
@@ -141,6 +149,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             allocated_ty,
                                             true,
                                             false,
+                                            declared_is_weak,
                                         );
                                     }
                             } else {
@@ -165,6 +174,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     ty,
                                     false,
                                     false,
+                                    declared_is_weak,
                                 );
                             }
                         }
@@ -454,6 +464,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         ty,
                                         true,
                                         false,
+                                        false,
                                     );
                                 }
                             } else if let Some(array_get_ptr_fn) =
@@ -496,6 +507,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         alloca,
                                         ty,
                                         true,
+                                        false,
                                         false,
                                     );
                                 }

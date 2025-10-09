@@ -16,7 +16,8 @@ pub mod stmt;
 // Locals are represented as a tuple (ptr, ty, initialized, is_const) in many
 // helper modules. Use the same alias here so different files agree on the
 // in-memory representation of the locals stack.
-type LocalEntry<'a> = (PointerValue<'a>, BasicTypeEnum<'a>, bool, bool);
+// LocalEntry now includes an `is_weak` bool as the fifth element.
+type LocalEntry<'a> = (PointerValue<'a>, BasicTypeEnum<'a>, bool, bool, bool);
 type LocalsStackLocal<'a> = Vec<std::collections::HashMap<String, LocalEntry<'a>>>;
 
 // Loop context for tracking break/continue targets
@@ -266,6 +267,18 @@ impl<'a> CodeGen<'a> {
             })
     }
 
+    fn get_array_push_ptr_weak(&self) -> FunctionValue<'a> {
+        self.module
+            .get_function("array_push_ptr_weak")
+            .unwrap_or_else(|| {
+                let fn_type = self
+                    .context
+                    .void_type()
+                    .fn_type(&[self.i8ptr_t.into(), self.i8ptr_t.into()], false);
+                self.module.add_function("array_push_ptr_weak", fn_type, None)
+            })
+    }
+
     fn get_array_pop_ptr(&self) -> FunctionValue<'a> {
         self.module
             .get_function("array_pop_ptr")
@@ -285,6 +298,19 @@ impl<'a> CodeGen<'a> {
                     false,
                 );
                 self.module.add_function("array_set_ptr", fn_type, None)
+            })
+    }
+
+    fn get_array_set_ptr_weak(&self) -> FunctionValue<'a> {
+        self.module
+            .get_function("array_set_ptr_weak")
+            .unwrap_or_else(|| {
+                // array_set_ptr_weak(arr: i8*, idx: i64, p: i8*) -> void
+                let fn_type = self.context.void_type().fn_type(
+                    &[self.i8ptr_t.into(), self.i64_t.into(), self.i8ptr_t.into()],
+                    false,
+                );
+                self.module.add_function("array_set_ptr_weak", fn_type, None)
             })
     }
 

@@ -1,402 +1,203 @@
-# Oats Compiler Roadmap
+## Oats — Roadmap (refreshed)
 
-This document provides a comprehensive roadmap for the Oats TypeScript-to-LLVM
-AOT compiler, covering short-term goals, long-term vision, and detailed
-implementation plans for major features.
+This document is the canonical roadmap for the Oats ahead-of-time TypeScript
+to native compiler. It replaces older planning notes with a concise, actionable
+plan: priorities, milestones, acceptance criteria, QA gates, and immediate
+next steps tied to the repository layout (see `crates/oats`, `crates/runtime`,
+`examples/`).
 
-## Table of Contents
+Summary goal
+------------
+Translate a well-scoped subset of TypeScript into efficient, debuggable native
+executables using LLVM, while providing deterministic memory semantics via a
+reference-counting runtime. Prioritize correctness, tests, diagnostics, and
+reproducible builds before large-scale feature expansion.
 
-1. [Executive Summary](#executive-summary)
-2. [Current Status](#current-status)
-3. [Short-term Roadmap (Phase 1)](#short-term-roadmap-phase-1)
-4. [Medium-term Roadmap (Phase 2)](#medium-term-roadmap-phase-2)
-5. [Long-term Vision (Phase 3)](#long-term-vision-phase-3)
-6. [Async/Await Implementation Plan](#asyncawait-implementation-plan)
-7. [Consolidated Priorities](#consolidated-priorities)
-8. [Timeline & Effort Estimates](#timeline--effort-estimates)
+High-level principles
+---------------------
+- Small, verifiable steps: every feature change must include tests.
+- Keep compiler and runtime separable (`crates/oats` vs `crates/runtime`).
+- Prefer correctness over premature optimization; add debug-only runtime
+  checks to detect RC violations early.
+- User-facing diagnostics should be clear and actionable (see
+  `crates/oats/src/diagnostics.rs`).
+
+Phases and timeline
+-------------------
+
+Phase 1 — Stabilize & Test (0–3 months)
+- Focus: make the toolchain reliable and reproducible.
+- Work items:
+  - CI that builds the workspace, runs unit tests and snapshots, and runs a
+    small set of end-to-end examples.
+  - Improve and expand snapshot tests for codegen IR (insta snapshots under
+    `crates/oats/tests`), and end-to-end tests that compile and run
+    representative examples from `examples/`.
+  - Add unit tests for runtime header/RC helpers under `crates/runtime/tests`.
+  - Harden diagnostics and ensure parser rules are enforced consistently.
+- Success criteria:
+  - `cargo test --workspace` passes on CI and locally.
+  - A set of 5+ representative examples compile, link and run without leaks or
+    crashes in debug mode.
+
+Phase 2 — Language Features & Module Model (3–9 months)
+- Focus: add module resolution, interfaces/type-aliases, captured closures,
+  and stabilize object/array/string semantics.
+- Work items:
+  - Module resolution and multi-file compilation (Node-like relative imports
+    first, then optional package resolution).
+  - Interfaces and type aliases mapped into `OatsType` (see
+    `crates/oats/src/types.rs`).
+  - Complete closure capture support with correct RC semantics and escape
+    analysis or conservative heap allocation fallback.
+  - Expand the standard runtime helpers and stdlib surface incrementally.
+- Success criteria:
+  - Cross-file examples compile and run.
+  - Captured closures behave correctly in unit and integration tests.
+
+Phase 3 — Advanced Features & Production Polish (9–24 months)
+- Focus: generics (monomorphization), try/catch, better optimization, and
+  production-grade runtime and packaging.
+- Work items:
+  - Monomorphization pipeline for generics or validated type-erasure tradeoff.
+  - Exception/try-catch support or an ergonomic Result-like alternative.
+  - Release process, ABI stability guidance, and performance baselines.
+
+Component map (where to look)
+-----------------------------
+- Compiler: `crates/oats/src`
+  - `parser.rs` — parsing, semicolon rules, AST hygiene
+  - `types.rs` — `OatsType` mapping and helpers
+  - `codegen/` — IR emission (emit.rs, expr.rs, stmt.rs, helpers.rs)
+  - `diagnostics.rs` — user-facing errors
+- Runtime: `crates/runtime/src`
+  - RC helpers, header layout, object/string/array layouts, and tests
+- Examples & tests: `examples/`, `crates/oats/tests/`, `crates/runtime/tests/`
+
+Priority work items (ordered)
+----------------------------
+1. CI + reproducible build (high)
+   - Ensure CI runs `cargo build` and `cargo test --workspace` and can run a
+     handful of compiled examples safely (or at least produce build artifacts).
+
+2. Runtime correctness tests (high)
+   - Add tests asserting header layout, `rc_inc`/`rc_dec` semantics,
+     weak-upgrade/weak-dec behavior, and destructor invocation order.
+
+3. Snapshot coverage for codegen (high)
+   - Extend `insta` snapshots where missing and adopt a policy for snapshot
+     updates: PRs that update snapshots must include a human explanation.
+
+4. Module resolver & multi-file compilation (medium)
+   - Implement relative import resolution and a module graph. Start simple;
+     avoid node_modules resolution in the first iteration.
+
+5. Captured closures (medium)
+   - Finish escape analysis, closure env lowering, and calling ABI. Conservative
+     heap-allocation fallback is acceptable initially.
+
+6. Generics strategy (long)
+   - Decide monomorphization vs type erasure and prototype the chosen approach.
+
+Quality gates and CI
+--------------------
+- Build: workspace builds for debug and release targets. Command: `cargo
+  build --workspace --all-targets`.
+- Tests: `cargo test --workspace` runs unit, integration, and snapshot tests.
+- Clippy: `cargo clippy --all-targets` should be run in PRs; warnings must be
+  addressed for non-experimental code.
+- Snapshots: `insta` snapshot updates must include explanations in PRs.
+- Smoke: CI should produce at least one native executable from `examples/`
+  and either run it in a sandbox or keep the artifact for manual inspection.
+
+Testing strategy (practical)
+---------------------------
+- Unit tests: small, fast tests for parser/type mapping/runtime primitives.
+- Snapshot tests: capture emitted LLVM IR for representative AST nodes and
+  language constructs.
+- Integration tests: compile + link + run examples that exercise the runtime.
+- Regression tests: convert bug reproducer examples into snapshot or
+  integration tests to prevent regressions.
+
+Acceptance criteria for PRs
+--------------------------
+- New behavior must include tests.
+- Breaking changes must be documented and justified.
+- Snapshot updates must explain why the change is correct or desired.
+- PRs that touch RC or memory layout must include runtime tests demonstrating
+  correctness (usually under `crates/runtime/tests/`).
+
+Developer workflow & checklist
+-----------------------------
+Before merging:
+- Run `source ./scripts/setup_env.sh` (if using local LLVM) and `cargo test
+  --workspace`.
+- Run `cargo clippy --all-targets -- -D warnings` for stricter PRs.
+- If changing codegen, include `insta` snapshot or explain why snapshot
+  updates are necessary.
+
+Security & sandboxing
+---------------------
+- Avoid running untrusted compiled programs in CI without sandboxing. If a
+  CI job needs to run generated native code, run it in a container with strict
+  resource limits or run only in an allowlist environment.
+
+Risks and mitigations
+---------------------
+- RC invariants broken by codegen changes → memory corruption.
+  - Mitigation: add a debug runtime mode with header invariants checks and
+    leak detection; add unit tests that exercise destructor ordering.
+
+- Snapshot churn hides regressions.
+  - Mitigation: require human explanation for snapshot updates and add
+    regression tests that assert user-visible behaviors.
+
+Immediate next steps (choose one and I will implement it)
+-------------------------------------------------------
+Pick one of the items below and I will implement it next in this repo:
+
+1) Add CI workflow: Create a GitHub Actions workflow that runs `cargo test
+   --workspace`, `cargo clippy`, and produces artifacts for a small set of
+   examples.
+2) Add runtime unit tests: Add focused tests under `crates/runtime/tests` for
+   header layout, `rc_inc`/`rc_dec` and weak-upgrade semantics.
+3) Add CONTRIBUTING.md: Document the PR checklist, how to run tests locally,
+   and how snapshot updates should be handled.
+
+If you'd like me to proceed, tell me which of the three (CI / runtime tests /
+CONTRIBUTING) to implement and I'll make the change, run tests, and report
+back with results.
+
+Appendix A — Runtime header quick reference
+-----------------------------------------
+- Header (8 bytes) layout summary used across the runtime and documented here
+  for quick reference:
+  - Bits 0–31: strong reference count (u32)
+  - Bit 32: static bit (1 = immortal/static)
+  - Bits 33–48: weak reference count (16 bits)
+  - Bits 49–63: type tag & flags
+
+Appendix B — Useful commands
+----------------------------
+source ./scripts/setup_env.sh    # set up LLVM environment (when required)
+cargo test --workspace           # run all tests
+cargo run -p oats --bin aot_run -- examples/cycle_reclaim.oats
+
+Appendix C — Where to find things
+---------------------------------
+- Compiler source: `crates/oats/src`
+- Runtime source: `crates/runtime/src`
+- Tests and examples: `crates/oats/tests`, `crates/runtime/tests`,
+  `examples/`
 
 ---
 
-## Executive Summary
-
-**Current State:** Oats can compile simple, self-contained TypeScript programs
-with basic classes, arrays, loops, and functions. However, it cannot run "off
-the shelf" TypeScript code from the internet.
-
-**Compatibility Estimate:**
-
-- **Today:** <1% of npm packages would work
-- **After Phase 1:** ~10-15% of simple TypeScript code
-- **After Phase 2:** ~40-50% of typical applications
-- **Production Ready:** 3-5 years of development
-
-**Development Focus:**
-
-- **Phase 1 (6-12 months):** Core language features for basic compatibility
-- **Phase 2 (6-12 months):** Advanced features for real applications
-- **Phase 3 (12+ months):** Ecosystem integration and production readiness
-
----
-
-## Current Status
-
-### ✅ What Works Today (v0.1.0)
-
-#### Type System
-
-- [x] Basic types: `number`, `boolean`, `string`, `void`
-- [x] Arrays: `number[]`, `string[]` (homogeneous only)
-- [x] Nominal classes: `class Foo { ... }`
-- [x] Type annotations on parameters and returns
-
-#### Language Features
-
-- [x] Named functions with strict type checking
-- [x] Classes with constructors, fields, methods
-- [x] `this` binding in methods
-- [x] Control flow: `if/else`, `for`, `while`, `do-while`, `for-of`
-- [x] Labeled `break` and `continue`
-- [x] Binary operators: arithmetic, comparison, logical (&&, ||)
-- [x] All unary operators: `!`, `-`, `+`, `~`, `++`, `--`
-- [x] String concatenation and template literals
-- [x] Array literals and indexing
-- [x] Member access: `obj.field` (read/write)
-- [x] Object construction: `new ClassName(args)`
-- [x] Constructor parameters: `constructor(public x: number)`
-
-#### Module System
-
-- [x] Export declarations: `export function`, `export class`
-- [x] Import declarations parsed (types registered)
-- [ ] **NOT SUPPORTED:** Cross-file compilation, module resolution
-
-#### Memory Management
-
-- [x] Reference counting for heap objects
-- [x] Automatic RC increment/decrement
-- [x] Runtime bounds checking for arrays
-- [x] Unified 64-bit headers for all heap objects
-- [x] Static string literals (immortal, no RC overhead)
-- [x] Runtime diagnostic/logging control: runtime diagnostic prints are gated by
-      the `OATS_RUNTIME_LOG` environment variable (off by default)
-
-#### Tooling
-
-- [x] LLVM IR generation
-- [x] AOT compilation to native code
-- [x] Basic diagnostics with source spans
-- [x] Test suite (51 tests passing)
-- [x] Test-only runtime hooks feature-gated: collector test enqueue helper is
-      compiled only when the workspace enables the `collector-test` Cargo
-      feature (avoids leaking test-only symbols into release builds by default)
-
-### ❌ Critical Missing Features
-
-**Blocking Real-world Usage:**
-
-### Status: implemented / partially-implemented / outstanding
-
-The project has made progress on several items previously listed as missing.
-Below is the updated status with short notes.
-
-- ✅ Arrow functions (non-capturing) — implemented (non-capturing arrows lowered
-  to static functions; capturing/closures remain to be implemented)
-- ✅ Object literals (basic) — implemented: object literals are lowered to
-  heap-allocated structs with header + fields; shorthand props supported.
-  Computed keys and spread remain unsupported.
-- ⚠️ Interface types and type aliases — partially implemented: nominal type
-  mapping (`TsTypeRef` -> `NominalStruct`) and Promise/Array generic handling
-  exist; full structural interface/type-alias support is still incomplete.
-- ❌ Module resolution and multi-file compilation — still outstanding
-  (architectural work: resolver, graph, cross-file symbol resolution).
-- ⚠️ Standard library — partially implemented: runtime helpers exist for
-  `math_random`, string/print helpers, and array helper functions
-  (`array_alloc`, `array_get_*`, `array_push_*`); full stdlib API surface is
-  still missing.
-- ✅ Union types (basic) — implemented: `OatsType::Union` support in the type
-  mapper, runtime boxing/unboxing helpers, and discriminant helper are present.
-  Generics beyond simple Promise/Array support remain outstanding.
-- ❌ Closures with capture — still outstanding (escape analysis and closure
-- ⚠️ Closures with capture — partially implemented: a closure-lowering prototype
-  exists (boxed environments, per-field weak-capture support, field_map emission
-  and closure object lowering). Remaining work: escape analysis (stack vs heap
-  envs), trampolines/stack-to-heap promotion, and additional RC/weak semantics
-  tests and correctness sweeps.
-
-### Phase A Complete
-
-We have completed the Phase A stabilization tasks that ensure a consistent
-object layout, metadata format, and initial collector scaffolding. Key items
-completed:
-
-- Consistent object layout (header/meta/fields) across constructors and object
-  literals
-- Packed per-class metadata globals and runtime validation
-- Trial-deletion collector scaffold and diagnostic logging (opt-in via env var)
-- Trial-deletion collector scaffold and diagnostic logging (opt-in via env var)
-- Integration and unit tests verifying the above (codegen snapshots, runtime
-  tests)
-
-Recent changes (Oct 2025)
-
-- Fixed a critical codegen bug where member stores could overwrite the per-class
-  metadata pointer stored at byte offset 8 (the object's "meta slot"). The bug
-  stemmed from inconsistent pointer-arithmetic lowering across codegen paths
-  (some code used GEP-style index arithmetic while constructors used ptr-to-int
-  + add + int-to-ptr). The fix standardizes byte-offset arithmetic via a
-  small helper used everywhere that computes an i8* by performing ptr->int +
-  add(i64) + int->ptr. This guarantees field loads/stores and constructor
-  writes always target the same byte offsets and prevents the collector from
-  observing corrupted metadata pointers.
-
-  - The change preserves the object layout invariant: header (8 bytes) |
-    meta pointer @ byte offset 8 (8 bytes) | fields begin at byte offset 16,
-    each field occupying an 8-byte slot. Codegen now consistently computes
-    offsets as: header_size + meta_slot + field_index * ptr_size.
-  - The fix has been compiled and smoke-tested locally (dev build succeeded).
-    Add an integration/regression test (for example `examples/cycle_reclaim.oats`)
-    to the test suite to lock this behavior and prevent regressions.
-
-- Work in progress: closure call lowering (captured closures)
-
-- Work in progress: closure lowering and ABI threading (captured closures)
-
-  - Prototype lowering for captured closures exists: the compiler allocates
-    boxed environments, emits per-class `field_map` metadata for closure objects,
-    and constructs closure objects with either a compact 2-field layout
-    (`[fn_ptr, env_ptr]`) when the closure return type is known statically, or
-    a fallback 3-slot tagged layout (`[fn_ptr, env_ptr, ret_tag_i64]`) when the
-    return type must be resolved at runtime.
-  - Current work: integrating the closure-call path so that when the callee
-    expression lowers to a pointer (closure object), the codegen loads the
-    stored `fn_ptr` and `env_ptr`, constructs an LLVM FunctionType matching
-    the argument list and (when available) the statically-known return type,
-    casts the loaded function pointer to a pointer-to-function of that type,
-    and performs an indirect call with `env` prepended to the argument list.
-    This path is merged into the main `Call` lowering and compiles cleanly in
-    dev builds.
-  - Remaining items: finalize the closure ABI (complete and expand the
-    conservative static-return-type mapping to more flows), add end-to-end AOT
-    tests for captured closures, and implement escape analysis / trampolines
-    for stack-to-heap promotion.
-
-This completes the critical foundation required before implementing module
-resolution and closures in Phase B/C.
-
----
-
-## Short-term Roadmap (Phase 1)
-
-**Goal:** Support simple npm packages and common TypeScript patterns\
-**Target Compatibility:** 10-15% of TypeScript code\
-**Timeline:** 6-12 months, 1-2 developers
-
-### Priority 0 (Critical Blockers)
-
-#### 1. Arrow Functions (non-capturing) 🔴
-
-**Effort:** 1-2 weeks | **Complexity:** Low
-
-```typescript
-// Target support:
-const add = (x: number, y: number) => x + y;
-const double = (x: number) => x * 2;
-arr.forEach((x) => print_f64(x));
-```
-
-**Implementation:**
-
-- Parse `ast::Expr::Arrow` in expression lowering
-- Generate function symbol for arrow expression
-- Handle implicit returns for expression bodies
-- Store arrow function as callable value (function pointer)
-- Start with non-capturing arrows (defer closures to Phase 2)
-
-#### 2. Module Resolution and Multi-file Compilation 🔴
-
-**Effort:** 4-6 weeks | **Complexity:** High
-
-```typescript
-// Target support:
-import { readFile } from "fs";
-import utils from "./utils";
-export { helper } from "./lib";
-```
-
-**Implementation:**
-
-- Module resolver (Node.js algorithm for relative imports)
-- Find .ts/.tsx files on disk (no node_modules initially)
-- Parse imported modules recursively
-- Build dependency graph with cycle detection
-- Topological sort for compilation order
-- Cross-module symbol resolution
-- This is the biggest architectural change
-
-#### 3. Interfaces and Type Aliases 🔴
-
-**Effort:** 2-3 weeks | **Complexity:** Medium
-
-```typescript
-// Target support:
-interface User {
-  name: string;
-  age: number;
-}
-type Point = { x: number; y: number };
-```
-
-**Implementation:**
-
-- Parse `TsInterfaceDecl` and register as nominal type
-- Parse `TsTypeAliasDecl` and expand to underlying type
-- Extend `map_ts_type()` to handle interface references
-- Support object type literals: `{ field: type }`
-- Start with nominal typing (structural typing later)
-
-### Priority 1 (High Impact)
-
-#### 4. Unions, Object Literals, and typeof (Critical consolidation) 🟡
-
-Work completed so far has introduced a runtime discriminant helper and basic
-boxed-union layout. The next step is to finish end-to-end support and test
-coverage.
-
-Effort: 1-3 weeks | Complexity: Medium
-
-Goals & acceptance criteria:
-
-- Representation: unions are boxed where necessary (pointer ABI) and expose a
-  64-bit discriminant word (runtime helper `union_get_discriminant`).
-- Lowering: locals, parameters, field stores, array elements, and object
-  literals use boxed unions when type requires. Compiler emits `union_box_*` /
-  `union_unbox_*` and `rc_inc`/`rc_dec` appropriately.
-- typeof semantics: unary `typeof` and binary `typeof <expr> === "..."` use the
-  discriminant for boxed unions and return interned string pointers that behave
-  like static string literals.
-- Tests: IR-level tests assert presence of `union_get_discriminant` and interned
-  string globals; integration smoke test executes an AOT output exercising
-  typeof on boxed unions.
-
-Implementation steps (short):
-
-1. Finish codegen lowering for union-typed locals/params/fields (box on store,
-   unbox on numeric coercion). Ensure `rc_inc`/`rc_dec` invariants. (1 week)
-2. Finalize unary and binary `typeof` lowering to consult discriminant when
-   operand is pointer-like and fall back correctly. (2-3 days)
-3. Add IR-level and runtime tests covering boxed number/string/boolean unions,
-   field writes, param passing, and destructor behaviour. (3-5 days)
-4. Small optimizations: hoist cached helper FunctionValue lookups and consider
-   inlining discriminant checks in hot paths. (optional)
-
-Rationale: finishing unions and object-literal boxing is high-impact — it
-enables many real-world patterns (heterogeneous containers, optional values) and
-stabilizes runtime/RC semantics.
-
-### Expected Phase 1 Outcome
-
-- **Compatibility:** Jump from <1% to ~15-20%
-- **Can Compile:** Simple utility libraries, basic frameworks
-- **Examples:** Basic Express routes, simple React components
-
----
-
-## Medium-term Roadmap (Phase 2)
-
-**Goal:** Support typical application code, framework basics\
-**Target Compatibility:** 40-50% of TypeScript code\
-**Timeline:** 6-12 months, 2-3 developers
-
-### Advanced Language Features
-
-#### 7. Closures with Capture 🔴
-
-**Effort:** 4-6 weeks | **Complexity:** High
-
-```typescript
-// Target support:
-function makeCounter() {
-  let count = 0;
-  return () => count++; // captures 'count'
-}
-```
-
-**Implementation:**
-
-- Escape analysis: detect captured variables (in progress)
-- Closure environment struct allocation: prototype implemented (heap-allocated
-  env)
-- Box captured variables on heap: implemented for prototype
-- Generate closure thunk (trampoline): TODO (required for stack->heap promotion)
-- Pass environment pointer to closure body: lowering for calling closure objects
-  is integrated into the main `Call` lowering (dev-tested)
-- This unlocks functional programming patterns
-
-What's next (short-term):
-
-- Complete escape analysis to decide stack vs heap env allocation (3-7 days).
-- Finalize closure-call ABI and end-to-end tests for captured closures (3-5
-  days).
-- Implement trampolines / stack-to-heap promotion for escaping closures (1-2
-  weeks).
-- Expand IR-level and integration tests for weak-capture semantics and
-  destructor ordering (3-5 days).
-- Conservative fallback: when unsure, always allocate envs on the heap to
-  preserve correctness (low-risk, used by the current prototype).
-
-Note: the parser already produces `ast::Stmt::Switch`, but codegen lowering for
-TypeScript `switch` statements is not implemented yet; a conservative lowering
-using ordered compares + branches is a good first step (1-3 days) and can be
-optimized later to LLVM `switch` where possible.
-
-#### 8. Generics (Monomorphization) 🔴
-
-**Effort:** 6-8 weeks | **Complexity:** Very High
-
-```typescript
-// Target support:
-function identity<T>(x: T): T {
-  return x;
-}
-class Box<T> {
-  constructor(public value: T) {}
-}
-```
-
-**Implementation:**
-
-- Parse type parameters: `<T, U extends Base>`
-- Track generic types in `OatsType`
-- Monomorphization: generate specialized code per concrete type
-- Cache monomorphized functions (avoid duplicates)
-- Alternative: type erasure (Java style) - simpler but slower
-- This is PhD-level compiler work
-
-#### 9. Try/Catch/Finally 🟠
-
-**Effort:** 4-6 weeks | **Complexity:** High
-
-```typescript
-// Target support:
-try {
-  riskyOperation();
-} catch (e) {
-  console.log(e);
-} finally {
-  cleanup();
-}
-```
-
-**Implementation:**
-
-- LLVM exception handling (landing pads, invoke)
-- Error object representation
-- Stack unwinding with proper cleanup
-- Alternative: Result<T, E> pattern (Rust-style)
-
-### Enhanced Type System
-
-#### 10. Destructuring 🟢
+Short closing note
+------------------
+This refreshed roadmap focuses the next cycle on stability, CI, tests, and a
+clear path to adding language features. Tell me which immediate task you'd
+like me to implement (CI, runtime tests, or CONTRIBUTING.md) and I'll do it
+and validate the result.
 
 **Effort:** 3-4 weeks | **Complexity:** Medium
 

@@ -114,6 +114,20 @@ Below is the updated status with short notes.
 - ❌ Closures with capture — still outstanding (escape analysis and closure
   environment lowering planned in Phase 2)
 
+### Phase A Complete
+
+We have completed the Phase A stabilization tasks that ensure a consistent
+object layout, metadata format, and initial collector scaffolding. Key items
+completed:
+
+- Consistent object layout (header/meta/fields) across constructors and object literals
+- Packed per-class metadata globals and runtime validation
+- Trial-deletion collector scaffold and diagnostic logging (opt-in via env var)
+- Integration and unit tests verifying the above (codegen snapshots, runtime tests)
+
+This completes the critical foundation required before implementing module
+resolution and closures in Phase B/C.
+
 ---
 
 ## Short-term Roadmap (Phase 1)

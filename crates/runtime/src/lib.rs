@@ -143,22 +143,33 @@ unsafe fn validate_meta_block(meta: *mut u64, max_len: usize) -> bool {
         if len == 0 || len > max_len {
             return false;
         }
+
         // Offsets now start at meta + 1 as i32 values. Check each.
-        let max_off = 1usize << 20;
+        // Enforce: offsets are 8-byte aligned, >= header+meta_slot (16), and
+        // reasonably bounded to avoid huge or negative values.
+        let max_off = 1usize << 20; // conservative 1 MiB object bound
+        let min_off = 16usize; // header (8) + meta_slot (8)
         let offsets_ptr = meta.add(1) as *const i32;
         for i in 0..len {
             let off_i32 = *offsets_ptr.add(i);
-            let off = off_i32 as isize as usize; // sign-extend if needed
-            if off == 0 || (off & 7) != 0 {
+            // disallow zero or negative offsets
+            if off_i32 <= 0 {
                 return false;
             }
-            if off < 16 || off > max_off {
+            let off = off_i32 as isize as usize; // sign-extend if needed
+            if (off & 7) != 0 {
+                return false;
+            }
+            if off < min_off || off > max_off {
                 return false;
             }
         }
     }
     true
 }
+
+// (validate_meta_block unit tests were moved into the consolidated
+// tests module at the end of this file to avoid duplicate `mod tests`.)
 
 fn collector_thread(col: Arc<Collector>) {
     loop {
@@ -1639,6 +1650,65 @@ mod tests {
 
             // destructor should have been called
             assert!(CALLED.load(Ordering::SeqCst));
+        }
+    }
+
+    #[test]
+    fn validate_meta_block_good() {
+        unsafe {
+            let len: usize = 2;
+            // allocate enough u64 words to hold meta0 + len*i32
+            let words = 1 + ((len * 4 + 7) / 8);
+            let mut buf: Vec<u64> = vec![0u64; words];
+            buf[0] = (META_MAGIC << 32) | (len as u64 & 0xffffffffu64);
+            let ptr_u8 = buf.as_mut_ptr() as *mut u8;
+            let offsets_ptr = ptr_u8.add(8) as *mut i32;
+            *offsets_ptr.add(0) = 16;
+            *offsets_ptr.add(1) = 24;
+            assert!(validate_meta_block(buf.as_mut_ptr(), 10));
+        }
+    }
+
+    #[test]
+    fn validate_meta_block_bad_magic() {
+        unsafe {
+            let len: usize = 1;
+            let words = 1 + ((len * 4 + 7) / 8);
+            let mut buf: Vec<u64> = vec![0u64; words];
+            // wrong magic
+            buf[0] = ((0x1234u64) << 32) | (len as u64 & 0xffffffffu64);
+            let ptr = buf.as_mut_ptr();
+            assert!(!validate_meta_block(ptr, 10));
+        }
+    }
+
+    #[test]
+    fn validate_meta_block_bad_offset_small() {
+        unsafe {
+            let len: usize = 1;
+            let words = 1 + ((len * 4 + 7) / 8);
+            let mut buf: Vec<u64> = vec![0u64; words];
+            buf[0] = (META_MAGIC << 32) | (len as u64 & 0xffffffffu64);
+            let ptr_u8 = buf.as_mut_ptr() as *mut u8;
+            let offsets_ptr = ptr_u8.add(8) as *mut i32;
+            // offset too small (points to metadata area)
+            *offsets_ptr.add(0) = 8;
+            assert!(!validate_meta_block(buf.as_mut_ptr(), 10));
+        }
+    }
+
+    #[test]
+    fn validate_meta_block_bad_unaligned() {
+        unsafe {
+            let len: usize = 1;
+            let words = 1 + ((len * 4 + 7) / 8);
+            let mut buf: Vec<u64> = vec![0u64; words];
+            buf[0] = (META_MAGIC << 32) | (len as u64 & 0xffffffffu64);
+            let ptr_u8 = buf.as_mut_ptr() as *mut u8;
+            let offsets_ptr = ptr_u8.add(8) as *mut i32;
+            // unaligned offset (not multiple of 8)
+            *offsets_ptr.add(0) = 18;
+            assert!(!validate_meta_block(buf.as_mut_ptr(), 10));
         }
     }
 }

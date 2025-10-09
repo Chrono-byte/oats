@@ -80,6 +80,14 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             // allocate the ABI slot accordingly and box numeric
                             // payloads into union objects.
                             if let Some(init) = &decl.init {
+                                // If initializer is `new ClassName(...)`, record the declared nominal
+                                // so member call lowering can infer the class for locals without
+                                // an explicit type annotation.
+                                if let deno_ast::swc::ast::Expr::New(new_expr) = &**init {
+                                    if let deno_ast::swc::ast::Expr::Ident(ident) = &*new_expr.callee {
+                                        declared_nominal = Some(ident.sym.to_string());
+                                    }
+                                }
                                 // `init` is an Option<Box<Expr>> (deno_ast wrapper); use `.as_ref()`
                                 if let Ok(mut val) =
                                     self.lower_expr(init, _function, _param_map, _locals_stack)

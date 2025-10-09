@@ -44,10 +44,26 @@ impl<'a> crate::codegen::CodeGen<'a> {
         let entry = self.context.append_basic_block(function, "entry");
         self.builder.position_at_end(entry);
 
-        // 3. Store metadata and create stack allocations for parameters.
+        // 3. If any parameter types are anonymous struct literals, register
+        // them as nominal structs in `class_fields` under a generated name so
+        // downstream lowering (which expects nominal names) can resolve
+        // member accesses. Then store param types in `fn_param_types`.
+        let mut param_types_owned = param_types.to_vec();
+        for (i, p) in param_types_owned.iter_mut().enumerate() {
+            if let crate::types::OatsType::StructLiteral(fields) = p {
+                // Create a generated nominal name like <func_name>_param_struct_<i>
+                let gen_name = format!("{}_param_struct_{}", func_name, i);
+                // Insert into class_fields for lowering
+                self.class_fields
+                    .borrow_mut()
+                    .insert(gen_name.clone(), fields.clone());
+                // Replace the param type with NominalStruct so existing lowering uses it
+                *p = crate::types::OatsType::NominalStruct(gen_name);
+            }
+        }
         self.fn_param_types
             .borrow_mut()
-            .insert(func_name.to_string(), param_types.to_vec());
+            .insert(func_name.to_string(), param_types_owned.clone());
         let (param_map, mut locals_stack) =
             self.create_param_allocas(function, func_decl, &llvm_param_types, receiver_name)?;
 
@@ -128,6 +144,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 OatsType::Number => self.f64_t.into(),
                 OatsType::String
                 | OatsType::NominalStruct(_)
+                | OatsType::StructLiteral(_)
                 | OatsType::Array(_)
                 | OatsType::Promise(_)
                 | OatsType::Weak(_)
@@ -268,7 +285,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         field_name, class_name
                     ))
                 })?;
-                let field_offset = header_size + (field_idx as u64 * 8);
+                let field_offset = header_size + meta_slot + (field_idx as u64 * 8);
                 let field_ptr_int = self
                     .builder
                     .build_ptr_to_int(malloc_ret, self.i64_t, "obj_addr")
@@ -384,7 +401,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     | crate::types::OatsType::Union(_)
                 );
                 if is_ptr {
-                    let offset = header_size + (field_idx as u64 * 8);
+                    let offset = header_size + meta_slot + (field_idx as u64 * 8);
                     let const_off = self.i64_t.const_int(offset, false);
                     ptr_field_offsets.push(const_off.as_basic_value_enum());
                 }

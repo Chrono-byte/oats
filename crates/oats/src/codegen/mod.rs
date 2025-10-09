@@ -193,10 +193,7 @@ impl<'a> CodeGen<'a> {
         if let Some(f) = *self.fn_rc_weak_inc.borrow() {
             return f;
         }
-        let fn_type = self
-            .context
-            .void_type()
-            .fn_type(&[self.i8ptr_t.into()], false);
+        let fn_type = self.context.void_type().fn_type(&[self.i8ptr_t.into()], false);
         let f = self.module.add_function("rc_weak_inc", fn_type, None);
         *self.fn_rc_weak_inc.borrow_mut() = Some(f);
         f
@@ -206,10 +203,7 @@ impl<'a> CodeGen<'a> {
         if let Some(f) = *self.fn_rc_weak_dec.borrow() {
             return f;
         }
-        let fn_type = self
-            .context
-            .void_type()
-            .fn_type(&[self.i8ptr_t.into()], false);
+        let fn_type = self.context.void_type().fn_type(&[self.i8ptr_t.into()], false);
         let f = self.module.add_function("rc_weak_dec", fn_type, None);
         *self.fn_rc_weak_dec.borrow_mut() = Some(f);
         f
@@ -281,6 +275,7 @@ impl<'a> CodeGen<'a> {
             })
     }
 
+    
     fn get_array_push_ptr_weak(&self) -> FunctionValue<'a> {
         self.module
             .get_function("array_push_ptr_weak")
@@ -289,8 +284,7 @@ impl<'a> CodeGen<'a> {
                     .context
                     .void_type()
                     .fn_type(&[self.i8ptr_t.into(), self.i8ptr_t.into()], false);
-                self.module
-                    .add_function("array_push_ptr_weak", fn_type, None)
+                self.module.add_function("array_push_ptr_weak", fn_type, None)
             })
     }
 
@@ -316,6 +310,7 @@ impl<'a> CodeGen<'a> {
             })
     }
 
+    
     fn get_array_set_ptr_weak(&self) -> FunctionValue<'a> {
         self.module
             .get_function("array_set_ptr_weak")
@@ -325,8 +320,7 @@ impl<'a> CodeGen<'a> {
                     &[self.i8ptr_t.into(), self.i64_t.into(), self.i8ptr_t.into()],
                     false,
                 );
-                self.module
-                    .add_function("array_set_ptr_weak", fn_type, None)
+                self.module.add_function("array_set_ptr_weak", fn_type, None)
             })
     }
 
@@ -437,67 +431,35 @@ impl<'a> CodeGen<'a> {
             if let Some(param_types) = self
                 .fn_param_types
                 .borrow()
-                .get(function.get_name().to_str().unwrap_or(""))
-            {
+                .get(function.get_name().to_str().unwrap_or("")
+            ) {
                 let idx_usize = idx as usize;
                 if idx_usize < param_types.len() {
                     let pty = &param_types[idx_usize];
                     if let crate::types::OatsType::Union(parts) = pty {
                         // If any part is pointer-like, the ABI for this param is i8*
-                        let any_ptr = parts.iter().any(|p| {
-                            matches!(
-                                p,
-                                crate::types::OatsType::String
-                                    | crate::types::OatsType::NominalStruct(_)
-                                    | crate::types::OatsType::Array(_)
-                                    | crate::types::OatsType::Promise(_)
-                            )
-                        });
+                        let any_ptr = parts.iter().any(|p| matches!(p, crate::types::OatsType::String | crate::types::OatsType::NominalStruct(_) | crate::types::OatsType::Array(_) | crate::types::OatsType::Promise(_)));
                         if any_ptr {
                             // Get the raw argument
                             if let Some(arg_val) = function.get_nth_param(idx) {
                                 // If arg is float, box it
                                 if arg_val.get_type().is_float_type() {
                                     let box_fn = self.get_union_box_f64();
-                                    let cs = self.builder.build_call(
-                                        box_fn,
-                                        &[arg_val.into()],
-                                        "union_box_f64_param",
-                                    );
-                                    if let Ok(cs) = cs
-                                        && let inkwell::Either::Left(bv) = cs.try_as_basic_value()
-                                    {
-                                        if let inkwell::values::BasicValueEnum::PointerValue(pv) =
-                                            bv
-                                        {
+                                    let cs = self.builder.build_call(box_fn, &[arg_val.into()], "union_box_f64_param");
+                                    if let Ok(cs) = cs && let inkwell::Either::Left(bv) = cs.try_as_basic_value() {
+                                        if let inkwell::values::BasicValueEnum::PointerValue(pv) = bv {
                                             let rc_inc = self.get_rc_inc();
-                                            let _ = self.builder.build_call(
-                                                rc_inc,
-                                                &[pv.into()],
-                                                "rc_inc_param",
-                                            );
+                                            let _ = self.builder.build_call(rc_inc, &[pv.into()], "rc_inc_param");
                                         }
                                     }
                                 } else if arg_val.get_type().is_pointer_type() {
                                     // box pointer payload
                                     let box_fn = self.get_union_box_ptr();
-                                    let cs = self.builder.build_call(
-                                        box_fn,
-                                        &[arg_val.into()],
-                                        "union_box_ptr_param",
-                                    );
-                                    if let Ok(cs) = cs
-                                        && let inkwell::Either::Left(bv) = cs.try_as_basic_value()
-                                    {
-                                        if let inkwell::values::BasicValueEnum::PointerValue(pv) =
-                                            bv
-                                        {
+                                    let cs = self.builder.build_call(box_fn, &[arg_val.into()], "union_box_ptr_param");
+                                    if let Ok(cs) = cs && let inkwell::Either::Left(bv) = cs.try_as_basic_value() {
+                                        if let inkwell::values::BasicValueEnum::PointerValue(pv) = bv {
                                             let rc_inc = self.get_rc_inc();
-                                            let _ = self.builder.build_call(
-                                                rc_inc,
-                                                &[pv.into()],
-                                                "rc_inc_param",
-                                            );
+                                            let _ = self.builder.build_call(rc_inc, &[pv.into()], "rc_inc_param");
                                         }
                                     }
                                 }

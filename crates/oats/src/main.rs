@@ -35,6 +35,54 @@ fn main() -> Result<()> {
     let entry_str = entry_abs.to_string_lossy().to_string();
     queue.push_back(entry_str.clone());
 
+    // Helper: resolve a relative import specifier against a module path.
+    // Tries common extensions and index file fallbacks. Returns a canonical
+    // absolute path string when a file is found.
+    fn resolve_relative_import(from: &str, spec: &str) -> Option<String> {
+        let base = std::path::Path::new(from)
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("."));
+        let candidate = base.join(spec);
+        let exts = [".ts", ".oats", ""]; // prefer .ts then .oats then raw
+
+        // Try direct file with extensions
+        for ext in &exts {
+            let mut c = candidate.clone();
+            if c.extension().is_none() && !ext.is_empty() {
+                c.set_extension(ext.trim_start_matches('.'));
+            }
+            if c.exists() {
+                if let Ok(cabs) = std::fs::canonicalize(&c) {
+                    return Some(cabs.to_string_lossy().to_string());
+                }
+            }
+        }
+
+        // If candidate is a directory or bare module, try index file fallbacks
+        if candidate.exists() && candidate.is_dir() {
+            for idx in &["index.ts", "index.oats", "index"] {
+                let c = candidate.join(idx);
+                if c.exists() {
+                    if let Ok(cabs) = std::fs::canonicalize(&c) {
+                        return Some(cabs.to_string_lossy().to_string());
+                    }
+                }
+            }
+        }
+
+        // Also try appending /index.* to the original spec (in case spec had ext)
+        for idx in &["index.ts", "index.oats", "index"] {
+            let c = candidate.join(idx);
+            if c.exists() {
+                if let Ok(cabs) = std::fs::canonicalize(&c) {
+                    return Some(cabs.to_string_lossy().to_string());
+                }
+            }
+        }
+
+        None
+    }
+
     while let Some(path) = queue.pop_front() {
         if modules.contains_key(&path) {
             continue; // already loaded
@@ -49,25 +97,7 @@ fn main() -> Result<()> {
                     let src_val = import_decl.src.value.to_string();
                     // Only handle relative paths for now
                     if src_val.starts_with("./") || src_val.starts_with("../") {
-                        // Try common extensions if not present
-                        let base = std::path::Path::new(&path)
-                            .parent()
-                            .unwrap_or_else(|| std::path::Path::new("."));
-                        let candidate = base.join(&src_val);
-                        let mut found = None;
-                        let exts = [".ts", ".oats", ""]; // prefer .ts then .oats then raw
-                        for ext in &exts {
-                            let mut c = candidate.clone();
-                            if c.extension().is_none() && !ext.is_empty() {
-                                c.set_extension(ext.trim_start_matches('.'));
-                            }
-                            if c.exists()
-                                && let Ok(cabs) = std::fs::canonicalize(&c) {
-                                    found = Some(cabs.to_string_lossy().to_string());
-                                    break;
-                                }
-                        }
-                        if let Some(fpath) = found
+                        if let Some(fpath) = resolve_relative_import(&path, &src_val)
                             && !modules.contains_key(&fpath) {
                                 queue.push_back(fpath);
                             }
@@ -99,6 +129,10 @@ fn main() -> Result<()> {
         String,
         std::collections::HashMap<String, OatsType>,
     > = std::collections::HashMap::new();
+    // Collect fields for top-level type aliases that are object literal types
+    // so we can register them as nominal structs for lowering.
+    let mut alias_fields: std::collections::HashMap<String, Vec<(String, OatsType)>> =
+        std::collections::HashMap::new();
     for (mkey, parsed_module) in modules.iter() {
         let mut emap: std::collections::HashMap<String, OatsType> =
             std::collections::HashMap::new();
@@ -125,8 +159,35 @@ fn main() -> Result<()> {
                         }
                         deno_ast::swc::ast::Decl::TsTypeAlias(type_alias) => {
                             let name = type_alias.id.sym.to_string();
+                            // If the alias maps directly to a known OatsType, record it.
                             if let Some(mapped) = oats::types::map_ts_type(&type_alias.type_ann) {
                                 emap.insert(name.clone(), mapped);
+                            } else {
+                                // If it's an object literal type (TsTypeLit), extract properties
+                                use deno_ast::swc::ast;
+                                if let ast::TsType::TsTypeLit(typelit) = &*type_alias.type_ann {
+                                    let mut fields: Vec<(String, OatsType)> = Vec::new();
+                                    for member in &typelit.members {
+                                        if let ast::TsTypeElement::TsPropertySignature(prop) = member {
+                                            // prop.key is an Expr boxed; match Identifier expressions
+                                            if let ast::Expr::Ident(id) = &*prop.key {
+                                                let fname = id.sym.to_string();
+                                                if let Some(type_ann) = &prop.type_ann
+                                                    && let Some(mapped) = oats::types::map_ts_type(&type_ann.type_ann)
+                                                {
+                                                    fields.push((fname, mapped));
+                                                    continue;
+                                                }
+                                                fields.push((fname, OatsType::Number));
+                                            }
+                                        }
+                                    }
+                                    if !fields.is_empty() {
+                                        // Record as a nominal struct export and stash its fields
+                                        emap.insert(name.clone(), OatsType::NominalStruct(name.clone()));
+                                        alias_fields.insert(name.clone(), fields);
+                                    }
+                                }
                             }
                         }
                         _ => {}
@@ -149,22 +210,7 @@ fn main() -> Result<()> {
                     let src_val = import_decl.src.value.to_string();
                     let mut resolved_mod: Option<String> = None;
                     if src_val.starts_with("./") || src_val.starts_with("../") {
-                        let base = std::path::Path::new(&mkey)
-                            .parent()
-                            .unwrap_or_else(|| std::path::Path::new("."));
-                        let candidate = base.join(&src_val);
-                        let exts = [".ts", ".oats", ""]; // same resolution order as loader
-                        for ext in &exts {
-                            let mut c = candidate.clone();
-                            if c.extension().is_none() && !ext.is_empty() {
-                                c.set_extension(ext.trim_start_matches('.'));
-                            }
-                            if c.exists()
-                                && let Ok(cabs) = std::fs::canonicalize(&c) {
-                                    resolved_mod = Some(cabs.to_string_lossy().to_string());
-                                    break;
-                                }
-                        }
+                        resolved_mod = resolve_relative_import(&mkey, &src_val);
                     }
 
                     for spec in &import_decl.specifiers {
@@ -285,6 +331,13 @@ fn main() -> Result<()> {
         loop_context_stack: std::cell::RefCell::new(Vec::new()),
         source: &parsed_mod.source,
     };
+
+    // Merge collected alias_fields from earlier passes into codegen.class_fields so
+    // downstream lowering can treat type aliases with object literal shapes as
+    // nominal structs (best-effort for Phase 1 structural support).
+    for (name, fields) in alias_fields.into_iter() {
+        codegen.class_fields.borrow_mut().insert(name, fields);
+    }
 
     // Helper: infer a simple OatsType from an expression (literals and simple arrays)
     fn infer_from_expr(e: &deno_ast::swc::ast::Expr) -> Option<OatsType> {

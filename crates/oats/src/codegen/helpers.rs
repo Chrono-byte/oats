@@ -23,6 +23,7 @@ impl<'a> super::CodeGen<'a> {
             OatsType::Boolean => self.bool_t.as_basic_type_enum(),
             OatsType::String
             | OatsType::NominalStruct(_)
+            | OatsType::StructLiteral(_)
             | OatsType::Array(_)
             | OatsType::Promise(_)
             | OatsType::Weak(_)
@@ -34,6 +35,7 @@ impl<'a> super::CodeGen<'a> {
                         p,
                         OatsType::String
                             | OatsType::NominalStruct(_)
+                            | OatsType::StructLiteral(_)
                             | OatsType::Array(_)
                             | OatsType::Promise(_)
                             | OatsType::Weak(_)
@@ -363,6 +365,8 @@ impl<'a> super::CodeGen<'a> {
             self.fn_strlen.borrow_mut().replace(f);
         }
 
+
+        
         // declare memcpy(i8*, i8*, i64) -> i8*
         if self.module.get_function("memcpy").is_none() {
             let i8ptr = self.i8ptr_t;
@@ -490,5 +494,88 @@ impl<'a> super::CodeGen<'a> {
         // Add the function declaration (no body). If a definition is needed
         // later (for a self-contained IR mode) we can change this behavior.
         let _function = self.module.add_function("str_concat", fn_type, None);
+    }
+
+    // Allocate a heap object with the standard header/meta/fields layout and
+    // store the provided pointer-field values into the object's fields.
+    // All values must be BasicValueEnum with pointer type (i8*). Numeric
+    // values should be boxed by the caller (e.g., via union_box_f64).
+    // Returns the allocated object base pointer (i8*).
+    pub(crate) fn heap_alloc_with_ptr_fields(
+        &self,
+        field_ptrs: &[inkwell::values::BasicValueEnum<'a>],
+    ) -> Result<inkwell::values::PointerValue<'a>, crate::diagnostics::Diagnostic> {
+        let field_count = field_ptrs.len();
+        let header_size = 8u64;
+        let meta_slot = 8u64;
+        let total_size = header_size + meta_slot + (field_count as u64 * 8);
+
+        let malloc_fn = self.get_malloc();
+        let size_const = self.i64_t.const_int(total_size, false);
+        let call_site = self
+            .builder
+            .build_call(malloc_fn, &[size_const.into()], "call_malloc")
+            .map_err(|_| crate::diagnostics::Diagnostic::simple("build_call failed"))?;
+        let malloc_ret = call_site
+            .try_as_basic_value()
+            .left()
+            .ok_or_else(|| crate::diagnostics::Diagnostic::simple("malloc call did not return a value"))?
+            .into_pointer_value();
+
+        // Cast to i8* for stores
+        let obj_ptr = self
+            .builder
+            .build_pointer_cast(malloc_ret, self.i8ptr_t, "obj_ptr")
+            .map_err(|_| crate::diagnostics::Diagnostic::simple("pointer cast failed"))?;
+
+        // Initialize header: rc=1, type_tag=3 (closure/env-like)
+        let type_tag_val = 3u64 << 49;
+        let header_val = self.i64_t.const_int(type_tag_val | 1u64, false);
+        let _ = self.builder.build_store(obj_ptr, header_val);
+
+        // Zero-init meta slot
+        let obj_ptr_int = self
+            .builder
+            .build_ptr_to_int(malloc_ret, self.i64_t, "obj_addr_for_zero")
+            .map_err(|_| crate::diagnostics::Diagnostic::simple("ptr_to_int failed"))?;
+        let off_meta = self.i64_t.const_int(header_size, false);
+        let meta_addr = self
+            .builder
+            .build_int_add(obj_ptr_int, off_meta, "meta_addr")
+            .map_err(|_| crate::diagnostics::Diagnostic::simple("int_add failed"))?;
+        let meta_ptr = self
+            .builder
+            .build_int_to_ptr(meta_addr, self.i8ptr_t, "meta_ptr")
+            .map_err(|_| crate::diagnostics::Diagnostic::simple("int_to_ptr failed"))?;
+        let null_ptr = self.i8ptr_t.const_null();
+        let _ = self.builder.build_store(meta_ptr, null_ptr.as_basic_value_enum());
+
+        // Store each field (as i8* word) at offset header+meta_slot + idx*8
+        for (i, val) in field_ptrs.iter().enumerate() {
+            // compute offset
+            let field_offset = header_size + meta_slot + (i as u64 * 8);
+            let off_const = self.i64_t.const_int(field_offset, false);
+            let field_addr = self
+                .builder
+                .build_int_add(obj_ptr_int, off_const, "field_addr")
+                .map_err(|_| crate::diagnostics::Diagnostic::simple("int_add failed"))?;
+            let field_ptr_cast = self
+                .builder
+                .build_int_to_ptr(field_addr, self.i8ptr_t, "field_ptr")
+                .map_err(|_| crate::diagnostics::Diagnostic::simple("int_to_ptr failed"))?;
+
+            // Ensure val is pointer-like; if it's not, cast could fail — caller responsibility
+            let _ = self.builder.build_store(field_ptr_cast, *val);
+
+            // If value is pointer, increment RC to claim ownership in env
+            if val.get_type().is_pointer_type() {
+                if let inkwell::values::BasicValueEnum::PointerValue(pv) = *val {
+                    let rc_inc = self.get_rc_inc();
+                    let _ = self.builder.build_call(rc_inc, &[pv.into()], "rc_inc_env");
+                }
+            }
+        }
+
+        Ok(obj_ptr)
     }
 }

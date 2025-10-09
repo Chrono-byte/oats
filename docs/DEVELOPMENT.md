@@ -28,6 +28,24 @@ This document consolidates all development-focused information including current
 - ✅ String operations and template literals
 - ✅ 51 passing tests covering all features
 
+### Phase A: Stabilization Complete ✅
+
+Phase A focused on stabilizing the runtime object layout, metadata, and initial
+cycle-collection scaffolding. The following checklist marks the Phase A
+deliverables that are now complete:
+
+- [x] Unified object layout enforced: header@0, meta_ptr@8, fields@16+
+- [x] Codegen emits a packed metadata global per class (`<Class>_field_map`) and stores pointer at offset +8
+- [x] Constructor and object-literal allocation updated to reserve `meta_slot` and zero-init field slots
+- [x] `validate_meta_block` runtime validation hardened and unit-tested
+- [x] Trial-deletion collector scaffold implemented (background thread)
+- [x] Integration regression test added: AOT-compile + run `examples/cycle_reclaim.oats`
+- [x] Fixes applied for constructor arg ABI and parameter-property auto-assignment
+- [x] Unit and codegen snapshot tests updated and passing
+
+These changes close a set of critical correctness regressions (segfaults from
+invalid RC operations) and provide a stable platform for Phase B work.
+
 **Memory Management:**
 - ✅ Unified heap object system with reference counting
 - ✅ Static string literals are immortal (static bit prevents RC modifications)

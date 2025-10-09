@@ -22,6 +22,8 @@ pub enum OatsType {
     NominalStruct(String),
     // Promise type wrapping a result type (e.g. Promise<number>)
     Promise(Box<OatsType>),
+    // Anonymous struct-like type (object literal type) with named fields
+    StructLiteral(Vec<(String, OatsType)>),
 }
 
 #[derive(Debug, Clone)]
@@ -165,6 +167,27 @@ pub fn map_ts_type(ty: &ast::TsType) -> Option<OatsType> {
         ast::TsType::TsArrayType(arr) => {
             // element type
             map_ts_type(&arr.elem_type).map(|elem| OatsType::Array(Box::new(elem)))
+        }
+        ast::TsType::TsTypeLit(typelit) => {
+            // Object literal type: collect property signatures where possible
+            use deno_ast::swc::ast;
+            let mut fields: Vec<(String, OatsType)> = Vec::new();
+            for member in &typelit.members {
+                if let ast::TsTypeElement::TsPropertySignature(prop) = member {
+                    if let ast::Expr::Ident(id) = &*prop.key {
+                        let fname = id.sym.to_string();
+                        if let Some(type_ann) = &prop.type_ann
+                            && let Some(mapped) = map_ts_type(&type_ann.type_ann)
+                        {
+                            fields.push((fname, mapped));
+                            continue;
+                        }
+                        // default when type can't be mapped
+                        fields.push((fname, OatsType::Number));
+                    }
+                }
+            }
+            Some(OatsType::StructLiteral(fields))
         }
         _ => None,
     }

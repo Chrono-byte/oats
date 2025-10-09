@@ -832,9 +832,16 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             .builder
                                             .build_int_mul(idx_const, ptr_sz, "fld_off_mul")
                                             .map_err(|_| Diagnostic::simple("LLVM builder error"))?;
+                                        // Reserve an 8-byte metadata slot after the header so field
+                                        // offsets are computed as: header_size + meta_slot + idx * ptr_size
+                                        let meta_slot = self.i64_t.const_int(8u64, false);
+                                        let tmp = self
+                                            .builder
+                                            .build_int_add(hdr_size, meta_slot, "hdr_plus_meta")
+                                            .map_err(|_| Diagnostic::simple("LLVM builder error"))?;
                                         let offset = self
                                             .builder
-                                            .build_int_add(hdr_size, mul, "fld_off")
+                                            .build_int_add(tmp, mul, "fld_off")
                                             .map_err(|_| Diagnostic::simple("LLVM builder error"))?;
                                         let offset_i32 = self
                                             .builder
@@ -1575,12 +1582,17 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             .map_err(|_| {
                                                 Diagnostic::simple("LLVM builder error")
                                             })?;
+                                        // Reserve an 8-byte metadata slot after the header so field
+                                        // offsets are computed as: header_size + meta_slot + idx * ptr_size
+                                        let meta_slot = self.i64_t.const_int(8u64, false);
+                                        let tmp = self
+                                            .builder
+                                            .build_int_add(hdr_size, meta_slot, "hdr_plus_meta")
+                                            .map_err(|_| Diagnostic::simple("LLVM builder error"))?;
                                         let offset = self
                                             .builder
-                                            .build_int_add(hdr_size, mul, "fld_off")
-                                            .map_err(|_| {
-                                                Diagnostic::simple("LLVM builder error")
-                                            })?;
+                                            .build_int_add(tmp, mul, "fld_off")
+                                            .map_err(|_| Diagnostic::simple("LLVM builder error"))?;
                                         // We need a i32 index sequence for gep on i8 pointer: cast offset to i64->i32 for index
                                         let offset_i64 = offset;
                                         let offset_i32 = self
@@ -1811,11 +1823,126 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 }
             }
             ast::Expr::Arrow(arrow) => {
-                // For now, only support non-capturing arrow functions
-                // They will be lowered to static functions and returned as function pointers
+                // Detect captured variables in the arrow body by scanning for
+                // identifier usages that are not parameters and that resolve to
+                // names in the surrounding `locals` stack. We return a helpful
+                // diagnostic listing captures for now; full closure lowering
+                // (boxed environments + trampolines) is planned in Phase 2.
+                fn collect_idents_in_expr(
+                    expr: &deno_ast::swc::ast::Expr,
+                    out: &mut std::collections::HashSet<String>,
+                ) {
+                    use deno_ast::swc::ast;
+                    match expr {
+                        ast::Expr::Ident(id) => {
+                            out.insert(id.sym.to_string());
+                        }
+                        ast::Expr::Bin(b) => {
+                            collect_idents_in_expr(&b.left, out);
+                            collect_idents_in_expr(&b.right, out);
+                        }
+                        ast::Expr::Unary(u) => {
+                            collect_idents_in_expr(&u.arg, out);
+                        }
+                        ast::Expr::Call(c) => {
+                            use deno_ast::swc::ast::Callee;
+                            match &c.callee {
+                                Callee::Expr(e) => collect_idents_in_expr(&*e, out),
+                                Callee::Super(_) => {}
+                                Callee::Import(_) => {}
+                            }
+                            for a in &c.args {
+                                collect_idents_in_expr(&a.expr, out);
+                            }
+                        }
+                        ast::Expr::Member(m) => {
+                            collect_idents_in_expr(&m.obj, out);
+                        }
+                        ast::Expr::Arrow(a) => {
+                            // nested arrow: scan body
+                            if a.body.is_block_stmt() {
+                                if let deno_ast::swc::ast::BlockStmtOrExpr::BlockStmt(b) = &*a.body {
+                                    for s in &b.stmts {
+                                        use deno_ast::swc::ast::Stmt;
+                                        if let Stmt::Expr(es) = s {
+                                            collect_idents_in_expr(&es.expr, out);
+                                        }
+                                    }
+                                }
+                            } else if let deno_ast::swc::ast::BlockStmtOrExpr::Expr(e) = &*a.body {
+                                collect_idents_in_expr(e, out);
+                            }
+                        }
+                        ast::Expr::Object(o) => {
+                            for prop in &o.props {
+                                if let deno_ast::swc::ast::PropOrSpread::Prop(p) = prop {
+                                    if let deno_ast::swc::ast::Prop::KeyValue(kv) = &**p {
+                                        collect_idents_in_expr(&kv.value, out);
+                                    }
+                                }
+                            }
+                        }
+                        ast::Expr::Array(a) => {
+                            for e in &a.elems {
+                                if let Some(elem) = e {
+                                    collect_idents_in_expr(&elem.expr, out);
+                                }
+                            }
+                        }
+                        ast::Expr::Assign(asg) => {
+                            collect_idents_in_expr(&asg.right, out);
+                        }
+                        ast::Expr::Cond(cnd) => {
+                            collect_idents_in_expr(&cnd.test, out);
+                            collect_idents_in_expr(&cnd.cons, out);
+                            collect_idents_in_expr(&cnd.alt, out);
+                        }
+                        _ => {}
+                    }
+                }
 
-                // TODO: Detect captured variables and implement closure support
-                // For Phase 1, we only support arrows that don't capture variables
+                // Build a set of names visible in the surrounding locals stack
+                let mut outer_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+                for scope in locals.iter() {
+                    for k in scope.keys() {
+                        outer_names.insert(k.clone());
+                    }
+                }
+
+                // Collect idents used in the arrow body
+                let mut used: std::collections::HashSet<String> = std::collections::HashSet::new();
+                if arrow.body.is_block_stmt() {
+                    if let deno_ast::swc::ast::BlockStmtOrExpr::BlockStmt(block) = &*arrow.body {
+                        for stmt in &block.stmts {
+                            use deno_ast::swc::ast::Stmt;
+                            if let Stmt::Expr(es) = stmt {
+                                collect_idents_in_expr(&es.expr, &mut used);
+                            }
+                        }
+                    }
+                } else if let deno_ast::swc::ast::BlockStmtOrExpr::Expr(expr) = &*arrow.body {
+                    collect_idents_in_expr(expr, &mut used);
+                }
+
+                // Remove arrow params from used
+                for param in &arrow.params {
+                    if let deno_ast::swc::ast::Pat::Ident(ident) = param {
+                        used.remove(&ident.id.sym.to_string());
+                    }
+                }
+
+                // Any remaining identifiers that exist in outer_names are captures
+                let mut captures: Vec<String> = Vec::new();
+                for name in used.into_iter() {
+                    if outer_names.contains(&name) {
+                        captures.push(name);
+                    }
+                }
+
+                if !captures.is_empty() {
+                    let msg = format!("arrow function captures variables not yet supported: {:?}", captures);
+                    return Err(Diagnostic::simple(&msg));
+                }
 
                 // Generate a unique function name for this arrow
                 let arrow_fn_name = format!("arrow_fn_{}", self.next_str_id.get());

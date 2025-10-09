@@ -9,9 +9,6 @@ fn field_write_emits_gep_store_and_rc_calls() -> Result<()> {
     let src = std::fs::read_to_string("../../examples/field_write.oats")?;
     let ir_string = gen_ir_for_source(&src)?;
 
-    // Debug: print IR for manual inspection
-    println!("Generated IR:\n{}", ir_string);
-
     // 1. Should have GEP instruction for field access
     assert!(
         ir_string.contains("getelementptr") || ir_string.contains("gep"),

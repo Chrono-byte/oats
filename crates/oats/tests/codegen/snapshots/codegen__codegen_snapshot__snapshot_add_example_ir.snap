@@ -27,3 +27,5 @@ entry:
 }
 
 declare void @rc_dec(ptr)
+
+declare void @rc_weak_dec(ptr)

@@ -542,6 +542,39 @@ pub unsafe extern "C" fn array_set_ptr(arr: *mut c_void, idx: usize, p: *mut c_v
     }
 }
 
+// Sets a pointer in a pointer-typed array, managing weak refcounts correctly.
+// This is like `array_set_ptr` but uses weak refcount ops so the array holds
+// a non-owning (weak) reference to the object.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn array_set_ptr_weak(arr: *mut c_void, idx: usize, p: *mut c_void) {
+    if arr.is_null() {
+        return;
+    }
+    unsafe {
+        let len_ptr = (arr as *mut u8).add(mem::size_of::<u64>()) as *const u64;
+        let len = *len_ptr as usize;
+        if idx >= len {
+            runtime_index_oob_abort(arr, idx, len);
+        }
+        let data_start = (arr as *mut u8).add(ARRAY_HEADER_SIZE);
+        let elem_ptr =
+            data_start.add(idx * mem::size_of::<*mut c_void>()) as *mut AtomicPtr<c_void>;
+
+        // Increment the new pointer's WEAK refcount *before* swapping it in.
+        if !p.is_null() {
+            rc_weak_inc(p);
+        }
+
+        // Atomically swap the new pointer into the array, getting the old one back.
+        let old = (*elem_ptr).swap(p, Ordering::AcqRel);
+
+        // Decrement the old pointer's WEAK refcount *after* it has been removed.
+        if !old.is_null() {
+            rc_weak_dec(old);
+        }
+    }
+}
+
 // Push a f64 value onto an existing array.
 // Note: this does not perform capacity checks or reallocation. The caller
 // must ensure the array was allocated with sufficient space.
@@ -600,6 +633,26 @@ pub unsafe extern "C" fn array_push_ptr(arr: *mut c_void, value: *mut c_void) {
         *elem_ptr = value;
         if !value.is_null() {
             rc_inc(value);
+        }
+        *len_ptr = (len + 1) as u64;
+    }
+}
+
+// Push a pointer-sized element into a pointer-typed array using WEAK refs.
+// Increments the pushed pointer's WEAK refcount to reflect array's non-owning reference.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn array_push_ptr_weak(arr: *mut c_void, value: *mut c_void) {
+    if arr.is_null() {
+        return;
+    }
+    unsafe {
+        let len_ptr = (arr as *mut u8).add(mem::size_of::<u64>()) as *mut u64;
+        let len = *len_ptr as usize;
+        let data_start = (arr as *mut u8).add(ARRAY_HEADER_SIZE);
+        let elem_ptr = data_start.add(len * mem::size_of::<*mut c_void>()) as *mut *mut c_void;
+        *elem_ptr = value;
+        if !value.is_null() {
+            rc_weak_inc(value);
         }
         *len_ptr = (len + 1) as u64;
     }

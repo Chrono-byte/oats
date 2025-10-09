@@ -9,6 +9,7 @@ type LocalEntry<'a> = (
     BasicTypeEnum<'a>,
     bool,
     bool,
+    bool, // is_weak
 );
 type LocalsStackLocal<'a> = Vec<HashMap<String, LocalEntry<'a>>>;
 
@@ -302,8 +303,8 @@ impl<'a> super::CodeGen<'a> {
         name: &str,
     ) -> Option<LocalEntry<'a>> {
         for scope in locals.iter().rev() {
-            if let Some((ptr, ty, init, is_const)) = scope.get(name) {
-                return Some((*ptr, *ty, *init, *is_const));
+            if let Some((ptr, ty, init, is_const, is_weak)) = scope.get(name) {
+                return Some((*ptr, *ty, *init, *is_const, *is_weak));
             }
         }
         None
@@ -317,13 +318,14 @@ impl<'a> super::CodeGen<'a> {
         ty: BasicTypeEnum<'a>,
         initialized: bool,
         is_const: bool,
+        is_weak: bool,
     ) {
         if locals.is_empty() {
             locals.push(HashMap::new());
         }
         // Safe: we just ensured locals is not empty above
         if let Some(scope) = locals.last_mut() {
-            scope.insert(name, (ptr, ty, initialized, is_const));
+            scope.insert(name, (ptr, ty, initialized, is_const, is_weak));
         }
     }
 
@@ -401,17 +403,23 @@ impl<'a> super::CodeGen<'a> {
     pub fn emit_rc_dec_for_locals(&self, locals: &LocalsStackLocal<'a>) {
         // Find the rc_dec declaration (declare if needed)
         let rc_dec = self.get_rc_dec();
+        let rc_weak_dec = self.get_rc_weak_dec();
         for scope in locals.iter().rev() {
-            for (_name, (ptr, ty, init, _is_const)) in scope.iter() {
+            for (_name, (ptr, ty, init, _is_const, is_weak)) in scope.iter() {
                 if *init && let inkwell::types::BasicTypeEnum::PointerType(_) = ty {
-                    // load current pointer value and call rc_dec
+                    // load current pointer value
                     if let Ok(loaded) = self.builder.build_load(*ty, *ptr, "drop_load")
                         && let BasicValueEnum::PointerValue(pv) = loaded
                     {
-                        // Silently ignore build_call errors during cleanup
-                        let _ = self
-                            .builder
-                            .build_call(rc_dec, &[pv.into()], "rc_dec_local");
+                        // If this local is a weak reference, call rc_weak_dec; otherwise rc_dec
+                        if *is_weak {
+                            let _ = self.builder.build_call(rc_weak_dec, &[pv.into()], "rc_weak_dec_local");
+                        } else {
+                            // Silently ignore build_call errors during cleanup
+                            let _ = self
+                                .builder
+                                .build_call(rc_dec, &[pv.into()], "rc_dec_local");
+                        }
                     }
                 }
             }
@@ -431,17 +439,22 @@ impl<'a> super::CodeGen<'a> {
             return;
         }
         // iterate from innermost scope down to start_index
+        let rc_weak_dec = self.get_rc_weak_dec();
         for scope in locals.iter().rev().take(locals.len() - start_index) {
-            for (_name, (ptr, ty, init, _is_const)) in scope.iter() {
+            for (_name, (ptr, ty, init, _is_const, is_weak)) in scope.iter() {
                 if *init
                     && let inkwell::types::BasicTypeEnum::PointerType(_) = ty
                     && let Ok(loaded) = self.builder.build_load(*ty, *ptr, "drop_load")
                     && let BasicValueEnum::PointerValue(pv) = loaded
                 {
-                    // Silently ignore build_call errors during cleanup
-                    let _ = self
-                        .builder
-                        .build_call(rc_dec, &[pv.into()], "rc_dec_local");
+                    if *is_weak {
+                        let _ = self.builder.build_call(rc_weak_dec, &[pv.into()], "rc_weak_dec_local");
+                    } else {
+                        // Silently ignore build_call errors during cleanup
+                        let _ = self
+                            .builder
+                            .build_call(rc_dec, &[pv.into()], "rc_dec_local");
+                    }
                 }
             }
         }

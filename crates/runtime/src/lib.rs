@@ -1365,8 +1365,16 @@ pub unsafe extern "C" fn rc_inc(p: *mut c_void) {
             return; // Static objects are immortal, skip RC
         }
 
-        // Increment RC on the object header
-        loop {
+        // Increment RC on the object header. We use a compare_exchange loop
+        // on the full 64-bit header so strong/weak bits and flags remain
+        // consistent. This avoids separate atomics for weak+strong counts and
+        // reduces the chance of race conditions during concurrent updates.
+    // Loop performing an atomic compare-exchange on the 64-bit header.
+    // We must do this atomically because other threads may be changing
+    // the refcount concurrently. When the count reaches zero we run
+    // destructor-like cleanup while holding the claim that we are the
+    // thread performing finalization for this object.
+    loop {
             let old_header = (*header).load(Ordering::Relaxed);
             let rc = old_header & HEADER_RC_MASK;
             let new_rc = rc.wrapping_add(1) & HEADER_RC_MASK;
@@ -1409,8 +1417,12 @@ unsafe fn get_object_base(p: *mut c_void) -> *mut c_void {
         let header = p as *const AtomicU64;
         let header_val = (*header).load(Ordering::Relaxed);
 
-        // Valid header check: either has static bit, or has reasonable RC value
-        // If RC is between 0 and 10000 and flags look reasonable, assume it's a valid header
+    // Valid header check: either has static bit, or has reasonable RC value.
+    // We check that the strong count is not absurdly large and that the
+    // flags are a small set of expected values. These heuristics are
+    // intentionally conservative; the runtime does not attempt to fully
+    // validate arbitrary pointers to avoid UB in the presence of memory
+    // corruption.
         let rc = header_val & HEADER_RC_MASK;
         let flags = (header_val >> 32) as u32;
 
@@ -1516,7 +1528,7 @@ pub unsafe extern "C" fn rc_dec(p: *mut c_void) {
                 Ordering::Relaxed,
             ) {
                 Ok(_) => {
-                    if new_rc == 0 {
+                        if new_rc == 0 {
                         // An acquire fence ensures that all memory effects that happened
                         // before the last reference was dropped are visible before we run destructor.
                         std::sync::atomic::fence(Ordering::Acquire);
@@ -1541,8 +1553,11 @@ pub unsafe extern "C" fn rc_dec(p: *mut c_void) {
                             }
                         }
 
-                        // After destructor runs, decrement the weak count on the control block
-                        // (the object's control block must survive until weak count reaches zero).
+                        // After destructor runs, decrement the weak count on the
+                        // control block. The runtime separates object lifetime
+                        // (strong refs) from control-block lifetime (weak refs);
+                        // `rc_weak_dec` will free the control block once both
+                        // counts reach zero.
                         rc_weak_dec(obj_ptr);
                         // rc_weak_dec is responsible for freeing when weak count reaches zero.
                     } else {
@@ -1784,6 +1799,8 @@ pub extern "C" fn union_box_ptr(p: *mut c_void) -> *mut c_void {
         // payload pointer at offset +24
         let payload_ptr_ptr = mem.add(24) as *mut *mut c_void;
         *payload_ptr_ptr = p;
+        // Ensure the boxed union owns a strong reference to the nested pointer
+        // so the payload remains live for the lifetime of the union object.
         if !p.is_null() {
             rc_inc(p);
         }

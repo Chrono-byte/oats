@@ -11,6 +11,21 @@
 //! runtime calls rather than attempting aggressive optimizations. Inline
 //! comments explain important choices (for example, when boxing is used
 //! for unions and when `rc_inc` / `rc_dec` semantics apply).
+//!
+//! Design notes and conventions used throughout this module:
+//! - ABI/Return values: lowering returns a `BasicValueEnum` that represents
+//!   the ABI value for an expression: numeric results are `f64` (float),
+//!   pointer-like values are `i8*`. For callers that expect a value from a
+//!   void-returning IR call we return a harmless `f64` zero so the surrounding
+//!   lowering can remain uniform.
+//! - Unions: when a union has any pointer-like arm we choose a pointer
+//!   representation for the ABI (i8*). Numeric arms are boxed via
+//!   `union_box_f64`/`union_box_ptr` when stored in heap fields or captured.
+//! - Last-expression origin: `last_expr_origin_local` is used as a small
+//!   heuristic to record that the last-lowered expression came from a named
+//!   temporary local (for example a freshly constructed closure). This lets
+//!   subsequent lowering paths conservatively recover more static information
+//!   (e.g., closure return types) without heavy analysis.
 
 use crate::diagnostics::Diagnostic;
 use inkwell::values::BasicValueEnum;
@@ -92,9 +107,13 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     let inner = self.lower_expr(&unary.arg, function, param_map, locals)?;
                     if let BasicValueEnum::PointerValue(pv) = inner {
                         // For pointer-like values, consult the union discriminant helper.
-                        // Runtime layout: union-boxed objects expose a discriminant word
-                        // (0=number, 1=string, 2=boolean/other). Calling the helper
-                        // allows `typeof` guards and comparisons to work on boxed unions.
+                        // Runtime layout: union-boxed objects expose a small tag (discriminant)
+                        // stored in the allocated container. The helper reads that tag and
+                        // returns an i64 so the compiler can cheaply implement `typeof`
+                        // without re-running generic dynamic checks. This fast-path is
+                        // intentionally optimistic: if the inner value is unboxed or a
+                        // different representation, we fall back to the general path
+                        // below.
                         let get_disc = self.get_union_get_discriminant();
                         let cs = self.builder.build_call(get_disc, &[pv.into()], "get_disc");
                         if let Ok(cs) = cs
@@ -205,6 +224,14 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 // two sides have differing ABI types (for example f64 vs i64
                 // or pointer). This keeps the lowering correct for expressions
                 // that return one of the operand values (JS-like semantics).
+                //
+                // Implementation detail: to preserve JS semantics where `a && b`
+                // returns either `a` or `b` we evaluate `a` first, check its
+                // truthiness via `to_condition_i1`, and only evaluate `b` when
+                // needed. The merge uses a phi node which may need to coerce the
+                // two incoming values to a common ABI representation; `build_phi_merge`
+                // performs those coercions conservatively (boxing numeric values
+                // if the other arm expects a pointer-like value, etc.).
                 if let deno_ast::swc::ast::BinaryOp::LogicalAnd = bin.op {
                     // a && b -> if a truthy then b else a
                     let left_val = l;
@@ -779,7 +806,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             {
                                 // Attempt to lower the callee expression to a value
                                 if let Ok(callee_val) =
-                                    self.lower_expr(&boxed_expr, function, param_map, locals)
+                                    self.lower_expr(boxed_expr, function, param_map, locals)
                                 {
                                     // If it lowered to a pointer, treat it as a closure object
                                     if let BasicValueEnum::PointerValue(callee_ptr) = callee_val {
@@ -923,7 +950,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             // Attempt to lower the callee as a general expression.
                             // This covers calling closure objects (layout: [header][meta][fn_ptr][env_ptr]).
                             if let Ok(callee_val) =
-                                self.lower_expr(&boxed_expr, function, param_map, locals)
+                                self.lower_expr(boxed_expr, function, param_map, locals)
                             {
                                 if let BasicValueEnum::PointerValue(callee_ptr) = callee_val {
                                     // compute offsets for fn_ptr (idx 0) and env_ptr (idx 1)
@@ -1170,16 +1197,16 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         self.last_expr_origin_local.borrow_mut().take();
                                         return Ok(zero.as_basic_value_enum());
                                     }
-                                    return Err(Diagnostic::simple(
+                                    Err(Diagnostic::simple(
                                         "unsupported expression (closure call)",
-                                    ));
+                                    ))
                                 } else {
-                                    return Err(Diagnostic::simple(
+                                    Err(Diagnostic::simple(
                                         "unsupported callee expression",
-                                    ));
+                                    ))
                                 }
                             } else {
-                                return Err(Diagnostic::simple("expression lowering failed"));
+                                Err(Diagnostic::simple("expression lowering failed"))
                             }
                         }
                     }
@@ -1215,13 +1242,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             // Propagate closure-local return type mapping when RHS
                             // expression originated from a known local that holds a
                             // freshly-created closure (e.g., __closure_tmp).
-                            if let Some(orig) = self.last_expr_origin_local.borrow().clone() {
-                                if let Some(rt) = self.closure_local_rettype.borrow().get(&orig) {
+                            if let Some(orig) = self.last_expr_origin_local.borrow().clone()
+                                && let Some(rt) = self.closure_local_rettype.borrow().get(&orig) {
                                     self.closure_local_rettype
                                         .borrow_mut()
                                         .insert(name.clone(), rt.clone());
                                 }
-                            }
                             // If the local is a pointer type, and previously initialized, decrement old refcount
                             if _ty == self.i8ptr_t.as_basic_type_enum() {
                                 // load old value
@@ -1296,8 +1322,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 // synthesize a mapping for this object's field so loads can recover the closure type.
                                 if let (Some(obj_orig), Some(rhs_orig)) =
                                     (obj_origin_after_obj.clone(), rhs_origin_after_rhs.clone())
-                                {
-                                    if let Some(rt) =
+                                    && let Some(rt) =
                                         self.closure_local_rettype.borrow().get(&rhs_orig)
                                     {
                                         let field_key = format!("{}.{}", obj_orig, field_name);
@@ -1305,7 +1330,6 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             .borrow_mut()
                                             .insert(field_key, rt.clone());
                                     }
-                                }
                                 // Determine the class name from the object expression
                                 let mut class_name_opt: Option<String> = None;
 
@@ -2756,6 +2780,22 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
                 // If there are captures, allocate environment in the outer function
                 // and construct a boxed closure object to return here.
+                //
+                // Design note: the environment (`env`) is a heap-allocated
+                // object following the standard object layout: [header][meta][fields...].
+                // We emit a `*_env_field_map` global which lists which offsets
+                // contain pointer-like fields so the runtime's cycle collector
+                // can traverse them. The closure object itself stores two
+                // pointer fields (fn_ptr and env_ptr) and may optionally carry
+                // a `ret_tag` to allow specialized indirect-call lowering.
+                //
+                // The `closure_local_rettype` map stores a conservative static
+                // return type for freshly-created closure temporaries (for
+                // example `__closure_tmp`). When present, later indirect calls
+                // that use this local can choose an optimized function type
+                // (e.g., returning f64) instead of conservatively assuming
+                // a pointer return. This is a pragmatic optimization to avoid
+                // emitting a runtime ret_tag for all closures.
                 if !captures.is_empty() {
                     // Collect current values of captured variables from outer scope
                     // Store tuples of (value, is_weak) so env allocation can use weak increments
@@ -2763,8 +2803,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         Vec::new();
                     for cname in &captures {
                         // First check if it's a parameter in the outer function
-                        if let Some(idx) = param_map.get(cname) {
-                            if let Some(pv) = function.get_nth_param(*idx) {
+                        if let Some(idx) = param_map.get(cname)
+                            && let Some(pv) = function.get_nth_param(*idx) {
                                 // Determine whether this parameter was declared Weak<T>
                                 let mut is_weak = false;
                                 if let Some(param_types) = self
@@ -2773,13 +2813,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     .get(function.get_name().to_str().unwrap_or(""))
                                 {
                                     let idx_usize = *idx as usize;
-                                    if idx_usize < param_types.len() {
-                                        if let crate::types::OatsType::Weak(_) =
+                                    if idx_usize < param_types.len()
+                                        && let crate::types::OatsType::Weak(_) =
                                             &param_types[idx_usize]
                                         {
                                             is_weak = true;
                                         }
-                                    }
                                 }
                                 // If parameter is pointer-like, use directly. If numeric, box it.
                                 if pv.get_type().is_pointer_type() {
@@ -2836,7 +2875,6 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 }
                                 continue;
                             }
-                        }
 
                         // Otherwise look up local variable
                         if let Some((
@@ -2861,7 +2899,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             ) {
                                 Ok(v) => v,
                                 Err(_) => {
-                                    return Err(Diagnostic::simple("failed to load captured local"));
+                                    return Err(Diagnostic::simple(
+                                        "failed to load captured local",
+                                    ));
                                 }
                             };
                             // If pointer, use directly. If float/int, box into union object.
@@ -2989,8 +3029,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     let closure_gv_name = format!("{}_closure_field_map", arrow_fn_name);
                     let mut closure_offsets: Vec<u64> = Vec::new();
                     // fields start after header + meta_slot; fn_ptr at idx 0, env_ptr at idx 1
-                    closure_offsets.push(header_size + meta_slot + (0u64 * 8));
-                    closure_offsets.push(header_size + meta_slot + (1u64 * 8));
+                    closure_offsets.push((header_size + meta_slot));
+                    closure_offsets.push(header_size + meta_slot + 8);
                     let closure_gv_i8 = self
                         .emit_field_map_global(&closure_gv_name, &closure_offsets)
                         .map_err(|_| Diagnostic::simple("failed to emit closure field_map"))?;

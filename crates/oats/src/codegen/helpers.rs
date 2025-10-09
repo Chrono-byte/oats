@@ -409,9 +409,12 @@ impl<'a> super::CodeGen<'a> {
             let _ = f;
         }
         // declare collector_test_enqueue() -> void for demo/testing
-        if self.module.get_function("collector_test_enqueue").is_none() {
-            let ty = self.context.void_type().fn_type(&[], false);
-            let _f = self.module.add_function("collector_test_enqueue", ty, None);
+        // Only declare when the runtime is built with the `collector-test` feature.
+        if cfg!(feature = "collector-test") {
+            if self.module.get_function("collector_test_enqueue").is_none() {
+                let ty = self.context.void_type().fn_type(&[], false);
+                let _f = self.module.add_function("collector_test_enqueue", ty, None);
+            }
         }
     }
 

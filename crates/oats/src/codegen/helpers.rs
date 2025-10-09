@@ -67,7 +67,10 @@ impl<'a> super::CodeGen<'a> {
             BasicValueEnum::PointerValue(pv) => {
                 // Attempt to unbox a union number from a boxed union pointer
                 let unbox_fn = self.get_union_unbox_f64();
-                if let Ok(cs) = self.builder.build_call(unbox_fn, &[pv.into()], "union_unbox_f64_call") {
+                if let Ok(cs) =
+                    self.builder
+                        .build_call(unbox_fn, &[pv.into()], "union_unbox_f64_call")
+                {
                     let either = cs.try_as_basic_value();
                     if let inkwell::Either::Left(bv) = either {
                         if let BasicValueEnum::FloatValue(fv) = bv {
@@ -329,7 +332,21 @@ impl<'a> super::CodeGen<'a> {
         }
         // Safe: we just ensured locals is not empty above
         if let Some(scope) = locals.last_mut() {
+            let key = name.clone();
             scope.insert(name, (ptr, ty, initialized, is_const, is_weak, nominal));
+            // If this new local was initialized from a previously-tracked
+            // expression origin that we recorded as a freshly-created closure,
+            // propagate its return-type mapping so future calls can use the
+            // statically-known return type.
+            if initialized {
+                if let Some(orig) = self.last_expr_origin_local.borrow().clone() {
+                    if let Some(rt) = self.closure_local_rettype.borrow().get(&orig) {
+                        self.closure_local_rettype
+                            .borrow_mut()
+                            .insert(key, rt.clone());
+                    }
+                }
+            }
         }
     }
 
@@ -578,11 +595,30 @@ impl<'a> super::CodeGen<'a> {
                 .build_int_to_ptr(field_addr, self.i8ptr_t, "field_ptr")
                 .map_err(|_| crate::diagnostics::Diagnostic::simple("int_to_ptr failed"))?;
 
-            // Ensure val is pointer-like; if it's not, cast could fail — caller responsibility
-            let _ = self.builder.build_store(field_ptr_cast, *val);
+            // Ensure val is pointer-like; if it's not an i8* (heap object pointer),
+            // cast it to i8* for storage but DO NOT adjust refcounts for non-heap
+            // pointers (e.g., function pointers). Only increment refcounts when
+            // the original value is an i8* heap pointer.
+            let mut store_val = *val;
+            // If it's a pointer and not already i8*, cast to i8* for storage
+            if val.get_type().is_pointer_type() {
+                if val.get_type() != self.i8ptr_t.as_basic_type_enum() {
+                    if let inkwell::values::BasicValueEnum::PointerValue(pv) = *val {
+                        let casted = self
+                            .builder
+                            .build_pointer_cast(pv, self.i8ptr_t, "cast_to_i8ptr")
+                            .map_err(|_| {
+                                crate::diagnostics::Diagnostic::simple("pointer cast failed")
+                            })?;
+                        store_val = casted.as_basic_value_enum();
+                    }
+                }
+            }
 
-            // If value is pointer, increment RC to claim ownership in env. Use weak inc when requested.
-            if val.get_type().is_pointer_type()
+            let _ = self.builder.build_store(field_ptr_cast, store_val);
+
+            // Only increment RC when the original value type is i8* (heap object)
+            if val.get_type() == self.i8ptr_t.as_basic_type_enum()
                 && let inkwell::values::BasicValueEnum::PointerValue(pv) = *val
             {
                 if *is_weak {
@@ -619,7 +655,9 @@ impl<'a> super::CodeGen<'a> {
 
         let len = offsets.len();
         let arr_i32_ty = self.context.i32_type().array_type(len as u32);
-        let struct_ty = self.context.struct_type(&[self.i64_t.into(), arr_i32_ty.into()], false);
+        let struct_ty = self
+            .context
+            .struct_type(&[self.i64_t.into(), arr_i32_ty.into()], false);
 
         let magic_u64 = 0x4F415453u64; // 'OATS'
         let meta0_val = (magic_u64 << 32) | (len as u64 & 0xffffffffu64);
@@ -631,7 +669,9 @@ impl<'a> super::CodeGen<'a> {
             int32_vals.push(self.i32_t.const_int(v, false));
         }
         let array_const = self.i32_t.const_array(&int32_vals);
-        let initializer = self.context.const_struct(&[meta0_const.into(), array_const.into()], false);
+        let initializer = self
+            .context
+            .const_struct(&[meta0_const.into(), array_const.into()], false);
 
         let gv = self.module.add_global(struct_ty, None, gv_name);
         gv.set_initializer(&initializer);
@@ -643,6 +683,34 @@ impl<'a> super::CodeGen<'a> {
             .build_pointer_cast(gv_ptr, self.i8ptr_t, "field_map_i8ptr")
             .map_err(|_| crate::diagnostics::Diagnostic::simple("pointer cast failed"))?;
         Ok(gv_i8)
+    }
+
+    // Helper: compute an i8* pointer by adding a 64-bit byte offset to a base i8*.
+    // We prefer ptr_to_int + add + int_to_ptr sequences for consistent byte-offset
+    // arithmetic across the codegen (avoids subtle differences when using GEP
+    // with i8 element indices). `base` must be an i8* pointer value.
+    pub(crate) fn i8_ptr_from_offset_i64(
+        &self,
+        base: inkwell::values::PointerValue<'a>,
+        offset: inkwell::values::IntValue<'a>,
+        name: &str,
+    ) -> Result<inkwell::values::PointerValue<'a>, crate::diagnostics::Diagnostic> {
+        // ptrtoint base -> i64
+        let obj_ptr_int = self
+            .builder
+            .build_ptr_to_int(base, self.i64_t, "obj_addr_for_gep")
+            .map_err(|_| crate::diagnostics::Diagnostic::simple("ptr_to_int failed"))?;
+        // add offset
+        let field_addr = self
+            .builder
+            .build_int_add(obj_ptr_int, offset, "field_addr_for_gep")
+            .map_err(|_| crate::diagnostics::Diagnostic::simple("int_add failed"))?;
+        // inttoptr -> i8*
+        let field_ptr = self
+            .builder
+            .build_int_to_ptr(field_addr, self.i8ptr_t, name)
+            .map_err(|_| crate::diagnostics::Diagnostic::simple("int_to_ptr failed"))?;
+        Ok(field_ptr)
     }
 
     // Compatibility wrapper: accept a simple slice of BasicValueEnum and treat all
@@ -657,5 +725,127 @@ impl<'a> super::CodeGen<'a> {
             vec.push((*v, false));
         }
         self.heap_alloc_with_ptr_fields(vec.as_slice())
+    }
+
+    // Allocate a closure object with two pointer fields (fn_ptr, env_ptr) and
+    // an additional i64 return-type tag stored in the third 8-byte slot. The
+    // tag is not included in the field_map (so the collector treats only the
+    // first two slots as pointer fields). Returns the i8* object pointer.
+    pub fn heap_alloc_closure_with_rettag(
+        &self,
+        fn_ptr: inkwell::values::BasicValueEnum<'a>,
+        env_ptr: inkwell::values::BasicValueEnum<'a>,
+        ret_tag: u64,
+    ) -> Result<inkwell::values::PointerValue<'a>, crate::diagnostics::Diagnostic> {
+        // We'll allocate space for 3 * 8-byte slots after header+meta.
+        let header_size = 8u64;
+        let meta_slot = 8u64;
+        let field_count = 3u64; // include the non-pointer tag slot
+        let total_size = header_size + meta_slot + (field_count * 8);
+
+        let malloc_fn = self.get_malloc();
+        let size_const = self.i64_t.const_int(total_size, false);
+        let call_site = self
+            .builder
+            .build_call(malloc_fn, &[size_const.into()], "call_malloc")
+            .map_err(|_| crate::diagnostics::Diagnostic::simple("build_call failed"))?;
+        let malloc_ret = call_site
+            .try_as_basic_value()
+            .left()
+            .ok_or_else(|| {
+                crate::diagnostics::Diagnostic::simple("malloc call did not return a value")
+            })?
+            .into_pointer_value();
+
+        let obj_ptr = self
+            .builder
+            .build_pointer_cast(malloc_ret, self.i8ptr_t, "obj_ptr")
+            .map_err(|_| crate::diagnostics::Diagnostic::simple("pointer cast failed"))?;
+
+        // Initialize header
+        let type_tag_val = 3u64 << 49;
+        let header_val = self.i64_t.const_int(type_tag_val | 1u64, false);
+        let _ = self.builder.build_store(obj_ptr, header_val);
+
+        // Zero-init meta slot
+        let obj_ptr_int = self
+            .builder
+            .build_ptr_to_int(malloc_ret, self.i64_t, "obj_addr_for_zero")
+            .map_err(|_| crate::diagnostics::Diagnostic::simple("ptr_to_int failed"))?;
+        let off_meta = self.i64_t.const_int(header_size, false);
+        let meta_addr = self
+            .builder
+            .build_int_add(obj_ptr_int, off_meta, "meta_addr")
+            .map_err(|_| crate::diagnostics::Diagnostic::simple("int_add failed"))?;
+        let meta_ptr = self
+            .builder
+            .build_int_to_ptr(meta_addr, self.i8ptr_t, "meta_ptr")
+            .map_err(|_| crate::diagnostics::Diagnostic::simple("int_to_ptr failed"))?;
+        let null_ptr = self.i8ptr_t.const_null();
+        let _ = self
+            .builder
+            .build_store(meta_ptr, null_ptr.as_basic_value_enum());
+
+        // Store fn_ptr (idx 0) and env_ptr (idx 1) as pointer fields, and store
+        // ret_tag (i64) into idx 2.
+        // compute base int
+        for (i, slot_val) in [fn_ptr, env_ptr].iter().enumerate() {
+            let field_offset = header_size + meta_slot + (i as u64 * 8);
+            let off_const = self.i64_t.const_int(field_offset, false);
+            let field_addr = self
+                .builder
+                .build_int_add(obj_ptr_int, off_const, "field_addr")
+                .map_err(|_| crate::diagnostics::Diagnostic::simple("int_add failed"))?;
+            let field_ptr_cast = self
+                .builder
+                .build_int_to_ptr(field_addr, self.i8ptr_t, "field_ptr")
+                .map_err(|_| crate::diagnostics::Diagnostic::simple("int_to_ptr failed"))?;
+
+            // Cast slot_val to i8* if necessary and store
+            let mut store_val = *slot_val;
+            if slot_val.get_type().is_pointer_type() {
+                if slot_val.get_type() != self.i8ptr_t.as_basic_type_enum() {
+                    if let inkwell::values::BasicValueEnum::PointerValue(pv) = *slot_val {
+                        let casted = self
+                            .builder
+                            .build_pointer_cast(pv, self.i8ptr_t, "cast_to_i8ptr")
+                            .map_err(|_| {
+                                crate::diagnostics::Diagnostic::simple("pointer cast failed")
+                            })?;
+                        store_val = casted.as_basic_value_enum();
+                    }
+                }
+            }
+            let _ = self.builder.build_store(field_ptr_cast, store_val);
+
+            // increment RC for pointer fields
+            if slot_val.get_type() == self.i8ptr_t.as_basic_type_enum()
+                && let inkwell::values::BasicValueEnum::PointerValue(pv) = *slot_val
+            {
+                let rc_inc = self.get_rc_inc();
+                let _ = self
+                    .builder
+                    .build_call(rc_inc, &[pv.into()], "rc_inc_closure");
+            }
+        }
+
+        // store ret_tag into idx 2 as i64
+        let ret_offset = header_size + meta_slot + (2u64 * 8);
+        let off_ret = self.i64_t.const_int(ret_offset, false);
+        let ret_addr = self
+            .builder
+            .build_int_add(obj_ptr_int, off_ret, "ret_addr")
+            .map_err(|_| crate::diagnostics::Diagnostic::simple("int_add failed"))?;
+        let ret_ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+        let ret_ptr = self
+            .builder
+            .build_int_to_ptr(ret_addr, ret_ptr_ty, "ret_ptr")
+            .map_err(|_| crate::diagnostics::Diagnostic::simple("int_to_ptr failed"))?;
+        let ret_const = self.i64_t.const_int(ret_tag, false);
+        let _ = self
+            .builder
+            .build_store(ret_ptr, ret_const.as_basic_value_enum());
+
+        Ok(obj_ptr)
     }
 }

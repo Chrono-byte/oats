@@ -84,6 +84,18 @@ sudo dnf install llvm18 llvm18-devel clang18
 
    You should see `Hello from Oats! 🌾` printed to your console.
 
+### Runtime diagnostics
+
+The runtime emits diagnostic logging only when explicitly enabled. To enable ad-hoc runtime diagnostics set the environment variable:
+
+```bash
+export OATS_RUNTIME_LOG=1
+# or for collector-specific logs
+export OATS_COLLECTOR_LOG=1
+```
+
+Additionally, the runtime includes a test-only helper `collector_test_enqueue()` which is not present in default release builds — it is compiled only when the `collector-test` Cargo feature is enabled for both the runtime and the compiler crates.
+
 ## 📁 Project Structure
 
 The Oats compiler is organized as a Rust workspace with two main crates:

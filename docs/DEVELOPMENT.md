@@ -84,6 +84,35 @@ The following items were recently completed and deserve a short summary here so 
 
 - Test suite improvements: Tests were consolidated with a shared helper (`gen_ir_for_source`) in `crates/oats/tests/common/mod.rs`. Snapshot testing using `insta` was added and stronger integration tests were introduced to simplify maintenance and make regressions easier to catch.
 
+### Recent codegen & runtime changes
+
+The following items were implemented recently and are worth calling out explicitly because they cross the codegen/runtime boundary and affect how closures, captures, and diagnostics behave:
+
+- Closure lowering prototype (arrow functions): captured variables are identified, numeric captures are boxed, and heap-allocated environment objects are emitted. See `crates/oats/src/codegen/expr.rs` for the lowering and `crates/oats/src/codegen/helpers.rs` for allocator helpers.
+- Per-field weak-capture support: the heap-allocation helper was extended to accept per-field weak flags so captured `Weak<T>` variables use `rc_weak_inc`/`rc_weak_dec` semantics. This is implemented in `crates/oats/src/codegen/helpers.rs` and wired through `expr.rs` so closures respect weak captures.
+- Field-map emission: codegen now emits a per-object `field_map` global (metadata) and stores the pointer into the object's meta slot (offset +8) so the background collector and runtime can traverse object fields safely; see `helpers.rs` and `expr.rs` for details.
+- Runtime logging control: the runtime diagnostic prints are disabled by default and can be enabled via the environment variable `OATS_RUNTIME_LOG=1`. Collector diagnostics remain controllable via `OATS_COLLECTOR_LOG`. See `crates/runtime/src/lib.rs`.
+- Test helper feature-gated: `collector_test_enqueue()` is now behind a Cargo feature `collector-test` so release builds don't include the test-only helper symbol unless the feature is enabled. See `crates/runtime/Cargo.toml` and `crates/oats/Cargo.toml` for the feature entry.
+- Developer tooling: added `scripts/cloc_no_tests.sh` to run `cloc` while excluding common non-code directories; cleaned up several one-off scripts in `scripts/` to reduce maintenance noise.
+
+### Recent fixes (important for contributors)
+
+- Meta-slot safety: A recent bug caused member stores to sometimes target the per-class
+    metadata pointer stored at byte offset 8. The fix standardizes pointer arithmetic
+    across codegen paths by using a helper that computes i8* pointers via ptr->int +
+    add(i64) + int->ptr. If you add new lowering paths that compute byte offsets,
+    follow this pattern to avoid metadata corruption. See `crates/oats/src/codegen/helpers.rs` (`i8_ptr_from_offset_i64`) and `expr.rs` for examples.
+
+- Closure ABI threading: The compiler now attempts to track closure return types
+    through simple flows (a temp `__closure_tmp`, direct `let` initializers, and
+    simple field stores). When the return type is known statically we emit a
+    compact 2-field closure object (`[fn_ptr, env_ptr]`); otherwise the compiler
+    falls back to a 3-slot tagged layout (`[fn_ptr, env_ptr, ret_tag_i64]`) and
+    reads `ret_tag` at call time. The mapping lives in `CodeGen.closure_local_rettype`.
+    If you change closure lowering, update tests and preserve mapping propagation.
+
+These items are currently covered by unit/codegen tests and a couple of small integration checks. Further work remains (escape analysis for stack-captured closures, trampolines, and richer IR assertions in tests) and is tracked in the roadmap/issue tracker.
+
 
 ## Technical Debt & Improvement Plan
 

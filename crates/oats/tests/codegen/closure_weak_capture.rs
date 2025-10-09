@@ -1,9 +1,9 @@
 use anyhow::Result;
-use oats::parser;
-use oats::codegen::CodeGen;
-use oats::types::{SymbolTable, check_function_strictness};
 use inkwell::context::Context;
 use inkwell::targets::TargetMachine;
+use oats::codegen::CodeGen;
+use oats::parser;
+use oats::types::{SymbolTable, check_function_strictness};
 use std::cell::Cell;
 
 #[test]
@@ -32,7 +32,8 @@ export function main(): number {
         }
     }
 
-    let (func_name, func_decl) = func_decl_opt.ok_or_else(|| anyhow::anyhow!("No exported function found"))?;
+    let (func_name, func_decl) =
+        func_decl_opt.ok_or_else(|| anyhow::anyhow!("No exported function found"))?;
     let mut symbols = SymbolTable::new();
     let func_sig = check_function_strictness(&func_decl, &mut symbols)?;
 
@@ -72,18 +73,29 @@ export function main(): number {
         fn_rc_weak_upgrade: std::cell::RefCell::new(None),
         fn_union_get_discriminant: std::cell::RefCell::new(None),
         class_fields: std::cell::RefCell::new(std::collections::HashMap::new()),
+        closure_local_rettype: std::cell::RefCell::new(std::collections::HashMap::new()),
+        last_expr_origin_local: std::cell::RefCell::new(None),
         fn_param_types: std::cell::RefCell::new(std::collections::HashMap::new()),
         loop_context_stack: std::cell::RefCell::new(Vec::new()),
         source: &parsed_mod.source,
     };
 
     codegen
-        .gen_function_ir(&func_name, &func_decl, &func_sig.params, &func_sig.ret, None)
+        .gen_function_ir(
+            &func_name,
+            &func_decl,
+            &func_sig.params,
+            &func_sig.ret,
+            None,
+        )
         .expect("codegen should succeed");
 
     let ir = codegen.module.print_to_string().to_string();
 
-    assert!(ir.contains("rc_weak_inc") || ir.contains("rc_weak_upgrade") || ir.contains("rc_weak_dec"), "IR should reference rc_weak helper functions");
+    assert!(
+        ir.contains("rc_weak_inc") || ir.contains("rc_weak_upgrade") || ir.contains("rc_weak_dec"),
+        "IR should reference rc_weak helper functions"
+    );
 
     Ok(())
 }

@@ -1,8 +1,8 @@
 use anyhow::Result;
-use oats::codegen::CodeGen;
-use inkwell::values::BasicValue;
 use inkwell::context::Context;
 use inkwell::targets::TargetMachine;
+use inkwell::values::BasicValue;
+use oats::codegen::CodeGen;
 use std::cell::Cell;
 
 #[test]
@@ -43,6 +43,8 @@ fn test_heap_alloc_with_ptr_fields_weak_emits_rc_weak_inc() -> Result<()> {
         fn_rc_weak_upgrade: std::cell::RefCell::new(None),
         fn_union_get_discriminant: std::cell::RefCell::new(None),
         class_fields: std::cell::RefCell::new(std::collections::HashMap::new()),
+        closure_local_rettype: std::cell::RefCell::new(std::collections::HashMap::new()),
+        last_expr_origin_local: std::cell::RefCell::new(None),
         fn_param_types: std::cell::RefCell::new(std::collections::HashMap::new()),
         loop_context_stack: std::cell::RefCell::new(Vec::new()),
         source: "",

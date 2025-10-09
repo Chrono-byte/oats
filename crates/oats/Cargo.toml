@@ -20,4 +20,3 @@ tempfile = "3.5"
 
 [features]
 collector-test = []
-

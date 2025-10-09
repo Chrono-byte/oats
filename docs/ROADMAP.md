@@ -77,6 +77,8 @@ the shelf" TypeScript code from the internet.
 - [x] Runtime bounds checking for arrays
 - [x] Unified 64-bit headers for all heap objects
 - [x] Static string literals (immortal, no RC overhead)
+- [x] Runtime diagnostic/logging control: runtime diagnostic prints are gated by
+      the `OATS_RUNTIME_LOG` environment variable (off by default)
 
 #### Tooling
 
@@ -84,6 +86,9 @@ the shelf" TypeScript code from the internet.
 - [x] AOT compilation to native code
 - [x] Basic diagnostics with source spans
 - [x] Test suite (51 tests passing)
+- [x] Test-only runtime hooks feature-gated: collector test enqueue helper is
+      compiled only when the workspace enables the `collector-test` Cargo
+      feature (avoids leaking test-only symbols into release builds by default)
 
 ### ❌ Critical Missing Features
 
@@ -112,7 +117,11 @@ Below is the updated status with short notes.
   mapper, runtime boxing/unboxing helpers, and discriminant helper are present.
   Generics beyond simple Promise/Array support remain outstanding.
 - ❌ Closures with capture — still outstanding (escape analysis and closure
-  environment lowering planned in Phase 2)
+- ⚠️ Closures with capture — partially implemented: a closure-lowering prototype
+  exists (boxed environments, per-field weak-capture support, field_map emission
+  and closure object lowering). Remaining work: escape analysis (stack vs heap
+  envs), trampolines/stack-to-heap promotion, and additional RC/weak semantics
+  tests and correctness sweeps.
 
 ### Phase A Complete
 
@@ -120,10 +129,56 @@ We have completed the Phase A stabilization tasks that ensure a consistent
 object layout, metadata format, and initial collector scaffolding. Key items
 completed:
 
-- Consistent object layout (header/meta/fields) across constructors and object literals
+- Consistent object layout (header/meta/fields) across constructors and object
+  literals
 - Packed per-class metadata globals and runtime validation
 - Trial-deletion collector scaffold and diagnostic logging (opt-in via env var)
-- Integration and unit tests verifying the above (codegen snapshots, runtime tests)
+- Trial-deletion collector scaffold and diagnostic logging (opt-in via env var)
+- Integration and unit tests verifying the above (codegen snapshots, runtime
+  tests)
+
+Recent changes (Oct 2025)
+
+- Fixed a critical codegen bug where member stores could overwrite the per-class
+  metadata pointer stored at byte offset 8 (the object's "meta slot"). The bug
+  stemmed from inconsistent pointer-arithmetic lowering across codegen paths
+  (some code used GEP-style index arithmetic while constructors used ptr-to-int
+  + add + int-to-ptr). The fix standardizes byte-offset arithmetic via a
+  small helper used everywhere that computes an i8* by performing ptr->int +
+  add(i64) + int->ptr. This guarantees field loads/stores and constructor
+  writes always target the same byte offsets and prevents the collector from
+  observing corrupted metadata pointers.
+
+  - The change preserves the object layout invariant: header (8 bytes) |
+    meta pointer @ byte offset 8 (8 bytes) | fields begin at byte offset 16,
+    each field occupying an 8-byte slot. Codegen now consistently computes
+    offsets as: header_size + meta_slot + field_index * ptr_size.
+  - The fix has been compiled and smoke-tested locally (dev build succeeded).
+    Add an integration/regression test (for example `examples/cycle_reclaim.oats`)
+    to the test suite to lock this behavior and prevent regressions.
+
+- Work in progress: closure call lowering (captured closures)
+
+- Work in progress: closure lowering and ABI threading (captured closures)
+
+  - Prototype lowering for captured closures exists: the compiler allocates
+    boxed environments, emits per-class `field_map` metadata for closure objects,
+    and constructs closure objects with either a compact 2-field layout
+    (`[fn_ptr, env_ptr]`) when the closure return type is known statically, or
+    a fallback 3-slot tagged layout (`[fn_ptr, env_ptr, ret_tag_i64]`) when the
+    return type must be resolved at runtime.
+  - Current work: integrating the closure-call path so that when the callee
+    expression lowers to a pointer (closure object), the codegen loads the
+    stored `fn_ptr` and `env_ptr`, constructs an LLVM FunctionType matching
+    the argument list and (when available) the statically-known return type,
+    casts the loaded function pointer to a pointer-to-function of that type,
+    and performs an indirect call with `env` prepended to the argument list.
+    This path is merged into the main `Call` lowering and compiles cleanly in
+    dev builds.
+  - Remaining items: finalize the closure ABI (complete and expand the
+    conservative static-return-type mapping to more flows), add end-to-end AOT
+    tests for captured closures, and implement escape analysis / trampolines
+    for stack-to-heap promotion.
 
 This completes the critical foundation required before implementing module
 resolution and closures in Phase B/C.
@@ -185,8 +240,8 @@ export { helper } from "./lib";
 ```typescript
 // Target support:
 interface User {
-    name: string;
-    age: number;
+  name: string;
+  age: number;
 }
 type Point = { x: number; y: number };
 ```
@@ -261,19 +316,38 @@ stabilizes runtime/RC semantics.
 ```typescript
 // Target support:
 function makeCounter() {
-    let count = 0;
-    return () => count++; // captures 'count'
+  let count = 0;
+  return () => count++; // captures 'count'
 }
 ```
 
 **Implementation:**
 
-- Escape analysis: detect captured variables
-- Closure environment struct allocation
-- Box captured variables on heap
-- Generate closure thunk (trampoline)
-- Pass environment pointer to closure body
+- Escape analysis: detect captured variables (in progress)
+- Closure environment struct allocation: prototype implemented (heap-allocated
+  env)
+- Box captured variables on heap: implemented for prototype
+- Generate closure thunk (trampoline): TODO (required for stack->heap promotion)
+- Pass environment pointer to closure body: lowering for calling closure objects
+  is integrated into the main `Call` lowering (dev-tested)
 - This unlocks functional programming patterns
+
+What's next (short-term):
+
+- Complete escape analysis to decide stack vs heap env allocation (3-7 days).
+- Finalize closure-call ABI and end-to-end tests for captured closures (3-5
+  days).
+- Implement trampolines / stack-to-heap promotion for escaping closures (1-2
+  weeks).
+- Expand IR-level and integration tests for weak-capture semantics and
+  destructor ordering (3-5 days).
+- Conservative fallback: when unsure, always allocate envs on the heap to
+  preserve correctness (low-risk, used by the current prototype).
+
+Note: the parser already produces `ast::Stmt::Switch`, but codegen lowering for
+TypeScript `switch` statements is not implemented yet; a conservative lowering
+using ordered compares + branches is a good first step (1-3 days) and can be
+optimized later to LLVM `switch` where possible.
 
 #### 8. Generics (Monomorphization) 🔴
 
@@ -282,10 +356,10 @@ function makeCounter() {
 ```typescript
 // Target support:
 function identity<T>(x: T): T {
-    return x;
+  return x;
 }
 class Box<T> {
-    constructor(public value: T) {}
+  constructor(public value: T) {}
 }
 ```
 
@@ -305,11 +379,11 @@ class Box<T> {
 ```typescript
 // Target support:
 try {
-    riskyOperation();
+  riskyOperation();
 } catch (e) {
-    console.log(e);
+  console.log(e);
 } finally {
-    cleanup();
+  cleanup();
 }
 ```
 

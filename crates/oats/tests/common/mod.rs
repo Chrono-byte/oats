@@ -71,6 +71,8 @@ pub fn gen_ir_for_source(src: &str) -> Result<String> {
         fn_union_get_discriminant: std::cell::RefCell::new(None),
         class_fields: std::cell::RefCell::new(std::collections::HashMap::new()),
         fn_param_types: std::cell::RefCell::new(std::collections::HashMap::new()),
+        closure_local_rettype: std::cell::RefCell::new(std::collections::HashMap::new()),
+        last_expr_origin_local: std::cell::RefCell::new(None),
         source: &parsed_mod.source,
         loop_context_stack: std::cell::RefCell::new(Vec::new()),
     };

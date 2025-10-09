@@ -8,6 +8,8 @@ mod arrays_and_loops;
 mod class_fields;
 #[path = "codegen/class_lowering.rs"]
 mod class_lowering;
+#[path = "codegen/closure_weak_capture.rs"]
+mod closure_weak_capture;
 #[path = "codegen/codegen_snapshot.rs"]
 mod codegen_snapshot;
 #[path = "codegen/constructor_params.rs"]
@@ -26,8 +28,5 @@ mod loops_and_fields;
 mod promise_type;
 #[path = "codegen/unary_operators.rs"]
 mod unary_operators;
-#[path = "codegen/closure_weak_capture.rs"]
-mod closure_weak_capture;
 #[path = "codegen/weak_helper_direct.rs"]
 mod weak_helper_direct;
-

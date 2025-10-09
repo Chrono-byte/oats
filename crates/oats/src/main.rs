@@ -338,6 +338,8 @@ fn main() -> Result<()> {
         class_fields: std::cell::RefCell::new(std::collections::HashMap::new()),
         fn_param_types: std::cell::RefCell::new(std::collections::HashMap::new()),
         loop_context_stack: std::cell::RefCell::new(Vec::new()),
+        closure_local_rettype: std::cell::RefCell::new(std::collections::HashMap::new()),
+        last_expr_origin_local: std::cell::RefCell::new(None),
         source: &parsed_mod.source,
     };
 

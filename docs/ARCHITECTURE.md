@@ -102,6 +102,45 @@ The RC system must handle **two kinds of pointers**:
 5. **Returns**: Call `emit_rc_dec_for_locals()` before return to clean up function locals
 6. **All pointers**: Safe to pass to `rc_inc`/`rc_dec` - they handle both base and data pointers
 
+### Meta-slot invariant and pointer arithmetic
+
+- The codebase reserves the 8-byte word at byte offset 8 in every heap object as
+    the "meta slot" which stores a per-class metadata pointer (the `field_map`)
+    used by codegen and runtime. This slot must never be overwritten by normal
+    field stores; fields start at byte offset 16. To ensure this invariant the
+    codegen standardizes pointer arithmetic across constructors, object literals,
+    and field loads/stores: instead of mixing GEPs and integer arithmetic, the
+    compiler now computes byte-offset pointers using ptr->int + add(i64) +
+    int->ptr to produce an `i8*` before casting. This removes subtle mismatches
+    between different lowering paths and prevents metadata corruption.
+
+### Closure object layout (prototype)
+
+- Compact form (used when the closure return type is known statically):
+
+```
+Offset 0:  i64 header
+Offset 8:  i64 meta (field_map pointer)
+Offset 16: i8* fn_ptr   ; pointer to compiled function entry (or function pointer data)
+Offset 24: i8* env_ptr  ; pointer to boxed environment
+```
+
+- Tagged fallback form (used when return type must be resolved at runtime):
+
+```
+Offset 0:  i64 header
+Offset 8:  i64 meta
+Offset 16: i8* fn_ptr
+Offset 24: i8* env_ptr
+Offset 32: i64 ret_tag  ; small integer tag encoding return-type
+```
+
+The compiler currently prefers the compact 2-field layout when it can
+statically determine the closure's return type (a best-effort mapping is
+carried through locals and simple stores). As a conservative fallback the
+3-slot tagged layout is used, and calls read `ret_tag` at call time to pick the
+correct FunctionType.
+
 ### Memory Management Strategy: Rust-Inspired Hybrid Model
 
 The long-term vision includes multiple phases of optimization:

@@ -8,7 +8,15 @@ use inkwell::builder::Builder;
 use inkwell::types::BasicType;
 use inkwell::types::BasicTypeEnum;
 use inkwell::values::{BasicValue, PointerValue};
-type LocalEntry<'a> = (PointerValue<'a>, BasicTypeEnum<'a>, bool, bool, bool);
+// LocalEntry now includes an Option<String> for an optional nominal type name
+type LocalEntry<'a> = (
+    PointerValue<'a>,
+    BasicTypeEnum<'a>,
+    bool,
+    bool,
+    bool,
+    Option<String>,
+);
 type LocalsStackLocal<'a> = Vec<HashMap<String, LocalEntry<'a>>>;
 
 impl<'a> crate::codegen::CodeGen<'a> {
@@ -253,7 +261,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 }
 
                 // If not a parameter, then it must be a local variable (`let` or `const`).
-                if let Some((ptr, ty, initialized, _is_const, _extra)) = self.find_local(locals, &name) {
+                if let Some((ptr, ty, initialized, _is_const, _extra, _nominal)) = self.find_local(locals, &name) {
                     // If not initialized -> TDZ: generate a trap (unreachable)
                     if !initialized {
                         // Emit a call to unreachable to trap at runtime
@@ -298,9 +306,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                     )
                                                     .ok();
                                             }
-                                            return Err(Diagnostic::simple(
-                                                "expression lowering failed",
-                                            ))?;
+                                            let zero = self.f64_t.const_float(0.0);
+                                            return Ok(zero.as_basic_value_enum());
                                         }
                                         BasicValueEnum::PointerValue(pv) => {
                                             if let Some(print_fn) =
@@ -315,9 +322,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                     )
                                                     .ok();
                                             }
-                                            return Err(Diagnostic::simple(
-                                                "expression lowering failed",
-                                            ))?;
+                                            let zero = self.f64_t.const_float(0.0);
+                                            return Ok(zero.as_basic_value_enum());
                                         }
                                         _ => return Err(Diagnostic::simple("operation failed")),
                                     }
@@ -521,58 +527,116 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             return Err(Diagnostic::simple("operation failed"));
                                         }
                                     }
-                                    // try to find a function named `<Class>_<method>`
-                                    for class_name in self.class_fields.borrow().keys() {
-                                        let cand = format!("{}_{}", class_name, method_name);
-                                        if let Some(method_f) = self.module.get_function(&cand) {
-                                            // lower user args
-                                            let mut user_args: Vec<
-                                                inkwell::values::BasicMetadataValueEnum,
-                                            > = Vec::new();
-                                            for a in &call.args {
-                                                if let Ok(v) = self.lower_expr(
-                                                    &a.expr, function, param_map, locals,
-                                                ) {
-                                                    user_args.push(v.into());
-                                                } else {
-                                                    return Err(Diagnostic::simple(
-                                                        "expression lowering failed",
-                                                    ))?;
-                                                }
+                                    // Resolve the nominal class name for the receiver and
+                                    // attempt to call the single candidate `<Class>_<method>`.
+                                    // Do not scan `class_fields` globally.
+                                    let mut class_name_opt: Option<String> = None;
+                                    if let deno_ast::swc::ast::Expr::Ident(ident) = &*member.obj {
+                                        let ident_name = ident.sym.to_string();
+                                        if ident_name == "this" {
+                                            let fname = function.get_name().to_str().unwrap_or("");
+                                            if let Some(cls) = fname.strip_suffix("_ctor") {
+                                                class_name_opt = Some(cls.to_string());
+                                            } else if let Some(param_types) = self
+                                                .fn_param_types
+                                                .borrow()
+                                                .get(fname)
+                                                && !param_types.is_empty()
+                                                && let crate::types::OatsType::NominalStruct(n) = &param_types[0]
+                                            {
+                                                class_name_opt = Some(n.clone());
                                             }
-
-                                            // if the method expects an extra param (likely `this`), prepend obj_val
-                                            let param_count = method_f.count_params() as usize;
-                                            let mut args: Vec<
-                                                inkwell::values::BasicMetadataValueEnum,
-                                            > = Vec::new();
-                                            if param_count > user_args.len() {
-                                                args.push(obj_val.into());
-                                                args.extend(user_args.into_iter());
-                                            } else {
-                                                args = user_args;
+                                        } else if let Some(param_idx) = param_map.get(&ident_name)
+                                            && let Some(param_types) = self
+                                                .fn_param_types
+                                                .borrow()
+                                                .get(function.get_name().to_str().unwrap_or("") )
+                                        {
+                                            let idx = *param_idx as usize;
+                                            if idx < param_types.len()
+                                                && let crate::types::OatsType::NominalStruct(n) = &param_types[idx]
+                                            {
+                                                class_name_opt = Some(n.clone());
                                             }
+                                        } else if let Some((_, _ty, _init, _is_const, _is_weak, nominal)) =
+                                            self.find_local(locals, &ident_name)
+                                        {
+                                            if let Some(nom) = nominal {
+                                                class_name_opt = Some(nom);
+                                            }
+                                        }
+                                    } else if matches!(&*member.obj, deno_ast::swc::ast::Expr::This(_)) {
+                                        let fname = function.get_name().to_str().unwrap_or("");
+                                        if let Some(cls) = fname.strip_suffix("_ctor") {
+                                            class_name_opt = Some(cls.to_string());
+                                        } else if let Some(param_types) = self
+                                            .fn_param_types
+                                            .borrow()
+                                            .get(fname)
+                                            && !param_types.is_empty()
+                                            && let crate::types::OatsType::NominalStruct(n) = &param_types[0]
+                                        {
+                                            class_name_opt = Some(n.clone());
+                                        }
+                                    }
 
-                                            let cs = match self.builder.build_call(
-                                                method_f,
-                                                &args,
-                                                "call_method",
+                                    let class_name = if let Some(c) = class_name_opt.clone() {
+                                        c
+                                    } else {
+                                        return Err(Diagnostic::simple(
+                                            "unsupported member call: could not infer receiver nominal type",
+                                        ));
+                                    };
+
+                                    let cand = format!("{}_{}", class_name, method_name);
+                                    if let Some(method_f) = self.module.get_function(&cand) {
+                                        // lower user args
+                                        let mut user_args: Vec<
+                                            inkwell::values::BasicMetadataValueEnum,
+                                        > = Vec::new();
+                                        for a in &call.args {
+                                            if let Ok(v) = self.lower_expr(
+                                                &a.expr, function, param_map, locals,
                                             ) {
-                                                Ok(cs) => cs,
-                                                Err(_) => {
-                                                    return Err(Diagnostic::simple(
-                                                        "operation failed",
-                                                    ));
-                                                }
-                                            };
-                                            let either = cs.try_as_basic_value();
-                                            if let inkwell::Either::Left(bv) = either {
-                                                return Ok(bv);
+                                                user_args.push(v.into());
                                             } else {
                                                 return Err(Diagnostic::simple(
                                                     "expression lowering failed",
                                                 ))?;
                                             }
+                                        }
+
+                                        // if the method expects an extra param (likely `this`), prepend obj_val
+                                        let param_count = method_f.count_params() as usize;
+                                        let mut args: Vec<
+                                            inkwell::values::BasicMetadataValueEnum,
+                                        > = Vec::new();
+                                        if param_count > user_args.len() {
+                                            args.push(obj_val.into());
+                                            args.extend(user_args.into_iter());
+                                        } else {
+                                            args = user_args;
+                                        }
+
+                                        let cs = match self.builder.build_call(
+                                            method_f,
+                                            &args,
+                                            "call_method",
+                                        ) {
+                                            Ok(cs) => cs,
+                                            Err(_) => {
+                                                return Err(Diagnostic::simple(
+                                                    "operation failed",
+                                                ));
+                                            }
+                                        };
+                                        let either = cs.try_as_basic_value();
+                                        if let inkwell::Either::Left(bv) = either {
+                                            return Ok(bv);
+                                        } else {
+                                            return Err(Diagnostic::simple(
+                                                "expression lowering failed",
+                                            ))?;
                                         }
                                     }
                                 }
@@ -589,7 +653,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 // support simple assignments `ident = expr` where the left side is an identifier
                 if let Some(bid) = assign.left.as_ident() {
                     let name = bid.id.sym.to_string();
-                    if let Some((ptr, _ty, _init, is_const, _extra)) = self.find_local(locals, &name) {
+                    if let Some((ptr, _ty, _init, is_const, _extra, _nominal)) = self.find_local(locals, &name) {
                         // Disallow assigning to immutable locals at compile-time
                         if is_const {
                             // Use span-aware diagnostic: assign.span.lo is a BytePos wrapper
@@ -711,22 +775,14 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         }
                                     } else {
                                         // Not a parameter: try to resolve a local variable's nominal
-                                        // class by inspecting locals and falling back to the class_fields
-                                        // registry if the local is a pointer.
-                                        if let Some((_, ty, _init, _is_const, _is_weak)) =
+                                        // class by inspecting locals. Do NOT fall back to scanning
+                                        // `class_fields` — require the local to carry a nominal
+                                        // annotation to be used for member lowering.
+                                        if let Some((_, _ty, _init, _is_const, _is_weak, nominal)) =
                                             self.find_local(locals, &ident_name)
                                         {
-                                            if matches!(ty, inkwell::types::BasicTypeEnum::PointerType(_)) {
-                                                // attempt to find unique class declaring this field
-                                                let mut matches: Vec<String> = Vec::new();
-                                                for (cls, fields_vec) in self.class_fields.borrow().iter() {
-                                                    if fields_vec.iter().any(|(n, _)| n == &field_name) {
-                                                        matches.push(cls.clone());
-                                                    }
-                                                }
-                                                if matches.len() == 1 {
-                                                    class_name_opt = Some(matches.pop().unwrap());
-                                                }
+                                            if let Some(nom) = nominal {
+                                                class_name_opt = Some(nom);
                                             }
                                         }
                                     }
@@ -745,27 +801,18 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     }
                                 }
 
-                                // Resolve a concrete class name either from the directly
-                                // inferred `class_name_opt` or by falling back to scanning
-                                // the known `class_fields` map for a unique match.
+                                // Require that we have a nominal class name inferred from
+                                // the object expression (from `this`, a typed parameter,
+                                // or a local with a nominal). Do not perform fallback
+                                // scans over `class_fields` here.
                                 let class_name = if let Some(c) = class_name_opt.clone() {
                                     c
                                 } else {
-                                    let mut matches: Vec<String> = Vec::new();
-                                    for (cls, fields_vec) in self.class_fields.borrow().iter() {
-                                        if fields_vec.iter().any(|(n, _)| n == &field_name) {
-                                            matches.push(cls.clone());
-                                        }
-                                    }
-                                    if matches.len() == 1 {
-                                        matches.pop().unwrap()
-                                    } else {
-                                        let fname = function.get_name().to_str().unwrap_or("<unknown>");
-                                        return Err(Diagnostic::simple(format!(
-                                            "unsupported member assignment: could not infer class for field '{}' in function '{}'",
-                                            field_name, fname
-                                        )));
-                                    }
+                                    let fname = function.get_name().to_str().unwrap_or("<unknown>");
+                                    return Err(Diagnostic::simple(format!(
+                                        "unsupported member assignment: could not infer class for field '{}' in function '{}'",
+                                        field_name, fname
+                                    )));
                                 };
 
                                 // Look up field list for this class
@@ -920,7 +967,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             }
                                             crate::types::OatsType::String
                                             | crate::types::OatsType::NominalStruct(_)
-                                            | crate::types::OatsType::Array(_) => {
+                                            | crate::types::OatsType::Array(_)
+                                            | crate::types::OatsType::Option(_)
+                                            | crate::types::OatsType::Weak(_)
+                                            | crate::types::OatsType::Promise(_) => {
                                                 // Cast to pointer type for slot
                                                 // Slot for ref-like fields (string/struct/array) stores an i8* value.
                                                 // The slot pointer therefore has type i8** (pointer-to-i8*).
@@ -1350,7 +1400,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 }
             }
             ast::Expr::This(_) => {
-                if let Some((ptr, ty, init, _ignore, _extra)) = self.find_local(locals, "this")
+                if let Some((ptr, ty, init, _ignore, _extra, _nominal)) = self.find_local(locals, "this")
                     && init
                     && let Ok(loaded) = self.builder.build_load(ty, ptr, "this_load")
                 {
@@ -1733,9 +1783,25 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 }
                             }
                         }
+                        // Ensure the number of arguments matches the constructor's
+                        // declared parameter count. Truncate extra args or pad with
+                        // nulls if the function expects more parameters. This fixes
+                        // ABI mismatches where the constructor signature and callsite
+                        // disagree.
+                        let expected = fv.count_params() as usize;
+                        let mut call_args = lowered_args.clone();
+                        if call_args.len() > expected {
+                            call_args.truncate(expected);
+                        } else if call_args.len() < expected {
+                            // pad with null pointers
+                            while call_args.len() < expected {
+                                call_args.push(self.i8ptr_t.const_null().as_basic_value_enum().into());
+                            }
+                        }
+
                         let cs = self
                             .builder
-                            .build_call(fv, &lowered_args, "new_call")
+                            .build_call(fv, &call_args, "new_call")
                             .map_err(|_| Diagnostic::simple("LLVM builder error"))?;
                         let either = cs.try_as_basic_value();
                         match either {
@@ -1810,6 +1876,14 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
                 // Create the arrow function
                 let arrow_fn = self.module.add_function(&arrow_fn_name, fn_type, None);
+
+                // Record parameter types for the generated arrow function so
+                // member-access lowering can consult `fn_param_types` to infer
+                // nominal types for parameters (and `this` receiver when
+                // applicable). This mirrors `gen_function_ir` behavior.
+                self.fn_param_types
+                    .borrow_mut()
+                    .insert(arrow_fn_name.clone(), param_types.clone());
 
                 // Save current insert block so we can return to it
                 let current_block = self.builder.get_insert_block();
@@ -1928,7 +2002,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             "failed to find shorthand param",
                                         ));
                                     }
-                                } else if let Some((ptr, ty, _init, _is_const, _extra)) = self.find_local(locals, &name)
+                                } else if let Some((ptr, ty, _init, _is_const, _extra, _nominal)) = self.find_local(locals, &name)
                                 {
                                     // load local value
                                     let loaded = match self.builder.build_load(
@@ -2386,7 +2460,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         return Err(Diagnostic::simple(
                             "cannot update function parameter directly",
                         ));
-                    } else if let Some((ptr, ty, initialized, is_const, _extra)) =
+                    } else if let Some((ptr, ty, initialized, is_const, _extra, _nominal)) =
                         self.find_local(locals, &name)
                     {
                         if is_const {

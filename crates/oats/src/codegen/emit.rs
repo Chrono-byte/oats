@@ -15,6 +15,7 @@ type LocalsStackLocal<'a> = Vec<
             bool,
             bool,
             bool,
+            Option<String>,
         ),
     >,
 >;
@@ -183,8 +184,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
             .builder
             .build_pointer_cast(malloc_ret, self.i8ptr_t, "hdr_ptr")
             .map_err(|_| crate::diagnostics::Diagnostic::simple("pointer cast failed"))?;
-        let header_val = self.i64_t.const_int(1u64, false);
-        let _ = self.builder.build_store(header_ptr, header_val);
+    // Set header: rc=1 and type_tag=0 (will encode class type tag non-zero if we emit metadata)
+    // We'll set type_tag to 2 to indicate "class with field_map" when we emit metadata below.
+    // HEADER_TYPE_TAG_SHIFT == 49 in runtime; shift our chosen tag into position
+    let type_tag_val = 2u64 << 49;
+    let header_val = self.i64_t.const_int(type_tag_val | 1u64, false);
+    let _ = self.builder.build_store(header_ptr, header_val);
 
         let mut locals: LocalsStackLocal = vec![];
         let mut scope = HashMap::new();
@@ -196,7 +201,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         let _ = self.builder.build_store(this_alloca, malloc_ret);
         scope.insert(
             "this".to_string(),
-            (this_alloca, self.i8ptr_t.into(), true, true, false),
+            (this_alloca, self.i8ptr_t.into(), true, true, false, Some(class_name.to_string())),
         );
 
         let mut param_map: HashMap<String, u32> = HashMap::new();
@@ -221,7 +226,13 @@ impl<'a> crate::codegen::CodeGen<'a> {
             let _ = self.builder.build_store(alloca, param_val);
             // Mark parameter as weak if its declared OatsType is Weak(_)
             let is_param_weak = matches!(param_types_vec.get(i), Some(OatsType::Weak(_)));
-            scope.insert(pname.clone(), (alloca, param_ty, true, true, is_param_weak));
+            // If the declared param type is a NominalStruct, record its name so
+            // member lowering can infer fields without fallback heuristics.
+            let nominal = match param_types_vec.get(i) {
+                Some(crate::types::OatsType::NominalStruct(n)) => Some(n.clone()),
+                _ => None,
+            };
+            scope.insert(pname.clone(), (alloca, param_ty, true, true, is_param_weak, nominal));
             param_map.insert(pname.clone(), i as u32);
         }
 
@@ -357,20 +368,68 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 }
             }
 
-            // Create global array constant if there are any pointer fields
+            // Create global struct constant containing length + offsets if there are any pointer fields
             if !ptr_field_offsets.is_empty() {
-                let arr_ty = self.i64_t.array_type(ptr_field_offsets.len() as u32);
+                let len = ptr_field_offsets.len();
+                let arr_ty = self.i64_t.array_type(len as u32);
                 // Convert BasicValueEnum::IntValue items into IntValue vector
                 let int_vals: Vec<inkwell::values::IntValue> = ptr_field_offsets
                     .into_iter()
                     .map(|bv| bv.into_int_value())
                     .collect();
-                let const_struct = self.i64_t.const_array(&int_vals);
+
+                // Build a struct type: { i64 meta0, [N x i32] }
+                // meta0 packs magic/version in high 32 bits and len in low 32 bits.
+                let arr_i32_ty = self.context.i32_type().array_type(len as u32);
+                let struct_ty = self
+                    .context
+                    .struct_type(&[self.i64_t.into(), arr_i32_ty.into()], false);
+
+                let magic_u64 = 0x4F415453u64; // 'OATS'
+                let meta0_val = (magic_u64 << 32) | (len as u64 & 0xffffffffu64);
+                let meta0_const = self.i64_t.const_int(meta0_val, false);
+
+                // Convert offsets to i32 constants
+                let int32_vals: Vec<inkwell::values::IntValue> = int_vals
+                    .into_iter()
+                    .map(|iv| {
+                        // Try to extract a constant; fall back to zero if not available.
+                        let v = iv.get_zero_extended_constant().unwrap_or(0) as u64;
+                        self.i32_t.const_int(v & 0xffffffffu64, false)
+                    })
+                    .collect();
+                let array_const = self.i32_t.const_array(&int32_vals);
+                let initializer = self.context.const_struct(&[meta0_const.into(), array_const.into()], false);
+
                 let gv_name = format!("{}_field_map", class_name);
-                let gv = self.module.add_global(arr_ty, None, &gv_name);
-                gv.set_initializer(&const_struct);
-                // mark global as constant
+                let gv = self.module.add_global(struct_ty, None, &gv_name);
+                gv.set_initializer(&initializer);
                 gv.set_constant(true);
+
+                // Store pointer to the field_map global into the object's second word
+                // Compute i8* pointer to the global and store at offset +8 from object base
+                if let Some(gv_global) = self.module.get_global(&gv_name) {
+                    let gv_ptr = gv_global.as_pointer_value();
+                    // cast global pointer to i8*
+                    if let Ok(gv_i8ptr) = self.builder.build_pointer_cast(gv_ptr, self.i8ptr_t, "field_map_i8ptr") {
+                        // compute field slot address: ptr_to_int(malloc_ret) + 8 -> int_to_ptr(i8*)
+                        let obj_ptr_int = self
+                            .builder
+                            .build_ptr_to_int(malloc_ret, self.i64_t, "obj_addr_for_meta")
+                            .map_err(|_| crate::diagnostics::Diagnostic::simple("ptr_to_int failed"))?;
+                        let off_const = self.i64_t.const_int(8, false);
+                        let field_addr = self
+                            .builder
+                            .build_int_add(obj_ptr_int, off_const, "meta_field_addr")
+                            .map_err(|_| crate::diagnostics::Diagnostic::simple("int_add failed"))?;
+                        let field_ptr = self
+                            .builder
+                            .build_int_to_ptr(field_addr, self.i8ptr_t, "meta_field_ptr")
+                            .map_err(|_| crate::diagnostics::Diagnostic::simple("int_to_ptr failed"))?;
+                        // store pointer value
+                        let _ = self.builder.build_store(field_ptr, gv_i8ptr.as_basic_value_enum());
+                    }
+                }
             }
         }
 

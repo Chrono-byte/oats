@@ -242,80 +242,9 @@ fn main() -> Result<()> {
         source: &parsed_mod.source,
     };
 
-    // Populate class_fields for exported classes by examining ClassProp
-    // declarations and constructor assignment ASTs (this.x = ...).
-    for item_ref in parsed.program_ref().body() {
-        if let deno_ast::ModuleItemRef::ModuleDecl(module_decl) = item_ref
-            && let deno_ast::swc::ast::ModuleDecl::ExportDecl(decl) = module_decl
-            && let deno_ast::swc::ast::Decl::Class(c) = &decl.decl
-        {
-            let class_name = c.ident.sym.to_string();
-            let mut fields: Vec<(String, oats::types::OatsType)> = Vec::new();
-            use deno_ast::swc::ast::{ClassMember, Expr, MemberProp, Stmt};
-            // Collect explicit property declarations
-            for member in &c.class.body {
-                if let ClassMember::ClassProp(prop) = member
-                    && let deno_ast::swc::ast::PropName::Ident(id) = &prop.key
-                {
-                    let fname = id.sym.to_string();
-                    if !fields.iter().any(|(n, _)| n == &fname) {
-                        fields.push((fname, oats::types::OatsType::Number));
-                    }
-                }
-            }
-            // Record constructor parameter properties (e.g., `public x: number`)
-            for member in &c.class.body {
-                if let ClassMember::Constructor(cons) = member {
-                    for param in &cons.params {
-                        use deno_ast::swc::ast::{ParamOrTsParamProp, TsParamPropParam};
-                        if let ParamOrTsParamProp::TsParamProp(ts_param) = param
-                            && let TsParamPropParam::Ident(binding_ident) = &ts_param.param
-                        {
-                            let fname = binding_ident.id.sym.to_string();
-                            if fields.iter().all(|(n, _)| n != &fname) {
-                                let ty = oats::types::infer_type(
-                                    binding_ident.type_ann.as_ref().map(|ann| &*ann.type_ann),
-                                    None,
-                                );
-                                fields.push((fname, ty));
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Scan constructor ASTs for `this.<ident> = <expr>` assignments
-            for member in &c.class.body {
-                if let ClassMember::Constructor(cons) = member
-                    && let Some(body) = &cons.body
-                {
-                    for stmt in &body.stmts {
-                        if let Stmt::Expr(expr_stmt) = stmt
-                            && let Expr::Assign(assign) = &*expr_stmt.expr
-                            && let deno_ast::swc::ast::AssignTarget::Simple(simple_target) =
-                                &assign.left
-                        {
-                            // Match a simple member assignment like `this.x = ...`
-                            if let deno_ast::swc::ast::SimpleAssignTarget::Member(mem) =
-                                simple_target
-                                && matches!(&*mem.obj, Expr::This(_))
-                                && let MemberProp::Ident(ident) = &mem.prop
-                            {
-                                let name = ident.sym.to_string();
-                                let inferred = oats::types::infer_type(None, Some(&assign.right));
-                                if fields.iter().all(|(n, _)| n != &name) {
-                                    fields.push((name, inferred));
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            if !fields.is_empty() {
-                codegen.class_fields.borrow_mut().insert(class_name, fields);
-            }
-        }
-    }
+    // Note: class field metadata is computed per-class when emitting
+    // constructors below. We avoid a global pre-scan of the module so
+    // member-field inference is based on declared/annotated types only.
 
     // Emit IR for class methods/constructors. Emit for both exported and
     // non-exported class declarations so constructors are available for
@@ -384,13 +313,107 @@ fn main() -> Result<()> {
                         }
                     }
                     ClassMember::Constructor(ctor) => {
-                        // Use the new unified constructor generation
-                        let fields = codegen
-                            .class_fields
-                            .borrow()
-                            .get(&class_name)
-                            .cloned()
-                            .unwrap_or_default();
+                        // Compute fields for this class from explicit props, constructor
+                        // param properties, and `this.x = ...` assignments inside the ctor.
+                        let mut fields: Vec<(String, oats::types::OatsType)> = Vec::new();
+                        use deno_ast::swc::ast::{ClassMember, Expr, MemberProp, Stmt, ParamOrTsParamProp, TsParamPropParam};
+                        // explicit class properties
+                        for m in &c.class.body {
+                            if let ClassMember::ClassProp(prop) = m
+                                && let deno_ast::swc::ast::PropName::Ident(id) = &prop.key
+                            {
+                                let fname = id.sym.to_string();
+                                if fields.iter().all(|(n, _)| n != &fname) {
+                                    // If the class property has a TypeScript type annotation, map it
+                                    // to an OatsType; otherwise default to Number.
+                                    let ftype = if let Some(type_ann) = &prop.type_ann {
+                                        if let Some(mt) = oats::types::map_ts_type(&type_ann.type_ann) {
+                                            mt
+                                        } else {
+                                            oats::types::OatsType::Number
+                                        }
+                                    } else {
+                                        oats::types::OatsType::Number
+                                    };
+                                    fields.push((fname, ftype));
+                                }
+                            }
+                        }
+                        // constructor param properties
+                        for p in &ctor.params {
+                            if let ParamOrTsParamProp::TsParamProp(ts_param) = p
+                                && let TsParamPropParam::Ident(binding_ident) = &ts_param.param
+                            {
+                                let fname = binding_ident.id.sym.to_string();
+                                if fields.iter().all(|(n, _)| n != &fname) {
+                                    let ty = oats::types::infer_type(
+                                        binding_ident.type_ann.as_ref().map(|ann| &*ann.type_ann),
+                                        None,
+                                    );
+                                    fields.push((fname, ty));
+                                }
+                            }
+                        }
+                        // scan ctor body for `this.x = ...` assignments
+                        if let Some(body) = &ctor.body {
+                            for stmt in &body.stmts {
+                                if let Stmt::Expr(expr_stmt) = stmt
+                                    && let Expr::Assign(assign) = &*expr_stmt.expr
+                                    && let deno_ast::swc::ast::AssignTarget::Simple(simple_target) = &assign.left
+                                {
+                                    if let deno_ast::swc::ast::SimpleAssignTarget::Member(mem) = simple_target
+                                        && matches!(&*mem.obj, Expr::This(_))
+                                        && let MemberProp::Ident(ident) = &mem.prop
+                                    {
+                                        let name = ident.sym.to_string();
+                                        // Try to infer type from RHS expression. If the RHS is a
+                                        // constructor parameter identifier, prefer its declared
+                                        // type annotation when available.
+                                        let mut inferred = oats::types::infer_type(None, Some(&assign.right));
+                                        // If RHS is an identifier, try to look up a matching
+                                        // constructor parameter and use its annotation.
+                                        if let oats::types::OatsType::Number = inferred {
+                                            if let Expr::Ident(rhs_ident) = &*assign.right {
+                                                for p in &ctor.params {
+                                                    use deno_ast::swc::ast::{ParamOrTsParamProp, TsParamPropParam};
+                                                    match p {
+                                                        ParamOrTsParamProp::Param(param) => {
+                                                            if let deno_ast::swc::ast::Pat::Ident(bind_ident) = &param.pat {
+                                                                if bind_ident.id.sym == rhs_ident.sym {
+                                                                    if let Some(type_ann) = &bind_ident.type_ann {
+                                                                        if let Some(mt) = oats::types::map_ts_type(&type_ann.type_ann) {
+                                                                            inferred = mt;
+                                                                            break;
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                        ParamOrTsParamProp::TsParamProp(ts_param) => {
+                                                            if let TsParamPropParam::Ident(binding_ident) = &ts_param.param {
+                                                                if binding_ident.id.sym == rhs_ident.sym {
+                                                                    if let Some(type_ann) = &binding_ident.type_ann {
+                                                                        if let Some(mt) = oats::types::map_ts_type(&type_ann.type_ann) {
+                                                                            inferred = mt;
+                                                                            break;
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        if fields.iter().all(|(n, _)| n != &name) {
+                                            fields.push((name, inferred));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        // Register computed fields so lowering can reference them
+                        codegen.class_fields.borrow_mut().insert(class_name.clone(), fields.clone());
                         if let Err(d) = codegen.gen_constructor_ir(&class_name, ctor, &fields) {
                             diagnostics::emit_diagnostic(&d, Some(parsed_mod.source.as_str()));
                             return Err(anyhow::anyhow!(d.message));
@@ -458,12 +481,62 @@ fn main() -> Result<()> {
                         }
                     }
                     ClassMember::Constructor(ctor) => {
-                        let fields = codegen
-                            .class_fields
-                            .borrow()
-                            .get(&class_name)
-                            .cloned()
-                            .unwrap_or_default();
+                        // Compute fields for non-exported class similarly to exported case
+                        let mut fields: Vec<(String, oats::types::OatsType)> = Vec::new();
+                        use deno_ast::swc::ast::{ClassMember, Expr, MemberProp, Stmt, ParamOrTsParamProp, TsParamPropParam};
+                        for m in &c.class.body {
+                            if let ClassMember::ClassProp(prop) = m
+                                && let deno_ast::swc::ast::PropName::Ident(id) = &prop.key
+                            {
+                                let fname = id.sym.to_string();
+                                if fields.iter().all(|(n, _)| n != &fname) {
+                                    let ftype = if let Some(type_ann) = &prop.type_ann {
+                                        if let Some(mt) = oats::types::map_ts_type(&type_ann.type_ann) {
+                                            mt
+                                        } else {
+                                            oats::types::OatsType::Number
+                                        }
+                                    } else {
+                                        oats::types::OatsType::Number
+                                    };
+                                    fields.push((fname, ftype));
+                                }
+                            }
+                        }
+                        for p in &ctor.params {
+                            if let ParamOrTsParamProp::TsParamProp(ts_param) = p
+                                && let TsParamPropParam::Ident(binding_ident) = &ts_param.param
+                            {
+                                let fname = binding_ident.id.sym.to_string();
+                                if fields.iter().all(|(n, _)| n != &fname) {
+                                    let ty = oats::types::infer_type(
+                                        binding_ident.type_ann.as_ref().map(|ann| &*ann.type_ann),
+                                        None,
+                                    );
+                                    fields.push((fname, ty));
+                                }
+                            }
+                        }
+                        if let Some(body) = &ctor.body {
+                            for stmt in &body.stmts {
+                                if let Stmt::Expr(expr_stmt) = stmt
+                                    && let Expr::Assign(assign) = &*expr_stmt.expr
+                                    && let deno_ast::swc::ast::AssignTarget::Simple(simple_target) = &assign.left
+                                {
+                                    if let deno_ast::swc::ast::SimpleAssignTarget::Member(mem) = simple_target
+                                        && matches!(&*mem.obj, Expr::This(_))
+                                        && let MemberProp::Ident(ident) = &mem.prop
+                                    {
+                                        let name = ident.sym.to_string();
+                                        let inferred = oats::types::infer_type(None, Some(&assign.right));
+                                        if fields.iter().all(|(n, _)| n != &name) {
+                                            fields.push((name, inferred));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        codegen.class_fields.borrow_mut().insert(class_name.clone(), fields.clone());
                         if let Err(d) = codegen.gen_constructor_ir(&class_name, ctor, &fields) {
                             diagnostics::emit_diagnostic(&d, Some(parsed_mod.source.as_str()));
                             return Err(anyhow::anyhow!(d.message));
@@ -553,6 +626,11 @@ fn main() -> Result<()> {
     let out_ll = format!("{}/{}.ll", out_dir, src_filename);
     let out_exe = format!("{}/{}", out_dir, src_filename);
     let out_obj = format!("{}/{}.o", out_dir, src_filename);
+    // Ensure output directory exists so File::create doesn't fail with ENOENT.
+    if let Err(e) = std::fs::create_dir_all(&out_dir) {
+        anyhow::bail!("failed to create output directory {}: {}", out_dir, e);
+    }
+
     let mut f = File::create(&out_ll)?;
     f.write_all(ir.as_bytes())?;
     f.sync_all()?;

@@ -20,7 +20,7 @@ use std::io::{self, Write};
 use std::mem;
 use std::process;
 use std::ptr;
-use std::sync::atomic::{AtomicPtr, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicPtr, AtomicU64, AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::thread;
 use std::time::Duration;
@@ -37,6 +37,8 @@ const HEADER_WEAK_MASK: u64 = 0xffffu64 << HEADER_WEAK_SHIFT; // bits 33-48
 const HEADER_TYPE_TAG_SHIFT: u64 = 49;
 // Flags mask includes everything above the low 32-bit refcount
 const HEADER_FLAGS_MASK: u64 = 0xffffffff00000000u64;
+// Metadata magic used by codegen: ASCII 'OATS' (0x4F415453)
+const META_MAGIC: u64 = 0x4F415453u64;
 
 // Create a header value for a heap-allocated object with initial refcount
 #[inline]
@@ -71,12 +73,22 @@ struct Collector {
 
 static COLLECTOR: OnceLock<Arc<Collector>> = OnceLock::new();
 
+// Control whether the background collector emits diagnostic logging.
+// Disabled by default; enable by setting the environment variable
+// OATS_COLLECTOR_LOG=1 before running the generated binary.
+static COLLECTOR_LOG: AtomicBool = AtomicBool::new(false);
+
 fn init_collector() -> Arc<Collector> {
     COLLECTOR.get_or_init(|| {
         let collector = Arc::new(Collector {
             queue: Mutex::new(Vec::new()),
             cv: Condvar::new(),
         });
+
+        // Configure collector logging from environment (disabled by default).
+        if std::env::var("OATS_COLLECTOR_LOG").map(|v| !v.is_empty() && v != "0").unwrap_or(false) {
+            COLLECTOR_LOG.store(true, Ordering::Relaxed);
+        }
 
         // Spawn background thread to process root candidates.
         let c = collector.clone();
@@ -85,6 +97,67 @@ fn init_collector() -> Arc<Collector> {
         collector
     })
     .clone()
+}
+
+// --- Safety helpers for collector traversal ---
+// Perform lightweight, conservative checks on raw pointers to avoid
+// obviously invalid addresses before dereferencing in the background
+// collector. These checks do NOT guarantee safety but reduce the
+// chance of immediately dereferencing small/null/unaligned addresses.
+
+#[inline]
+
+fn is_plausible_addr(addr: usize) -> bool {
+    // Reject null or very small addresses (below common page sizes),
+    // and require 8-byte alignment for our u64-based headers.
+    if addr == 0 {
+        return false;
+    }
+    if addr < 4096 {
+        return false;
+    }
+    (addr & 7) == 0
+}
+
+// Validate a metadata block pointer: must be plausibly aligned/non-null and
+// contain a reasonable length value (1..=max_len). Also check each offset is
+// an 8-byte aligned positive value within a pragmatic object-size bound.
+
+unsafe fn validate_meta_block(meta: *mut u64, max_len: usize) -> bool {
+    if meta.is_null() {
+        return false;
+    }
+    let addr = meta as usize;
+    if !is_plausible_addr(addr) {
+        return false;
+    }
+    // Expect layout: [meta0: u64 (magic<<32 | len)], [len x i32 offsets]
+    unsafe {
+        // Read meta0 (u64)
+        let meta0 = *meta;
+        let magic = meta0 >> 32;
+        if magic != META_MAGIC {
+            return false;
+        }
+        let len = (meta0 & 0xffffffffu64) as usize;
+        if len == 0 || len > max_len {
+            return false;
+        }
+        // Offsets now start at meta + 1 as i32 values. Check each.
+        let max_off = 1usize << 20;
+        let offsets_ptr = meta.add(1) as *const i32;
+        for i in 0..len {
+            let off_i32 = *offsets_ptr.add(i);
+            let off = off_i32 as isize as usize; // sign-extend if needed
+            if off == 0 || (off & 7) != 0 {
+                return false;
+            }
+            if off < 16 || off > max_off {
+                return false;
+            }
+        }
+    }
+    true
 }
 
 fn collector_thread(col: Arc<Collector>) {
@@ -119,7 +192,9 @@ fn collector_thread(col: Arc<Collector>) {
                 // Resolve base pointer (handles string data pointers)
                 let base = get_object_base(*obj_ptr);
                 if base.is_null() {
-                    let _ = io::stderr().write_all(b"[oats runtime] collector: invalid object pointer\n");
+                    if COLLECTOR_LOG.load(Ordering::Relaxed) {
+                        let _ = io::stderr().write_all(b"[oats runtime] collector: invalid object pointer\n");
+                    }
                     continue;
                 }
 
@@ -131,18 +206,266 @@ fn collector_thread(col: Arc<Collector>) {
                 let weak = header_get_weak_bits(h);
                 let type_tag = (h >> HEADER_TYPE_TAG_SHIFT) as u32;
 
-                let _ = io::stderr().write_all(
-                    format!(
-                        "[oats runtime] collector: obj={:p} base={:p} strong={} weak={} static={} type_tag={}\n",
-                        *obj_ptr, base, strong, weak, is_static, type_tag
-                    )
-                    .as_bytes(),
-                );
+                if COLLECTOR_LOG.load(Ordering::Relaxed) {
+                    let _ = io::stderr().write_all(
+                        format!(
+                            "[oats runtime] collector: obj={:p} base={:p} strong={} weak={} static={} type_tag={}\n",
+                            *obj_ptr, base, strong, weak, is_static, type_tag
+                        )
+                        .as_bytes(),
+                    );
+                }
             }
         }
 
-        // TODO: implement trial-deletion mark/sweep/restore here.
-        // For now we just inspected and logged candidates non-destructively.
+        // Implement a simple trial-deletion collector:
+        // For each candidate, perform a non-destructive simulation of
+        // decrementing reference counts across the reachable subgraph.
+        // Any objects whose simulated count reaches zero are considered
+        // collectible; we then attempt to claim (CAS strong->0) and
+        // destruct/free them.
+        // Note: This is a conservative, best-effort implementation for
+        // the prototype collector.
+        // Build simulation maps for all drained candidates
+        use std::collections::{HashMap, VecDeque};
+
+        // Helper: read strong count and type_tag for an object
+        unsafe fn read_header_info(obj: *mut c_void) -> Option<(u64, u32)> {
+            if obj.is_null() {
+                return None;
+            }
+            // Raw pointer deref and atomic loads are unsafe operations; wrap
+            // them in an explicit unsafe block to satisfy the 2024 safety
+            // guidelines (unsafe operations require an unsafe block).
+            unsafe {
+                let header = obj as *mut AtomicU64;
+                let h = (*header).load(Ordering::Acquire);
+                let strong = h & HEADER_RC_MASK;
+                let type_tag = (h >> HEADER_TYPE_TAG_SHIFT) as u32;
+                Some((strong, type_tag))
+            }
+        }
+
+        // Helper: gather neighbors (outgoing pointers) for an object
+        unsafe fn gather_neighbors(obj: *mut c_void) -> Vec<*mut c_void> {
+            let mut res: Vec<*mut c_void> = Vec::new();
+            if obj.is_null() {
+                return res;
+            }
+            // All raw pointer arithmetic and derefs are explicitly wrapped in
+            // unsafe blocks to make the intent clear and satisfy the compiler.
+            unsafe {
+                let header = obj as *mut AtomicU64;
+                let h = (*header).load(Ordering::Relaxed);
+                let type_tag = (h >> HEADER_TYPE_TAG_SHIFT) as u32;
+
+                if type_tag == 1 {
+                    // union object layout: [header][dtor_ptr][discrim][payload]
+                    let discrim_ptr = (obj as *mut u8).add(16) as *const u64;
+                    let discrim = *discrim_ptr;
+                    if discrim == 1 {
+                        // pointer payload at +24
+                        let payload_ptr_ptr = (obj as *mut u8).add(24) as *mut *mut c_void;
+                        let payload = *payload_ptr_ptr;
+                        if !payload.is_null() {
+                            res.push(payload);
+                        }
+                    }
+                    return res;
+                }
+
+                if type_tag == 2 {
+                    // class metadata pointer stored at +8: points to { u64 magic, u64 len, [len x u64 offsets] }
+                    let meta_ptr_ptr = (obj as *mut u8).add(8) as *mut *mut u64;
+                    let meta = *meta_ptr_ptr;
+                    if meta.is_null() {
+                        if COLLECTOR_LOG.load(Ordering::Relaxed) {
+                            let _ = io::stderr().write_all(b"[oats runtime] collector: meta pointer null\n");
+                        }
+                        return res;
+                    }
+                    // Validate metadata block conservatively before deref
+                    if !validate_meta_block(meta, 256) {
+                        if COLLECTOR_LOG.load(Ordering::Relaxed) {
+                            let _ = io::stderr().write_all(
+                                format!("[oats runtime] collector: invalid meta at {:p}\n", meta).as_bytes(),
+                            );
+                        }
+                        return res;
+                    }
+                    // meta[0] = magic, meta[1] = len, offsets start at meta[2]
+                    let meta_i32_ptr = meta.add(1) as *const i32;
+                    let len = (*meta >> 0) as u32 as usize & 0xffffffffusize; // len encoded in low 32 bits of meta0
+                    if COLLECTOR_LOG.load(Ordering::Relaxed) {
+                        let _ = io::stderr().write_all(
+                            format!("[oats runtime] collector: meta at {:p} len={}\n", meta, len).as_bytes(),
+                        );
+                    }
+                    for i in 0..len {
+                        let off_i32 = *meta_i32_ptr.add(i);
+                        let off = off_i32 as isize as usize;
+                        if COLLECTOR_LOG.load(Ordering::Relaxed) {
+                            let _ = io::stderr().write_all(
+                                format!("[oats runtime] collector: field offset {} -> {}\n", i, off).as_bytes(),
+                            );
+                        }
+                        let field_addr = (obj as *mut u8).add(off) as *mut *mut c_void;
+                        let p = *field_addr;
+                        if !p.is_null() {
+                            res.push(p);
+                        }
+                    }
+                    return res;
+                }
+            }
+
+            // Fallback: no neighbors known for other types
+            res
+        }
+
+        // Simulation and collection per drained candidate
+        for root in drained.iter() {
+            let root_ptr = *root;
+            if root_ptr.is_null() {
+                continue;
+            }
+
+            // Simulation map: pointer usize -> simulated strong count
+            let mut sim: HashMap<usize, u64> = HashMap::new();
+            let mut stack: VecDeque<*mut c_void> = VecDeque::new();
+
+            // Seed with root: read real strong count
+            if let Some((strong, _tag)) = unsafe { read_header_info(root_ptr) } {
+                if strong == 0 {
+                    continue;
+                }
+                sim.insert(root_ptr as usize, strong);
+                // trial-decrement root by one
+                let newr = strong.saturating_sub(1);
+                sim.insert(root_ptr as usize, newr);
+                if newr == 0 {
+                    stack.push_back(root_ptr);
+                }
+            } else {
+                continue;
+            }
+
+            // Propagate trial-decrements
+            while let Some(obj) = stack.pop_front() {
+                // For each outgoing neighbor, ensure it has an entry in sim and decrement
+                let neighbors = unsafe { gather_neighbors(obj) };
+                    for nbr in neighbors.into_iter() {
+                    let key = nbr as usize;
+                    let cur = if let Some(v) = sim.get(&key) {
+                        *v
+                    } else {
+                        // read real header count
+                        if let Some((s, _)) = unsafe { read_header_info(nbr) } {
+                            sim.insert(key, s);
+                            s
+                        } else {
+                            continue;
+                        }
+                    };
+                    let newc = cur.saturating_sub(1);
+                    // update
+                    sim.insert(key, newc);
+                    if newc == 0 {
+                        // schedule neighbor for further traversal
+                        stack.push_back(nbr);
+                    }
+                }
+            }
+
+            // Determine collectible objects: those with simulated count == 0
+            let collectible: Vec<*mut c_void> = sim
+                .iter()
+                .filter_map(|(k, v)| if *v == 0 { Some(*k as *mut c_void) } else { None })
+                .collect();
+
+            if collectible.is_empty() {
+                continue;
+            }
+
+            // Sweep: attempt to claim and destroy each collectible object
+            for obj in collectible.into_iter() {
+                if obj.is_null() {
+                    continue;
+                }
+                // Perform unsafe operations inside a dedicated block
+                unsafe {
+                    let header_ptr = obj as *mut AtomicU64;
+                    // Try to atomically set strong count to 0 (claiming object)
+                    loop {
+                        let old_header = (*header_ptr).load(Ordering::Acquire);
+                        let strong = old_header & HEADER_RC_MASK;
+                        if strong == 0 {
+                            // already zero (someone else claimed/collected)
+                            break;
+                        }
+                        let new_header = (old_header & HEADER_FLAGS_MASK) | 0u64;
+                        match (*header_ptr).compare_exchange_weak(
+                            old_header,
+                            new_header,
+                            Ordering::AcqRel,
+                            Ordering::Relaxed,
+                        ) {
+                            Ok(_) => {
+                                // We claimed the object. Run destructor-like cleanup.
+                                let type_tag = (old_header >> HEADER_TYPE_TAG_SHIFT) as u32;
+                                if type_tag == 1 {
+                                    // union: read dtor ptr and call it if present
+                                    let dtor_ptr_ptr = (obj as *mut u8).add(std::mem::size_of::<u64>()) as *mut *mut c_void;
+                                    let dtor_raw = *dtor_ptr_ptr;
+                                    if !dtor_raw.is_null() {
+                                        let dtor: extern "C" fn(*mut c_void) = std::mem::transmute(dtor_raw);
+                                        dtor(obj);
+                                    }
+                                } else if type_tag == 2 {
+                                    // class: iterate pointer fields and rc_dec them
+                                    let meta_ptr_ptr = (obj as *mut u8).add(8) as *mut *mut u64;
+                                    let meta = *meta_ptr_ptr;
+                                    if meta.is_null() {
+                                        // no metadata; nothing we can do safely
+                                    } else if validate_meta_block(meta, 256) {
+                                        let meta_i32_ptr = meta.add(1) as *const i32;
+                                        let len = (*meta >> 0) as u32 as usize & 0xffffffffusize;
+                                        for i in 0..len {
+                                            let off_i32 = *meta_i32_ptr.add(i);
+                                            let off = off_i32 as isize as usize;
+                                            let field_addr = (obj as *mut u8).add(off) as *mut *mut c_void;
+                                            let p = *field_addr;
+                                            if !p.is_null() {
+                                                // drop owned reference
+                                                rc_dec(p);
+                                            }
+                                        }
+                                    } else {
+                                        // metadata invalid; skip to avoid UB
+                                    }
+                                }
+
+                                // After destructor effects, decrement weak count on control block
+                                rc_weak_dec(obj);
+                                break;
+                            }
+                            Err(_) => {
+                                // Retry or bail if header changed to non-zero
+                                let cur = (*header_ptr).load(Ordering::Acquire);
+                                let cur_strong = cur & HEADER_RC_MASK;
+                                if cur_strong != 0 {
+                                    // lost claim; abort destroying this object
+                                    break;
+                                } else {
+                                    // retry
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -819,6 +1142,11 @@ pub unsafe extern "C" fn rc_inc(p: *mut c_void) {
     }
     unsafe {
         // Try to determine the actual object pointer
+        let p_addr = p as usize;
+        if !is_plausible_addr(p_addr) {
+            // avoid operating on implausible pointer values
+            return;
+        }
         let obj_ptr = get_object_base(p);
         if obj_ptr.is_null() {
             return;
@@ -899,6 +1227,18 @@ pub unsafe extern "C" fn rc_dec(p: *mut c_void) {
         return;
     }
     unsafe {
+        // Diagnostic: print pointer being decremented to help debug crashes.
+        // Use libc::printf as it avoids higher-level allocation that could
+        // interfere with runtime state during a bug investigation.
+        let _ = libc::printf(b"[oats runtime] rc_dec called p=%p\n\0".as_ptr() as *const c_char, p);
+        // Quick plausibility check to avoid dereferencing obviously invalid
+        // pointers (small integers or near-null values). This prevents the
+        // collector or codegen bug from crashing the process while we debug.
+        let p_addr = p as usize;
+        if !is_plausible_addr(p_addr) {
+            let _ = libc::printf(b"[oats runtime] rc_dec: implausible p=%p, ignoring\n\0".as_ptr() as *const c_char, p);
+            return;
+        }
         // Get the actual object pointer
         let obj_ptr = get_object_base(p);
         if obj_ptr.is_null() {

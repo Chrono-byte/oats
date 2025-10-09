@@ -1,3 +1,19 @@
+//! Top-level codegen module
+//!
+//! This module provides the `CodeGen` structure which holds the LLVM
+//! `Context`, `Module`, `Builder`, and a number of caches for frequently
+//! used LLVM types and runtime helper function declarations. The codegen
+//! pipeline is organized across submodules:
+//! - `emit` : top-level item lowering (functions, constructors)
+//! - `expr` : expression lowering
+//! - `stmt` : statement lowering
+//! - `helpers` : small re-usable utilities
+//!
+//! `CodeGen` also exposes getters for runtime helper functions (for
+//! example `get_rc_inc`, `get_union_box_f64`) which lazily add declarations
+//! to the LLVM module. This centralization ensures consistent ABI types for
+//! these helpers and avoids duplicate declarations.
+
 use deno_ast::swc::ast;
 use inkwell::builder::Builder;
 use inkwell::context::Context;

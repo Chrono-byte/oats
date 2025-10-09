@@ -1,3 +1,15 @@
+//! Small helper utilities used across codegen lowering.
+//!
+//! This module implements a set of reusable helpers:
+//! - Mapping `OatsType` to LLVM ABI types (`map_type_to_llvm`).
+//! - Lightweight coercions between ABI kinds (`coerce_to_f64`, `coerce_to_i64`).
+//! - Truthiness coercion used for conditionals (`to_condition_i1`).
+//! - Local variable stack helpers (`find_local`, `insert_local_current_scope`).
+//!
+//! The helpers keep lowering code focused and centralize runtime/ABI
+//! decisions in one place so they can be updated consistently as the ABI
+//! evolves.
+
 use crate::types::OatsType;
 use inkwell::types::BasicType;
 use inkwell::types::BasicTypeEnum;
@@ -15,8 +27,15 @@ type LocalEntry<'a> = (
 type LocalsStackLocal<'a> = Vec<HashMap<String, LocalEntry<'a>>>;
 
 impl<'a> super::CodeGen<'a> {
-    // Map our OatsType to an LLVM BasicTypeEnum for parameters/allocas.
-    // Note: Void is not a valid parameter type; panic if encountered here.
+    /// Map an `OatsType` to an LLVM `BasicTypeEnum` for parameter/alloca ABI.
+    ///
+    /// This follows the current ABI decisions:
+    /// - Numeric types map to `f64`.
+    /// - Pointer-like types (strings, arrays, objects, option, weak, etc.) map
+    ///   to `i8*`.
+    /// - Unions map to `i8*` if any arm is pointer-like, otherwise `f64`.
+    ///
+    /// Panics for `Void` as it cannot be used as a parameter/alloca type.
     pub(crate) fn map_type_to_llvm(&self, t: &OatsType) -> BasicTypeEnum<'a> {
         match t {
             OatsType::Number => self.f64_t.as_basic_type_enum(),
@@ -52,8 +71,14 @@ impl<'a> super::CodeGen<'a> {
         }
     }
 
-    // Try to coerce a BasicValueEnum into an f64 FloatValue.
-    // Supports FloatValue and IntValue (including i1/bool).
+    /// Try to coerce a `BasicValueEnum` into an `f64` FloatValue.
+    ///
+    /// Supported inputs:
+    /// - `FloatValue` -> returned as-is
+    /// - `IntValue` -> converted with signed int->float
+    /// - `PointerValue` -> attempt to `union_unbox_f64` (unbox boxed union)
+    ///
+    /// Returns `None` when coercion isn't possible.
     pub(crate) fn coerce_to_f64(
         &self,
         val: inkwell::values::BasicValueEnum<'a>,
@@ -84,7 +109,10 @@ impl<'a> super::CodeGen<'a> {
         }
     }
 
-    // Coerce an int/bool value to i64
+    /// Coerce an int/bool/float value to an `i64` IntValue when possible.
+    ///
+    /// This is used when building phi nodes or integer comparisons where a
+    /// canonical `i64` representation is convenient.
     pub(crate) fn coerce_to_i64(
         &self,
         val: BasicValueEnum<'a>,
@@ -105,7 +133,12 @@ impl<'a> super::CodeGen<'a> {
         }
     }
 
-    // Lower a value to an i1 condition (as IntValue). Returns None if unsupported.
+    /// Lower a value to an `i1` condition (`IntValue`). Returns `None` if
+    /// the value cannot be coerced to a boolean.
+    ///
+    /// Truthiness rules are JS-like: numbers are true when not 0/NaN, pointers
+    /// are true when non-null (and strings also require non-zero length), and
+    /// ints are true when non-zero.
     pub(crate) fn to_condition_i1(
         &self,
         val: BasicValueEnum<'a>,
@@ -201,8 +234,16 @@ impl<'a> super::CodeGen<'a> {
         }
     }
 
-    // Build a phi merging two BasicValueEnum values from then_bb and else_bb.
-    // Performs simple coercions (int<->float) when possible.
+    /// Build a phi merging two `BasicValueEnum` values coming from `then_bb`
+    /// and `else_bb` respectively.
+    ///
+    /// The helper performs simple coercions to a common type when possible:
+    /// - If either value is float, coerce both to `f64`.
+    /// - Else if both are pointers, build a pointer phi.
+    /// - Else if either is integer-like, coerce both to `i64` and build an
+    ///   integer phi.
+    ///
+    /// Returns `None` when no sensible coercion/phi can be constructed.
     pub(crate) fn build_phi_merge(
         &self,
         then_bb: inkwell::basic_block::BasicBlock<'a>,
@@ -302,7 +343,7 @@ impl<'a> super::CodeGen<'a> {
         None
     }
 
-    // Lookup a local by name from the scope stack (searching innermost scope first)
+    /// Lookup a local by name from the lexical scope stack (innermost first).
     pub(crate) fn find_local(
         &self,
         locals: &LocalsStackLocal<'a>,
@@ -316,6 +357,11 @@ impl<'a> super::CodeGen<'a> {
         None
     }
 
+    /// Insert a new local into the current lexical scope.
+    ///
+    /// Creates the scope if none exists. The `nominal` argument carries an
+    /// optional nominal struct/class name which helps member access lowering
+    /// when the static type is available.
     pub(crate) fn insert_local_current_scope(
         &self,
         locals: &mut LocalsStackLocal<'a>,
@@ -364,6 +410,18 @@ impl<'a> super::CodeGen<'a> {
         }
     }
     pub fn declare_libc(&self) {
+        // Declare external libc/runtime helper functions used by codegen.
+        // These are added as declarations (no body) so the runtime or
+        // system libc provides the implementation at link time.
+        // Examples: malloc, strlen, memcpy, free and runtime print helpers.
+        // Declarations are idempotent: we only add a function if it isn't
+        // already present in the module.
+        //
+        // Note: these declarations are intentionally minimal to avoid
+        // duplicate-symbol issues when linking against the runtime staticlib.
+        // If a definition is required for self-contained IR builds, the
+        // behavior can be adjusted.
+        //
         // declare malloc(i64) -> i8*
         if self.module.get_function("malloc").is_none() {
             let i8ptr = self.i8ptr_t;
@@ -373,7 +431,7 @@ impl<'a> super::CodeGen<'a> {
             self.fn_malloc.borrow_mut().replace(f);
         }
 
-        // declare strlen(i8*) -> i64
+    // declare strlen(i8*) -> i64
         if self.module.get_function("strlen").is_none() {
             let i8ptr = self.i8ptr_t;
             let i64t = self.i64_t;
@@ -382,7 +440,7 @@ impl<'a> super::CodeGen<'a> {
             self.fn_strlen.borrow_mut().replace(f);
         }
 
-        // declare memcpy(i8*, i8*, i64) -> i8*
+    // declare memcpy(i8*, i8*, i64) -> i8*
         if self.module.get_function("memcpy").is_none() {
             let i8ptr = self.i8ptr_t;
             let i64t = self.i64_t;
@@ -391,7 +449,7 @@ impl<'a> super::CodeGen<'a> {
             self.fn_memcpy.borrow_mut().replace(f);
         }
 
-        // declare free(i8*) -> void
+    // declare free(i8*) -> void
         if self.module.get_function("free").is_none() {
             let voidt = self.context.void_type();
             let i8ptr = self.i8ptr_t;
@@ -400,7 +458,7 @@ impl<'a> super::CodeGen<'a> {
             self.fn_free.borrow_mut().replace(f);
         }
 
-        // Declare runtime print helpers so user scripts can call them.
+    // Declare runtime print helpers so user scripts can call them.
         if self.module.get_function("print_f64").is_none() {
             let print_ty = self
                 .context
@@ -415,7 +473,8 @@ impl<'a> super::CodeGen<'a> {
             let f = self.module.add_function("print_str", print_str_ty, None);
             self.fn_print_str.borrow_mut().replace(f);
         }
-        // declare sleep_ms(f64) -> void so examples can pause to allow background collector to run
+    // declare sleep_ms(f64) -> void so examples can pause to allow the
+    // background collector to run during demos/tests.
         if self.module.get_function("sleep_ms").is_none() {
             let sleep_ty = self
                 .context
@@ -425,8 +484,9 @@ impl<'a> super::CodeGen<'a> {
             // no dedicated RefCell for this helper; declaration is sufficient
             let _ = f;
         }
-        // declare collector_test_enqueue() -> void for demo/testing
-        // Only declare when the runtime is built with the `collector-test` feature.
+        // Declare test-only helper `collector_test_enqueue()` when the
+        // workspace enables the `collector-test` Cargo feature. This avoids
+        // exposing test/debug symbols in normal release builds.
         if cfg!(feature = "collector-test") {
             if self.module.get_function("collector_test_enqueue").is_none() {
                 let ty = self.context.void_type().fn_type(&[], false);

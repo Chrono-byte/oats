@@ -1,11 +1,25 @@
-//! This module contains the logic for emitting top-level items, such as
-//! functions and constructors, into LLVM IR.
+//! Code generation for top-level items.
+//!
+//! This module implements lowering of high-level declarations (functions,
+//! constructors, etc.) into LLVM IR using the shared `CodeGen` helpers.
 
 use deno_ast::swc::ast;
 use inkwell::values::BasicValue;
 use inkwell::values::FunctionValue;
 use std::collections::HashMap;
 
+// Type alias for the `locals_stack` used during statement lowering.
+// 
+// This is a stack of scopes, where each scope maps local variable names to
+// a tuple containing:
+// - PointerValue: the alloca or pointer to the variable's storage.
+// - BasicTypeEnum: the LLVM type of the variable.
+// - bool: is this variable mutable (declared with `let` vs `const`)
+// - bool: is this variable a function parameter
+// - bool: is this variable declared as Weak<T> (for reference counting)
+// - Option<String>: if the variable is of a NominalStruct type, the name of
+//   that nominal type; otherwise None. This helps member lowering resolve
+//   fields without fallback heuristics.
 type LocalsStackLocal<'a> = Vec<
     HashMap<
         String,
@@ -21,8 +35,32 @@ type LocalsStackLocal<'a> = Vec<
 >;
 
 impl<'a> crate::codegen::CodeGen<'a> {
-    // Generates LLVM IR for a function declaration.
-    // This is the main entry point for function compilation.
+    /// Generates LLVM IR for a function declaration.
+    ///
+    /// This is the main entry point for compiling a user function into LLVM
+    /// IR. Responsibilities include:
+    /// - Mapping Oats parameter and return types to LLVM ABI types.
+    /// - Creating the LLVM function and entry basic block.
+    /// - Registering any anonymous struct-typed parameters as generated
+    ///   nominal structs so member lowering can resolve fields.
+    /// - Allocating stack slots for parameters and wiring the initial
+    ///   `locals_stack` used by statement lowering.
+    /// - Lowering the function body via `lower_stmts` and emitting an
+    ///   implicit `return` and `rc_dec` cleanup if the body doesn't
+    ///   explicitly terminate.
+    ///
+    /// # Arguments
+    /// * `func_name` - exported name to give the generated LLVM function.
+    /// * `func_decl` - the AST `Function` node describing parameters and body.
+    /// * `param_types` - the list of resolved `OatsType` for parameters.
+    /// * `ret_type` - the declared return `OatsType` for ABI mapping.
+    /// * `receiver_name` - optional `this` receiver name for methods.
+    ///
+    /// # Returns
+    /// Returns the created `FunctionValue` on success or a `Diagnostic` on
+    /// failure. The function emits calls to runtime helpers (for example
+    /// for union boxing) and expects the runtime to provide those symbols
+    /// during linking.
     pub fn gen_function_ir(
         &self,
         func_name: &str,
@@ -90,7 +128,32 @@ impl<'a> crate::codegen::CodeGen<'a> {
         Ok(function)
     }
 
-    // Generate a complete constructor function for a class.
+    /// Generate a complete constructor function for a class.
+    ///
+    /// The constructor created here follows the runtime object layout used
+    /// throughout Oats:
+    ///
+    /// Layout (byte offsets):
+    /// - 0: header (8 bytes) — stores reference count and flags. See the
+    ///   runtime for the bit layout constants.
+    /// - 8: metadata pointer (8 bytes) — points to a `*_field_map` global
+    ///   used by the cycle collector/runtime to locate pointer fields.
+    /// - 16+: field slots (each 8 bytes)
+    ///
+    /// The constructor allocates the object via the runtime `malloc` helper,
+    /// sets up the header with an initial RC of 1, stores the `field_map`
+    /// pointer at offset 8, zero-initializes field slots, and stores any
+    /// constructor parameters into fields, performing union-boxing and
+    /// reference-count increments as required.
+    ///
+    /// # Arguments
+    /// * `class_name` - nominal class name used to name the generated ctor
+    ///   and the `*_field_map` global.
+    /// * `ctor` - AST node describing constructor parameters and body.
+    /// * `fields` - list of class fields with their `OatsType`s.
+    ///
+    /// # Returns
+    /// Returns `Ok(())` on success or a `Diagnostic` on error.
     pub fn gen_constructor_ir(
         &self,
         class_name: &str,
@@ -332,7 +395,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 let _ = self.builder.build_store(field_ptr_cast, boxed_bv);
                                 // For union-boxed pointers we treat the stored pointer as strong by default.
                                 // If the declared field type within the union is Weak, more refined handling
-                                // will be added later. For now, use strong rc_inc.
+                                // The weak/strong distinction will be added later.
+                                // Use the strong `rc_inc` path for current allocations.
                                 let rc_inc_fn = self.get_rc_inc();
                                 let _ = self.builder.build_call(
                                     rc_inc_fn,

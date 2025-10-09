@@ -1,3 +1,17 @@
+//! Expression lowering helpers
+//!
+//! This module contains the primary expression lowering routine (`lower_expr`)
+//! which traverses the `deno_ast` expression AST and emits corresponding
+//! LLVM IR values via the shared `CodeGen` helpers. Expressions are the
+//! most complex part of lowering because they must handle type coercions,
+//! union boxing/unboxing, short-circuiting control flow (logical &&/||),
+//! and runtime helper interactions (array access, string concat, etc.).
+//!
+//! The implementation intentionally preserves explicit conversions and
+//! runtime calls rather than attempting aggressive optimizations. Inline
+//! comments explain important choices (for example, when boxing is used
+//! for unions and when `rc_inc` / `rc_dec` semantics apply).
+
 use crate::diagnostics::Diagnostic;
 use inkwell::values::BasicValueEnum;
 use inkwell::values::FunctionValue;
@@ -20,9 +34,34 @@ type LocalEntry<'a> = (
 type LocalsStackLocal<'a> = Vec<HashMap<String, LocalEntry<'a>>>;
 
 impl<'a> crate::codegen::CodeGen<'a> {
-    // Return true if the given OatsType contains or is a pointer-like type.
-    /// Main expression lowering function. Returns Result to provide better error messages
-    /// when lowering fails (instead of just returning None).
+    /// Main expression lowering function.
+    ///
+    /// Traverses an AST expression and emits LLVM IR values for the
+    /// expression using the `CodeGen`'s `builder` and runtime helper
+    /// functions. The returned `BasicValueEnum` represents the ABI value
+    /// for the expression (for example `f64` for numbers or `i8*` for
+    /// pointer-like values). On error a `Diagnostic` is returned and the
+    /// caller decides whether to continue lowering other parts of the
+    /// module.
+    ///
+    /// Contract/Notes:
+    /// - The lowering keeps boxing/unboxing explicit: unions with pointer-
+    ///   like arms use `i8*` slots and numeric arms may be boxed into
+    ///   runtime objects using `union_box_f64`.
+    /// - Short-circuiting logical operations create basic blocks and
+    ///   phi nodes to merge results when needed.
+    /// - `lower_expr` may emit calls to runtime helpers (e.g. `strlen`,
+    ///   `array_get_f64`, `str_concat`). Those functions are declared via
+    ///   `helpers::declare_libc` or created lazily by `CodeGen` getters.
+    ///
+    /// # Arguments
+    /// * `expr` - AST expression to lower.
+    /// * `function` - current LLVM function for block creation.
+    /// * `param_map` - map of function parameter names to indices.
+    /// * `locals` - mutable lexical locals stack used for allocas and RC.
+    ///
+    /// # Returns
+    /// A lowered `BasicValueEnum` on success, or a `Diagnostic` on failure.
     pub fn lower_expr(
         &self,
         expr: &deno_ast::swc::ast::Expr,
@@ -38,6 +77,13 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 use inkwell::FloatPredicate;
 
                 // Special-case: typeof <expr> === "string"/"number" patterns
+                //
+                // This pattern is common in guard code. When the left side is
+                // a `typeof` unary we can lower the inner expression and, for
+                // pointer-like (boxed union) values, consult the runtime
+                // discriminant instead of performing a heavier dynamic check.
+                // This keeps the emitted IR small for the common guarded
+                // branches used in tests and examples.
                 if let ast::Expr::Unary(unary) = &*bin.left
                     && let deno_ast::swc::ast::UnaryOp::TypeOf = unary.op
                     && let ast::Expr::Lit(deno_ast::swc::ast::Lit::Str(s)) = &*bin.right
@@ -76,6 +122,13 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 let l = self.lower_expr(&bin.left, function, param_map, locals)?;
                 let r = self.lower_expr(&bin.right, function, param_map, locals)?;
 
+                // Coercion and unboxing notes:
+                // - `coerce_to_f64` will convert ints/bools to f64 where
+                //   appropriate and will also attempt to unbox numeric payloads
+                //   from union-boxed pointers by calling the runtime `union_unbox_f64`.
+                // - We attempt the float-path first because numeric arithmetic is
+                //   the most common case and produces simpler IR.
+                // - If coercion fails we fall back to pointer/other handling.
                 // coercion now handled by self.coerce_to_f64
 
                 // Helper to handle float arithmetic
@@ -145,6 +198,13 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 }
 
                 // Logical operators: short-circuiting
+                //
+                // For `&&` and `||` we emit explicit conditional branches and
+                // create a merge block with a phi node. The phi node is built
+                // by `build_phi_merge` which performs basic coercions when the
+                // two sides have differing ABI types (for example f64 vs i64
+                // or pointer). This keeps the lowering correct for expressions
+                // that return one of the operand values (JS-like semantics).
                 if let deno_ast::swc::ast::BinaryOp::LogicalAnd = bin.op {
                     // a && b -> if a truthy then b else a
                     let left_val = l;
@@ -161,7 +221,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     {
                         return Err(Diagnostic::simple("expression lowering failed"))?;
                     }
-                    // then: evaluate right
+                    // then: evaluate right. Note: we don't eagerly `rc_inc` here;
+                    // any pointer ownership changes are performed by the
+                    // callee/array_get/union_box helpers when producing values.
                     self.builder.position_at_end(then_bb);
                     let rv = self.lower_expr(&bin.right, function, param_map, locals);
                     if self.builder.get_insert_block().is_some()
@@ -169,7 +231,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     {
                         return Err(Diagnostic::simple("expression lowering failed"))?;
                     }
-                    // else: keep left
+                    // else: keep left (the left expression's value is the
+                    // result of the `&&` expression when it's falsy). We branch
+                    // to `merge_bb` to join both control-flow paths and use a
+                    // phi node to select the correct value.
                     self.builder.position_at_end(else_bb);
                     if self.builder.get_insert_block().is_some() {
                         let _ = self
@@ -186,6 +251,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     return Err(Diagnostic::simple("expression lowering failed"))?;
                 }
                 if let deno_ast::swc::ast::BinaryOp::LogicalOr = bin.op {
+                    // `||` mirrors `&&` but keeps the left value when truthy.
                     // a || b -> if a truthy then a else b
                     let left_val = l;
                     let cond = self.to_condition_i1(left_val).ok_or_else(|| {
@@ -257,6 +323,14 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     _ => Err(Diagnostic::simple("operation not supported (bin fallback)")),
                 }
             }
+            // Identifier lookup and TDZ handling
+            //
+            // Identifiers can refer to function parameters (which are
+            // passed in via `param_map`) or to locals created by `let`/`const`.
+            // For locals we track an `initialized` flag and trap (emit
+            // unreachable) for Temporal Dead Zone reads. We also record the
+            // origin local name for the last-lowered expression which helps
+            // propagate closure-local typing information.
             ast::Expr::Ident(id) => {
                 let name = id.sym.to_string();
 
@@ -271,7 +345,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 if let Some((ptr, ty, initialized, _is_const, _extra, _nominal)) =
                     self.find_local(locals, &name)
                 {
-                    // If not initialized -> TDZ: generate a trap (unreachable)
+                    // If not initialized -> TDZ: generate a trap (unreachable).
+                    //
+                    // Emitting `unreachable` here is a simple way to guard
+                    // against invalid reads in generated code. In future we
+                    // could lower a runtime diagnostic or insert a proper
+                    // throw.
                     if !initialized {
                         // Emit a call to unreachable to trap at runtime
                         let _ = self.builder.build_unreachable();
@@ -290,13 +369,22 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 Err(Diagnostic::simple("unsupported expression"))
             }
             ast::Expr::Call(call) => {
-                // Support simple identifier callees and member-callee method calls
+                // Support simple identifier callees and member-callee method calls.
+                //
+                // We intentionally support a small set of call shapes in the
+                // emitter: plain identifier calls (e.g., `foo()`), and
+                // member method calls (e.g., `obj.method()`). More complex
+                // call expressions (computed callees, dynamic property lookups)
+                // can be added when needed.
                 if let ast::Callee::Expr(boxed_expr) = &call.callee {
                     match &**boxed_expr {
                         ast::Expr::Ident(ident) => {
                             let fname = ident.sym.to_string();
 
                             // Special-case: println(x) -> call runtime print helpers
+                            //
+                            // `println` is a convenience used by tests/examples and
+                            // lowered to runtime helpers `print_f64` / `print_str`.
                             if fname == "println" {
                                 if call.args.len() != 1 {
                                     return Err(Diagnostic::simple("expression lowering failed"))?;
@@ -370,11 +458,14 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 };
                                 let either = cs.try_as_basic_value();
                                 if let inkwell::Either::Left(bv) = either {
+                                    // The call returned a value; propagate it.
                                     Ok(bv)
                                 } else {
-                                    // call returned void; produce a harmless f64 zero so
-                                    // expression-statement lowering (which ignores the
-                                    // value) succeeds instead of emitting an error.
+                                    // The call returned void. To make expression
+                                    // contexts uniformly expect a `BasicValueEnum`
+                                    // we return a harmless `f64` zero. This keeps
+                                    // expression-statement lowering simple: the
+                                    // caller can ignore the returned value.
                                     let zero = self.f64_t.const_float(0.0);
                                     Ok(zero.as_basic_value_enum())
                                 }
@@ -2001,7 +2092,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             && let Ok(idx_val) =
                                 self.lower_expr(&boxed.expr, function, param_map, locals)
                         {
-                            // only support pointer-array indexing (i8**)
+                            // Only support pointer-array indexing (i8**).
                             if let BasicValueEnum::PointerValue(arr_ptr) = obj_val {
                                 // compute index as i64 for runtime helpers
                                 let idx_i64 = match idx_val {
@@ -2405,7 +2496,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 // Detect captured variables in the arrow body by scanning for
                 // identifier usages that are not parameters and that resolve to
                 // names in the surrounding `locals` stack. We return a helpful
-                // diagnostic listing captures for now; full closure lowering
+                // Diagnostic: capture listing is emitted here. Full closure
+                // lowering will be implemented separately.
                 // (boxed environments + trampolines) is planned in Phase 2.
                 fn collect_idents_in_expr(
                     expr: &deno_ast::swc::ast::Expr,
@@ -2558,8 +2650,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         return Err(Diagnostic::simple("Arrow return type not supported"));
                     }
                 } else {
-                    // If no return type annotation, default to Number for now
-                    // TODO: Implement type inference
+                    // If no return type annotation is present, default to Number.
+                    // TODO: Implement type inference and propagate inferred types.
                     crate::types::OatsType::Number
                 };
 
@@ -3059,7 +3151,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     match prop {
                         ast::PropOrSpread::Prop(prop_box) => match &**prop_box {
                             ast::Prop::KeyValue(kv) => {
-                                // Only support identifier keys for now
+                                // Only identifier keys are supported currently.
                                 if let ast::PropName::Ident(_ident) = &kv.key {
                                     // Lower the value expression
                                     let val =
@@ -3574,7 +3666,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 // These modify the variable and return the old (postfix) or new (prefix) value
                 use deno_ast::swc::ast::UpdateOp;
 
-                // Only support simple identifier updates for now
+                // Only simple identifier updates are supported at present.
                 if let ast::Expr::Ident(ident) = &*update.arg {
                     let name = ident.sym.to_string();
 

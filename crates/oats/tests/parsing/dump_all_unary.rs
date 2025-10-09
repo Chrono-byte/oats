@@ -24,5 +24,5 @@ export function main(): number {
     })
     .unwrap();
 
-    println!("{:#?}", parsed.program());
+    // println!("{:#?}", parsed.program());
 }

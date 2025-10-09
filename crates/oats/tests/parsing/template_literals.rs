@@ -19,7 +19,7 @@ fn parse_simple_template_literal() -> Result<()> {
     let body_count = parsed.program_ref().body().count();
     assert!(body_count > 0);
 
-    println!("Template literal parsed successfully");
+    // println!("Template literal parsed successfully");
     Ok(())
 }
 

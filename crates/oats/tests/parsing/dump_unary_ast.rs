@@ -22,5 +22,5 @@ export function main(): number {
     .unwrap();
 
     // Print the program structure
-    println!("{:#?}", parsed.program());
+    // println!("{:#?}", parsed.program());
 }

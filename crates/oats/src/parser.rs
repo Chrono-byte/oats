@@ -20,9 +20,8 @@ pub fn parse_oats_module(source_code: &str, file_path: Option<&str>) -> Result<P
         // fails, still attempt to produce a file:// URL from the provided
         // path string.
         match std::fs::canonicalize(p) {
-            Ok(abs) => Url::from_file_path(abs).map_err(|()| {
-                anyhow::anyhow!("failed to convert path to file URL: {}", p)
-            })?,
+            Ok(abs) => Url::from_file_path(abs)
+                .map_err(|()| anyhow::anyhow!("failed to convert path to file URL: {}", p))?,
             Err(_) => Url::from_file_path(p).unwrap_or_else(|_| {
                 // Last-resort: treat as a plain file URL using the original
                 // string (not ideal but better than a constant placeholder).

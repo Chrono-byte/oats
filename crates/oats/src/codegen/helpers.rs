@@ -65,7 +65,10 @@ impl<'a> super::CodeGen<'a> {
             BasicValueEnum::PointerValue(pv) => {
                 // Attempt to unbox a union number from a boxed union pointer
                 let unbox_fn = self.get_union_unbox_f64();
-                if let Ok(cs) = self.builder.build_call(unbox_fn, &[pv.into()], "union_unbox_f64_call") {
+                if let Ok(cs) =
+                    self.builder
+                        .build_call(unbox_fn, &[pv.into()], "union_unbox_f64_call")
+                {
                     let either = cs.try_as_basic_value();
                     if let inkwell::Either::Left(bv) = either {
                         if let BasicValueEnum::FloatValue(fv) = bv {
@@ -331,7 +334,6 @@ impl<'a> super::CodeGen<'a> {
         }
     }
 
-    
     pub(crate) fn set_local_initialized(
         &self,
         locals: &mut LocalsStackLocal<'a>,
@@ -399,7 +401,10 @@ impl<'a> super::CodeGen<'a> {
         }
         // declare sleep_ms(f64) -> void so examples can pause to allow background collector to run
         if self.module.get_function("sleep_ms").is_none() {
-            let sleep_ty = self.context.void_type().fn_type(&[self.f64_t.into()], false);
+            let sleep_ty = self
+                .context
+                .void_type()
+                .fn_type(&[self.f64_t.into()], false);
             let f = self.module.add_function("sleep_ms", sleep_ty, None);
             // no dedicated RefCell for this helper; declaration is sufficient
             let _ = f;
@@ -427,7 +432,11 @@ impl<'a> super::CodeGen<'a> {
                     {
                         // If this local is a weak reference, call rc_weak_dec; otherwise rc_dec
                         if *is_weak {
-                            let _ = self.builder.build_call(rc_weak_dec, &[pv.into()], "rc_weak_dec_local");
+                            let _ = self.builder.build_call(
+                                rc_weak_dec,
+                                &[pv.into()],
+                                "rc_weak_dec_local",
+                            );
                         } else {
                             // Silently ignore build_call errors during cleanup
                             let _ = self
@@ -462,7 +471,9 @@ impl<'a> super::CodeGen<'a> {
                     && let BasicValueEnum::PointerValue(pv) = loaded
                 {
                     if *is_weak {
-                        let _ = self.builder.build_call(rc_weak_dec, &[pv.into()], "rc_weak_dec_local");
+                        let _ =
+                            self.builder
+                                .build_call(rc_weak_dec, &[pv.into()], "rc_weak_dec_local");
                     } else {
                         // Silently ignore build_call errors during cleanup
                         let _ = self

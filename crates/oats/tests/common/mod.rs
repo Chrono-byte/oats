@@ -68,7 +68,7 @@ pub fn gen_ir_for_source(src: &str) -> Result<String> {
         fn_rc_weak_inc: std::cell::RefCell::new(None),
         fn_rc_weak_dec: std::cell::RefCell::new(None),
         fn_rc_weak_upgrade: std::cell::RefCell::new(None),
-    fn_union_get_discriminant: std::cell::RefCell::new(None),
+        fn_union_get_discriminant: std::cell::RefCell::new(None),
         class_fields: std::cell::RefCell::new(std::collections::HashMap::new()),
         fn_param_types: std::cell::RefCell::new(std::collections::HashMap::new()),
         source: &parsed_mod.source,

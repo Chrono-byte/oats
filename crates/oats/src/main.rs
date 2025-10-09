@@ -50,7 +50,9 @@ fn main() -> Result<()> {
                     // Only handle relative paths for now
                     if src_val.starts_with("./") || src_val.starts_with("../") {
                         // Try common extensions if not present
-                        let base = std::path::Path::new(&path).parent().unwrap_or_else(|| std::path::Path::new("."));
+                        let base = std::path::Path::new(&path)
+                            .parent()
+                            .unwrap_or_else(|| std::path::Path::new("."));
                         let candidate = base.join(&src_val);
                         let mut found = None;
                         let exts = [".ts", ".oats", ""]; // prefer .ts then .oats then raw
@@ -80,7 +82,9 @@ fn main() -> Result<()> {
 
     // For downstream logic we pick the entry parsed module and also have all
     // other parsed modules available in `modules` for symbol collection.
-    let parsed_mod = modules.get(&entry_str).ok_or_else(|| anyhow::anyhow!("entry module missing after load"))?;
+    let parsed_mod = modules
+        .get(&entry_str)
+        .ok_or_else(|| anyhow::anyhow!("entry module missing after load"))?;
     // `parsed_mod` is available if callers need the entry module parsed AST.
 
     // Require the user script to export a `main` function as the program entrypoint
@@ -94,10 +98,13 @@ fn main() -> Result<()> {
     // First pass: collect exported type-like symbols per module (classes,
     // interfaces, and type aliases) so imports can be resolved to their
     // real types when possible.
-    let mut exports_map: std::collections::HashMap<String, std::collections::HashMap<String, OatsType>> =
-        std::collections::HashMap::new();
+    let mut exports_map: std::collections::HashMap<
+        String,
+        std::collections::HashMap<String, OatsType>,
+    > = std::collections::HashMap::new();
     for (mkey, parsed_module) in modules.iter() {
-        let mut emap: std::collections::HashMap<String, OatsType> = std::collections::HashMap::new();
+        let mut emap: std::collections::HashMap<String, OatsType> =
+            std::collections::HashMap::new();
         let pm = &parsed_module.parsed;
         for item_ref in pm.program_ref().body() {
             if let deno_ast::ModuleItemRef::ModuleDecl(module_decl) = item_ref {
@@ -146,7 +153,9 @@ fn main() -> Result<()> {
                     let src_val = import_decl.src.value.to_string();
                     let mut resolved_mod: Option<String> = None;
                     if src_val.starts_with("./") || src_val.starts_with("../") {
-                        let base = std::path::Path::new(&mkey).parent().unwrap_or_else(|| std::path::Path::new("."));
+                        let base = std::path::Path::new(&mkey)
+                            .parent()
+                            .unwrap_or_else(|| std::path::Path::new("."));
                         let candidate = base.join(&src_val);
                         let exts = [".ts", ".oats", ""]; // same resolution order as loader
                         for ext in &exts {
@@ -170,8 +179,12 @@ fn main() -> Result<()> {
                                 // Determine the imported name (it may be `imported as local`)
                                 let imported_name = if let Some(imported) = &named.imported {
                                     match imported {
-                                        deno_ast::swc::ast::ModuleExportName::Ident(id) => id.sym.to_string(),
-                                        deno_ast::swc::ast::ModuleExportName::Str(s) => s.value.to_string(),
+                                        deno_ast::swc::ast::ModuleExportName::Ident(id) => {
+                                            id.sym.to_string()
+                                        }
+                                        deno_ast::swc::ast::ModuleExportName::Str(s) => {
+                                            s.value.to_string()
+                                        }
                                     }
                                 } else {
                                     // No explicit imported name -> use local as the exported name
@@ -273,9 +286,9 @@ fn main() -> Result<()> {
         fn_union_box_ptr: std::cell::RefCell::new(None),
         fn_union_unbox_f64: std::cell::RefCell::new(None),
         fn_union_unbox_ptr: std::cell::RefCell::new(None),
-    fn_rc_weak_inc: std::cell::RefCell::new(None),
-    fn_rc_weak_dec: std::cell::RefCell::new(None),
-    fn_rc_weak_upgrade: std::cell::RefCell::new(None),
+        fn_rc_weak_inc: std::cell::RefCell::new(None),
+        fn_rc_weak_dec: std::cell::RefCell::new(None),
+        fn_rc_weak_upgrade: std::cell::RefCell::new(None),
         fn_union_get_discriminant: std::cell::RefCell::new(None),
         class_fields: std::cell::RefCell::new(std::collections::HashMap::new()),
         fn_param_types: std::cell::RefCell::new(std::collections::HashMap::new()),
@@ -448,22 +461,35 @@ fn main() -> Result<()> {
                             if let Ok(sig) = check_function_strictness(&m.function, &mut symbols) {
                                 // Prepend `this` as the first param (nominal struct pointer)
                                 let mut params = Vec::new();
-                                params.push(oats::types::OatsType::NominalStruct(class_name.clone()));
+                                params
+                                    .push(oats::types::OatsType::NominalStruct(class_name.clone()));
                                 params.extend(sig.params.into_iter());
                                 let ret = sig.ret;
                                 let fname = format!("{}_{}", class_name, mname);
                                 codegen
-                                    .gen_function_ir(&fname, &m.function, &params, &ret, Some("this"))
+                                    .gen_function_ir(
+                                        &fname,
+                                        &m.function,
+                                        &params,
+                                        &ret,
+                                        Some("this"),
+                                    )
                                     .map_err(|d| {
-                                        oats::diagnostics::emit_diagnostic(&d, Some(parsed_module.source.as_str()));
+                                        oats::diagnostics::emit_diagnostic(
+                                            &d,
+                                            Some(parsed_module.source.as_str()),
+                                        );
                                         anyhow::anyhow!("{}", d.message)
                                     })?;
                             } else {
                                 // If strict check failed (e.g., missing return annotation), try to emit with Void return
-                                if let Ok(sig2) = check_function_strictness(&m.function, &mut symbols) {
+                                if let Ok(sig2) =
+                                    check_function_strictness(&m.function, &mut symbols)
+                                {
                                     let mut params = Vec::new();
-                                    params
-                                        .push(oats::types::OatsType::NominalStruct(class_name.clone()));
+                                    params.push(oats::types::OatsType::NominalStruct(
+                                        class_name.clone(),
+                                    ));
                                     params.extend(sig2.params.into_iter());
                                     let fname = format!("{}_{}", class_name, mname);
                                     codegen
@@ -493,7 +519,10 @@ fn main() -> Result<()> {
                                 .cloned()
                                 .unwrap_or_default();
                             if let Err(d) = codegen.gen_constructor_ir(&class_name, ctor, &fields) {
-                                oats::diagnostics::emit_diagnostic(&d, Some(parsed_module.source.as_str()));
+                                oats::diagnostics::emit_diagnostic(
+                                    &d,
+                                    Some(parsed_module.source.as_str()),
+                                );
                                 return Err(anyhow::anyhow!(d.message));
                             }
                         }

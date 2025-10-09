@@ -107,7 +107,8 @@ pub fn map_ts_type(ty: &ast::TsType) -> Option<OatsType> {
                     if let Some(type_params) = &type_ref.type_params
                         && let Some(first_param) = type_params.params.first()
                     {
-                        return map_ts_type(first_param).map(|inner| OatsType::Weak(Box::new(inner)));
+                        return map_ts_type(first_param)
+                            .map(|inner| OatsType::Weak(Box::new(inner)));
                     }
                     return None;
                 }
@@ -115,7 +116,8 @@ pub fn map_ts_type(ty: &ast::TsType) -> Option<OatsType> {
                     if let Some(type_params) = &type_ref.type_params
                         && let Some(first_param) = type_params.params.first()
                     {
-                        return map_ts_type(first_param).map(|inner| OatsType::Option(Box::new(inner)));
+                        return map_ts_type(first_param)
+                            .map(|inner| OatsType::Option(Box::new(inner)));
                     }
                     return None;
                 }
@@ -146,10 +148,10 @@ pub fn map_ts_type(ty: &ast::TsType) -> Option<OatsType> {
                     }
                     if seen_null
                         && let Some(o) = other
-                            && let Some(mapped) = map_ts_type(o) {
-                                return Some(OatsType::Option(Box::new(mapped)));
-                            }
-
+                        && let Some(mapped) = map_ts_type(o)
+                    {
+                        return Some(OatsType::Option(Box::new(mapped)));
+                    }
                 }
 
                 let mut parts = Vec::new();
@@ -174,17 +176,18 @@ pub fn map_ts_type(ty: &ast::TsType) -> Option<OatsType> {
             let mut fields: Vec<(String, OatsType)> = Vec::new();
             for member in &typelit.members {
                 if let ast::TsTypeElement::TsPropertySignature(prop) = member
-                    && let ast::Expr::Ident(id) = &*prop.key {
-                        let fname = id.sym.to_string();
-                        if let Some(type_ann) = &prop.type_ann
-                            && let Some(mapped) = map_ts_type(&type_ann.type_ann)
-                        {
-                            fields.push((fname, mapped));
-                            continue;
-                        }
-                        // default when type can't be mapped
-                        fields.push((fname, OatsType::Number));
+                    && let ast::Expr::Ident(id) = &*prop.key
+                {
+                    let fname = id.sym.to_string();
+                    if let Some(type_ann) = &prop.type_ann
+                        && let Some(mapped) = map_ts_type(&type_ann.type_ann)
+                    {
+                        fields.push((fname, mapped));
+                        continue;
                     }
+                    // default when type can't be mapped
+                    fields.push((fname, OatsType::Number));
+                }
             }
             Some(OatsType::StructLiteral(fields))
         }

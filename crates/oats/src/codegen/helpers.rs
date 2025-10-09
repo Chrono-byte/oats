@@ -67,12 +67,16 @@ impl<'a> super::CodeGen<'a> {
             BasicValueEnum::PointerValue(pv) => {
                 // Attempt to unbox a union number from a boxed union pointer
                 let unbox_fn = self.get_union_unbox_f64();
-                if let Ok(cs) = self.builder.build_call(unbox_fn, &[pv.into()], "union_unbox_f64_call") {
+                if let Ok(cs) =
+                    self.builder
+                        .build_call(unbox_fn, &[pv.into()], "union_unbox_f64_call")
+                {
                     let either = cs.try_as_basic_value();
                     if let inkwell::Either::Left(bv) = either
-                        && let BasicValueEnum::FloatValue(fv) = bv {
-                            return Some(fv);
-                        }
+                        && let BasicValueEnum::FloatValue(fv) = bv
+                    {
+                        return Some(fv);
+                    }
                 }
                 None
             }
@@ -332,7 +336,6 @@ impl<'a> super::CodeGen<'a> {
         }
     }
 
-    
     pub(crate) fn set_local_initialized(
         &self,
         locals: &mut LocalsStackLocal<'a>,
@@ -365,8 +368,6 @@ impl<'a> super::CodeGen<'a> {
             self.fn_strlen.borrow_mut().replace(f);
         }
 
-
-        
         // declare memcpy(i8*, i8*, i64) -> i8*
         if self.module.get_function("memcpy").is_none() {
             let i8ptr = self.i8ptr_t;
@@ -402,7 +403,10 @@ impl<'a> super::CodeGen<'a> {
         }
         // declare sleep_ms(f64) -> void so examples can pause to allow background collector to run
         if self.module.get_function("sleep_ms").is_none() {
-            let sleep_ty = self.context.void_type().fn_type(&[self.f64_t.into()], false);
+            let sleep_ty = self
+                .context
+                .void_type()
+                .fn_type(&[self.f64_t.into()], false);
             let f = self.module.add_function("sleep_ms", sleep_ty, None);
             // no dedicated RefCell for this helper; declaration is sufficient
             let _ = f;
@@ -430,7 +434,11 @@ impl<'a> super::CodeGen<'a> {
                     {
                         // If this local is a weak reference, call rc_weak_dec; otherwise rc_dec
                         if *is_weak {
-                            let _ = self.builder.build_call(rc_weak_dec, &[pv.into()], "rc_weak_dec_local");
+                            let _ = self.builder.build_call(
+                                rc_weak_dec,
+                                &[pv.into()],
+                                "rc_weak_dec_local",
+                            );
                         } else {
                             // Silently ignore build_call errors during cleanup
                             let _ = self
@@ -465,7 +473,9 @@ impl<'a> super::CodeGen<'a> {
                     && let BasicValueEnum::PointerValue(pv) = loaded
                 {
                     if *is_weak {
-                        let _ = self.builder.build_call(rc_weak_dec, &[pv.into()], "rc_weak_dec_local");
+                        let _ =
+                            self.builder
+                                .build_call(rc_weak_dec, &[pv.into()], "rc_weak_dec_local");
                     } else {
                         // Silently ignore build_call errors during cleanup
                         let _ = self
@@ -519,7 +529,9 @@ impl<'a> super::CodeGen<'a> {
         let malloc_ret = call_site
             .try_as_basic_value()
             .left()
-            .ok_or_else(|| crate::diagnostics::Diagnostic::simple("malloc call did not return a value"))?
+            .ok_or_else(|| {
+                crate::diagnostics::Diagnostic::simple("malloc call did not return a value")
+            })?
             .into_pointer_value();
 
         // Cast to i8* for stores
@@ -548,7 +560,9 @@ impl<'a> super::CodeGen<'a> {
             .build_int_to_ptr(meta_addr, self.i8ptr_t, "meta_ptr")
             .map_err(|_| crate::diagnostics::Diagnostic::simple("int_to_ptr failed"))?;
         let null_ptr = self.i8ptr_t.const_null();
-        let _ = self.builder.build_store(meta_ptr, null_ptr.as_basic_value_enum());
+        let _ = self
+            .builder
+            .build_store(meta_ptr, null_ptr.as_basic_value_enum());
 
         // Store each field (as i8* word) at offset header+meta_slot + idx*8
         for (i, val) in field_ptrs.iter().enumerate() {
@@ -569,10 +583,11 @@ impl<'a> super::CodeGen<'a> {
 
             // If value is pointer, increment RC to claim ownership in env
             if val.get_type().is_pointer_type()
-                && let inkwell::values::BasicValueEnum::PointerValue(pv) = *val {
-                    let rc_inc = self.get_rc_inc();
-                    let _ = self.builder.build_call(rc_inc, &[pv.into()], "rc_inc_env");
-                }
+                && let inkwell::values::BasicValueEnum::PointerValue(pv) = *val
+            {
+                let rc_inc = self.get_rc_inc();
+                let _ = self.builder.build_call(rc_inc, &[pv.into()], "rc_inc_env");
+            }
         }
 
         Ok(obj_ptr)

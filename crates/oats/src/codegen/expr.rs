@@ -745,314 +745,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     }
                                 }
 
-                                if let Some(class_name) = class_name_opt {
-                                    // Look up field list for this class
-                                    if let Some(fields) =
-                                        self.class_fields.borrow().get(&class_name)
-                                    {
-                                        // Find the field by name
-                                        if let Some((field_idx, (_fname, field_ty))) = fields
-                                            .iter()
-                                            .enumerate()
-                                            .find(|(_, (n, _))| n == &field_name)
-                                        {
-                                            // Compute field offset: header (u64) + field_idx * sizeof(ptr)
-                                            let hdr_size = self.i64_t.const_int(
-                                                std::mem::size_of::<u64>() as u64,
-                                                false,
-                                            );
-                                            let ptr_sz = self.i64_t.const_int(
-                                                std::mem::size_of::<usize>() as u64,
-                                                false,
-                                            );
-                                            let idx_const =
-                                                self.i64_t.const_int(field_idx as u64, false);
-                                            let mul = self
-                                                .builder
-                                                .build_int_mul(idx_const, ptr_sz, "fld_off_mul")
-                                                .map_err(|_| {
-                                                    Diagnostic::simple("LLVM builder error")
-                                                })?;
-                                            let offset = self
-                                                .builder
-                                                .build_int_add(hdr_size, mul, "fld_off")
-                                                .map_err(|_| {
-                                                    Diagnostic::simple("LLVM builder error")
-                                                })?;
-                                            let offset_i32 = self
-                                                .builder
-                                                .build_int_cast(
-                                                    offset,
-                                                    self.context.i32_type(),
-                                                    "off_i32",
-                                                )
-                                                .map_err(|_| {
-                                                    Diagnostic::simple("LLVM builder error")
-                                                })?;
-
-                                            // GEP to field location
-                                            let gep_ptr = unsafe {
-                                                self.builder.build_gep(
-                                                    self.context.i8_type(),
-                                                    obj_ptr,
-                                                    &[offset_i32],
-                                                    "field_i8ptr_store",
-                                                )
-                                            };
-                                            let gep_ptr = match gep_ptr {
-                                                Ok(pv) => pv,
-                                                Err(_) => {
-                                                    return Err(Diagnostic::simple(
-                                                        "operation failed",
-                                                    ));
-                                                }
-                                            };
-
-                                            // Store based on field type
-                                            match field_ty {
-                                                crate::types::OatsType::Number => {
-                                                    // Coerce RHS to f64 then store into an f64* slot
-                                                    if let Some(fv) = self.coerce_to_f64(new_val) {
-                                                        let f64_ptr_ty = self.context.ptr_type(AddressSpace::default());
-                                                        let f64_ptr = self
-                                                            .builder
-                                                            .build_pointer_cast(
-                                                                gep_ptr,
-                                                                f64_ptr_ty,
-                                                                "f64_ptr_cast_store",
-                                                            )
-                                                            .map_err(|_| {
-                                                                Diagnostic::simple("LLVM builder error")
-                                                            })?;
-                                                        let _ = self.builder.build_store(f64_ptr, fv.as_basic_value_enum());
-                                                        return Ok(fv.as_basic_value_enum());
-                                                    } else {
-                                                        return Err(Diagnostic::simple("expected numeric value for number field"));
-                                                    }
-                                                }
-                                                crate::types::OatsType::Union(_) => {
-                                                    // Use boxed pointer representation for unions.
-                                                    // Always store an i8* pointing to a small heap object produced by union_box_*.
-                                                    // Slot for unions is stored as an i8* value in memory.
-                                                    // The slot pointer therefore has type i8** (pointer-to-i8*).
-                                                    let slot_ptr_ty = self.context.ptr_type(AddressSpace::default());
-                                                    let slot_ptr = match self.builder.build_pointer_cast(
-                                                        gep_ptr,
-                                                        slot_ptr_ty,
-                                                        "slot_ptr_cast_store",
-                                                    ) {
-                                                        Ok(p) => p,
-                                                        Err(_) => {
-                                                            return Err(Diagnostic::simple("operation failed"));
-                                                        }
-                                                    };
-
-                                                    // Load old boxed union pointer and rc_dec if present
-                                                    let old_val = match self.builder.build_load(
-                                                        self.i8ptr_t,
-                                                        slot_ptr,
-                                                        "old_field_val",
-                                                    ) {
-                                                        Ok(v) => v,
-                                                        Err(_) => {
-                                                            return Err(Diagnostic::simple(
-                                                                "operation failed",
-                                                            ));
-                                                        }
-                                                    };
-                                                    if let BasicValueEnum::PointerValue(old_pv) =
-                                                        old_val
-                                                    {
-                                                        let rc_dec = self.get_rc_dec();
-                                                        let _ = match self.builder.build_call(
-                                                            rc_dec,
-                                                            &[old_pv.into()],
-                                                            "rc_dec_old_field",
-                                                        ) {
-                                                            Ok(cs) => cs,
-                                                            Err(_) => {
-                                                                return Err(Diagnostic::simple(
-                                                                    "operation failed",
-                                                                ));
-                                                            }
-                                                        };
-                                                    }
-
-                                                    // If new_val is a number, box it with union_box_f64; if pointer, box with union_box_ptr.
-                                                    let boxed_new =
-                                                        if let BasicValueEnum::FloatValue(fv) =
-                                                            new_val
-                                                        {
-                                                            let box_fn = self.get_union_box_f64();
-                                                            let cs = match self.builder.build_call(
-                                                                box_fn,
-                                                                &[fv.into()],
-                                                                "union_box_f64_call",
-                                                            ) {
-                                                                Ok(cs) => cs,
-                                                                Err(_) => {
-                                                                    return Err(
-                                                                        Diagnostic::simple(
-                                                                            "operation failed",
-                                                                        ),
-                                                                    );
-                                                                }
-                                                            };
-                                                            match cs.try_as_basic_value() {
-                                                                inkwell::Either::Left(bv) => bv,
-                                                                _ => {
-                                                                    return Err(
-                                                                        Diagnostic::simple(
-                                                                            "operation failed",
-                                                                        ),
-                                                                    );
-                                                                }
-                                                            }
-                                                        } else if let BasicValueEnum::PointerValue(
-                                                            pv,
-                                                        ) = new_val
-                                                        {
-                                                            let box_fn = self.get_union_box_ptr();
-                                                            let cs = match self.builder.build_call(
-                                                                box_fn,
-                                                                &[pv.into()],
-                                                                "union_box_ptr_call",
-                                                            ) {
-                                                                Ok(cs) => cs,
-                                                                Err(_) => {
-                                                                    return Err(
-                                                                        Diagnostic::simple(
-                                                                            "operation failed",
-                                                                        ),
-                                                                    );
-                                                                }
-                                                            };
-                                                            match cs.try_as_basic_value() {
-                                                                inkwell::Either::Left(bv) => bv,
-                                                                _ => {
-                                                                    return Err(
-                                                                        Diagnostic::simple(
-                                                                            "operation failed",
-                                                                        ),
-                                                                    );
-                                                                }
-                                                            }
-                                                        } else {
-                                                            return Err(Diagnostic::simple(
-                                                                "unsupported union payload type",
-                                                            ));
-                                                        };
-
-                                                    // Store the boxed pointer into the field slot
-                                                    let _ = self
-                                                        .builder
-                                                        .build_store(slot_ptr, boxed_new);
-                                                    // Increment refcount of the boxed union object
-                                                    if let BasicValueEnum::PointerValue(new_pv) =
-                                                        boxed_new
-                                                    {
-                                                        let rc_inc = self.get_rc_inc();
-                                                        let _ = match self.builder.build_call(
-                                                            rc_inc,
-                                                            &[new_pv.into()],
-                                                            "rc_inc_new_field",
-                                                        ) {
-                                                            Ok(cs) => cs,
-                                                            Err(_) => {
-                                                                return Err(Diagnostic::simple(
-                                                                    "operation failed",
-                                                                ));
-                                                            }
-                                                        };
-                                                    }
-                                                    return Ok(boxed_new);
-                                                }
-                                                crate::types::OatsType::String
-                                                | crate::types::OatsType::NominalStruct(_)
-                                                | crate::types::OatsType::Array(_) => {
-                                                    // Cast to pointer type for slot
-                                                    // Slot for ref-like fields (string/struct/array) stores an i8* value.
-                                                    // The slot pointer therefore has type i8** (pointer-to-i8*).
-                                                    let slot_ptr_ty = self.context.ptr_type(AddressSpace::default());
-                                                    let slot_ptr = match self.builder.build_pointer_cast(
-                                                        gep_ptr,
-                                                        slot_ptr_ty,
-                                                        "slot_ptr_cast_store",
-                                                    ) {
-                                                        Ok(p) => p,
-                                                        Err(_) => {
-                                                            return Err(Diagnostic::simple("operation failed"));
-                                                        }
-                                                    };
-
-                                                    // Load old value for RC decrement
-                                                    let old_val = match self.builder.build_load(
-                                                        self.i8ptr_t,
-                                                        slot_ptr,
-                                                        "old_field_val",
-                                                    ) {
-                                                        Ok(v) => v,
-                                                        Err(_) => {
-                                                            return Err(Diagnostic::simple(
-                                                                "operation failed",
-                                                            ));
-                                                        }
-                                                    };
-
-                                                    // Decrement old value's refcount
-                                                    if let BasicValueEnum::PointerValue(old_pv) =
-                                                        old_val
-                                                    {
-                                                        let rc_dec = self.get_rc_dec();
-                                                        let _ = match self.builder.build_call(
-                                                            rc_dec,
-                                                            &[old_pv.into()],
-                                                            "rc_dec_old_field",
-                                                        ) {
-                                                            Ok(cs) => cs,
-                                                            Err(_) => {
-                                                                return Err(Diagnostic::simple(
-                                                                    "operation failed",
-                                                                ));
-                                                            }
-                                                        };
-                                                    }
-
-                                                    // Store new value
-                                                    // Ensure new_val is a pointer before storing
-                                                    if let BasicValueEnum::PointerValue(new_pv) = new_val {
-                                                        let _ = self.builder.build_store(slot_ptr, new_val);
-                                                        // Increment new value's refcount
-                                                        let rc_inc = self.get_rc_inc();
-                                                        let _ = match self.builder.build_call(
-                                                            rc_inc,
-                                                            &[new_pv.into()],
-                                                            "rc_inc_new_field",
-                                                        ) {
-                                                            Ok(cs) => cs,
-                                                            Err(_) => {
-                                                                return Err(Diagnostic::simple("operation failed"));
-                                                            }
-                                                        };
-                                                        return Ok(new_val);
-                                                    } else {
-                                                        return Err(Diagnostic::simple("expected pointer value for reference field"));
-                                                    }
-                                                }
-                                                _ => {
-                                                    // Unsupported field type
-                                                    return Err(Diagnostic::simple(
-                                                        "expression lowering failed",
-                                                    ))?;
-                                                }
-                                            }
-                                        }
-                                    }
+                                // Resolve a concrete class name either from the directly
+                                // inferred `class_name_opt` or by falling back to scanning
+                                // the known `class_fields` map for a unique match.
+                                let class_name = if let Some(c) = class_name_opt.clone() {
+                                    c
                                 } else {
-                                    // Try a fallback: scan known class field maps for a class
-                                    // that contains this field name. If exactly one class
-                                    // declares the field, assume that class (useful for
-                                    // local variables whose nominal annotation isn't tracked).
                                     let mut matches: Vec<String> = Vec::new();
                                     for (cls, fields_vec) in self.class_fields.borrow().iter() {
                                         if fields_vec.iter().any(|(n, _)| n == &field_name) {
@@ -1060,13 +758,213 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         }
                                     }
                                     if matches.len() == 1 {
-                                        class_name_opt = Some(matches.pop().unwrap());
+                                        matches.pop().unwrap()
                                     } else {
                                         let fname = function.get_name().to_str().unwrap_or("<unknown>");
                                         return Err(Diagnostic::simple(format!(
                                             "unsupported member assignment: could not infer class for field '{}' in function '{}'",
                                             field_name, fname
                                         )));
+                                    }
+                                };
+
+                                // Look up field list for this class
+                                if let Some(fields) = self.class_fields.borrow().get(&class_name) {
+                                    // Find the field by name
+                                    if let Some((field_idx, (_fname, field_ty))) = fields
+                                        .iter()
+                                        .enumerate()
+                                        .find(|(_, (n, _))| n == &field_name)
+                                    {
+                                        // Compute field offset: header (u64) + field_idx * sizeof(ptr)
+                                        let hdr_size = self.i64_t.const_int(
+                                            std::mem::size_of::<u64>() as u64,
+                                            false,
+                                        );
+                                        let ptr_sz = self.i64_t.const_int(
+                                            std::mem::size_of::<usize>() as u64,
+                                            false,
+                                        );
+                                        let idx_const = self.i64_t.const_int(field_idx as u64, false);
+                                        let mul = self
+                                            .builder
+                                            .build_int_mul(idx_const, ptr_sz, "fld_off_mul")
+                                            .map_err(|_| Diagnostic::simple("LLVM builder error"))?;
+                                        let offset = self
+                                            .builder
+                                            .build_int_add(hdr_size, mul, "fld_off")
+                                            .map_err(|_| Diagnostic::simple("LLVM builder error"))?;
+                                        let offset_i32 = self
+                                            .builder
+                                            .build_int_cast(
+                                                offset,
+                                                self.context.i32_type(),
+                                                "off_i32",
+                                            )
+                                            .map_err(|_| Diagnostic::simple("LLVM builder error"))?;
+
+                                        // GEP to field location
+                                        let gep_ptr = unsafe {
+                                            self.builder.build_gep(
+                                                self.context.i8_type(),
+                                                obj_ptr,
+                                                &[offset_i32],
+                                                "field_i8ptr_store",
+                                            )
+                                        };
+                                        let gep_ptr = match gep_ptr {
+                                            Ok(pv) => pv,
+                                            Err(_) => {
+                                                return Err(Diagnostic::simple("operation failed"));
+                                            }
+                                        };
+
+                                        // Store based on field type
+                                        match field_ty {
+                                            crate::types::OatsType::Number => {
+                                                // Coerce RHS to f64 then store into an f64* slot
+                                                if let Some(fv) = self.coerce_to_f64(new_val) {
+                                                    let f64_ptr_ty = self.context.ptr_type(AddressSpace::default());
+                                                    let f64_ptr = self
+                                                        .builder
+                                                        .build_pointer_cast(
+                                                            gep_ptr,
+                                                            f64_ptr_ty,
+                                                            "f64_ptr_cast_store",
+                                                        )
+                                                        .map_err(|_| Diagnostic::simple("LLVM builder error"))?;
+                                                    let _ = self.builder.build_store(f64_ptr, fv.as_basic_value_enum());
+                                                    return Ok(fv.as_basic_value_enum());
+                                                } else {
+                                                    return Err(Diagnostic::simple("expected numeric value for number field"));
+                                                }
+                                            }
+                                            crate::types::OatsType::Union(_) => {
+                                                // Use boxed pointer representation for unions.
+                                                // Always store an i8* pointing to a small heap object produced by union_box_*.
+                                                // Slot for unions is stored as an i8* value in memory.
+                                                // The slot pointer therefore has type i8** (pointer-to-i8*).
+                                                let slot_ptr_ty = self.context.ptr_type(AddressSpace::default());
+                                                let slot_ptr = match self.builder.build_pointer_cast(
+                                                    gep_ptr,
+                                                    slot_ptr_ty,
+                                                    "slot_ptr_cast_store",
+                                                ) {
+                                                    Ok(p) => p,
+                                                    Err(_) => {
+                                                        return Err(Diagnostic::simple("operation failed"));
+                                                    }
+                                                };
+
+                                                // Load old boxed union pointer and rc_dec if present
+                                                let old_val = match self.builder.build_load(
+                                                    self.i8ptr_t,
+                                                    slot_ptr,
+                                                    "old_field_val",
+                                                ) {
+                                                    Ok(v) => v,
+                                                    Err(_) => {
+                                                        return Err(Diagnostic::simple("operation failed"));
+                                                    }
+                                                };
+                                                if let BasicValueEnum::PointerValue(old_pv) = old_val {
+                                                    let rc_dec = self.get_rc_dec();
+                                                    let _ = match self.builder.build_call(
+                                                        rc_dec,
+                                                        &[old_pv.into()],
+                                                        "rc_dec_old_field",
+                                                    ) {
+                                                        Ok(cs) => cs,
+                                                        Err(_) => {
+                                                            return Err(Diagnostic::simple("operation failed"));
+                                                        }
+                                                    };
+                                                }
+
+                                                // If new_val is a number, box it with union_box_f64; if pointer, box with union_box_ptr.
+                                                let boxed_new = if let BasicValueEnum::FloatValue(fv) = new_val {
+                                                    let box_fn = self.get_union_box_f64();
+                                                    let cs = match self.builder.build_call(box_fn, &[fv.into()], "union_box_f64_call") {
+                                                        Ok(cs) => cs,
+                                                        Err(_) => return Err(Diagnostic::simple("operation failed")),
+                                                    };
+                                                    match cs.try_as_basic_value() {
+                                                        inkwell::Either::Left(bv) => bv,
+                                                        _ => return Err(Diagnostic::simple("operation failed")),
+                                                    }
+                                                } else if let BasicValueEnum::PointerValue(pv) = new_val {
+                                                    let box_fn = self.get_union_box_ptr();
+                                                    let cs = match self.builder.build_call(box_fn, &[pv.into()], "union_box_ptr_call") {
+                                                        Ok(cs) => cs,
+                                                        Err(_) => return Err(Diagnostic::simple("operation failed")),
+                                                    };
+                                                    match cs.try_as_basic_value() {
+                                                        inkwell::Either::Left(bv) => bv,
+                                                        _ => return Err(Diagnostic::simple("operation failed")),
+                                                    }
+                                                } else {
+                                                    return Err(Diagnostic::simple("unsupported union payload type"));
+                                                };
+
+                                                // Store the boxed pointer into the field slot
+                                                let _ = self.builder.build_store(slot_ptr, boxed_new);
+                                                // Increment refcount of the boxed union object
+                                                if let BasicValueEnum::PointerValue(new_pv) = boxed_new {
+                                                    let rc_inc = self.get_rc_inc();
+                                                    let _ = match self.builder.build_call(rc_inc, &[new_pv.into()], "rc_inc_new_field") {
+                                                        Ok(cs) => cs,
+                                                        Err(_) => return Err(Diagnostic::simple("operation failed")),
+                                                    };
+                                                }
+                                                return Ok(boxed_new);
+                                            }
+                                            crate::types::OatsType::String
+                                            | crate::types::OatsType::NominalStruct(_)
+                                            | crate::types::OatsType::Array(_) => {
+                                                // Cast to pointer type for slot
+                                                // Slot for ref-like fields (string/struct/array) stores an i8* value.
+                                                // The slot pointer therefore has type i8** (pointer-to-i8*).
+                                                let slot_ptr_ty = self.context.ptr_type(AddressSpace::default());
+                                                let slot_ptr = match self.builder.build_pointer_cast(gep_ptr, slot_ptr_ty, "slot_ptr_cast_store") {
+                                                    Ok(p) => p,
+                                                    Err(_) => return Err(Diagnostic::simple("operation failed")),
+                                                };
+
+                                                // Load old value for RC decrement
+                                                let old_val = match self.builder.build_load(self.i8ptr_t, slot_ptr, "old_field_val") {
+                                                    Ok(v) => v,
+                                                    Err(_) => return Err(Diagnostic::simple("operation failed")),
+                                                };
+
+                                                // Decrement old value's refcount
+                                                if let BasicValueEnum::PointerValue(old_pv) = old_val {
+                                                    let rc_dec = self.get_rc_dec();
+                                                    let _ = match self.builder.build_call(rc_dec, &[old_pv.into()], "rc_dec_old_field") {
+                                                        Ok(cs) => cs,
+                                                        Err(_) => return Err(Diagnostic::simple("operation failed")),
+                                                    };
+                                                }
+
+                                                // Store new value
+                                                // Ensure new_val is a pointer before storing
+                                                if let BasicValueEnum::PointerValue(new_pv) = new_val {
+                                                    let _ = self.builder.build_store(slot_ptr, new_val);
+                                                    // Increment new value's refcount
+                                                    let rc_inc = self.get_rc_inc();
+                                                    let _ = match self.builder.build_call(rc_inc, &[new_pv.into()], "rc_inc_new_field") {
+                                                        Ok(cs) => cs,
+                                                        Err(_) => return Err(Diagnostic::simple("operation failed")),
+                                                    };
+                                                    return Ok(new_val);
+                                                } else {
+                                                    return Err(Diagnostic::simple("expected pointer value for reference field"));
+                                                }
+                                            }
+                                            _ => {
+                                                // Unsupported field type
+                                                return Err(Diagnostic::simple("expression lowering failed"))?;
+                                            }
+                                        }
                                     }
                                 }
                             }

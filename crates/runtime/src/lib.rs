@@ -1,18 +1,26 @@
-// Runtime helpers for the OATS AOT runtime.
-//
-// This file provides a small set of C-callable helpers used by the
-// code generator. It intentionally keeps implementations small and
-// conservative. The object header layout used here is a u64 where the
-// high 32 bits contain type/flags and the low 32 bits contain a
-// refcount. All refcount updates are done via atomic CAS on the full
-// u64 word.
-//
-// OBJECT HEADER FORMAT (64 bits):
-// - Bits 0-31:  Reference count (atomic)
-// - Bit 32:     Static/immortal flag (1 = static, 0 = heap-allocated)
-// - Bits 33-63: Type tag and other flags (reserved for future use)
-//
-// Static objects (string literals, etc.) have bit 32 set and RC operations are no-ops.
+//! Runtime helpers for the OATS AOT runtime.
+//!
+//! This crate provides the small C-callable runtime used by the code
+//! generator. It implements deterministic reference counting, a simple
+//! trial-deletion cycle-collector scaffold, array and string helpers,
+//! and union boxing/unboxing helpers used by the compiler.
+//!
+//! Important runtime contract summary:
+//! - Unified 64-bit header at the beginning of heap control blocks:
+//!   - Bits 0..31: strong reference count (atomic u32)
+//!   - Bit 32: static/immortal flag (1 = static/immortal)
+//!   - Bits 33..48: weak reference count (u16)
+//!   - Bits 49..63: type tag and flags
+//! - Strings, arrays, class objects and union-boxed values are allocated
+//!   using the runtime allocator and follow layouts described near the
+//!   functions that allocate them. The code generator relies on these
+//!   layouts and calls `rc_inc` / `rc_dec` appropriately.
+//!
+//! Concurrency and memory ordering:
+//! - Reference-count updates are performed via atomic compare-and-swap on
+//!   the full 64-bit header. The code uses `Acquire/Release` semantics
+//!   where required so destructors observe prior writes.
+//!
 
 use libc::{c_char, c_void, size_t};
 use std::ffi::CStr;
@@ -624,6 +632,17 @@ unsafe fn heap_str_to_obj(data: *const c_char) -> *mut c_void {
 // `data` must be a pointer previously returned by the runtime for a string
 // (either a static literal or a heap-allocated string). Passing arbitrary
 // pointers is undefined behavior.
+/// Increment the strong reference count for a string data pointer.
+///
+/// This helper accepts a pointer to string data (the pointer returned to
+/// user-space code, which points at offset +16 from the header). It
+/// resolves the header and delegates to `rc_inc` which handles both
+/// string-data and object-base pointers.
+///
+/// # Safety
+/// The argument `data` must be a pointer previously returned by the
+/// runtime for a string (either a static literal or a heap-allocated
+/// string). Passing arbitrary pointers is undefined behavior.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rc_inc_str(data: *mut c_char) {
     if data.is_null() {
@@ -631,7 +650,9 @@ pub unsafe extern "C" fn rc_inc_str(data: *mut c_char) {
     }
     unsafe {
         // Check if this looks like a heap string by checking if there's a valid header at -16
-        // For now, we'll use a heuristic: try to read the header and see if it has the static bit
+    // Use a heuristic to detect static/heap pointers: attempt to read the
+    // object header and test the static flag bit. This is tolerant to
+    // both base-pointer and string-data-pointer inputs.
         let obj = heap_str_to_obj(data);
         rc_inc(obj);
     }
@@ -643,6 +664,17 @@ pub unsafe extern "C" fn rc_inc_str(data: *mut c_char) {
 // `data` must be a pointer previously returned by the runtime for a string
 // (either a static literal or a heap-allocated string). Passing arbitrary
 // pointers or double-dropping a pointer is undefined behavior.
+/// Decrement the strong reference count for a string data pointer.
+///
+/// This resolves the header (handles data vs base pointer) and delegates
+/// to `rc_dec`. If the reference count reaches zero, destructor logic may
+/// run which frees heap storage. Static string literals are immortal and
+/// are not freed.
+///
+/// # Safety
+/// `data` must be a pointer previously returned by the runtime for a
+/// string. Passing arbitrary pointers or double-dropping is undefined
+/// behavior.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rc_dec_str(data: *mut c_char) {
     if data.is_null() {
@@ -656,6 +688,11 @@ pub unsafe extern "C" fn rc_dec_str(data: *mut c_char) {
 
 // --- Memory Management ---
 
+/// Allocate memory from the runtime allocator.
+///
+/// This wrapper currently delegates to `libc::malloc`. The runtime and
+/// codegen use this allocator for heap objects whose headers follow the
+/// unified layout described in the crate-level documentation.
 #[unsafe(no_mangle)]
 pub extern "C" fn runtime_malloc(size: size_t) -> *mut c_void {
     unsafe { libc::malloc(size) }
@@ -666,6 +703,12 @@ pub extern "C" fn runtime_malloc(size: size_t) -> *mut c_void {
 // # Safety
 // The pointer `p` must have been allocated by the runtime allocator and not
 // already freed. Freeing invalid or non-owned pointers is undefined behavior.
+/// Free memory previously allocated by the runtime allocator.
+///
+/// # Safety
+/// The pointer `p` must have been allocated by the runtime allocator and
+/// not already freed. Freeing invalid or non-owned pointers is undefined
+/// behavior.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn runtime_free(p: *mut c_void) {
     unsafe { libc::free(p) }
@@ -678,6 +721,11 @@ pub unsafe extern "C" fn runtime_free(p: *mut c_void) {
 // # Safety
 // `s` must be a valid pointer to a nul-terminated C string. Passing an
 // invalid pointer or non-nul-terminated memory is undefined behavior.
+/// Compute the length of a nul-terminated C string.
+///
+/// # Safety
+/// `s` must be a valid pointer to a nul-terminated C string. Passing an
+/// invalid pointer or non-nul-terminated memory is undefined behavior.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn runtime_strlen(s: *const c_char) -> size_t {
     if s.is_null() {
@@ -691,6 +739,14 @@ pub unsafe extern "C" fn runtime_strlen(s: *const c_char) -> size_t {
 // # Safety
 // `s` must point to a valid nul-terminated C string. The caller is
 // responsible for freeing the returned buffer when no longer needed.
+/// Duplicate a nul-terminated C string into a newly allocated runtime buffer.
+///
+/// The returned pointer points to a newly allocated C string (no RC header).
+/// The caller is responsible for freeing the returned buffer when no longer
+/// needed using `runtime_free`.
+///
+/// # Safety
+/// `s` must point to a valid nul-terminated C string.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn str_dup(s: *const c_char) -> *mut c_char {
     if s.is_null() {
@@ -712,6 +768,15 @@ pub unsafe extern "C" fn str_dup(s: *const c_char) -> *mut c_char {
 // # Safety
 // Both `a` and `b` must be valid pointers to nul-terminated C strings. The
 // caller is responsible for freeing the returned buffer.
+/// Concatenate two nul-terminated C strings into a newly allocated runtime string with RC header.
+///
+/// This allocates a heap string with the runtime header and returns a
+/// pointer to the data section (offset +16). The returned string is an
+/// owning pointer and must be released with `rc_dec_str` when no longer
+/// needed.
+///
+/// # Safety
+/// Both `a` and `b` must be valid pointers to nul-terminated C strings.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn str_concat(a: *const c_char, b: *const c_char) -> *mut c_char {
     if a.is_null() || b.is_null() {
@@ -747,6 +812,7 @@ pub unsafe extern "C" fn str_concat(a: *const c_char, b: *const c_char) -> *mut 
 
 // --- Printing ---
 
+/// Print a f64 value to stdout with a newline.
 #[unsafe(no_mangle)]
 pub extern "C" fn print_f64(v: f64) {
     unsafe {
@@ -759,6 +825,10 @@ pub extern "C" fn print_f64(v: f64) {
 // # Safety
 // `s` must be a valid pointer to a nul-terminated C string. Passing an
 // invalid pointer is undefined behavior.
+/// Print a nul-terminated C string to stdout (with newline).
+///
+/// # Safety
+/// `s` must be a valid pointer to a nul-terminated C string.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn print_str(s: *const c_char) {
     if s.is_null() {
@@ -777,6 +847,9 @@ pub extern "C" fn print_i32(v: i32) {
 
 // Convert a number (f64) to a string with RC header
 // Returns a heap-allocated string (data pointer, header is at offset -16)
+/// Convert a number (f64) to a heap-allocated string with RC header.
+///
+/// Returns a pointer to the data section (offset +16 from the header).
 #[unsafe(no_mangle)]
 pub extern "C" fn number_to_string(num: f64) -> *mut c_char {
     // Format the number using libc's snprintf
@@ -810,6 +883,10 @@ pub extern "C" fn number_to_string(num: f64) -> *mut c_char {
 }
 
 // Math.random() -> f64 in [0, 1)
+/// PRNG helper used for `Math.random()`.
+///
+/// Produces a double in [0, 1). The function ensures libc's PRNG is
+/// seeded once per process.
 #[unsafe(no_mangle)]
 pub extern "C" fn math_random() -> f64 {
     // Seed libc PRNG once per process to avoid deterministic output across runs.
@@ -873,6 +950,16 @@ fn runtime_index_oob_abort(_arr: *mut c_void, idx: usize, len: usize) -> ! {
 // This function performs raw memory allocation and writes to raw pointers.
 // Callers must ensure the returned pointer is handled correctly and not
 // dereferenced from safe Rust code without proper checks.
+/// Allocate an array on the runtime heap.
+///
+/// Layout: [header: u64][len: u64][data...]
+/// - header: high 32 bits = flags/type, low 32 bits = refcount
+/// - length stored as u64 at offset +8
+///
+/// # Safety
+/// This function performs raw memory allocation and writes to raw
+/// pointers. Callers must ensure the returned pointer is handled
+/// correctly and not dereferenced from safe Rust code without proper checks.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn array_alloc(
     len: usize,
@@ -909,6 +996,11 @@ pub unsafe extern "C" fn array_alloc(
 // # Safety
 // Caller must ensure `arr` is a valid array pointer returned by `array_alloc` and
 // `idx` is within bounds. Undefined behavior may occur otherwise.
+/// Load a f64 element from an array.
+///
+/// # Safety
+/// Caller must ensure `arr` is a valid array pointer returned by
+/// `array_alloc` and `idx` is within bounds. Undefined behavior may occur otherwise.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn array_get_f64(arr: *mut c_void, idx: usize) -> f64 {
     if arr.is_null() {
@@ -937,6 +1029,15 @@ pub unsafe extern "C" fn array_get_f64(arr: *mut c_void, idx: usize) -> f64 {
 // Caller must ensure `arr` is a valid pointer-typed array. The returned pointer
 // is an owning reference (its refcount has been incremented) and must be
 // eventually released with `rc_dec`.
+/// Loads a pointer element from a pointer-typed array and returns an owned pointer.
+///
+/// This helper increments the referenced object's refcount before
+/// returning so the caller receives an owning reference. The caller is
+/// responsible for eventually calling `rc_dec` on the returned pointer.
+///
+/// # Safety
+/// Caller must ensure `arr` is a valid pointer-typed array. The returned pointer
+/// is an owning reference and must be released with `rc_dec`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn array_get_ptr(arr: *mut c_void, idx: usize) -> *mut c_void {
     if arr.is_null() {
@@ -968,6 +1069,15 @@ pub unsafe extern "C" fn array_get_ptr(arr: *mut c_void, idx: usize) -> *mut c_v
 // # Safety
 // Caller must ensure `arr` is valid and the borrowed pointer is not stored into
 // long-lived locations without calling `rc_inc` first.
+/// Returns a borrowed pointer from a pointer-typed array without changing refcounts.
+///
+/// The caller must not store the returned pointer into any long-lived location
+/// without first manually calling `rc_inc`. This is useful for short-lived,
+/// read-only access where the pointer's lifetime is guaranteed to be short.
+///
+/// # Safety
+/// Caller must ensure `arr` is valid and the borrowed pointer is not stored into
+/// long-lived locations without calling `rc_inc` first.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn array_get_ptr_borrow(arr: *mut c_void, idx: usize) -> *mut c_void {
     if arr.is_null() {
@@ -989,6 +1099,10 @@ pub unsafe extern "C" fn array_get_ptr_borrow(arr: *mut c_void, idx: usize) -> *
 //
 // # Safety
 // Caller must ensure `arr` is a valid array pointer and `idx` is within bounds.
+/// Set a f64 element in an array.
+///
+/// # Safety
+/// Caller must ensure `arr` is a valid array pointer and `idx` is within bounds.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn array_set_f64(arr: *mut c_void, idx: usize, v: f64) {
     if arr.is_null() {
@@ -1014,6 +1128,15 @@ pub unsafe extern "C" fn array_set_f64(arr: *mut c_void, idx: usize, v: f64) {
 //
 // # Safety
 // Caller must ensure `arr` is a valid pointer-typed array and `idx` is within bounds.
+/// Set a pointer into a pointer-typed array, managing refcounts.
+///
+/// This function increments the new pointer's refcount (if not null) before
+/// swapping it into the array and decrements the old pointer's refcount after
+/// it has been removed. This ordering prevents races where the old value
+/// could be freed while another thread reads it.
+///
+/// # Safety
+/// Caller must ensure `arr` is a valid pointer-typed array and `idx` is within bounds.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn array_set_ptr(arr: *mut c_void, idx: usize, p: *mut c_void) {
     if arr.is_null() {
@@ -1047,6 +1170,10 @@ pub unsafe extern "C" fn array_set_ptr(arr: *mut c_void, idx: usize, p: *mut c_v
 // Sets a pointer in a pointer-typed array, managing weak refcounts correctly.
 // This is like `array_set_ptr` but uses weak refcount ops so the array holds
 // a non-owning (weak) reference to the object.
+/// Set a pointer into a pointer-typed array using weak references.
+///
+/// This is similar to `array_set_ptr` but uses weak reference operations
+/// so the array holds a non-owning reference to the object.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn array_set_ptr_weak(arr: *mut c_void, idx: usize, p: *mut c_void) {
     if arr.is_null() {
@@ -1080,6 +1207,10 @@ pub unsafe extern "C" fn array_set_ptr_weak(arr: *mut c_void, idx: usize, p: *mu
 // Push a f64 value onto an existing array.
 // Note: this does not perform capacity checks or reallocation. The caller
 // must ensure the array was allocated with sufficient space.
+/// Push a f64 value onto an existing array.
+///
+/// Note: this does not perform capacity checks or reallocation. The caller
+/// must ensure the array was allocated with sufficient space.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn array_push_f64(arr: *mut c_void, value: f64) {
     if arr.is_null() {
@@ -1097,6 +1228,8 @@ pub unsafe extern "C" fn array_push_f64(arr: *mut c_void, value: f64) {
 
 // Pop a f64 value from an array and return it. If the array is empty,
 // returns 0.0.
+/// Pop a f64 value from an array and return it. If the array is empty,
+/// returns 0.0.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn array_pop_f64(arr: *mut c_void) -> f64 {
     if arr.is_null() {
@@ -1122,6 +1255,9 @@ pub unsafe extern "C" fn array_pop_f64(arr: *mut c_void) -> f64 {
 // Push a pointer-sized element into a pointer-typed array. Increments the
 // pushed pointer's refcount to reflect array ownership. Caller must ensure
 // sufficient capacity.
+/// Push a pointer-sized element into a pointer-typed array. Increments the
+/// pushed pointer's refcount to reflect array ownership. Caller must ensure
+/// sufficient capacity.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn array_push_ptr(arr: *mut c_void, value: *mut c_void) {
     if arr.is_null() {
@@ -1142,6 +1278,9 @@ pub unsafe extern "C" fn array_push_ptr(arr: *mut c_void, value: *mut c_void) {
 
 // Push a pointer-sized element into a pointer-typed array using WEAK refs.
 // Increments the pushed pointer's WEAK refcount to reflect array's non-owning reference.
+/// Push a pointer-sized element into a pointer-typed array using WEAK refs.
+/// Increments the pushed pointer's WEAK refcount to reflect the array's
+/// non-owning reference.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn array_push_ptr_weak(arr: *mut c_void, value: *mut c_void) {
     if arr.is_null() {
@@ -1163,6 +1302,9 @@ pub unsafe extern "C" fn array_push_ptr_weak(arr: *mut c_void, value: *mut c_voi
 // Pop a pointer element from a pointer-typed array and return it. Returns
 // NULL if the array is empty. Ownership of the returned pointer is
 // transferred to the caller (no refcount change is performed).
+/// Pop a pointer element from a pointer-typed array and return it. Returns
+/// NULL if the array is empty. Ownership of the returned pointer is
+/// transferred to the caller (no refcount change is performed).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn array_pop_ptr(arr: *mut c_void) -> *mut c_void {
     if arr.is_null() {
@@ -1190,6 +1332,15 @@ pub unsafe extern "C" fn array_pop_ptr(arr: *mut c_void) -> *mut c_void {
 // Atomically increments the reference count of a heap-allocated object.
 // No-op for static/immortal objects.
 // Handles both object pointers and string data pointers (at offset +16 from header).
+/// Atomically increment the strong reference count of a heap-allocated object.
+///
+/// This function accepts either an object base pointer (points at header)
+/// or a string data pointer (points at offset +16); `get_object_base` is
+/// used to resolve the real base pointer. Static/immortal objects are no-ops.
+///
+/// # Safety
+/// `p` must be a pointer previously returned by the runtime (string data
+/// pointer or object base). Passing arbitrary pointers is undefined behavior.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rc_inc(p: *mut c_void) {
     if p.is_null() {
@@ -1236,6 +1387,18 @@ pub unsafe extern "C" fn rc_inc(p: *mut c_void) {
 // Get the base object pointer from a pointer that might be either:
 // - An object pointer (points to header at offset 0)
 // - A string data pointer (points to data at offset +16 from header)
+/// Resolve the base object pointer from a possibly-offset pointer.
+///
+/// The runtime accepts both object base pointers (header at offset 0) and
+/// string data pointers (data pointer at offset +16). This helper heuristically
+/// checks for a valid header at the provided pointer and, if not found,
+/// attempts to find a header at `p - 16`. The heuristics are intentionally
+/// conservative to avoid UB when called with unexpected pointers.
+///
+/// # Safety
+/// The pointer must be a pointer returned by the runtime (either a base
+/// pointer or a data pointer). Passing arbitrary pointers can lead to
+/// undefined behavior when the function dereferences memory.
 #[inline]
 unsafe fn get_object_base(p: *mut c_void) -> *mut c_void {
     if p.is_null() {
@@ -1276,6 +1439,15 @@ unsafe fn get_object_base(p: *mut c_void) -> *mut c_void {
 // Atomically decrements the reference count and frees the object if the count reaches zero.
 // No-op for static/immortal objects.
 // Handles both object pointers and string data pointers (at offset +16 from header).
+/// Atomically decrement the strong reference count and free the object if the count reaches zero.
+///
+/// If the strong count drops to zero, destructor logic (if present) will be
+/// invoked and the weak count will be decremented. When both strong and weak
+/// counts reach zero the control block is freed.
+///
+/// # Safety
+/// `p` must be an owning pointer previously returned by the runtime. Passing
+/// invalid pointers is undefined behavior.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rc_dec(p: *mut c_void) {
     if p.is_null() {
@@ -1387,6 +1559,10 @@ pub unsafe extern "C" fn rc_dec(p: *mut c_void) {
 }
 
 // Atomically increment the weak count on an object. No-op for static objects.
+/// Atomically increment the weak reference count on an object.
+///
+/// Weak references are non-owning and do not prevent object destruction.
+/// Weak refcounts are used by the runtime to implement weak pointers.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rc_weak_inc(p: *mut c_void) {
     if p.is_null() {
@@ -1423,6 +1599,8 @@ pub unsafe extern "C" fn rc_weak_inc(p: *mut c_void) {
 
 // Atomically decrement the weak count and free the object when weak reaches zero
 // (and strong is already zero). No-op for static objects.
+/// Atomically decrement the weak reference count and free the control block
+/// when both strong and weak are zero.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rc_weak_dec(p: *mut c_void) {
     if p.is_null() {
@@ -1476,6 +1654,11 @@ pub unsafe extern "C" fn rc_weak_dec(p: *mut c_void) {
 // Returns the object pointer (same as input resolved to base) with strong
 // count incremented if successful, or NULL if the object has already been
 // destroyed (strong==0).
+/// Attempt to upgrade a weak pointer into a strong one.
+///
+/// If the object is still alive (strong>0) this atomically increments the
+/// strong count and returns the base pointer. Returns NULL if the object
+/// has already been destroyed.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rc_weak_upgrade(p: *mut c_void) -> *mut c_void {
     if p.is_null() {
@@ -1517,6 +1700,8 @@ pub unsafe extern "C" fn rc_weak_upgrade(p: *mut c_void) -> *mut c_void {
 
 // Destructor for union objects: reads discriminant at offset +16 and if the
 // payload is a pointer (discriminant == 1) calls rc_dec on the stored pointer.
+/// Destructor used for union-boxed objects. Reads the discriminant and
+/// decrements the nested pointer payload if present.
 extern "C" fn union_dtor(obj_ptr: *mut c_void) {
     if obj_ptr.is_null() {
         return;
@@ -1537,6 +1722,10 @@ extern "C" fn union_dtor(obj_ptr: *mut c_void) {
     }
 }
 
+/// Box a numeric payload into a union heap object.
+///
+/// The returned control block pointer follows the runtime union layout
+/// and must be released with `rc_dec` when no longer needed.
 #[unsafe(no_mangle)]
 pub extern "C" fn union_box_f64(v: f64) -> *mut c_void {
     unsafe {
@@ -1569,6 +1758,7 @@ pub extern "C" fn union_box_f64(v: f64) -> *mut c_void {
     }
 }
 
+/// Box a pointer payload into a union heap object (increasing the nested pointer's RC).
 #[unsafe(no_mangle)]
 pub extern "C" fn union_box_ptr(p: *mut c_void) -> *mut c_void {
     unsafe {
@@ -1602,6 +1792,7 @@ pub extern "C" fn union_box_ptr(p: *mut c_void) -> *mut c_void {
     }
 }
 
+/// Unbox a numeric payload from a union object.
 #[unsafe(no_mangle)]
 pub extern "C" fn union_unbox_f64(u: *mut c_void) -> f64 {
     if u.is_null() {
@@ -1613,6 +1804,8 @@ pub extern "C" fn union_unbox_f64(u: *mut c_void) -> f64 {
     }
 }
 
+/// Unbox a pointer payload from a union object and return an owning pointer
+/// (increments nested object's refcount before returning).
 #[unsafe(no_mangle)]
 pub extern "C" fn union_unbox_ptr(u: *mut c_void) -> *mut c_void {
     if u.is_null() {
@@ -1628,6 +1821,9 @@ pub extern "C" fn union_unbox_ptr(u: *mut c_void) -> *mut c_void {
     }
 }
 
+/// Read the discriminant of a union object.
+///
+/// Returns an integer code describing the payload kind (e.g., 0=f64, 1=pointer).
 #[unsafe(no_mangle)]
 pub extern "C" fn union_get_discriminant(u: *mut c_void) -> i64 {
     if u.is_null() {

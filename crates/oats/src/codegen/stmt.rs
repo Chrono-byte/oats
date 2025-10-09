@@ -1,5 +1,14 @@
-// Statement lowering helpers
-// Moved from mod.rs during modularization
+//! Statement lowering helpers
+//!
+//! This module contains the lowering logic for AST statement nodes into
+//! LLVM IR using the `CodeGen` helpers. It implements a minimal but
+//! well-documented subset of statement lowering used by the test-suite and
+//! examples: variable declarations, expression statements, control-flow
+//! constructs (if/for/while/do-while/for-of), returns and block scoping.
+//!
+//! The file documents non-obvious decisions such as union boxing and
+//! reference-counting management so future contributors understand the
+//! rationale behind emitted IR.
 
 use inkwell::types::BasicType;
 use inkwell::values::{BasicValueEnum, FunctionValue};
@@ -13,10 +22,22 @@ type LocalEntry<'a> = (
     bool,
     Option<String>,
 );
+// A stack of per-scope local maps.
+//
+// Each entry in the vector is a HashMap representing a lexical scope's
+// locals. The maps store `LocalEntry` tuples describing the alloca pointer,
+// the ABI type of the slot, initialization flag, const flag, whether the
+// local is a Weak<T> (affects RC semantics), and an optional nominal type
+// name used to guide member access lowering.
 type LocalsStackLocal<'a> = Vec<HashMap<String, LocalEntry<'a>>>;
 
 impl<'a> crate::codegen::CodeGen<'a> {
-    // Returns `true` if a terminator instruction (e.g., return) was emitted.
+    /// Lower a sequence of statements into `function`.
+    ///
+    /// Returns `Ok(true)` if lowering emitted a terminator instruction
+    /// (for example `return` or an unconditional branch that ends the
+    /// current block). This signals callers to stop emitting fall-through
+    /// code for the current basic block.
     pub(crate) fn lower_stmts(
         &self,
         stmts: &[deno_ast::swc::ast::Stmt],
@@ -47,7 +68,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             deno_ast::swc::ast::Stmt::Decl(d) => {
                 if let deno_ast::swc::ast::Decl::Var(var_decl) = d {
                     for decl in &var_decl.decls {
-                        // Only handle simple identifier patterns for now
+                        // Only simple identifier patterns are handled at present.
                         if let deno_ast::swc::ast::Pat::Ident(ident) = &decl.name {
                             let name = ident.id.sym.to_string();
 
@@ -93,8 +114,21 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 if let Ok(mut val) =
                                     self.lower_expr(init, _function, _param_map, _locals_stack)
                                 {
-                                    // If declared as a Union that includes pointer-like parts,
-                                    // we store an i8* slot and box numeric initializers.
+                                    // If declared as a Union that includes pointer-like
+                                    // parts we must pick a stable ABI slot. The
+                                    // strategy here is:
+                                    // - If any union arm is pointer-like (string,
+                                    //   array, nominal struct, promise), represent the
+                                    //   union in the ABI as an `i8*` pointer.
+                                    // - Numeric-only unions are represented as `f64`.
+                                    //
+                                    // When a pointer-like union receives a numeric
+                                    // initializer, we "box" it into a heap object
+                                    // using runtime helpers (`union_box_f64` /
+                                    // `union_box_ptr`) so the stored slot is a
+                                    // pointer. Boxing keeps the runtime layout
+                                    // uniform for pointer-like unions and simplifies
+                                    // RC handling.
                                     let mut allocated_ty = val.get_type().as_basic_type_enum();
                                     if let Some(crate::types::OatsType::Union(parts)) =
                                         &declared_union
@@ -173,7 +207,13 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         };
                                     // store lowered (possibly boxed) value
                                     let _ = self.builder.build_store(alloca, val);
-                                    // If pointer type, increment RC for stored pointer
+                                    // If this slot is a pointer-like ABI slot then we
+                                    // must increment the reference count for the
+                                    // stored value. The runtime's `rc_inc` helper
+                                    // resolves string-data vs object-base pointers and
+                                    // performs an atomic increment on the low-32-bit
+                                    // RC field. This keeps local ownership
+                                    // semantics consistent for pointers.
                                     if let inkwell::types::BasicTypeEnum::PointerType(_) =
                                         allocated_ty
                                         && let BasicValueEnum::PointerValue(pv) = val
@@ -185,7 +225,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             "rc_inc_local",
                                         );
                                     }
-                                    // mark initialized in locals; is_const=false for now
+                                    // mark initialized in locals; is_const=false by default
                                     self.insert_local_current_scope(
                                         _locals_stack,
                                         name,
@@ -198,7 +238,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     );
                                 }
                             } else {
-                                // No initializer: create an uninitialized slot with i64 as default
+                                // No initializer: create an uninitialized slot
+                                // using `i64` as a conservative ABI choice. The
+                                // slot will be marked uninitialized so further
+                                // lowering can detect reads of uninitialized
+                                // locals and emit diagnostics if necessary.
                                 let ty = self.i64_t.as_basic_type_enum();
                                 let alloca = match self.builder.build_alloca(ty, &name) {
                                     Ok(a) => a,
@@ -244,7 +288,13 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 Ok(false)
             }
             deno_ast::swc::ast::Stmt::Return(ret) => {
-                // Lower return expression, emit rc_decs for locals then return
+                // Lower return expression, emit rc_decs for locals then return.
+                //
+                // Important: we must run `emit_rc_dec_for_locals` before
+                // emitting the `ret` instruction so that any pointer-valued
+                // locals have their RC decremented and destructors (if any)
+                // run before the caller resumes. This models deterministic
+                // destruction and matches the runtime's RC expectations.
                 if let Some(arg) = &ret.arg {
                     if let Ok(val) = self.lower_expr(arg, _function, _param_map, _locals_stack) {
                         // emit rc decs for locals
@@ -261,10 +311,18 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 Ok(false)
             }
             deno_ast::swc::ast::Stmt::Break(_break_stmt) => {
-                // Break statement: jump to the loop's break (exit) block
+                // Break statement: jump to the loop's break (exit) block.
+                //
+                // We must emit RC decrements for locals before branching out
+                // of the current lexical scope because `break` logically
+                // exits the scope and any pointer-valued locals need their
+                // reference counts adjusted. `emit_rc_dec_for_locals` is the
+                // helper that lowers these decrements.
                 if let Some(loop_ctx) = self.loop_context_stack.borrow().last().copied() {
-                    // TODO: Handle labeled breaks if _break_stmt.label is Some
-                    // For now, only support unlabeled break
+                    // TODO: Support labeled breaks by resolving the label to the
+                    // target loop context. Currently only unlabeled `break`
+                    // statements are implemented. See issue #TODO (add issue)
+                    // for full labeled-break semantics and tests.
 
                     // Emit RC decrements for locals before breaking
                     self.emit_rc_dec_for_locals(_locals_stack);
@@ -276,16 +334,24 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
                     Ok(true) // break terminates the current block
                 } else {
-                    // Break outside of loop - this is a semantic error
-                    // For now, just ignore it (ideally should emit diagnostic)
+                    // Break outside of a loop is a semantic error. Current
+                    // behavior is to ignore it; a diagnostic should be emitted
+                    // instead. See issue #TODO (add issue) to track error
+                    // reporting for invalid control-flow statements.
                     Ok(false)
                 }
             }
             deno_ast::swc::ast::Stmt::Continue(_continue_stmt) => {
-                // Continue statement: jump to the loop's continue block
+                // Continue statement: jump to the loop's continue block.
+                //
+                // Like `break`, a `continue` may exit the current lexical
+                // scope. Emit RC decrements for locals to preserve correct
+                // lifetime semantics before transferring control.
                 if let Some(loop_ctx) = self.loop_context_stack.borrow().last().copied() {
-                    // TODO: Handle labeled continues if _continue_stmt.label is Some
-                    // For now, only support unlabeled continue
+                    // TODO: Support labeled continues by resolving the label to
+                    // the target loop context. Currently only unlabeled
+                    // `continue` statements are implemented. See issue #TODO
+                    // (add issue) for full labeled-continue semantics and tests.
 
                     // Emit RC decrements for locals before continuing
                     self.emit_rc_dec_for_locals(_locals_stack);
@@ -297,8 +363,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
                     Ok(true) // continue terminates the current block
                 } else {
-                    // Continue outside of loop - this is a semantic error
-                    // For now, just ignore it (ideally should emit diagnostic)
+                    // Continue outside of loop is a semantic error. Currently the
+                    // implementation ignores it; it should instead emit a
+                    // diagnostic. See issue #TODO (add issue) to track reporting
+                    // of control-flow errors.
                     Ok(false)
                 }
             }
@@ -375,9 +443,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     Ok(false)
                 }
             }
-            // Minimal ForOf lowering: handle `for (let v of iterable) { body }`
+            // Minimal ForOf lowering: handle `for (let v of iterable) { body }`.
             deno_ast::swc::ast::Stmt::ForOf(forof) => {
-                // Only handle left as a var decl: `for (let v of rhs)`
+                // Only handle the case where the left-hand side is a var
+                // declaration (e.g., `for (let v of rhs)`).
                 // forof.left can be either a VarDecl or a Pat; we match on VarDecl
                 if let deno_ast::swc::ast::ForHead::VarDecl(var_decl) = &forof.left
                     && var_decl.decls.len() == 1

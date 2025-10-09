@@ -24,7 +24,8 @@ fn main() -> Result<()> {
     // enhancements. Currently unused.
 
     // Load and parse modules transitively. We support simple relative imports
-    // for now (./foo, ../bar). Modules are keyed by canonicalized absolute
+    // Currently resolves relative module paths (./foo, ../bar). Modules are
+    // keyed by canonicalized absolute paths.
     // paths to avoid duplicates and cycles.
     use std::collections::{HashMap, VecDeque};
     let mut modules: HashMap<String, parser::ParsedModule> = HashMap::new();
@@ -96,7 +97,7 @@ fn main() -> Result<()> {
                 && let deno_ast::swc::ast::ModuleDecl::Import(import_decl) = module_decl
             {
                 let src_val = import_decl.src.value.to_string();
-                // Only handle relative paths for now
+                // Only relative paths are handled by this code path.
                 if (src_val.starts_with("./") || src_val.starts_with("../"))
                     && let Some(fpath) = resolve_relative_import(&path, &src_val)
                     && !modules.contains_key(&fpath)
@@ -153,7 +154,8 @@ fn main() -> Result<()> {
                         if name == "main" {
                             func_decl_opt = Some((*f.function).clone());
                         }
-                        // We don't store functions in the type export map for now.
+                        // Functions are not stored in the type export map at
+                        // present.
                     }
                     deno_ast::swc::ast::Decl::TsInterface(iface) => {
                         let name = iface.id.sym.to_string();

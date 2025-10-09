@@ -1,3 +1,11 @@
+//! Oats parser utilities
+//!
+//! This module wraps `deno_ast` parsing and enforces a small set of
+//! project-specific diagnostics and stylistic constraints (for example,
+//! requiring semicolons and banning `var`). The parser returns a
+//! `ParsedModule` containing both the parsed AST and the original source
+//! text, which are used by later passes to report span-based diagnostics.
+
 use crate::diagnostics;
 use anyhow::Result;
 use deno_ast::swc::ast;
@@ -10,6 +18,17 @@ pub struct ParsedModule {
     pub source: String,
 }
 
+/// Parse a TypeScript source string into a `ParsedModule` and run
+/// lightweight project-specific checks.
+///
+/// The function performs the following additional checks beyond parsing:
+/// - Enforces that certain statement kinds end with semicolons (conservative
+///   style choice to simplify span handling).
+/// - Rejects usage of the `var` keyword in favor of `let`/`const`.
+///
+/// # Arguments
+/// * `source_code` - source text to parse
+/// * `file_path` - optional path used to create a `file://` URL for diagnostics
 pub fn parse_oats_module(source_code: &str, file_path: Option<&str>) -> Result<ParsedModule> {
     let sti = SourceTextInfo::from_string(source_code.to_string());
     // Use the provided file_path (if any) to create a proper file:// URL so

@@ -1,3 +1,11 @@
+//! Representation of Oats (subset of TypeScript) types used by the compiler.
+//!
+//! `OatsType` is a compact enum used during parsing and codegen to convey
+//! the static type information that the compiler currently understands. The
+//! code generator maps these variants to LLVM ABI types and uses this
+//! information to decide on boxing/unboxing, union representation, and
+//! reference-counting behavior.
+
 use anyhow::Result;
 use deno_ast::swc::ast;
 use std::collections::HashMap;
@@ -5,6 +13,24 @@ use std::collections::HashMap;
 // Type alias for the locals stack used in codegen
 pub type LocalsStack = Vec<HashMap<String, OatsType>>;
 
+/// Oats type system (simplified subset of TypeScript used by the compiler)
+///
+/// Key variants and their meaning:
+/// - `Number` -> numeric `f64` values.
+/// - `Boolean` -> boolean values (represented as i1/i64 in places).
+/// - `Union(Vec<OatsType>)` -> tagged unions. Codegen represents unions as
+///   either `f64` (numeric-only unions) or `i8*` pointer slots when any arm
+///   is pointer-like. Numeric arms can be boxed into runtime union objects
+///   to fit pointer-like ABI slots.
+/// - `Array(Box<OatsType>)` -> runtime array with element type metadata used
+///   by helpers like `array_get_f64` / `array_get_ptr`.
+/// - `Weak(T)` -> non-owning references (affects whether `rc_inc` or
+///   `rc_weak_inc` is used when storing values).
+/// - `Option(T)` -> nullable/optional values.
+/// - `NominalStruct(name)` -> nominal class/struct identified by name.
+/// - `StructLiteral(fields)` -> anonymous object shape inferred from an
+///   object literal type; the emitter may register such shapes under a
+///   generated nominal name when needed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OatsType {
     Number,

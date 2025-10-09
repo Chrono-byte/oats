@@ -20,7 +20,7 @@ use std::io::{self, Write};
 use std::mem;
 use std::process;
 use std::ptr;
-use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicPtr, AtomicU64, AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::thread;
 use std::time::Duration;
@@ -79,28 +79,24 @@ static COLLECTOR: OnceLock<Arc<Collector>> = OnceLock::new();
 static COLLECTOR_LOG: AtomicBool = AtomicBool::new(false);
 
 fn init_collector() -> Arc<Collector> {
-    COLLECTOR
-        .get_or_init(|| {
-            let collector = Arc::new(Collector {
-                queue: Mutex::new(Vec::new()),
-                cv: Condvar::new(),
-            });
+    COLLECTOR.get_or_init(|| {
+        let collector = Arc::new(Collector {
+            queue: Mutex::new(Vec::new()),
+            cv: Condvar::new(),
+        });
 
-            // Configure collector logging from environment (disabled by default).
-            if std::env::var("OATS_COLLECTOR_LOG")
-                .map(|v| !v.is_empty() && v != "0")
-                .unwrap_or(false)
-            {
-                COLLECTOR_LOG.store(true, Ordering::Relaxed);
-            }
+        // Configure collector logging from environment (disabled by default).
+        if std::env::var("OATS_COLLECTOR_LOG").map(|v| !v.is_empty() && v != "0").unwrap_or(false) {
+            COLLECTOR_LOG.store(true, Ordering::Relaxed);
+        }
 
-            // Spawn background thread to process root candidates.
-            let c = collector.clone();
-            thread::spawn(move || collector_thread(c));
+        // Spawn background thread to process root candidates.
+        let c = collector.clone();
+        thread::spawn(move || collector_thread(c));
 
-            collector
-        })
-        .clone()
+        collector
+    })
+    .clone()
 }
 
 // --- Safety helpers for collector traversal ---
@@ -169,7 +165,10 @@ fn collector_thread(col: Arc<Collector>) {
         // Wait for work or timeout
         let mut guard = col.queue.lock().unwrap();
         while guard.is_empty() {
-            let (g, timeout_res) = col.cv.wait_timeout(guard, Duration::from_secs(1)).unwrap();
+            let (g, timeout_res) = col
+                .cv
+                .wait_timeout(guard, Duration::from_secs(1))
+                .unwrap();
             guard = g;
             if timeout_res.timed_out() && guard.is_empty() {
                 // timed out with no work; loop around and wait again
@@ -178,13 +177,10 @@ fn collector_thread(col: Arc<Collector>) {
         }
 
         // Drain the queue into a local vector to minimize lock hold time
-        let mut drained_usize: Vec<usize> = Vec::new();
-        std::mem::swap(&mut drained_usize, &mut *guard);
-        // cast back to pointers for local use
-        let drained: Vec<*mut c_void> = drained_usize
-            .into_iter()
-            .map(|u| u as *mut c_void)
-            .collect();
+    let mut drained_usize: Vec<usize> = Vec::new();
+    std::mem::swap(&mut drained_usize, &mut *guard);
+    // cast back to pointers for local use
+    let drained: Vec<*mut c_void> = drained_usize.into_iter().map(|u| u as *mut c_void).collect();
         drop(guard);
 
         // Inspect each candidate non-destructively: resolve base, read header and log counts.
@@ -197,8 +193,7 @@ fn collector_thread(col: Arc<Collector>) {
                 let base = get_object_base(*obj_ptr);
                 if base.is_null() {
                     if COLLECTOR_LOG.load(Ordering::Relaxed) {
-                        let _ = io::stderr()
-                            .write_all(b"[oats runtime] collector: invalid object pointer\n");
+                        let _ = io::stderr().write_all(b"[oats runtime] collector: invalid object pointer\n");
                     }
                     continue;
                 }
@@ -285,8 +280,7 @@ fn collector_thread(col: Arc<Collector>) {
                     let meta = *meta_ptr_ptr;
                     if meta.is_null() {
                         if COLLECTOR_LOG.load(Ordering::Relaxed) {
-                            let _ = io::stderr()
-                                .write_all(b"[oats runtime] collector: meta pointer null\n");
+                            let _ = io::stderr().write_all(b"[oats runtime] collector: meta pointer null\n");
                         }
                         return res;
                     }
@@ -294,8 +288,7 @@ fn collector_thread(col: Arc<Collector>) {
                     if !validate_meta_block(meta, 256) {
                         if COLLECTOR_LOG.load(Ordering::Relaxed) {
                             let _ = io::stderr().write_all(
-                                format!("[oats runtime] collector: invalid meta at {:p}\n", meta)
-                                    .as_bytes(),
+                                format!("[oats runtime] collector: invalid meta at {:p}\n", meta).as_bytes(),
                             );
                         }
                         return res;
@@ -305,8 +298,7 @@ fn collector_thread(col: Arc<Collector>) {
                     let len = (*meta >> 0) as u32 as usize & 0xffffffffusize; // len encoded in low 32 bits of meta0
                     if COLLECTOR_LOG.load(Ordering::Relaxed) {
                         let _ = io::stderr().write_all(
-                            format!("[oats runtime] collector: meta at {:p} len={}\n", meta, len)
-                                .as_bytes(),
+                            format!("[oats runtime] collector: meta at {:p} len={}\n", meta, len).as_bytes(),
                         );
                     }
                     for i in 0..len {
@@ -314,11 +306,7 @@ fn collector_thread(col: Arc<Collector>) {
                         let off = off_i32 as isize as usize;
                         if COLLECTOR_LOG.load(Ordering::Relaxed) {
                             let _ = io::stderr().write_all(
-                                format!(
-                                    "[oats runtime] collector: field offset {} -> {}\n",
-                                    i, off
-                                )
-                                .as_bytes(),
+                                format!("[oats runtime] collector: field offset {} -> {}\n", i, off).as_bytes(),
                             );
                         }
                         let field_addr = (obj as *mut u8).add(off) as *mut *mut c_void;
@@ -366,7 +354,7 @@ fn collector_thread(col: Arc<Collector>) {
             while let Some(obj) = stack.pop_front() {
                 // For each outgoing neighbor, ensure it has an entry in sim and decrement
                 let neighbors = unsafe { gather_neighbors(obj) };
-                for nbr in neighbors.into_iter() {
+                    for nbr in neighbors.into_iter() {
                     let key = nbr as usize;
                     let cur = if let Some(v) = sim.get(&key) {
                         *v
@@ -392,13 +380,7 @@ fn collector_thread(col: Arc<Collector>) {
             // Determine collectible objects: those with simulated count == 0
             let collectible: Vec<*mut c_void> = sim
                 .iter()
-                .filter_map(|(k, v)| {
-                    if *v == 0 {
-                        Some(*k as *mut c_void)
-                    } else {
-                        None
-                    }
-                })
+                .filter_map(|(k, v)| if *v == 0 { Some(*k as *mut c_void) } else { None })
                 .collect();
 
             if collectible.is_empty() {
@@ -433,13 +415,10 @@ fn collector_thread(col: Arc<Collector>) {
                                 let type_tag = (old_header >> HEADER_TYPE_TAG_SHIFT) as u32;
                                 if type_tag == 1 {
                                     // union: read dtor ptr and call it if present
-                                    let dtor_ptr_ptr = (obj as *mut u8)
-                                        .add(std::mem::size_of::<u64>())
-                                        as *mut *mut c_void;
+                                    let dtor_ptr_ptr = (obj as *mut u8).add(std::mem::size_of::<u64>()) as *mut *mut c_void;
                                     let dtor_raw = *dtor_ptr_ptr;
                                     if !dtor_raw.is_null() {
-                                        let dtor: extern "C" fn(*mut c_void) =
-                                            std::mem::transmute(dtor_raw);
+                                        let dtor: extern "C" fn(*mut c_void) = std::mem::transmute(dtor_raw);
                                         dtor(obj);
                                     }
                                 } else if type_tag == 2 {
@@ -454,8 +433,7 @@ fn collector_thread(col: Arc<Collector>) {
                                         for i in 0..len {
                                             let off_i32 = *meta_i32_ptr.add(i);
                                             let off = off_i32 as isize as usize;
-                                            let field_addr =
-                                                (obj as *mut u8).add(off) as *mut *mut c_void;
+                                            let field_addr = (obj as *mut u8).add(off) as *mut *mut c_void;
                                             let p = *field_addr;
                                             if !p.is_null() {
                                                 // drop owned reference
@@ -1252,19 +1230,13 @@ pub unsafe extern "C" fn rc_dec(p: *mut c_void) {
         // Diagnostic: print pointer being decremented to help debug crashes.
         // Use libc::printf as it avoids higher-level allocation that could
         // interfere with runtime state during a bug investigation.
-        let _ = libc::printf(
-            b"[oats runtime] rc_dec called p=%p\n\0".as_ptr() as *const c_char,
-            p,
-        );
+        let _ = libc::printf(b"[oats runtime] rc_dec called p=%p\n\0".as_ptr() as *const c_char, p);
         // Quick plausibility check to avoid dereferencing obviously invalid
         // pointers (small integers or near-null values). This prevents the
         // collector or codegen bug from crashing the process while we debug.
         let p_addr = p as usize;
         if !is_plausible_addr(p_addr) {
-            let _ = libc::printf(
-                b"[oats runtime] rc_dec: implausible p=%p, ignoring\n\0".as_ptr() as *const c_char,
-                p,
-            );
+            let _ = libc::printf(b"[oats runtime] rc_dec: implausible p=%p, ignoring\n\0".as_ptr() as *const c_char, p);
             return;
         }
         // Get the actual object pointer
@@ -1335,7 +1307,8 @@ pub unsafe extern "C" fn rc_dec(p: *mut c_void) {
                         // (the object's control block must survive until weak count reaches zero).
                         rc_weak_dec(obj_ptr);
                         // rc_weak_dec is responsible for freeing when weak count reaches zero.
-                    } else {
+                    }
+                    else {
                         // The object did not reach zero: it is a candidate for cycle collection.
                         // Add to root list so the background collector can analyze cycles later.
                         add_root_candidate(obj_ptr);

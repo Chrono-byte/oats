@@ -105,8 +105,7 @@ pub fn map_ts_type(ty: &ast::TsType) -> Option<OatsType> {
                     if let Some(type_params) = &type_ref.type_params
                         && let Some(first_param) = type_params.params.first()
                     {
-                        return map_ts_type(first_param)
-                            .map(|inner| OatsType::Weak(Box::new(inner)));
+                        return map_ts_type(first_param).map(|inner| OatsType::Weak(Box::new(inner)));
                     }
                     return None;
                 }
@@ -114,8 +113,7 @@ pub fn map_ts_type(ty: &ast::TsType) -> Option<OatsType> {
                     if let Some(type_params) = &type_ref.type_params
                         && let Some(first_param) = type_params.params.first()
                     {
-                        return map_ts_type(first_param)
-                            .map(|inner| OatsType::Option(Box::new(inner)));
+                        return map_ts_type(first_param).map(|inner| OatsType::Option(Box::new(inner)));
                     }
                     return None;
                 }
@@ -151,6 +149,7 @@ pub fn map_ts_type(ty: &ast::TsType) -> Option<OatsType> {
                             }
                         }
                     }
+
                 }
 
                 let mut parts = Vec::new();

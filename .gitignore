@@ -50,7 +50,7 @@ node_modules/
 
 # Ignore build artifacts produced by clang in tempdirs
 **/out
-aot_run/**
+aot_out/**
 test_out/**
 
 # Allow exceptions: keep README, scripts, source code tracked

@@ -51,33 +51,30 @@ fn main() -> Result<()> {
             if c.extension().is_none() && !ext.is_empty() {
                 c.set_extension(ext.trim_start_matches('.'));
             }
-            if c.exists() {
-                if let Ok(cabs) = std::fs::canonicalize(&c) {
+            if c.exists()
+                && let Ok(cabs) = std::fs::canonicalize(&c) {
                     return Some(cabs.to_string_lossy().to_string());
                 }
-            }
         }
 
         // If candidate is a directory or bare module, try index file fallbacks
         if candidate.exists() && candidate.is_dir() {
             for idx in &["index.ts", "index.oats", "index"] {
                 let c = candidate.join(idx);
-                if c.exists() {
-                    if let Ok(cabs) = std::fs::canonicalize(&c) {
+                if c.exists()
+                    && let Ok(cabs) = std::fs::canonicalize(&c) {
                         return Some(cabs.to_string_lossy().to_string());
                     }
-                }
             }
         }
 
         // Also try appending /index.* to the original spec (in case spec had ext)
         for idx in &["index.ts", "index.oats", "index"] {
             let c = candidate.join(idx);
-            if c.exists() {
-                if let Ok(cabs) = std::fs::canonicalize(&c) {
+            if c.exists()
+                && let Ok(cabs) = std::fs::canonicalize(&c) {
                     return Some(cabs.to_string_lossy().to_string());
                 }
-            }
         }
 
         None
@@ -96,12 +93,11 @@ fn main() -> Result<()> {
                 && let deno_ast::swc::ast::ModuleDecl::Import(import_decl) = module_decl {
                     let src_val = import_decl.src.value.to_string();
                     // Only handle relative paths for now
-                    if src_val.starts_with("./") || src_val.starts_with("../") {
-                        if let Some(fpath) = resolve_relative_import(&path, &src_val)
+                    if (src_val.starts_with("./") || src_val.starts_with("../"))
+                        && let Some(fpath) = resolve_relative_import(&path, &src_val)
                             && !modules.contains_key(&fpath) {
                                 queue.push_back(fpath);
                             }
-                    }
                 }
         }
         modules.insert(path.clone(), parsed);
@@ -210,7 +206,7 @@ fn main() -> Result<()> {
                     let src_val = import_decl.src.value.to_string();
                     let mut resolved_mod: Option<String> = None;
                     if src_val.starts_with("./") || src_val.starts_with("../") {
-                        resolved_mod = resolve_relative_import(&mkey, &src_val);
+                        resolved_mod = resolve_relative_import(mkey, &src_val);
                     }
 
                     for spec in &import_decl.specifiers {

@@ -8,7 +8,6 @@ use inkwell::builder::Builder;
 use inkwell::types::BasicType;
 use inkwell::types::BasicTypeEnum;
 use inkwell::values::{BasicValue, PointerValue};
-// LocalEntry now includes is_weak flag as the fifth tuple element.
 type LocalEntry<'a> = (PointerValue<'a>, BasicTypeEnum<'a>, bool, bool, bool);
 type LocalsStackLocal<'a> = Vec<HashMap<String, LocalEntry<'a>>>;
 
@@ -254,7 +253,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 }
 
                 // If not a parameter, then it must be a local variable (`let` or `const`).
-                if let Some((ptr, ty, initialized, _is_const, _is_weak)) = self.find_local(locals, &name) {
+                if let Some((ptr, ty, initialized, _is_const, _extra)) = self.find_local(locals, &name) {
                     // If not initialized -> TDZ: generate a trap (unreachable)
                     if !initialized {
                         // Emit a call to unreachable to trap at runtime
@@ -453,35 +452,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                             .as_basic_value_enum());
                                                     }
                                                     BasicValueEnum::PointerValue(pv) => {
-                                                        // If the argument AST is a `.downgrade()` call, use the weak push helper
-                                                        let use_weak = {
-                                                            let mut uw = false;
-                                                            if let deno_ast::swc::ast::Expr::Call(call_expr) = &*arg.expr {
-                                                                if let deno_ast::swc::ast::Callee::Expr(boxed) = &call_expr.callee {
-                                                                    if let deno_ast::swc::ast::Expr::Member(m) = &**boxed {
-                                                                        if let deno_ast::swc::ast::MemberProp::Ident(mi) = &m.prop {
-                                                                            uw = mi.sym.to_string() == "downgrade";
-                                                                        }
-                                                                    }
-                                                                }
-                                                            }
-                                                            uw
-                                                        };
-                                                        if use_weak {
-                                                            let f = self.get_array_push_ptr_weak();
-                                                            let _ = self.builder.build_call(
-                                                                f,
-                                                                &[obj_val.into(), pv.into()],
-                                                                "arr_push_ptr_weak",
-                                                            );
-                                                        } else {
-                                                            let f = self.get_array_push_ptr();
-                                                            let _ = self.builder.build_call(
-                                                                f,
-                                                                &[obj_val.into(), pv.into()],
-                                                                "arr_push_ptr",
-                                                            );
-                                                        }
+                                                        let f = self.get_array_push_ptr();
+                                                        let _ = self.builder.build_call(
+                                                            f,
+                                                            &[obj_val.into(), pv.into()],
+                                                            "arr_push_ptr",
+                                                        );
                                                         return Ok(self
                                                             .context
                                                             .i64_type()
@@ -608,7 +584,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 // support simple assignments `ident = expr` where the left side is an identifier
                 if let Some(bid) = assign.left.as_ident() {
                     let name = bid.id.sym.to_string();
-                    if let Some((ptr, _ty, _init, is_const, _is_weak)) = self.find_local(locals, &name) {
+                    if let Some((ptr, _ty, _init, is_const, _extra)) = self.find_local(locals, &name) {
                         // Disallow assigning to immutable locals at compile-time
                         if is_const {
                             // Use span-aware diagnostic: assign.span.lo is a BytePos wrapper
@@ -683,89 +659,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     // Lower the right-hand side value
                     if let Ok(new_val) = self.lower_expr(&assign.right, function, param_map, locals)
                     {
-                        // Handle both dot-member (obj.prop) and computed (obj[expr])
+                        // Only handle dot-member (obj.prop), not computed (obj[expr])
                         use deno_ast::swc::ast::MemberProp;
-                        match &member.prop {
-                            MemberProp::Computed(boxed) => {
-                                // arr[idx] = expr
-                                if let Ok(obj_val) = self.lower_expr(&member.obj, function, param_map, locals)
-                                    && let Ok(idx_val) = self.lower_expr(&boxed.expr, function, param_map, locals)
-                                {
-                                    if let BasicValueEnum::PointerValue(arr_ptr) = obj_val {
-                                        // compute idx as i64
-                                        let idx_i64 = match idx_val {
-                                            BasicValueEnum::IntValue(iv) => self
-                                                .builder
-                                                .build_int_cast(iv, self.i64_t, "idx_i64")
-                                                .map_err(|_| Diagnostic::simple("LLVM builder error"))?,
-                                            BasicValueEnum::FloatValue(fv) => self
-                                                .builder
-                                                .build_float_to_signed_int(fv, self.i64_t, "f2i")
-                                                .map_err(|_| Diagnostic::simple("LLVM builder error"))?,
-                                            _ => return Err(Diagnostic::simple("operation failed")),
-                                        };
-
-                                        // If RHS is pointer, decide between strong/weak set helper
-                                        if let BasicValueEnum::PointerValue(pv) = new_val {
-                                            // detect if RHS AST is a `.downgrade()` call to prefer weak set
-                                            let use_weak = {
-                                                let mut uw = false;
-                                                if let deno_ast::swc::ast::Expr::Call(call_expr) = &*assign.right {
-                                                    if let deno_ast::swc::ast::Callee::Expr(boxed) = &call_expr.callee {
-                                                        if let deno_ast::swc::ast::Expr::Member(m) = &**boxed {
-                                                            if let deno_ast::swc::ast::MemberProp::Ident(mi) = &m.prop {
-                                                                uw = mi.sym.to_string() == "downgrade";
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                                uw
-                                            };
-
-                                            let f = if use_weak { self.get_array_set_ptr_weak() } else { self.get_array_set_ptr() };
-                                            let _ = match self.builder.build_call(
-                                                f,
-                                                &[arr_ptr.into(), idx_i64.into(), pv.into()],
-                                                "array_set_ptr_call",
-                                            ) {
-                                                Ok(cs) => cs,
-                                                Err(_) => return Err(Diagnostic::simple("operation failed")),
-                                            };
-                                            return Ok(new_val);
-                                        } else if let BasicValueEnum::IntValue(iv) = new_val {
-                                            // store integer into pointer slot as raw value
-                                            // compute element pointer and store
-                                            // compute data ptr offset: header bytes
-                                            let header_bytes = (std::mem::size_of::<u64>() + std::mem::size_of::<u64>()) as u64;
-                                            let offset_const = self.i32_t.const_int(header_bytes, false);
-                                            let data_i8_res = unsafe {
-                                                self.builder.build_gep(
-                                                    self.context.i8_type(),
-                                                    arr_ptr,
-                                                    &[offset_const],
-                                                    "arr_data_i8",
-                                                )
-                                            };
-                                            let data_ptr_i8 = if let Ok(p) = data_i8_res { p } else { return Err(Diagnostic::simple("expression lowering failed"))? };
-                                            let ptr_size = 8u64;
-                                            let byte_off = ptr_size; // placeholder: using idx would require multiplication runtime; for now fall back to runtime helper
-                                            // Fallback: call strong set helper with coerced pointer
-                                            let f = self.get_array_set_ptr();
-                                            let _ = match self.builder.build_call(
-                                                f,
-                                                &[arr_ptr.into(), idx_i64.into(), iv.into()],
-                                                "array_set_ptr_call",
-                                            ) {
-                                                Ok(cs) => cs,
-                                                Err(_) => return Err(Diagnostic::simple("operation failed")),
-                                            };
-                                            return Ok(new_val);
-                                        }
-                                    }
-                                }
-                            }
-                            MemberProp::Ident(prop_ident) => {
-                                let field_name = prop_ident.sym.to_string();
+                        if let MemberProp::Ident(prop_ident) = &member.prop {
+                            let field_name = prop_ident.sym.to_string();
 
                             // Lower the object to get its pointer
                             if let Ok(BasicValueEnum::PointerValue(obj_ptr)) =
@@ -1114,76 +1011,6 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                     }
                                                     return Ok(new_val);
                                                 }
-                                                crate::types::OatsType::Weak(_) => {
-                                                    // Weak field: decrement old weak count and increment new weak count
-                                                    let slot_ptr_ty = self
-                                                        .context
-                                                        .ptr_type(AddressSpace::default());
-                                                    let slot_ptr = match self.builder.build_pointer_cast(
-                                                        gep_ptr,
-                                                        slot_ptr_ty,
-                                                        "slot_ptr_cast_store",
-                                                    ) {
-                                                        Ok(p) => p,
-                                                        Err(_) => {
-                                                            return Err(Diagnostic::simple(
-                                                                "operation failed",
-                                                            ));
-                                                        }
-                                                    };
-
-                                                    // Load old value for weak decrement
-                                                    let old_val = match self.builder.build_load(
-                                                        self.i8ptr_t,
-                                                        slot_ptr,
-                                                        "old_field_val",
-                                                    ) {
-                                                        Ok(v) => v,
-                                                        Err(_) => {
-                                                            return Err(Diagnostic::simple(
-                                                                "operation failed",
-                                                            ));
-                                                        }
-                                                    };
-                                                    if let BasicValueEnum::PointerValue(old_pv) = old_val
-                                                    {
-                                                        let rc_weak_dec = self.get_rc_weak_dec();
-                                                        let _ = match self.builder.build_call(
-                                                            rc_weak_dec,
-                                                            &[old_pv.into()],
-                                                            "rc_weak_dec_old_field",
-                                                        ) {
-                                                            Ok(cs) => cs,
-                                                            Err(_) => {
-                                                                return Err(Diagnostic::simple(
-                                                                    "operation failed",
-                                                                ));
-                                                            }
-                                                        };
-                                                    }
-
-                                                    // Store new value
-                                                    let _ = self.builder.build_store(slot_ptr, new_val);
-
-                                                    // Increment new weak refcount
-                                                    if let BasicValueEnum::PointerValue(new_pv) = new_val
-                                                    {
-                                                        let rc_weak_inc = self.get_rc_weak_inc();
-                                                        let _ = match self.builder.build_call(
-                                                            rc_weak_inc,
-                                                            &[new_pv.into()],
-                                                            "rc_weak_inc_new_field",
-                                                        ) {
-                                                            Ok(cs) => cs,
-                                                            Err(_) => {
-                                                                return Err(Diagnostic::simple(
-                                                                    "operation failed",
-                                                                ));
-                                                            }
-                                                        };
-                                                    }
-                                                    return Ok(new_val);
-                                                }
                                                 _ => {
                                                     // Unsupported field type
                                                     return Err(Diagnostic::simple(
@@ -1402,31 +1229,14 @@ impl<'a> crate::codegen::CodeGen<'a> {
             }
             ast::Expr::Array(arr) => {
                 // Lower array literal: determine element kinds by lowering each elt
-                // Track a provenance flag `use_weak` per element when the original
-                // AST element is a `.downgrade()` call so we can choose the weak
-                // array-set helper for pointer slots.
-                let mut lowered_elems: Vec<(BasicValueEnum, bool)> = Vec::new();
+                let mut lowered_elems: Vec<BasicValueEnum> = Vec::new();
                 for opt in &arr.elems {
                     if let Some(expr_or_spread) = opt {
                         // ExprOrSpread has .expr
                         if let Ok(ev) =
                             self.lower_expr(&expr_or_spread.expr, function, param_map, locals)
                         {
-                            // detect AST-level `.downgrade()` call pattern
-                            let use_weak = {
-                                let mut uw = false;
-                                if let deno_ast::swc::ast::Expr::Call(call_expr) = &*expr_or_spread.expr {
-                                    if let deno_ast::swc::ast::Callee::Expr(boxed) = &call_expr.callee {
-                                        if let deno_ast::swc::ast::Expr::Member(m) = &**boxed {
-                                            if let deno_ast::swc::ast::MemberProp::Ident(mi) = &m.prop {
-                                                uw = mi.sym.to_string() == "downgrade";
-                                            }
-                                        }
-                                    }
-                                }
-                                uw
-                            };
-                            lowered_elems.push((ev, use_weak));
+                            lowered_elems.push(ev);
                         } else {
                             // unsupported element lowering
                             return Err(Diagnostic::simple("expression lowering failed"))?;
@@ -1441,7 +1251,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 // decide numeric array if every elem is FloatValue
                 let all_numbers = lowered_elems
                     .iter()
-                    .all(|(v, _)| matches!(v, BasicValueEnum::FloatValue(_)));
+                    .all(|v| matches!(v, BasicValueEnum::FloatValue(_)));
 
                 // call runtime array_alloc(i64 len, i32 elem_size, i32 elem_is_number)
                 let array_alloc_fn = self.get_array_alloc();
@@ -1496,11 +1306,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     return Err(Diagnostic::simple("expression lowering failed"))?;
                 };
                 let array_set_ptr_fn = self.get_array_set_ptr();
-                let array_set_ptr_weak_fn = self.get_array_set_ptr_weak();
 
                 if all_numbers {
                     // For each element, compute byte offset = i * 8, GEP from data_ptr_i8, bitcast to f64* and store
-                    for (i, (v, _use_weak)) in lowered_elems.into_iter().enumerate() {
+                    for (i, v) in lowered_elems.into_iter().enumerate() {
                         if let BasicValueEnum::FloatValue(fv) = v {
                             let byte_off = (i as u64) * 8u64;
                             let off_const = self.i32_t.const_int(byte_off, false);
@@ -1535,7 +1344,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 } else {
                     // pointer array: elements stored as machine pointers; element byte offset = i * ptr_size
                     let ptr_size = 8u64;
-                    for (i, (v, use_weak)) in lowered_elems.into_iter().enumerate() {
+                    for (i, v) in lowered_elems.into_iter().enumerate() {
                         let byte_off = (i as u64) * ptr_size;
                         let off_const = self.i32_t.const_int(byte_off, false);
                         let elem_i8_res = unsafe {
@@ -1563,16 +1372,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         match v {
                             BasicValueEnum::PointerValue(pv) => {
                                 // call runtime array_set_ptr(arr_ptr, idx, pv)
-                                // If the original AST element was a `.downgrade()` call,
-                                // prefer the weak-setting helper which uses rc_weak ops.
                                 let idx_const = self.i64_t.const_int(i as u64, false);
-                                let callee = if use_weak {
-                                    array_set_ptr_weak_fn
-                                } else {
-                                    array_set_ptr_fn
-                                };
                                 match self.builder.build_call(
-                                    callee,
+                                    array_set_ptr_fn,
                                     &[arr_ptr.into(), idx_const.into(), pv.into()],
                                     "array_set_ptr_call",
                                 ) {
@@ -1591,7 +1393,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 }
             }
             ast::Expr::This(_) => {
-                if let Some((ptr, ty, init, _, _)) = self.find_local(locals, "this")
+                if let Some((ptr, ty, init, _ignore, _extra)) = self.find_local(locals, "this")
                     && init
                     && let Ok(loaded) = self.builder.build_load(ty, ptr, "this_load")
                 {
@@ -2169,7 +1971,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             "failed to find shorthand param",
                                         ));
                                     }
-                                } else if let Some((ptr, ty, _, _, _)) = self.find_local(locals, &name)
+                                } else if let Some((ptr, ty, _init, _is_const, _extra)) = self.find_local(locals, &name)
                                 {
                                     // load local value
                                     let loaded = match self.builder.build_load(
@@ -2627,7 +2429,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         return Err(Diagnostic::simple(
                             "cannot update function parameter directly",
                         ));
-                    } else if let Some((ptr, ty, initialized, is_const, _is_weak)) =
+                    } else if let Some((ptr, ty, initialized, is_const, _extra)) =
                         self.find_local(locals, &name)
                     {
                         if is_const {

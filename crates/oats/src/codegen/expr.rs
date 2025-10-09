@@ -3029,7 +3029,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     let closure_gv_name = format!("{}_closure_field_map", arrow_fn_name);
                     let mut closure_offsets: Vec<u64> = Vec::new();
                     // fields start after header + meta_slot; fn_ptr at idx 0, env_ptr at idx 1
-                    closure_offsets.push((header_size + meta_slot));
+                    closure_offsets.push(header_size + meta_slot);
                     closure_offsets.push(header_size + meta_slot + 8);
                     let closure_gv_i8 = self
                         .emit_field_map_global(&closure_gv_name, &closure_offsets)

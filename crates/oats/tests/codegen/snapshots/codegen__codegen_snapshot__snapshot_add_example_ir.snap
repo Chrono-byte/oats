@@ -21,8 +21,6 @@ declare void @print_str(ptr)
 
 declare void @sleep_ms(double)
 
-declare void @collector_test_enqueue()
-
 declare ptr @str_concat(ptr, ptr)
 
 define double @oats_main() {

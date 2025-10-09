@@ -2,6 +2,17 @@
 //!
 //! This module implements lowering of high-level declarations (functions,
 //! constructors, etc.) into LLVM IR using the shared `CodeGen` helpers.
+//!
+//! Notes on design and ABI decisions:
+//! - Functions use a simple, handwritten ABI mapping defined by `OatsType` ->
+//!   LLVM primitive types. Numbers map to `f64`, booleans to `i1`/i8 as
+//!   appropriate, and any pointer-like types map to `i8*` so the runtime can
+//!   uniformly operate on object pointers. Unions are mapped to either `f64`
+//!   or `i8*` depending on whether any branch is pointer-like; this keeps
+//!   math-heavy unions efficient while still supporting heap objects.
+//! - Constructors return `i8*` (object base pointer). The runtime expects the
+//!   object layout described below and the codegen relies on the runtime's
+//!   helpers (rc_inc/rc_dec, box/unbox) to manage lifetimes.
 
 use deno_ast::swc::ast;
 use inkwell::values::BasicValue;
@@ -9,7 +20,7 @@ use inkwell::values::FunctionValue;
 use std::collections::HashMap;
 
 // Type alias for the `locals_stack` used during statement lowering.
-// 
+//
 // This is a stack of scopes, where each scope maps local variable names to
 // a tuple containing:
 // - PointerValue: the alloca or pointer to the variable's storage.
@@ -269,8 +280,14 @@ impl<'a> crate::codegen::CodeGen<'a> {
             .build_pointer_cast(malloc_ret, self.i8ptr_t, "hdr_ptr")
             .map_err(|_| crate::diagnostics::Diagnostic::simple("pointer cast failed"))?;
         // Set header: rc=1 and type_tag=2 (class with field_map)
+        // The header is a packed 64-bit value. Here we set the strong refcount
+        // to 1 in the low bits and set a type tag in the high bits so the
+        // runtime can recognize class objects quickly. The magic bit layout
+        // is defined in the runtime; we mirror its expectations here.
         let type_tag_val = 2u64 << 49;
         let header_val = self.i64_t.const_int(type_tag_val | 1u64, false);
+        // Store the header as an i64 at the object base. We intentionally cast
+        // the malloc return to an i8* then store the i64 header at offset 0.
         let _ = self.builder.build_store(header_ptr, header_val);
 
         let mut locals: LocalsStackLocal = vec![];
@@ -310,6 +327,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 .build_int_to_ptr(field_addr, self.i8ptr_t, "field_ptr_zero")
                 .map_err(|_| crate::diagnostics::Diagnostic::simple("int_to_ptr failed"))?;
             let null_ptr = self.i8ptr_t.const_null();
+            // We store a null i8* into the field slot. For non-pointer fields
+            // (e.g. numbers) the representation in object fields is still an
+            // i8* when the field is pointer-like; numeric fields are stored
+            // directly in registers during computation and only boxed when
+            // necessary (by unions). Zero-init prevents uninitialised reads
+            // during early phase of constructor execution.
             let _ = self
                 .builder
                 .build_store(field_ptr_cast, null_ptr.as_basic_value_enum());
@@ -378,6 +401,17 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 match _field_type {
                     OatsType::Union(_) => {
                         // If the incoming param is a float, box it; if it's already a pointer, box via union_box_ptr.
+                        // We do a small ABI-aware decision here: the constructor
+                        // ABI may pass unions as either a float or pointer. If
+                        // the parameter's LLVM type is a float then we must
+                        // allocate a union container for the f64 and return a
+                        // pointer to it (`union_box_f64`). Otherwise, if the
+                        // ABI passed an i8* we call `union_box_ptr` which will
+                        // wrap the existing pointer in a union tag. The
+                        // runtime's union_box_* helpers return an owned pointer
+                        // (with RC=1) which we then store into the object and
+                        // immediately `rc_inc` to reflect the object's strong
+                        // reference to it.
                         if param_val.get_type().is_float_type() {
                             let unboxed_f = param_val.into_float_value();
                             let box_fn = self.get_union_box_f64();
@@ -496,6 +530,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
                 // Build a struct type: { i64 meta0, [N x i32] }
                 // meta0 packs magic/version in high 32 bits and len in low 32 bits.
+                // The array contains i32 offsets (relative to object base) for
+                // each pointer-like field. The runtime will use this table to
+                // walk object fields during cycle collection and serialization.
                 let arr_i32_ty = self.context.i32_type().array_type(len as u32);
                 let struct_ty = self
                     .context

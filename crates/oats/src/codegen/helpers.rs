@@ -97,11 +97,10 @@ impl<'a> super::CodeGen<'a> {
                         .build_call(unbox_fn, &[pv.into()], "union_unbox_f64_call")
                 {
                     let either = cs.try_as_basic_value();
-                    if let inkwell::Either::Left(bv) = either {
-                        if let BasicValueEnum::FloatValue(fv) = bv {
+                    if let inkwell::Either::Left(bv) = either
+                        && let BasicValueEnum::FloatValue(fv) = bv {
                             return Some(fv);
                         }
-                    }
                 }
                 None
             }
@@ -384,15 +383,13 @@ impl<'a> super::CodeGen<'a> {
             // expression origin that we recorded as a freshly-created closure,
             // propagate its return-type mapping so future calls can use the
             // statically-known return type.
-            if initialized {
-                if let Some(orig) = self.last_expr_origin_local.borrow().clone() {
-                    if let Some(rt) = self.closure_local_rettype.borrow().get(&orig) {
+            if initialized
+                && let Some(orig) = self.last_expr_origin_local.borrow().clone()
+                    && let Some(rt) = self.closure_local_rettype.borrow().get(&orig) {
                         self.closure_local_rettype
                             .borrow_mut()
                             .insert(key, rt.clone());
                     }
-                }
-            }
         }
     }
 
@@ -487,12 +484,11 @@ impl<'a> super::CodeGen<'a> {
         // Declare test-only helper `collector_test_enqueue()` when the
         // workspace enables the `collector-test` Cargo feature. This avoids
         // exposing test/debug symbols in normal release builds.
-        if cfg!(feature = "collector-test") {
-            if self.module.get_function("collector_test_enqueue").is_none() {
+        if cfg!(feature = "collector-test")
+            && self.module.get_function("collector_test_enqueue").is_none() {
                 let ty = self.context.void_type().fn_type(&[], false);
                 let _f = self.module.add_function("collector_test_enqueue", ty, None);
             }
-        }
     }
 
     // Emit rc_dec calls for any initialized pointer locals in the provided
@@ -661,9 +657,9 @@ impl<'a> super::CodeGen<'a> {
             // the original value is an i8* heap pointer.
             let mut store_val = *val;
             // If it's a pointer and not already i8*, cast to i8* for storage
-            if val.get_type().is_pointer_type() {
-                if val.get_type() != self.i8ptr_t.as_basic_type_enum() {
-                    if let inkwell::values::BasicValueEnum::PointerValue(pv) = *val {
+            if val.get_type().is_pointer_type()
+                && val.get_type() != self.i8ptr_t.as_basic_type_enum()
+                    && let inkwell::values::BasicValueEnum::PointerValue(pv) = *val {
                         let casted = self
                             .builder
                             .build_pointer_cast(pv, self.i8ptr_t, "cast_to_i8ptr")
@@ -672,8 +668,6 @@ impl<'a> super::CodeGen<'a> {
                             })?;
                         store_val = casted.as_basic_value_enum();
                     }
-                }
-            }
 
             let _ = self.builder.build_store(field_ptr_cast, store_val);
 
@@ -863,9 +857,9 @@ impl<'a> super::CodeGen<'a> {
 
             // Cast slot_val to i8* if necessary and store
             let mut store_val = *slot_val;
-            if slot_val.get_type().is_pointer_type() {
-                if slot_val.get_type() != self.i8ptr_t.as_basic_type_enum() {
-                    if let inkwell::values::BasicValueEnum::PointerValue(pv) = *slot_val {
+            if slot_val.get_type().is_pointer_type()
+                && slot_val.get_type() != self.i8ptr_t.as_basic_type_enum()
+                    && let inkwell::values::BasicValueEnum::PointerValue(pv) = *slot_val {
                         let casted = self
                             .builder
                             .build_pointer_cast(pv, self.i8ptr_t, "cast_to_i8ptr")
@@ -874,8 +868,6 @@ impl<'a> super::CodeGen<'a> {
                             })?;
                         store_val = casted.as_basic_value_enum();
                     }
-                }
-            }
             let _ = self.builder.build_store(field_ptr_cast, store_val);
 
             // increment RC for pointer fields

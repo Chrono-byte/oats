@@ -56,9 +56,9 @@ fn main() -> Result<()> {
                         }
                         let decl = &vdecl.decls[0];
                         // Only simple identifier patterns
-                        if let ast::Pat::Ident(binding_ident) = &decl.name {
-                            if let Some(init_expr) = &decl.init {
-                                if let ast::Expr::Arrow(_arrow) = &**init_expr {
+                        if let ast::Pat::Ident(binding_ident) = &decl.name
+                            && let Some(init_expr) = &decl.init
+                                && let ast::Expr::Arrow(_arrow) = &**init_expr {
                                     // Rather than rely on child spans (which may not include
                                     // opening paren), scan from the var decl to find '=' then
                                     // parse params/ret/=>/body from the source text to preserve
@@ -201,14 +201,14 @@ fn main() -> Result<()> {
                                     let func_decl = if ret_text.is_empty() {
                                         format!(
                                             "function {}{} {}\n",
-                                            binding_ident.id.sym.to_string(),
+                                            binding_ident.id.sym,
                                             params_text,
                                             body_text
                                         )
                                     } else {
                                         format!(
                                             "function {}{} {} {}\n",
-                                            binding_ident.id.sym.to_string(),
+                                            binding_ident.id.sym,
                                             params_text,
                                             ret_text,
                                             body_text
@@ -217,14 +217,12 @@ fn main() -> Result<()> {
 
                                     repls.push((start, body_end, func_decl));
                                 }
-                            }
-                        }
                     }
                 }
                 deno_ast::ModuleItemRef::ModuleDecl(module_decl) => {
                     // handle `export const foo = (...) => ...;`
-                    if let ast::ModuleDecl::ExportDecl(decl) = module_decl {
-                        if let ast::Decl::Var(vdecl) = &decl.decl {
+                    if let ast::ModuleDecl::ExportDecl(decl) = module_decl
+                        && let ast::Decl::Var(vdecl) = &decl.decl {
                             if vdecl.decls.len() != 1 {
                                 continue;
                             }
@@ -232,9 +230,9 @@ fn main() -> Result<()> {
                                 continue;
                             }
                             let declarator = &vdecl.decls[0];
-                            if let ast::Pat::Ident(binding_ident) = &declarator.name {
-                                if let Some(init_expr) = &declarator.init {
-                                    if let ast::Expr::Arrow(arrow) = &**init_expr {
+                            if let ast::Pat::Ident(binding_ident) = &declarator.name
+                                && let Some(init_expr) = &declarator.init
+                                    && let ast::Expr::Arrow(arrow) = &**init_expr {
                                         // For export decl use the inner decl span so we cover
                                         // exactly the `export const ...;` range
                                         let start = decl.span.lo.0 as usize;
@@ -330,10 +328,7 @@ fn main() -> Result<()> {
                                             repls.push((start, end, func_decl));
                                         }
                                     }
-                                }
-                            }
                         }
-                    }
                 }
             }
         }

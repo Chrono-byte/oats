@@ -52,7 +52,7 @@ use std::cell::RefCell;
 
 thread_local! {
     // Per-thread recursion guard stack storing object addresses to detect cycles.
-    static VISITED_OBJS: RefCell<Vec<usize>> = RefCell::new(Vec::new());
+    static VISITED_OBJS: RefCell<Vec<usize>> = const { RefCell::new(Vec::new()) };
 }
 
 const MAX_RECURSION_DEPTH: usize = 32;
@@ -948,7 +948,7 @@ pub unsafe extern "C" fn array_to_string(arr: *mut c_void) -> *mut c_char {
             s.push(']');
             // Convert to C string and allocate heap string
             let c = std::ffi::CString::new(s).unwrap_or_default();
-            return heap_str_from_cstr(c.as_ptr());
+            heap_str_from_cstr(c.as_ptr())
         } else {
             // Pointer arrays: iterate elements and attempt to stringify nested arrays/tuples
             let mut s = String::new();
@@ -1003,7 +1003,7 @@ pub unsafe extern "C" fn array_to_string(arr: *mut c_void) -> *mut c_char {
             }
             s.push(']');
             let c = std::ffi::CString::new(s).unwrap_or_default();
-            return heap_str_from_cstr(c.as_ptr());
+            heap_str_from_cstr(c.as_ptr())
         }
     }
 }

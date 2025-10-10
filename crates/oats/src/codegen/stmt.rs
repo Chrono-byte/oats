@@ -110,6 +110,34 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             // allocate the ABI slot accordingly and box numeric
                             // payloads into union objects.
                             if let Some(init) = &decl.init {
+                                // If the initializer is an object literal and the
+                                // declared local carries a nominal struct name
+                                // (for example `const user: User = { ... }`),
+                                // register the object's property list under
+                                // `self.class_fields` keyed by the nominal name.
+                                // This helps member-access lowering (e.g., `user.x`)
+                                // infer field offsets for locals typed with
+                                // interface/type-alias names declared in-scope.
+                                if let deno_ast::swc::ast::Expr::Object(obj_lit) = &**init
+                                    && declared_nominal.is_some()
+                                {
+                                    let nominal_name = declared_nominal.clone().unwrap();
+                                    let mut fields: Vec<(String, crate::types::OatsType)> = Vec::new();
+                                    use deno_ast::swc::ast;
+                                    for prop in &obj_lit.props {
+                                        if let ast::PropOrSpread::Prop(prop_box) = prop
+                                            && let ast::Prop::KeyValue(kv) = &**prop_box
+                                                && let ast::PropName::Ident(id) = &kv.key {
+                                                    let fname = id.sym.to_string();
+                                                    // Try to infer the field type from the initializer expression.
+                                                    let fty = crate::types::infer_type(None, Some(&kv.value));
+                                                    fields.push((fname, fty));
+                                                }
+                                    }
+                                    if !fields.is_empty() {
+                                        self.class_fields.borrow_mut().insert(nominal_name, fields);
+                                    }
+                                }
                                 // If initializer is `new ClassName(...)`, record the declared nominal
                                 // so member call lowering can infer the class for locals without
                                 // an explicit type annotation.

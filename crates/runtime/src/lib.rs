@@ -777,10 +777,12 @@ pub unsafe extern "C" fn runtime_free(p: *mut c_void) {
 /// invalid pointer or non-nul-terminated memory is undefined behavior.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn runtime_strlen(s: *const c_char) -> size_t {
-    if s.is_null() {
-        return 0;
+    unsafe {
+        if s.is_null() {
+            return 0;
+        }
+        libc::strlen(s)
     }
-    unsafe { libc::strlen(s) }
 }
 
 /// Duplicate a nul-terminated C string into a newly allocated runtime buffer.
@@ -793,10 +795,10 @@ pub unsafe extern "C" fn runtime_strlen(s: *const c_char) -> size_t {
 /// `s` must point to a valid nul-terminated C string.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn str_dup(s: *const c_char) -> *mut c_char {
-    if s.is_null() {
-        return ptr::null_mut();
-    }
     unsafe {
+        if s.is_null() {
+            return ptr::null_mut();
+        }
         let len = libc::strlen(s) + 1;
         let dst = libc::malloc(len) as *mut c_char;
         if dst.is_null() {
@@ -818,10 +820,10 @@ pub unsafe extern "C" fn str_dup(s: *const c_char) -> *mut c_char {
 /// Both `a` and `b` must be valid pointers to nul-terminated C strings.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn str_concat(a: *const c_char, b: *const c_char) -> *mut c_char {
-    if a.is_null() || b.is_null() {
-        return ptr::null_mut();
-    }
     unsafe {
+        if a.is_null() || b.is_null() {
+            return ptr::null_mut();
+        }
         let la = libc::strlen(a);
         let lb = libc::strlen(b);
 
@@ -868,11 +870,13 @@ pub extern "C" fn print_f64(v: f64) {
 /// invalid pointer is undefined behavior.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn print_str(s: *const c_char) {
-    if s.is_null() {
-        return;
+    unsafe {
+        if s.is_null() {
+            return;
+        }
+        let _ = io::stdout().write_all(CStr::from_ptr(s).to_bytes());
+        let _ = io::stdout().write_all(b"\n");
     }
-    let _ = io::stdout().write_all(unsafe { CStr::from_ptr(s).to_bytes() });
-    let _ = io::stdout().write_all(b"\n");
 }
 
 #[unsafe(no_mangle)]
@@ -902,11 +906,13 @@ pub unsafe extern "C" fn print_f64_no_nl(v: f64) {
 /// is undefined behavior.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn print_str_no_nl(s: *const c_char) {
-    if s.is_null() {
-        return;
+    unsafe {
+        if s.is_null() {
+            return;
+        }
+        let _ = io::stdout().write_all(CStr::from_ptr(s).to_bytes());
+        // no newline
     }
-    let _ = io::stdout().write_all(unsafe { CStr::from_ptr(s).to_bytes() });
-    // no newline
 }
 
 /// Print just a newline.
@@ -930,7 +936,7 @@ pub extern "C" fn number_to_string(num: f64) -> *mut c_char {
     // Format the number using libc's snprintf
     unsafe {
         // First, get the required buffer size
-    let len = libc::snprintf(ptr::null_mut(), 0, c"%g".as_ptr() as *const c_char, num);
+        let len = libc::snprintf(ptr::null_mut(), 0, c"%g".as_ptr() as *const c_char, num);
 
         if len < 0 {
             return ptr::null_mut();
@@ -946,7 +952,12 @@ pub extern "C" fn number_to_string(num: f64) -> *mut c_char {
         let data_ptr = (obj as *mut u8).add(16) as *mut c_char;
 
         // Format the number into the buffer
-        libc::snprintf(data_ptr, (len + 1) as size_t, c"%g".as_ptr() as *const c_char, num);
+        libc::snprintf(
+            data_ptr,
+            (len + 1) as size_t,
+            c"%g".as_ptr() as *const c_char,
+            num,
+        );
 
         data_ptr
     }
@@ -1079,14 +1090,16 @@ fn stringify_value_raw(val_raw: u64, depth: usize) -> String {
     format!("{}", f)
 }
 
-// tuple_to_string: iterate tuple meta block and stringify each 8-byte field.
-#[unsafe(no_mangle)]
-/// Convert a tuple/object into a printable C string. The returned pointer is an owning
-/// data pointer (offset +16) and must be released with `rc_dec_str`.
+/// Convert a tuple/object into a printable C string.
+///
+/// Iterates the tuple metadata block and stringifies each 8-byte field.
+/// The returned pointer is an owning data pointer (offset +16) and must
+/// be released with `rc_dec_str`.
 ///
 /// # Safety
 /// `obj` must be a valid object pointer allocated by this runtime and contain a
 /// valid metadata pointer at +8. Passing arbitrary pointers is undefined behavior.
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn tuple_to_string(obj: *mut c_void) -> *mut c_char {
     if obj.is_null() {
         return ptr::null_mut();
@@ -1124,11 +1137,11 @@ pub unsafe extern "C" fn tuple_to_string(obj: *mut c_void) -> *mut c_char {
     unsafe { heap_str_from_cstr(c.as_ptr()) }
 }
 
-// Math.random() -> f64 in [0, 1)
 /// PRNG helper used for `Math.random()`.
 ///
-/// Produces a double in [0, 1). The function ensures libc's PRNG is
-/// seeded once per process.
+/// Returns a pseudo-random `f64` value in the range [0, 1). The function
+/// ensures libc's PRNG is seeded once per process using high-resolution
+/// time and process ID for better entropy.
 #[unsafe(no_mangle)]
 pub extern "C" fn math_random() -> f64 {
     // Seed libc PRNG once per process to avoid deterministic output across runs.
@@ -1663,7 +1676,10 @@ pub unsafe extern "C" fn rc_dec(p: *mut c_void) {
         // when OATS_RUNTIME_LOG=1 is set in the environment.
         init_runtime_log();
         if RUNTIME_LOG.load(Ordering::Relaxed) {
-            let _ = libc::printf(c"[oats runtime] rc_dec called p=%p\n".as_ptr() as *const c_char, p);
+            let _ = libc::printf(
+                c"[oats runtime] rc_dec called p=%p\n".as_ptr() as *const c_char,
+                p,
+            );
         }
         // Quick plausibility check to avoid dereferencing obviously invalid
         // pointers (small integers or near-null values). This prevents the
@@ -1671,7 +1687,11 @@ pub unsafe extern "C" fn rc_dec(p: *mut c_void) {
         let p_addr = p as usize;
         if !is_plausible_addr(p_addr) {
             if RUNTIME_LOG.load(Ordering::Relaxed) {
-                let _ = libc::printf(c"[oats runtime] rc_dec: implausible p=%p, ignoring\n".as_ptr() as *const c_char, p);
+                let _ = libc::printf(
+                    c"[oats runtime] rc_dec: implausible p=%p, ignoring\n".as_ptr()
+                        as *const c_char,
+                    p,
+                );
             }
             return;
         }
@@ -1909,10 +1929,11 @@ pub unsafe extern "C" fn rc_weak_upgrade(p: *mut c_void) -> *mut c_void {
 
 // --- Union helpers ---
 
-// Destructor for union objects: reads discriminant at offset +16 and if the
-// payload is a pointer (discriminant == 1) calls rc_dec on the stored pointer.
-/// Destructor used for union-boxed objects. Reads the discriminant and
-/// decrements the nested pointer payload if present.
+/// Destructor used for union-boxed objects.
+///
+/// Reads the discriminant at offset +16 and if the payload is a pointer
+/// (discriminant == 1) calls `rc_dec` on the stored pointer to release
+/// the nested object reference.
 extern "C" fn union_dtor(obj_ptr: *mut c_void) {
     if obj_ptr.is_null() {
         return;
@@ -2015,10 +2036,10 @@ pub unsafe extern "C" fn union_box_ptr(p: *mut c_void) -> *mut c_void {
 /// `u` must be a valid union object previously returned by the runtime.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn union_unbox_f64(u: *mut c_void) -> f64 {
-    if u.is_null() {
-        return 0.0;
-    }
     unsafe {
+        if u.is_null() {
+            return 0.0;
+        }
         let payload = (u as *mut u8).add(24) as *mut f64;
         *payload
     }
@@ -2031,10 +2052,10 @@ pub unsafe extern "C" fn union_unbox_f64(u: *mut c_void) -> f64 {
 /// `u` must be a valid union object previously returned by the runtime.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn union_unbox_ptr(u: *mut c_void) -> *mut c_void {
-    if u.is_null() {
-        return ptr::null_mut();
-    }
     unsafe {
+        if u.is_null() {
+            return ptr::null_mut();
+        }
         let payload_ptr_ptr = (u as *mut u8).add(24) as *mut *mut c_void;
         let p = *payload_ptr_ptr;
         if !p.is_null() {
@@ -2052,10 +2073,10 @@ pub unsafe extern "C" fn union_unbox_ptr(u: *mut c_void) -> *mut c_void {
 /// `u` must be a valid union object previously returned by the runtime.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn union_get_discriminant(u: *mut c_void) -> i64 {
-    if u.is_null() {
-        return -1;
-    }
     unsafe {
+        if u.is_null() {
+            return -1;
+        }
         let discrim_ptr = (u as *mut u8).add(16) as *mut u64;
         *discrim_ptr as i64
     }
@@ -2071,16 +2092,16 @@ pub unsafe extern "C" fn union_get_discriminant(u: *mut c_void) -> i64 {
 /// and is safe to call from any thread.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sleep_ms(ms: f64) {
-    if ms <= 0.0 {
-        return;
-    }
-    // Convert to microseconds for libc::usleep; clamp to reasonable range
-    let mut usec = (ms * 1000.0) as u64;
-    if usec > 10_000_000u64 {
-        // cap at 10s to avoid very long sleeps
-        usec = 10_000_000u64;
-    }
     unsafe {
+        if ms <= 0.0 {
+            return;
+        }
+        // Convert to microseconds for libc::usleep; clamp to reasonable range
+        let mut usec = (ms * 1000.0) as u64;
+        if usec > 10_000_000u64 {
+            // cap at 10s to avoid very long sleeps
+            usec = 10_000_000u64;
+        }
         // usleep takes useconds_t (usually u32), so saturate if necessary
         let to_call = if usec > u32::MAX as u64 {
             u32::MAX

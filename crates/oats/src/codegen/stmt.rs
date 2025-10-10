@@ -131,17 +131,20 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             "internal error: nominal name missing",
                                         ));
                                     };
-                                    let mut fields: Vec<(String, crate::types::OatsType)> = Vec::new();
+                                    let mut fields: Vec<(String, crate::types::OatsType)> =
+                                        Vec::new();
                                     use deno_ast::swc::ast;
                                     for prop in &obj_lit.props {
                                         if let ast::PropOrSpread::Prop(prop_box) = prop
                                             && let ast::Prop::KeyValue(kv) = &**prop_box
-                                                && let ast::PropName::Ident(id) = &kv.key {
-                                                    let fname = id.sym.to_string();
-                                                    // Try to infer the field type from the initializer expression.
-                                                    let fty = crate::types::infer_type(None, Some(&kv.value));
-                                                    fields.push((fname, fty));
-                                                }
+                                            && let ast::PropName::Ident(id) = &kv.key
+                                        {
+                                            let fname = id.sym.to_string();
+                                            // Try to infer the field type from the initializer expression.
+                                            let fty =
+                                                crate::types::infer_type(None, Some(&kv.value));
+                                            fields.push((fname, fty));
+                                        }
                                     }
                                     if !fields.is_empty() {
                                         self.class_fields.borrow_mut().insert(nominal_name, fields);
@@ -257,16 +260,16 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                     })?;
                                                 // Store element into slot using same logic as object literal
                                                 // Use the declared element type to choose storage
-                                                        let field_ty = match elem_types.get(i) {
-                                                            Some(ft) => ft,
-                                                            None => {
-                                                                return Err(
-                                                                    crate::diagnostics::Diagnostic::simple(
-                                                                        "tuple element type missing",
-                                                                    ),
-                                                                );
-                                                            }
-                                                        };
+                                                let field_ty = match elem_types.get(i) {
+                                                    Some(ft) => ft,
+                                                    None => {
+                                                        return Err(
+                                                            crate::diagnostics::Diagnostic::simple(
+                                                                "tuple element type missing",
+                                                            ),
+                                                        );
+                                                    }
+                                                };
                                                 match field_ty {
                                                             crate::types::OatsType::Number => {
                                                                 // Coerce to f64 then store into an f64* slot

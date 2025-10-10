@@ -58,277 +58,265 @@ fn main() -> Result<()> {
                         // Only simple identifier patterns
                         if let ast::Pat::Ident(binding_ident) = &decl.name
                             && let Some(init_expr) = &decl.init
-                                && let ast::Expr::Arrow(_arrow) = &**init_expr {
-                                    // Rather than rely on child spans (which may not include
-                                    // opening paren), scan from the var decl to find '=' then
-                                    // parse params/ret/=>/body from the source text to preserve
-                                    // original formatting and types.
-                                    let decl_lo = vdecl.span.lo.0 as usize;
-                                    // compute line start
-                                    let start =
-                                        source[..decl_lo].rfind('\n').map(|i| i + 1).unwrap_or(0);
-                                    // find '=' after decl_lo
-                                    let mut eq = None;
-                                    let mut p = decl_lo;
-                                    while p < source.len() {
-                                        let ch = source.as_bytes()[p];
-                                        if ch == b'=' {
-                                            eq = Some(p);
-                                            break;
-                                        }
-                                        p += 1;
-                                    }
-                                    let eq = match eq {
-                                        Some(x) => x,
-                                        None => continue,
-                                    };
-                                    // scan forward from eq to find '=>' and parse params/ret/body
-                                    let mut iidx = eq + 1;
-                                    while iidx < source.len()
-                                        && source.as_bytes()[iidx].is_ascii_whitespace()
-                                    {
-                                        iidx += 1;
-                                    }
-                                    // params
-                                    let (params_text, after_params_idx) =
-                                        if iidx < source.len() && source.as_bytes()[iidx] == b'(' {
-                                            // collect balanced parens
-                                            let mut depth = 0i32;
-                                            let mut j = iidx;
-                                            while j < source.len() {
-                                                let ch = source.as_bytes()[j];
-                                                if ch == b'(' {
-                                                    depth += 1;
-                                                } else if ch == b')' {
-                                                    depth -= 1;
-                                                    if depth == 0 {
-                                                        j += 1;
-                                                        break;
-                                                    }
-                                                }
-                                                j += 1;
-                                            }
-                                            (source[iidx..j].to_string(), j)
-                                        } else {
-                                            // single identifier param
-                                            let mut j = iidx;
-                                            while j < source.len()
-                                                && (source.as_bytes()[j] as char).is_alphanumeric()
-                                                || source.as_bytes()[j] == b'_'
-                                            {
-                                                j += 1;
-                                            }
-                                            (format!("({})", source[iidx..j].trim()), j)
-                                        };
-                                    // skip whitespace and optional return type
-                                    let mut j = after_params_idx;
-                                    while j < source.len()
-                                        && (source.as_bytes()[j] as char).is_whitespace()
-                                    {
-                                        j += 1;
-                                    }
-                                    let mut ret_text = String::new();
-                                    if j < source.len() && source.as_bytes()[j] == b':' {
-                                        let rt_start = j;
-                                        // scan until =>
-                                        while j < source.len()
-                                            && !(source.as_bytes()[j] == b'='
-                                                && j + 1 < source.len()
-                                                && source.as_bytes()[j + 1] == b'>')
-                                        {
-                                            j += 1;
-                                        }
-                                        ret_text = source[rt_start..j].trim().to_string();
-                                    }
-                                    // find =>
-                                    let mut arrow_pos = None;
-                                    while j + 1 < source.len() {
-                                        if source.as_bytes()[j] == b'='
-                                            && source.as_bytes()[j + 1] == b'>'
-                                        {
-                                            arrow_pos = Some(j);
-                                            break;
-                                        }
-                                        j += 1;
-                                    }
-                                    let arrow_pos = match arrow_pos {
-                                        Some(x) => x,
-                                        None => continue,
-                                    };
-                                    let mut body_start = arrow_pos + 2;
-                                    while body_start < source.len()
-                                        && (source.as_bytes()[body_start] as char).is_whitespace()
-                                    {
-                                        body_start += 1;
-                                    }
-                                    // body: block or expression
-                                    let (body_text, body_end) = if body_start < source.len()
-                                        && source.as_bytes()[body_start] == b'{'
-                                    {
-                                        let mut bd = body_start;
-                                        let mut depth = 0i32;
-                                        while bd < source.len() {
-                                            let ch = source.as_bytes()[bd];
-                                            if ch == b'{' {
-                                                depth += 1;
-                                            } else if ch == b'}' {
-                                                depth -= 1;
-                                                if depth == 0 {
-                                                    bd += 1;
-                                                    break;
-                                                }
-                                            }
-                                            bd += 1;
-                                        }
-                                        (source[body_start..bd].to_string(), bd)
-                                    } else {
-                                        let mut bd = body_start;
-                                        while bd < source.len()
-                                            && source.as_bytes()[bd] != b';'
-                                            && source.as_bytes()[bd] != b'\n'
-                                        {
-                                            bd += 1;
-                                        }
-                                        (
-                                            format!(
-                                                "{{ return {}; }}",
-                                                source[body_start..bd].trim()
-                                            ),
-                                            bd,
-                                        )
-                                    };
-
-                                    let func_decl = if ret_text.is_empty() {
-                                        format!(
-                                            "function {}{} {}\n",
-                                            binding_ident.id.sym,
-                                            params_text,
-                                            body_text
-                                        )
-                                    } else {
-                                        format!(
-                                            "function {}{} {} {}\n",
-                                            binding_ident.id.sym,
-                                            params_text,
-                                            ret_text,
-                                            body_text
-                                        )
-                                    };
-
-                                    repls.push((start, body_end, func_decl));
+                            && let ast::Expr::Arrow(_arrow) = &**init_expr
+                        {
+                            // Rather than rely on child spans (which may not include
+                            // opening paren), scan from the var decl to find '=' then
+                            // parse params/ret/=>/body from the source text to preserve
+                            // original formatting and types.
+                            let decl_lo = vdecl.span.lo.0 as usize;
+                            // compute line start
+                            let start = source[..decl_lo].rfind('\n').map(|i| i + 1).unwrap_or(0);
+                            // find '=' after decl_lo
+                            let mut eq = None;
+                            let mut p = decl_lo;
+                            while p < source.len() {
+                                let ch = source.as_bytes()[p];
+                                if ch == b'=' {
+                                    eq = Some(p);
+                                    break;
                                 }
+                                p += 1;
+                            }
+                            let eq = match eq {
+                                Some(x) => x,
+                                None => continue,
+                            };
+                            // scan forward from eq to find '=>' and parse params/ret/body
+                            let mut iidx = eq + 1;
+                            while iidx < source.len()
+                                && source.as_bytes()[iidx].is_ascii_whitespace()
+                            {
+                                iidx += 1;
+                            }
+                            // params
+                            let (params_text, after_params_idx) =
+                                if iidx < source.len() && source.as_bytes()[iidx] == b'(' {
+                                    // collect balanced parens
+                                    let mut depth = 0i32;
+                                    let mut j = iidx;
+                                    while j < source.len() {
+                                        let ch = source.as_bytes()[j];
+                                        if ch == b'(' {
+                                            depth += 1;
+                                        } else if ch == b')' {
+                                            depth -= 1;
+                                            if depth == 0 {
+                                                j += 1;
+                                                break;
+                                            }
+                                        }
+                                        j += 1;
+                                    }
+                                    (source[iidx..j].to_string(), j)
+                                } else {
+                                    // single identifier param
+                                    let mut j = iidx;
+                                    while j < source.len()
+                                        && (source.as_bytes()[j] as char).is_alphanumeric()
+                                        || source.as_bytes()[j] == b'_'
+                                    {
+                                        j += 1;
+                                    }
+                                    (format!("({})", source[iidx..j].trim()), j)
+                                };
+                            // skip whitespace and optional return type
+                            let mut j = after_params_idx;
+                            while j < source.len() && (source.as_bytes()[j] as char).is_whitespace()
+                            {
+                                j += 1;
+                            }
+                            let mut ret_text = String::new();
+                            if j < source.len() && source.as_bytes()[j] == b':' {
+                                let rt_start = j;
+                                // scan until =>
+                                while j < source.len()
+                                    && !(source.as_bytes()[j] == b'='
+                                        && j + 1 < source.len()
+                                        && source.as_bytes()[j + 1] == b'>')
+                                {
+                                    j += 1;
+                                }
+                                ret_text = source[rt_start..j].trim().to_string();
+                            }
+                            // find =>
+                            let mut arrow_pos = None;
+                            while j + 1 < source.len() {
+                                if source.as_bytes()[j] == b'=' && source.as_bytes()[j + 1] == b'>'
+                                {
+                                    arrow_pos = Some(j);
+                                    break;
+                                }
+                                j += 1;
+                            }
+                            let arrow_pos = match arrow_pos {
+                                Some(x) => x,
+                                None => continue,
+                            };
+                            let mut body_start = arrow_pos + 2;
+                            while body_start < source.len()
+                                && (source.as_bytes()[body_start] as char).is_whitespace()
+                            {
+                                body_start += 1;
+                            }
+                            // body: block or expression
+                            let (body_text, body_end) = if body_start < source.len()
+                                && source.as_bytes()[body_start] == b'{'
+                            {
+                                let mut bd = body_start;
+                                let mut depth = 0i32;
+                                while bd < source.len() {
+                                    let ch = source.as_bytes()[bd];
+                                    if ch == b'{' {
+                                        depth += 1;
+                                    } else if ch == b'}' {
+                                        depth -= 1;
+                                        if depth == 0 {
+                                            bd += 1;
+                                            break;
+                                        }
+                                    }
+                                    bd += 1;
+                                }
+                                (source[body_start..bd].to_string(), bd)
+                            } else {
+                                let mut bd = body_start;
+                                while bd < source.len()
+                                    && source.as_bytes()[bd] != b';'
+                                    && source.as_bytes()[bd] != b'\n'
+                                {
+                                    bd += 1;
+                                }
+                                (
+                                    format!("{{ return {}; }}", source[body_start..bd].trim()),
+                                    bd,
+                                )
+                            };
+
+                            let func_decl = if ret_text.is_empty() {
+                                format!(
+                                    "function {}{} {}\n",
+                                    binding_ident.id.sym, params_text, body_text
+                                )
+                            } else {
+                                format!(
+                                    "function {}{} {} {}\n",
+                                    binding_ident.id.sym, params_text, ret_text, body_text
+                                )
+                            };
+
+                            repls.push((start, body_end, func_decl));
+                        }
                     }
                 }
                 deno_ast::ModuleItemRef::ModuleDecl(module_decl) => {
                     // handle `export const foo = (...) => ...;`
                     if let ast::ModuleDecl::ExportDecl(decl) = module_decl
-                        && let ast::Decl::Var(vdecl) = &decl.decl {
-                            if vdecl.decls.len() != 1 {
-                                continue;
+                        && let ast::Decl::Var(vdecl) = &decl.decl
+                    {
+                        if vdecl.decls.len() != 1 {
+                            continue;
+                        }
+                        if matches!(vdecl.kind, ast::VarDeclKind::Var) {
+                            continue;
+                        }
+                        let declarator = &vdecl.decls[0];
+                        if let ast::Pat::Ident(binding_ident) = &declarator.name
+                            && let Some(init_expr) = &declarator.init
+                            && let ast::Expr::Arrow(arrow) = &**init_expr
+                        {
+                            // For export decl use the inner decl span so we cover
+                            // exactly the `export const ...;` range
+                            let start = decl.span.lo.0 as usize;
+                            let mut end = decl.span.hi.0 as usize;
+                            let sbytes = source.as_bytes();
+                            while end < sbytes.len() && sbytes[end] != b'\n' {
+                                end += 1;
                             }
-                            if matches!(vdecl.kind, ast::VarDeclKind::Var) {
-                                continue;
+                            if end < sbytes.len() {
+                                end += 1;
                             }
-                            let declarator = &vdecl.decls[0];
-                            if let ast::Pat::Ident(binding_ident) = &declarator.name
-                                && let Some(init_expr) = &declarator.init
-                                    && let ast::Expr::Arrow(arrow) = &**init_expr {
-                                        // For export decl use the inner decl span so we cover
-                                        // exactly the `export const ...;` range
-                                        let start = decl.span.lo.0 as usize;
-                                        let mut end = decl.span.hi.0 as usize;
-                                        let sbytes = source.as_bytes();
-                                        while end < sbytes.len() && sbytes[end] != b'\n' {
-                                            end += 1;
-                                        }
-                                        if end < sbytes.len() {
-                                            end += 1;
-                                        }
 
-                                        // Use arrow span-based extraction similar to the non-export path
-                                        let alo = arrow.span.lo.0 as usize;
-                                        let ahi = arrow.span.hi.0 as usize;
-                                        let arrow_src = if alo < ahi && ahi <= source.len() {
-                                            &source[alo..ahi]
-                                        } else {
-                                            ""
-                                        };
-                                        if let Some(apos) = arrow_src.find("=>") {
-                                            let left = arrow_src[..apos].trim();
-                                            let right = arrow_src[apos + 2..].trim();
-                                            let params_text = if let Some(lp) = left.find('(') {
-                                                // find matching )
-                                                let mut depth = 0i32;
-                                                let mut match_idx: Option<usize> = None;
-                                                for (i, ch) in left.char_indices().skip(lp) {
-                                                    if ch == '(' {
-                                                        depth += 1;
-                                                    } else if ch == ')' {
-                                                        depth -= 1;
-                                                        if depth == 0 {
-                                                            match_idx = Some(i);
-                                                            break;
-                                                        }
-                                                    }
-                                                }
-                                                if let Some(rp) = match_idx {
-                                                    left[lp..=rp].to_string()
-                                                } else {
-                                                    format!("({})", left)
-                                                }
-                                            } else {
-                                                let mut end_idx = left.len();
-                                                if let Some(colon) = left.find(':') {
-                                                    end_idx = colon;
-                                                }
-                                                let id = left[..end_idx].trim();
-                                                format!("({})", id)
-                                            };
-                                            let mut ret_text = String::new();
-                                            if let Some(params_pos) = left.find(&params_text) {
-                                                let after = left[params_pos + params_text.len()..]
-                                                    .trim_start();
-                                                if after.starts_with(':') {
-                                                    let rt = after;
-                                                    if !rt.is_empty() {
-                                                        ret_text = format!(" {}", rt);
-                                                    }
-                                                }
+                            // Use arrow span-based extraction similar to the non-export path
+                            let alo = arrow.span.lo.0 as usize;
+                            let ahi = arrow.span.hi.0 as usize;
+                            let arrow_src = if alo < ahi && ahi <= source.len() {
+                                &source[alo..ahi]
+                            } else {
+                                ""
+                            };
+                            if let Some(apos) = arrow_src.find("=>") {
+                                let left = arrow_src[..apos].trim();
+                                let right = arrow_src[apos + 2..].trim();
+                                let params_text = if let Some(lp) = left.find('(') {
+                                    // find matching )
+                                    let mut depth = 0i32;
+                                    let mut match_idx: Option<usize> = None;
+                                    for (i, ch) in left.char_indices().skip(lp) {
+                                        if ch == '(' {
+                                            depth += 1;
+                                        } else if ch == ')' {
+                                            depth -= 1;
+                                            if depth == 0 {
+                                                match_idx = Some(i);
+                                                break;
                                             }
-                                            let body_text = if right.starts_with('{') {
-                                                let mut depth = 0i32;
-                                                let mut end_rel: Option<usize> = None;
-                                                for (i, ch) in right.char_indices() {
-                                                    if ch == '{' {
-                                                        depth += 1;
-                                                    } else if ch == '}' {
-                                                        depth -= 1;
-                                                        if depth == 0 {
-                                                            end_rel = Some(i);
-                                                            break;
-                                                        }
-                                                    }
-                                                }
-                                                if let Some(er) = end_rel {
-                                                    right[..=er].to_string()
-                                                } else {
-                                                    format!("{{ {} }}", right)
-                                                }
-                                            } else {
-                                                format!(
-                                                    "{{ return {}; }}",
-                                                    right.trim_end_matches(';').trim()
-                                                )
-                                            };
-                                            let name = binding_ident.id.sym.to_string();
-                                            let func_decl = format!(
-                                                "export function {}{}{} {}\n",
-                                                name, params_text, ret_text, body_text
-                                            );
-                                            repls.push((start, end, func_decl));
                                         }
                                     }
+                                    if let Some(rp) = match_idx {
+                                        left[lp..=rp].to_string()
+                                    } else {
+                                        format!("({})", left)
+                                    }
+                                } else {
+                                    let mut end_idx = left.len();
+                                    if let Some(colon) = left.find(':') {
+                                        end_idx = colon;
+                                    }
+                                    let id = left[..end_idx].trim();
+                                    format!("({})", id)
+                                };
+                                let mut ret_text = String::new();
+                                if let Some(params_pos) = left.find(&params_text) {
+                                    let after = left[params_pos + params_text.len()..].trim_start();
+                                    if after.starts_with(':') {
+                                        let rt = after;
+                                        if !rt.is_empty() {
+                                            ret_text = format!(" {}", rt);
+                                        }
+                                    }
+                                }
+                                let body_text = if right.starts_with('{') {
+                                    let mut depth = 0i32;
+                                    let mut end_rel: Option<usize> = None;
+                                    for (i, ch) in right.char_indices() {
+                                        if ch == '{' {
+                                            depth += 1;
+                                        } else if ch == '}' {
+                                            depth -= 1;
+                                            if depth == 0 {
+                                                end_rel = Some(i);
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    if let Some(er) = end_rel {
+                                        right[..=er].to_string()
+                                    } else {
+                                        format!("{{ {} }}", right)
+                                    }
+                                } else {
+                                    format!("{{ return {}; }}", right.trim_end_matches(';').trim())
+                                };
+                                let name = binding_ident.id.sym.to_string();
+                                let func_decl = format!(
+                                    "export function {}{}{} {}\n",
+                                    name, params_text, ret_text, body_text
+                                );
+                                repls.push((start, end, func_decl));
+                            }
                         }
+                    }
                 }
             }
         }

@@ -596,7 +596,7 @@ fn add_root_candidate(p: *mut c_void) {
 /// - This symbol is test-only and should not be used in normal runtime code.
 /// - The function allocates and enqueues a synthetic heap block; callers need not
 ///   manage the returned pointer. The function is safe to call from any thread.
-pub unsafe extern "C" fn collector_test_enqueue() {
+pub extern "C" fn collector_test_enqueue() {
     // Allocate minimal heap block: header + one u64 word
     let size = std::mem::size_of::<u64>() * 2;
     let mem = runtime_malloc(size as size_t) as *mut u8;
@@ -892,7 +892,7 @@ pub extern "C" fn print_i32(v: i32) {
 /// The caller must ensure that calling libc::printf with a formatted float is safe
 /// in the current environment. This function does not dereference raw pointers.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn print_f64_no_nl(v: f64) {
+pub extern "C" fn print_f64_no_nl(v: f64) {
     unsafe {
         libc::printf(c"%g".as_ptr() as *const c_char, v);
         // no newline
@@ -920,7 +920,7 @@ pub unsafe extern "C" fn print_str_no_nl(s: *const c_char) {
 /// # Safety
 /// This function does not dereference raw pointers and is safe to call from any thread.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn print_newline() {
+pub extern "C" fn print_newline() {
     let _ = io::stdout().write_all(b"\n");
 }
 
@@ -1073,9 +1073,7 @@ fn stringify_value_raw(val_raw: u64, depth: usize) -> String {
         if !s_ptr.is_null() {
             let s = unsafe { CStr::from_ptr(s_ptr) };
             let res = s.to_string_lossy().into_owned();
-            unsafe {
-                rc_dec_str(s_ptr);
-            }
+            unsafe { rc_dec_str(s_ptr); }
             return res;
         }
         // Fallback: try to interpret as a C string
@@ -1210,11 +1208,7 @@ fn runtime_index_oob_abort(_arr: *mut c_void, idx: usize, len: usize) -> ! {
 /// Callers must ensure the returned pointer is handled correctly and not
 /// dereferenced from safe Rust code without proper checks.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn array_alloc(
-    len: usize,
-    elem_size: usize,
-    elem_is_number: i32,
-) -> *mut c_void {
+pub extern "C" fn array_alloc(len: usize, elem_size: usize, elem_is_number: i32) -> *mut c_void {
     let data_bytes = len * elem_size;
     let total_bytes = ARRAY_HEADER_SIZE + data_bytes;
     unsafe {
@@ -1246,7 +1240,7 @@ pub unsafe extern "C" fn array_alloc(
 /// Caller must ensure `arr` is a valid array pointer returned by `array_alloc` and
 /// `idx` is within bounds. Undefined behavior may occur otherwise.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn array_get_f64(arr: *mut c_void, idx: usize) -> f64 {
+pub extern "C" fn array_get_f64(arr: *mut c_void, idx: usize) -> f64 {
     if arr.is_null() {
         return 0.0;
     }
@@ -1273,7 +1267,7 @@ pub unsafe extern "C" fn array_get_f64(arr: *mut c_void, idx: usize) -> f64 {
 /// is an owning reference (its refcount has been incremented) and must be
 /// released with `rc_dec`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn array_get_ptr(arr: *mut c_void, idx: usize) -> *mut c_void {
+pub extern "C" fn array_get_ptr(arr: *mut c_void, idx: usize) -> *mut c_void {
     if arr.is_null() {
         return ptr::null_mut();
     }
@@ -1303,7 +1297,7 @@ pub unsafe extern "C" fn array_get_ptr(arr: *mut c_void, idx: usize) -> *mut c_v
 /// Caller must ensure `arr` is valid and the borrowed pointer is not stored into
 /// long-lived locations without calling `rc_inc` first.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn array_get_ptr_borrow(arr: *mut c_void, idx: usize) -> *mut c_void {
+pub extern "C" fn array_get_ptr_borrow(arr: *mut c_void, idx: usize) -> *mut c_void {
     if arr.is_null() {
         return ptr::null_mut();
     }
@@ -1324,7 +1318,7 @@ pub unsafe extern "C" fn array_get_ptr_borrow(arr: *mut c_void, idx: usize) -> *
 /// # Safety
 /// Caller must ensure `arr` is a valid array pointer and `idx` is within bounds.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn array_set_f64(arr: *mut c_void, idx: usize, v: f64) {
+pub extern "C" fn array_set_f64(arr: *mut c_void, idx: usize, v: f64) {
     if arr.is_null() {
         return;
     }
@@ -1350,7 +1344,7 @@ pub unsafe extern "C" fn array_set_f64(arr: *mut c_void, idx: usize, v: f64) {
 /// # Safety
 /// Caller must ensure `arr` is a valid pointer-typed array and `idx` is within bounds.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn array_set_ptr(arr: *mut c_void, idx: usize, p: *mut c_void) {
+pub extern "C" fn array_set_ptr(arr: *mut c_void, idx: usize, p: *mut c_void) {
     if arr.is_null() {
         return;
     }
@@ -1385,7 +1379,7 @@ pub unsafe extern "C" fn array_set_ptr(arr: *mut c_void, idx: usize, p: *mut c_v
 /// `arr` must be a valid pointer-typed array. `p` must be either NULL or a pointer
 /// previously returned by this runtime. Passing invalid pointers is undefined behavior.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn array_set_ptr_weak(arr: *mut c_void, idx: usize, p: *mut c_void) {
+pub extern "C" fn array_set_ptr_weak(arr: *mut c_void, idx: usize, p: *mut c_void) {
     if arr.is_null() {
         return;
     }
@@ -1419,7 +1413,7 @@ pub unsafe extern "C" fn array_set_ptr_weak(arr: *mut c_void, idx: usize, p: *mu
 /// # Safety
 /// Caller must ensure `arr` is a valid array pointer with sufficient capacity.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn array_push_f64(arr: *mut c_void, value: f64) {
+pub extern "C" fn array_push_f64(arr: *mut c_void, value: f64) {
     if arr.is_null() {
         return;
     }
@@ -1438,7 +1432,7 @@ pub unsafe extern "C" fn array_push_f64(arr: *mut c_void, value: f64) {
 /// # Safety
 /// Caller must ensure `arr` is a valid array pointer.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn array_pop_f64(arr: *mut c_void) -> f64 {
+pub extern "C" fn array_pop_f64(arr: *mut c_void) -> f64 {
     if arr.is_null() {
         return 0.0;
     }
@@ -1466,7 +1460,7 @@ pub unsafe extern "C" fn array_pop_f64(arr: *mut c_void) -> f64 {
 /// # Safety
 /// Caller must ensure `arr` is a valid pointer-typed array with sufficient capacity.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn array_push_ptr(arr: *mut c_void, value: *mut c_void) {
+pub extern "C" fn array_push_ptr(arr: *mut c_void, value: *mut c_void) {
     if arr.is_null() {
         return;
     }
@@ -1491,7 +1485,7 @@ pub unsafe extern "C" fn array_push_ptr(arr: *mut c_void, value: *mut c_void) {
 /// # Safety
 /// Caller must ensure `arr` is a valid pointer-typed array with sufficient capacity.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn array_push_ptr_weak(arr: *mut c_void, value: *mut c_void) {
+pub extern "C" fn array_push_ptr_weak(arr: *mut c_void, value: *mut c_void) {
     if arr.is_null() {
         return;
     }
@@ -1516,7 +1510,7 @@ pub unsafe extern "C" fn array_push_ptr_weak(arr: *mut c_void, value: *mut c_voi
 /// # Safety
 /// Caller must ensure `arr` is a valid pointer-typed array.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn array_pop_ptr(arr: *mut c_void) -> *mut c_void {
+pub extern "C" fn array_pop_ptr(arr: *mut c_void) -> *mut c_void {
     if arr.is_null() {
         return ptr::null_mut();
     }
@@ -1996,7 +1990,7 @@ pub extern "C" fn union_box_f64(v: f64) -> *mut c_void {
 /// `p` must be a valid pointer previously returned by the runtime or NULL. The
 /// returned control block is an owning object and must be released with `rc_dec`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn union_box_ptr(p: *mut c_void) -> *mut c_void {
+pub extern "C" fn union_box_ptr(p: *mut c_void) -> *mut c_void {
     unsafe {
         let total = 8 * 4;
         let mem = runtime_malloc(total as size_t) as *mut u8;
@@ -2035,7 +2029,7 @@ pub unsafe extern "C" fn union_box_ptr(p: *mut c_void) -> *mut c_void {
 /// # Safety
 /// `u` must be a valid union object previously returned by the runtime.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn union_unbox_f64(u: *mut c_void) -> f64 {
+pub extern "C" fn union_unbox_f64(u: *mut c_void) -> f64 {
     unsafe {
         if u.is_null() {
             return 0.0;
@@ -2051,7 +2045,7 @@ pub unsafe extern "C" fn union_unbox_f64(u: *mut c_void) -> f64 {
 /// # Safety
 /// `u` must be a valid union object previously returned by the runtime.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn union_unbox_ptr(u: *mut c_void) -> *mut c_void {
+pub extern "C" fn union_unbox_ptr(u: *mut c_void) -> *mut c_void {
     unsafe {
         if u.is_null() {
             return ptr::null_mut();
@@ -2072,7 +2066,7 @@ pub unsafe extern "C" fn union_unbox_ptr(u: *mut c_void) -> *mut c_void {
 /// # Safety
 /// `u` must be a valid union object previously returned by the runtime.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn union_get_discriminant(u: *mut c_void) -> i64 {
+pub extern "C" fn union_get_discriminant(u: *mut c_void) -> i64 {
     unsafe {
         if u.is_null() {
             return -1;
@@ -2091,7 +2085,7 @@ pub unsafe extern "C" fn union_get_discriminant(u: *mut c_void) -> i64 {
 /// This function does not dereference raw pointers. It simply calls into libc
 /// and is safe to call from any thread.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn sleep_ms(ms: f64) {
+pub extern "C" fn sleep_ms(ms: f64) {
     unsafe {
         if ms <= 0.0 {
             return;

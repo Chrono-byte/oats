@@ -220,6 +220,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 | OatsType::NominalStruct(_)
                 | OatsType::StructLiteral(_)
                 | OatsType::Array(_)
+                | OatsType::Tuple(_)
                 | OatsType::Promise(_)
                 | OatsType::Weak(_)
                 | OatsType::Option(_) => self.i8ptr_t.into(),

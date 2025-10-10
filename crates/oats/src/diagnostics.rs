@@ -150,6 +150,12 @@ pub struct Diagnostic {
     pub message: String,
     pub file: Option<String>,
     pub note: Option<String>,
+    // Optional byte-index into the source text where the error occurred.
+    // When present and a source string is supplied to `emit_diagnostic`,
+    // the diagnostics system will show a span-aware message with a
+    // caret pointing at the correct column instead of printing the file
+    // head.
+    pub span_start: Option<usize>,
 }
 
 impl Diagnostic {
@@ -158,11 +164,57 @@ impl Diagnostic {
             message: msg.into(),
             file: None,
             note: None,
+            span_start: None,
+        }
+    }
+
+    /// Create a simple diagnostic that includes a byte-offset span into
+    /// the source text. `span_start` is a 0-based byte index into the
+    /// source; the reporter will compute the line/column from this index.
+    pub fn simple_with_span(msg: impl Into<String>, span_start: usize) -> Self {
+        Diagnostic {
+            message: msg.into(),
+            file: None,
+            note: None,
+            span_start: Some(span_start),
         }
     }
 }
 
 // Emit the diagnostic via the existing lightweight printer.
 pub fn emit_diagnostic(d: &Diagnostic, source: Option<&str>) {
-    report_error(d.file.as_deref(), source, &d.message, d.note.as_deref());
+    if DIAGNOSTICS_ENABLED.load(Ordering::SeqCst) {
+        // If we have a concrete span and source text, use the span-aware
+        // reporter so the caret points at the correct column. Fall back to
+        // the simpler header+context printer otherwise.
+        if let (Some(start), Some(src)) = (d.span_start, source) {
+            report_error_span(d.file.as_deref(), src, start, &d.message, d.note.as_deref());
+        } else {
+            report_error(d.file.as_deref(), source, &d.message, d.note.as_deref());
+        }
+    }
+}
+
+use std::sync::atomic::{AtomicBool, Ordering};
+
+static DIAGNOSTICS_ENABLED: AtomicBool = AtomicBool::new(true);
+
+/// Suppress diagnostic printing for the current scope. Returns a guard that
+/// restores the previous enabled state when dropped. Tests can call
+/// `let _g = diagnostics::suppress();` to silence stderr output while still
+/// allowing callers to inspect returned Errors/Diagnostics.
+pub fn suppress() -> SuppressGuard {
+    let prev = DIAGNOSTICS_ENABLED.swap(false, Ordering::SeqCst);
+    SuppressGuard { prev }
+}
+
+/// Internal guard type returned by `suppress()`.
+pub struct SuppressGuard {
+    prev: bool,
+}
+
+impl Drop for SuppressGuard {
+    fn drop(&mut self) {
+        DIAGNOSTICS_ENABLED.store(self.prev, Ordering::SeqCst);
+    }
 }

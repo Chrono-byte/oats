@@ -1,0 +1,13 @@
+export function main(): void {
+    function getFirstElement<T>(arr: T[]): T | undefined {
+        return arr.length > 0 ? arr[0] : undefined;
+    }
+
+    const numbers = [10, 20, 30];
+    const strings = ["a", "b", "c"];
+
+    println(`First number: ${getFirstElement(numbers)}`);
+    println(`First string: ${getFirstElement(strings)}`);
+
+    return;
+}

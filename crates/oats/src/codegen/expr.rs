@@ -3014,153 +3014,142 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     // earlier inference failed to pick the correct nominal but
                     // the field layout is nevertheless registered.
                     if let Ok(bv) = self.lower_expr(&member.obj, function, param_map, locals)
-                        && let BasicValueEnum::PointerValue(obj_ptr) = bv {
-                            // If prop is an identifier, try to find a class that
-                            // has this field and load it.
-                            if let deno_ast::swc::ast::MemberProp::Ident(pi) = &member.prop {
-                                let target_field = pi.sym.to_string();
-                                for (_class_name, fields) in self.class_fields.borrow().iter() {
-                                    if let Some((field_idx, (_fname, field_ty))) = fields
-                                        .iter()
-                                        .enumerate()
-                                        .find(|(_, (n, _))| n == &target_field)
-                                    {
-                                        // compute byte offset = sizeof(u64) + meta_slot + idx * ptr_size
-                                        let hdr_size = self.i64_t.const_int(
-                                            std::mem::size_of::<u64>() as u64,
-                                            false,
-                                        );
-                                        let ptr_sz = self.i64_t.const_int(
-                                            std::mem::size_of::<usize>() as u64,
-                                            false,
-                                        );
-                                        let idx_const =
-                                            self.i64_t.const_int(field_idx as u64, false);
-                                        let mul = match self.builder.build_int_mul(
-                                            idx_const,
-                                            ptr_sz,
-                                            "fld_off_mul",
-                                        ) {
+                        && let BasicValueEnum::PointerValue(obj_ptr) = bv
+                    {
+                        // If prop is an identifier, try to find a class that
+                        // has this field and load it.
+                        if let deno_ast::swc::ast::MemberProp::Ident(pi) = &member.prop {
+                            let target_field = pi.sym.to_string();
+                            for (_class_name, fields) in self.class_fields.borrow().iter() {
+                                if let Some((field_idx, (_fname, field_ty))) = fields
+                                    .iter()
+                                    .enumerate()
+                                    .find(|(_, (n, _))| n == &target_field)
+                                {
+                                    // compute byte offset = sizeof(u64) + meta_slot + idx * ptr_size
+                                    let hdr_size = self
+                                        .i64_t
+                                        .const_int(std::mem::size_of::<u64>() as u64, false);
+                                    let ptr_sz = self
+                                        .i64_t
+                                        .const_int(std::mem::size_of::<usize>() as u64, false);
+                                    let idx_const = self.i64_t.const_int(field_idx as u64, false);
+                                    let mul = match self.builder.build_int_mul(
+                                        idx_const,
+                                        ptr_sz,
+                                        "fld_off_mul",
+                                    ) {
+                                        Ok(v) => v,
+                                        Err(_) => continue,
+                                    };
+                                    let meta_slot = self.i64_t.const_int(8u64, false);
+                                    let tmp = match self.builder.build_int_add(
+                                        hdr_size,
+                                        meta_slot,
+                                        "hdr_plus_meta",
+                                    ) {
+                                        Ok(v) => v,
+                                        Err(_) => continue,
+                                    };
+                                    let offset =
+                                        match self.builder.build_int_add(tmp, mul, "fld_off") {
                                             Ok(v) => v,
                                             Err(_) => continue,
                                         };
-                                        let meta_slot = self.i64_t.const_int(8u64, false);
-                                        let tmp = match self.builder.build_int_add(
-                                            hdr_size,
-                                            meta_slot,
-                                            "hdr_plus_meta",
-                                        ) {
-                                            Ok(v) => v,
-                                            Err(_) => continue,
-                                        };
-                                        let offset = match self
-                                            .builder
-                                            .build_int_add(tmp, mul, "fld_off")
-                                        {
-                                            Ok(v) => v,
-                                            Err(_) => continue,
-                                        };
-                                        let gep_ptr = match self.i8_ptr_from_offset_i64(
-                                            obj_ptr,
-                                            offset,
-                                            "field_i8ptr",
-                                        ) {
-                                            Ok(p) => p,
-                                            Err(_) => continue,
-                                        };
-                                        match field_ty {
-                                            crate::types::OatsType::Number => {
-                                                let f64_ptr =
-                                                    match self.builder.build_pointer_cast(
-                                                        gep_ptr,
-                                                        self.context
-                                                            .ptr_type(AddressSpace::default()),
-                                                        "f64_ptr_cast",
-                                                    ) {
-                                                        Ok(p) => p,
-                                                        Err(_) => continue,
-                                                    };
-                                                if let Ok(loaded) = self.builder.build_load(
-                                                    self.f64_t,
-                                                    f64_ptr,
-                                                    "field_f64_load",
-                                                ) {
-                                                    return Ok(loaded.as_basic_value_enum());
-                                                }
+                                    let gep_ptr = match self.i8_ptr_from_offset_i64(
+                                        obj_ptr,
+                                        offset,
+                                        "field_i8ptr",
+                                    ) {
+                                        Ok(p) => p,
+                                        Err(_) => continue,
+                                    };
+                                    match field_ty {
+                                        crate::types::OatsType::Number => {
+                                            let f64_ptr = match self.builder.build_pointer_cast(
+                                                gep_ptr,
+                                                self.context.ptr_type(AddressSpace::default()),
+                                                "f64_ptr_cast",
+                                            ) {
+                                                Ok(p) => p,
+                                                Err(_) => continue,
+                                            };
+                                            if let Ok(loaded) = self.builder.build_load(
+                                                self.f64_t,
+                                                f64_ptr,
+                                                "field_f64_load",
+                                            ) {
+                                                return Ok(loaded.as_basic_value_enum());
                                             }
-                                            crate::types::OatsType::String
-                                            | crate::types::OatsType::NominalStruct(_)
-                                            | crate::types::OatsType::Array(_) => {
-                                                let slot_ptr_ty = self
-                                                    .context
-                                                    .ptr_type(AddressSpace::default());
-                                                let slot_ptr =
-                                                    match self.builder.build_pointer_cast(
-                                                        gep_ptr,
-                                                        slot_ptr_ty,
-                                                        "slot_ptr_cast",
-                                                    ) {
-                                                        Ok(p) => p,
-                                                        Err(_) => continue,
-                                                    };
-                                                if let Ok(loaded) = self.builder.build_load(
-                                                    self.i8ptr_t,
-                                                    slot_ptr,
-                                                    "field_load",
-                                                ) {
-                                                    return Ok(loaded.as_basic_value_enum());
-                                                }
-                                            }
-                                            crate::types::OatsType::Union(_) => {
-                                                let slot_ptr_ty = self
-                                                    .context
-                                                    .ptr_type(AddressSpace::default());
-                                                let slot_ptr =
-                                                    match self.builder.build_pointer_cast(
-                                                        gep_ptr,
-                                                        slot_ptr_ty,
-                                                        "slot_ptr_cast",
-                                                    ) {
-                                                        Ok(p) => p,
-                                                        Err(_) => continue,
-                                                    };
-                                                if let Ok(boxed) = self.builder.build_load(
-                                                    self.i8ptr_t,
-                                                    slot_ptr,
-                                                    "union_boxed_load",
-                                                ) && let BasicValueEnum::PointerValue(
-                                                    boxed_ptr,
-                                                ) = boxed
-                                                {
-                                                    let unbox_f = self.get_union_unbox_f64();
-                                                    if let Ok(cs) = self.builder.build_call(
-                                                        unbox_f,
-                                                        &[boxed_ptr.into()],
-                                                        "union_unbox_f64_call",
-                                                    ) && let inkwell::Either::Left(bv) =
-                                                        cs.try_as_basic_value()
-                                                    {
-                                                        return Ok(bv);
-                                                    }
-                                                    let unbox_p = self.get_union_unbox_ptr();
-                                                    if let Ok(cs2) = self.builder.build_call(
-                                                        unbox_p,
-                                                        &[boxed_ptr.into()],
-                                                        "union_unbox_ptr_call",
-                                                    ) && let inkwell::Either::Left(bv2) =
-                                                        cs2.try_as_basic_value()
-                                                    {
-                                                        return Ok(bv2);
-                                                    }
-                                                }
-                                            }
-                                            _ => {}
                                         }
+                                        crate::types::OatsType::String
+                                        | crate::types::OatsType::NominalStruct(_)
+                                        | crate::types::OatsType::Array(_) => {
+                                            let slot_ptr_ty =
+                                                self.context.ptr_type(AddressSpace::default());
+                                            let slot_ptr = match self.builder.build_pointer_cast(
+                                                gep_ptr,
+                                                slot_ptr_ty,
+                                                "slot_ptr_cast",
+                                            ) {
+                                                Ok(p) => p,
+                                                Err(_) => continue,
+                                            };
+                                            if let Ok(loaded) = self.builder.build_load(
+                                                self.i8ptr_t,
+                                                slot_ptr,
+                                                "field_load",
+                                            ) {
+                                                return Ok(loaded.as_basic_value_enum());
+                                            }
+                                        }
+                                        crate::types::OatsType::Union(_) => {
+                                            let slot_ptr_ty =
+                                                self.context.ptr_type(AddressSpace::default());
+                                            let slot_ptr = match self.builder.build_pointer_cast(
+                                                gep_ptr,
+                                                slot_ptr_ty,
+                                                "slot_ptr_cast",
+                                            ) {
+                                                Ok(p) => p,
+                                                Err(_) => continue,
+                                            };
+                                            if let Ok(boxed) = self.builder.build_load(
+                                                self.i8ptr_t,
+                                                slot_ptr,
+                                                "union_boxed_load",
+                                            ) && let BasicValueEnum::PointerValue(boxed_ptr) =
+                                                boxed
+                                            {
+                                                let unbox_f = self.get_union_unbox_f64();
+                                                if let Ok(cs) = self.builder.build_call(
+                                                    unbox_f,
+                                                    &[boxed_ptr.into()],
+                                                    "union_unbox_f64_call",
+                                                ) && let inkwell::Either::Left(bv) =
+                                                    cs.try_as_basic_value()
+                                                {
+                                                    return Ok(bv);
+                                                }
+                                                let unbox_p = self.get_union_unbox_ptr();
+                                                if let Ok(cs2) = self.builder.build_call(
+                                                    unbox_p,
+                                                    &[boxed_ptr.into()],
+                                                    "union_unbox_ptr_call",
+                                                ) && let inkwell::Either::Left(bv2) =
+                                                    cs2.try_as_basic_value()
+                                                {
+                                                    return Ok(bv2);
+                                                }
+                                            }
+                                        }
+                                        _ => {}
                                     }
                                 }
                             }
-                            // no matching field found; fall through to diagnostic below
                         }
+                        // no matching field found; fall through to diagnostic below
+                    }
 
                     let lowered_recv =
                         match self.lower_expr(&member.obj, function, param_map, locals) {

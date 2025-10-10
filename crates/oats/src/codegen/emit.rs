@@ -212,7 +212,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             .borrow_mut()
             .insert(fname.clone(), param_types_vec.clone());
 
-    let mut llvm_param_types: Vec<inkwell::types::BasicMetadataTypeEnum> = Vec::new();
+        let mut llvm_param_types: Vec<inkwell::types::BasicMetadataTypeEnum> = Vec::new();
         for pty in &param_types_vec {
             let llvm_ty = match pty {
                 OatsType::Number => self.f64_t.into(),

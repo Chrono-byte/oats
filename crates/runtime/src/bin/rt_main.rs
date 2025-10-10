@@ -22,8 +22,8 @@ fn try_call_oats_entry() -> Option<i32> {
         if sym.is_null() {
             return None;
         }
-    // SAFETY: caller-provided symbol should match `extern "C" fn() -> i32`.
-    let f = std::mem::transmute::<*mut c_void, extern "C" fn() -> i32>(sym);
+        // SAFETY: caller-provided symbol should match `extern "C" fn() -> i32`.
+        let f = std::mem::transmute::<*mut c_void, extern "C" fn() -> i32>(sym);
         Some(f())
     }
 }

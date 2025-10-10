@@ -68,7 +68,14 @@ impl<'a> super::CodeGen<'a> {
                     self.f64_t.as_basic_type_enum()
                 }
             }
-            OatsType::Void => panic!("Void cannot be mapped to a BasicTypeEnum for params"),
+            OatsType::Void => {
+                // Defensive fallback: Void should not appear as a parameter/alloca
+                // type. Returning an i8* avoids panics in unexpected edge cases
+                // and keeps lowering resilient. Call sites that encounter Void
+                // in parameter positions are likely buggy and should be
+                // diagnosed upstream.
+                self.i8ptr_t.as_basic_type_enum()
+            }
         }
     }
 

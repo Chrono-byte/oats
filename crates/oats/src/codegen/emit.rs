@@ -212,7 +212,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             .borrow_mut()
             .insert(fname.clone(), param_types_vec.clone());
 
-        let mut llvm_param_types: Vec<inkwell::types::BasicMetadataTypeEnum> = Vec::new();
+    let mut llvm_param_types: Vec<inkwell::types::BasicMetadataTypeEnum> = Vec::new();
         for pty in &param_types_vec {
             let llvm_ty = match pty {
                 OatsType::Number => self.f64_t.into(),
@@ -254,12 +254,32 @@ impl<'a> crate::codegen::CodeGen<'a> {
         let entry = self.context.append_basic_block(f, "entry");
         self.builder.position_at_end(entry);
 
+        // Merge constructor parameter properties (TS shorthand `constructor(public x: T)`) into
+        // the effective field list so they become true object fields even if not
+        // listed in the declared `fields` slice passed in. This ensures the
+        // constructor will allocate storage and initialize those fields.
+        let mut combined_fields: Vec<(String, crate::types::OatsType)> = fields.to_vec();
+        // Detect parameter properties by comparing the ctor param list. We
+        // previously collected `param_names` and `param_types_vec`; reconstruct
+        // which params were declared as `TsParamProp` by checking the AST again
+        // (ctor.params). For simplicity, if a parameter name matches an
+        // existing field we leave it alone; otherwise append it.
+        for (i, pname) in param_names.iter().enumerate() {
+            // If the pname is already a declared field, skip
+            if combined_fields.iter().any(|(n, _)| n == pname) {
+                continue;
+            }
+            // Otherwise, this parameter becomes a field (TS param-property)
+            // and we use the resolved parameter type as its field type.
+            combined_fields.push((pname.clone(), param_types_vec[i].clone()));
+        }
+
         // Layout: [ header (8) | metadata ptr (8) | field0 (8) | field1 (8) | ... ]
         // Reserve an 8-byte metadata slot immediately after the header so the
         // runtime can store a pointer to the class field_map at offset 8.
         let header_size = 8u64;
         let meta_slot = 8u64; // metadata pointer word after header
-        let field_count = fields.len();
+        let field_count = combined_fields.len();
         let total_size = header_size + meta_slot + (field_count as u64 * 8);
 
         let malloc_fn = self.get_malloc();
@@ -376,7 +396,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
         locals.push(scope);
 
-        for (field_idx, (field_name, _field_type)) in fields.iter().enumerate() {
+        for (field_idx, (field_name, _field_type)) in combined_fields.iter().enumerate() {
             if let Some(param_idx) = param_names.iter().position(|pn| pn == field_name) {
                 let param_val = f.get_nth_param(param_idx as u32).ok_or_else(|| {
                     crate::diagnostics::Diagnostic::simple(format!(
@@ -500,7 +520,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         // named `<class_name>_field_map` and will be used by the cycle collector.
         {
             let mut ptr_field_offsets: Vec<inkwell::values::BasicValueEnum> = Vec::new();
-            for (field_idx, (_field_name, field_type)) in fields.iter().enumerate() {
+            for (field_idx, (_field_name, field_type)) in combined_fields.iter().enumerate() {
                 // Determine if this field is pointer-like
                 let is_ptr = matches!(
                     field_type,

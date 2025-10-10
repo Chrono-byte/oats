@@ -49,6 +49,10 @@ type LocalsStackLocal<'a> = Vec<std::collections::HashMap<String, LocalEntry<'a>
 pub struct LoopContext<'a> {
     pub continue_block: inkwell::basic_block::BasicBlock<'a>,
     pub break_block: inkwell::basic_block::BasicBlock<'a>,
+    // Index into the `locals_stack` marking the first scope that belongs to
+    // the loop. When breaking/continuing we should only emit rc_decs for
+    // locals added from this index onward.
+    pub locals_start: usize,
 }
 
 // The main code generation structure, holding the LLVM context, module,

@@ -121,7 +121,16 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 if let deno_ast::swc::ast::Expr::Object(obj_lit) = &**init
                                     && declared_nominal.is_some()
                                 {
-                                    let nominal_name = declared_nominal.clone().unwrap();
+                                    // declared_nominal was checked with `is_some()` above;
+                                    // be defensive and avoid panics by returning a Diagnostic
+                                    // if the value is somehow missing.
+                                    let nominal_name = if let Some(n) = declared_nominal.clone() {
+                                        n
+                                    } else {
+                                        return Err(crate::diagnostics::Diagnostic::simple(
+                                            "internal error: nominal name missing",
+                                        ));
+                                    };
                                     let mut fields: Vec<(String, crate::types::OatsType)> = Vec::new();
                                     use deno_ast::swc::ast;
                                     for prop in &obj_lit.props {
@@ -248,9 +257,16 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                     })?;
                                                 // Store element into slot using same logic as object literal
                                                 // Use the declared element type to choose storage
-                                                let field_ty = elem_types
-                                                    .get(i)
-                                                    .expect("tuple elem type missing");
+                                                        let field_ty = match elem_types.get(i) {
+                                                            Some(ft) => ft,
+                                                            None => {
+                                                                return Err(
+                                                                    crate::diagnostics::Diagnostic::simple(
+                                                                        "tuple element type missing",
+                                                                    ),
+                                                                );
+                                                            }
+                                                        };
                                                 match field_ty {
                                                             crate::types::OatsType::Number => {
                                                                 // Coerce to f64 then store into an f64* slot
@@ -587,8 +603,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     // statements are implemented. See issue #TODO (add issue)
                     // for full labeled-break semantics and tests.
 
-                    // Emit RC decrements for locals before breaking
-                    self.emit_rc_dec_for_locals(_locals_stack);
+                    // Emit RC decrements for locals owned by the current loop
+                    // (only scopes starting at `locals_start`). This avoids
+                    // decreffing outer scopes that remain live after the break.
+                    self._emit_rc_dec_for_locals_from(_locals_stack, loop_ctx.locals_start);
 
                     // Branch to break block
                     let _ = self
@@ -616,8 +634,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     // `continue` statements are implemented. See issue #TODO
                     // (add issue) for full labeled-continue semantics and tests.
 
-                    // Emit RC decrements for locals before continuing
-                    self.emit_rc_dec_for_locals(_locals_stack);
+                    // Emit RC decrements for locals owned by the current loop
+                    // (only scopes starting at `locals_start`). This avoids
+                    // decreffing outer scopes that remain live after the continue.
+                    self._emit_rc_dec_for_locals_from(_locals_stack, loop_ctx.locals_start);
 
                     // Branch to continue block
                     let _ = self
@@ -760,6 +780,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 crate::codegen::LoopContext {
                                     continue_block: loop_cond_bb,
                                     break_block: loop_after_bb,
+                                    locals_start: _locals_stack.len(),
                                 },
                             );
 
@@ -996,6 +1017,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     .push(crate::codegen::LoopContext {
                         continue_block: loop_incr_bb,
                         break_block: loop_after_bb,
+                        locals_start: _locals_stack.len(),
                     });
 
                 // Branch to condition
@@ -1074,6 +1096,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     .push(crate::codegen::LoopContext {
                         continue_block: loop_cond_bb,
                         break_block: loop_after_bb,
+                        locals_start: _locals_stack.len(),
                     });
 
                 // Branch to condition
@@ -1135,6 +1158,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     .push(crate::codegen::LoopContext {
                         continue_block: loop_cond_bb,
                         break_block: loop_after_bb,
+                        locals_start: _locals_stack.len(),
                     });
 
                 // Branch directly to body (execute at least once)

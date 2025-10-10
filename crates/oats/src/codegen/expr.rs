@@ -341,10 +341,16 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     )),
                                 }
                             } else {
-                                Err(Diagnostic::simple("unsupported expression"))
+                                Err(Diagnostic::simple_with_span(
+                                    "string concatenation helper `str_concat` not found",
+                                    bin.span.lo.0 as usize,
+                                ))
                             }
                         } else {
-                            Err(Diagnostic::simple("unsupported expression"))
+                            Err(Diagnostic::simple_with_span(
+                                "pointer binary operation not supported",
+                                bin.span.lo.0 as usize,
+                            ))
                         }
                     }
                     _ => Err(Diagnostic::simple("operation not supported (bin fallback)")),
@@ -393,7 +399,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         .replace(name.clone());
                     return Ok(loaded);
                 }
-                Err(Diagnostic::simple("unsupported expression"))
+                Err(Diagnostic::simple_with_span(
+                    format!("unknown identifier '{}'", name),
+                    id.span.lo.0 as usize,
+                ))
             }
             ast::Expr::Call(call) => {
                 // Support simple identifier callees and member-callee method calls.
@@ -408,56 +417,219 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         ast::Expr::Ident(ident) => {
                             let fname = ident.sym.to_string();
 
-                            // Special-case: println(x) -> call runtime print helpers
-                            //
+                            // Special-case: println(...) -> call runtime print helpers
                             // `println` is a convenience used by tests/examples and
                             // lowered to runtime helpers `print_f64` / `print_str`.
                             if fname == "println" {
-                                if call.args.len() != 1 {
-                                    return Err(Diagnostic::simple("expression lowering failed"))?;
-                                }
-                                let a = &call.args[0];
-                                if let Ok(val) =
-                                    self.lower_expr(&a.expr, function, param_map, locals)
-                                {
+                                // Print each argument sequentially. This supports
+                                // `println(a, b, c)` by emitting individual
+                                // print calls for each argument and returning zero.
+                                // Print each argument sequentially without a newline.
+                                for a in &call.args {
+                                    let val = match self
+                                        .lower_expr(&a.expr, function, param_map, locals)
+                                    {
+                                        Ok(v) => v,
+                                        Err(d) => return Err(d)?,
+                                    };
                                     match val {
                                         BasicValueEnum::FloatValue(fv) => {
                                             if let Some(print_fn) =
-                                                self.module.get_function("print_f64")
+                                                self.module.get_function("print_f64_no_nl")
                                             {
                                                 let _ = self
                                                     .builder
                                                     .build_call(
                                                         print_fn,
                                                         &[fv.into()],
-                                                        "print_f64_call",
+                                                        "print_f64_no_nl_call",
                                                     )
                                                     .ok();
                                             }
-                                            let zero = self.f64_t.const_float(0.0);
-                                            return Ok(zero.as_basic_value_enum());
                                         }
                                         BasicValueEnum::PointerValue(pv) => {
-                                            if let Some(print_fn) =
-                                                self.module.get_function("print_str")
+                                            // Attempt to format arrays/tuples specially.
+                                            let mut used = false;
+                                            if let Some(orig) =
+                                                self.last_expr_origin_local.borrow().clone()
                                             {
-                                                let _ = self
-                                                    .builder
-                                                    .build_call(
-                                                        print_fn,
-                                                        &[pv.into()],
-                                                        "print_str_call",
-                                                    )
-                                                    .ok();
+                                                if let Some((
+                                                    _ptr,
+                                                    _ty,
+                                                    _init,
+                                                    _is_const,
+                                                    _is_weak,
+                                                    nominal,
+                                                )) = self.find_local(locals, &orig)
+                                                {
+                                                    if let Some(n) = nominal {
+                                                        if n == "__oats_array" {
+                                                            if let Some(array_to_string) = self
+                                                                .module
+                                                                .get_function("array_to_string")
+                                                            {
+                                                                let cs = self.builder.build_call(
+                                                                    array_to_string,
+                                                                    &[pv.into()],
+                                                                    "array_to_string_call",
+                                                                );
+                                                                if let Ok(cs) = cs
+                                                                    && let inkwell::Either::Left(bv) =
+                                                                        cs.try_as_basic_value()
+                                                                {
+                                                                    let str_ptr =
+                                                                        bv.into_pointer_value();
+                                                                    if let Some(print_fn) =
+                                                                        self.module.get_function(
+                                                                            "print_str_no_nl",
+                                                                        )
+                                                                    {
+                                                                        let _ = self.builder.build_call(print_fn, &[str_ptr.into()], "print_str_no_nl_call").ok();
+                                                                    }
+                                                                    if let Some(rc_dec_str) = self
+                                                                        .module
+                                                                        .get_function("rc_dec_str")
+                                                                    {
+                                                                        let _ = self
+                                                                            .builder
+                                                                            .build_call(
+                                                                                rc_dec_str,
+                                                                                &[str_ptr.into()],
+                                                                                "rc_dec_str_call",
+                                                                            )
+                                                                            .ok();
+                                                                    }
+                                                                    used = true;
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                                if !used
+                                                    && self
+                                                        .class_fields
+                                                        .borrow()
+                                                        .get(&orig)
+                                                        .is_some()
+                                                {
+                                                    if let Some(array_to_string) =
+                                                        self.module.get_function("array_to_string")
+                                                    {
+                                                        let cs = self.builder.build_call(
+                                                            array_to_string,
+                                                            &[pv.into()],
+                                                            "array_to_string_call",
+                                                        );
+                                                        if let Ok(cs) = cs
+                                                            && let inkwell::Either::Left(bv) =
+                                                                cs.try_as_basic_value()
+                                                        {
+                                                            let str_ptr = bv.into_pointer_value();
+                                                            if let Some(print_fn) = self
+                                                                .module
+                                                                .get_function("print_str_no_nl")
+                                                            {
+                                                                let _ = self
+                                                                    .builder
+                                                                    .build_call(
+                                                                        print_fn,
+                                                                        &[str_ptr.into()],
+                                                                        "print_str_no_nl_call",
+                                                                    )
+                                                                    .ok();
+                                                            }
+                                                            if let Some(rc_dec_str) = self
+                                                                .module
+                                                                .get_function("rc_dec_str")
+                                                            {
+                                                                let _ = self
+                                                                    .builder
+                                                                    .build_call(
+                                                                        rc_dec_str,
+                                                                        &[str_ptr.into()],
+                                                                        "rc_dec_str_call",
+                                                                    )
+                                                                    .ok();
+                                                            }
+                                                            used = true;
+                                                        }
+                                                    }
+                                                }
+                                                // If still not used, check whether the arg is a function parameter
+                                                if !used {
+                                                    // If the argument was an identifier, see if it maps to a parameter index
+                                                    if let deno_ast::swc::ast::Expr::Ident(ident) =
+                                                        &*a.expr
+                                                    {
+                                                        let arg_name = ident.sym.to_string();
+                                                        if let Some(idx) = param_map.get(&arg_name)
+                                                        {
+                                                            // Look up param types for the current function
+                                                            let fname = function
+                                                                .get_name()
+                                                                .to_str()
+                                                                .unwrap_or("<fn>");
+                                                            if let Some(param_types) = self
+                                                                .fn_param_types
+                                                                .borrow()
+                                                                .get(fname)
+                                                            {
+                                                                if let Some(pt) =
+                                                                    param_types.get(*idx as usize)
+                                                                {
+                                                                    if matches!(pt, crate::types::OatsType::Array(_)) {
+                                                                        if let Some(array_to_string) = self.module.get_function("array_to_string") {
+                                                                            let cs = self.builder.build_call(array_to_string, &[pv.into()], "array_to_string_call");
+                                                                            if let Ok(cs) = cs && let inkwell::Either::Left(bv) = cs.try_as_basic_value() {
+                                                                                let str_ptr = bv.into_pointer_value();
+                                                                                if let Some(print_fn) = self.module.get_function("print_str_no_nl") {
+                                                                                    let _ = self.builder.build_call(print_fn, &[str_ptr.into()], "print_str_no_nl_call").ok();
+                                                                                }
+                                                                                if let Some(rc_dec_str) = self.module.get_function("rc_dec_str") {
+                                                                                    let _ = self.builder.build_call(rc_dec_str, &[str_ptr.into()], "rc_dec_str_call").ok();
+                                                                                }
+                                                                                used = true;
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
                                             }
-                                            let zero = self.f64_t.const_float(0.0);
-                                            return Ok(zero.as_basic_value_enum());
+                                            if !used {
+                                                if let Some(print_fn) =
+                                                    self.module.get_function("print_str_no_nl")
+                                                {
+                                                    let _ = self
+                                                        .builder
+                                                        .build_call(
+                                                            print_fn,
+                                                            &[pv.into()],
+                                                            "print_str_no_nl_call",
+                                                        )
+                                                        .ok();
+                                                }
+                                            }
                                         }
-                                        _ => return Err(Diagnostic::simple("operation failed")),
+                                        _ => {
+                                            return Err(Diagnostic::simple_with_span(
+                                                "operation failed",
+                                                call.span.lo.0 as usize,
+                                            ));
+                                        }
                                     }
-                                } else {
-                                    return Err(Diagnostic::simple("expression lowering failed"))?;
                                 }
+                                // After printing all args, emit a single newline
+                                if let Some(nl_fn) = self.module.get_function("print_newline") {
+                                    let _ = self
+                                        .builder
+                                        .build_call(nl_fn, &[], "print_newline_call")
+                                        .ok();
+                                }
+                                let zero = self.f64_t.const_float(0.0);
+                                return Ok(zero.as_basic_value_enum());
                             }
 
                             if let Some(fv) = self.module.get_function(&fname) {
@@ -497,9 +669,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     Ok(zero.as_basic_value_enum())
                                 }
                             } else {
-                                Err(Diagnostic::simple(
-                                    "unsupported expression (call_ident fallback)",
-                                ))
+                                Err(Diagnostic::simple(format!(
+                                    "unknown or missing function '{}'",
+                                    fname
+                                )))
                             }
                         }
                         ast::Expr::Member(member) => {
@@ -941,8 +1114,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         }
                                     }
                                 }
-                                Err(Diagnostic::simple(
-                                    "unsupported expression (member call fallback)",
+                                Err(Diagnostic::simple_with_span(
+                                    "unsupported member call or dynamic callee",
+                                    call.span.lo.0 as usize,
                                 ))
                             }
                         }
@@ -1197,21 +1371,29 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         self.last_expr_origin_local.borrow_mut().take();
                                         return Ok(zero.as_basic_value_enum());
                                     }
-                                    Err(Diagnostic::simple(
-                                        "unsupported expression (closure call)",
+                                    Err(Diagnostic::simple_with_span(
+                                        "unsupported closure call (indirect call lowering failed)",
+                                        call.span.lo.0 as usize,
                                     ))
                                 } else {
-                                    Err(Diagnostic::simple(
+                                    Err(Diagnostic::simple_with_span(
                                         "unsupported callee expression",
+                                        call.span.lo.0 as usize,
                                     ))
                                 }
                             } else {
-                                Err(Diagnostic::simple("expression lowering failed"))
+                                Err(Diagnostic::simple_with_span(
+                                    "expression lowering failed",
+                                    call.span.lo.0 as usize,
+                                ))
                             }
                         }
                     }
                 } else {
-                    Err(Diagnostic::simple("unsupported expression"))
+                    Err(Diagnostic::simple_with_span(
+                        "unsupported call expression: callee form not supported",
+                        call.span.lo.0 as usize,
+                    ))
                 }
             }
             // (Duplicate closure-call lowering removed; handled in the primary Call arm above.)
@@ -1243,11 +1425,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             // expression originated from a known local that holds a
                             // freshly-created closure (e.g., __closure_tmp).
                             if let Some(orig) = self.last_expr_origin_local.borrow().clone()
-                                && let Some(rt) = self.closure_local_rettype.borrow().get(&orig) {
-                                    self.closure_local_rettype
-                                        .borrow_mut()
-                                        .insert(name.clone(), rt.clone());
-                                }
+                                && let Some(rt) = self.closure_local_rettype.borrow().get(&orig)
+                            {
+                                self.closure_local_rettype
+                                    .borrow_mut()
+                                    .insert(name.clone(), rt.clone());
+                            }
                             // If the local is a pointer type, and previously initialized, decrement old refcount
                             if _ty == self.i8ptr_t.as_basic_type_enum() {
                                 // load old value
@@ -1324,12 +1507,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     (obj_origin_after_obj.clone(), rhs_origin_after_rhs.clone())
                                     && let Some(rt) =
                                         self.closure_local_rettype.borrow().get(&rhs_orig)
-                                    {
-                                        let field_key = format!("{}.{}", obj_orig, field_name);
-                                        self.closure_local_rettype
-                                            .borrow_mut()
-                                            .insert(field_key, rt.clone());
-                                    }
+                                {
+                                    let field_key = format!("{}.{}", obj_orig, field_name);
+                                    self.closure_local_rettype
+                                        .borrow_mut()
+                                        .insert(field_key, rt.clone());
+                                }
                                 // Determine the class name from the object expression
                                 let mut class_name_opt: Option<String> = None;
 
@@ -1715,7 +1898,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         ));
                     }
                 }
-                Err(Diagnostic::simple("unsupported expression"))
+                Err(Diagnostic::simple_with_span(
+                    "unsupported assignment target or pattern",
+                    assign.span.lo.0 as usize,
+                ))
             }
             ast::Expr::Cond(cond) => {
                 // Ternary expression: test ? cons : alt
@@ -1844,7 +2030,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     return Ok(phi);
                 }
 
-                Err(Diagnostic::simple("unsupported expression"))
+                Err(Diagnostic::simple_with_span(
+                    "unsupported conditional expression (ternary) form",
+                    cond.span.lo.0 as usize,
+                ))
             }
             ast::Expr::Lit(lit) => {
                 use deno_ast::swc::ast::Lit;
@@ -1918,7 +2107,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             self.string_literals.borrow_mut().insert(key, ptr);
                             return Ok(ptr.as_basic_value_enum());
                         }
-                        Err(Diagnostic::simple("unsupported expression"))
+                        Err(Diagnostic::simple_with_span(
+                            "failed to lower string literal",
+                            s.span.lo.0 as usize,
+                        ))
                     }
                     _ => Err(Diagnostic::simple("operation not supported")),
                 }
@@ -1935,11 +2127,17 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             lowered_elems.push(ev);
                         } else {
                             // unsupported element lowering
-                            return Err(Diagnostic::simple("expression lowering failed"))?;
+                            return Err(Diagnostic::simple_with_span(
+                                "expression lowering failed",
+                                arr.span.lo.0 as usize,
+                            ))?;
                         }
                     } else {
                         // elided element like [ , ] -> treat as undefined -> unsupported
-                        return Err(Diagnostic::simple("expression lowering failed"))?;
+                        return Err(Diagnostic::simple_with_span(
+                            "expression lowering failed",
+                            arr.span.lo.0 as usize,
+                        ))?;
                     }
                 }
 
@@ -1999,7 +2197,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 let data_ptr_i8 = if let Ok(p) = data_i8_res {
                     p
                 } else {
-                    return Err(Diagnostic::simple("expression lowering failed"))?;
+                    return Err(Diagnostic::simple_with_span(
+                        "expression lowering failed",
+                        arr.span.lo.0 as usize,
+                    ))?;
                 };
                 let array_set_ptr_fn = self.get_array_set_ptr();
 
@@ -2020,7 +2221,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             let elem_i8 = if let Ok(p) = elem_i8_res {
                                 p
                             } else {
-                                return Err(Diagnostic::simple("expression lowering failed"))?;
+                                return Err(Diagnostic::simple_with_span(
+                                    "expression lowering failed",
+                                    arr.span.lo.0 as usize,
+                                ))?;
                             };
                             // bitcast to f64* (unwrap Result returned by pointer cast)
                             let elem_ptr = match self.builder.build_pointer_cast(
@@ -2054,7 +2258,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         let elem_i8 = if let Ok(p) = elem_i8_res {
                             p
                         } else {
-                            return Err(Diagnostic::simple("expression lowering failed"))?;
+                            return Err(Diagnostic::simple_with_span(
+                                "expression lowering failed",
+                                arr.span.lo.0 as usize,
+                            ))?;
                         };
                         // bitcast to i8** (pointer-to-pointer)
                         let elem_ptr = match self.builder.build_pointer_cast(
@@ -2082,13 +2289,43 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 // store integer as-is into pointer slot (coerce as i8*)
                                 let _ = self.builder.build_store(elem_ptr, iv);
                             }
-                            _ => return Err(Diagnostic::simple("operation failed")),
+                            BasicValueEnum::FloatValue(fv) => {
+                                // Box numeric payload into a union object and store pointer via array_set_ptr
+                                let box_fn = self.get_union_box_f64();
+                                let cs = match self.builder.build_call(
+                                    box_fn,
+                                    &[fv.into()],
+                                    "union_box_f64_call",
+                                ) {
+                                    Ok(cs) => cs,
+                                    Err(_) => return Err(Diagnostic::simple("operation failed")),
+                                };
+                                let boxed_ptr = match cs.try_as_basic_value() {
+                                    inkwell::Either::Left(bv) => bv.into_pointer_value(),
+                                    _ => return Err(Diagnostic::simple("operation failed")),
+                                };
+                                let idx_const = self.i64_t.const_int(i as u64, false);
+                                match self.builder.build_call(
+                                    array_set_ptr_fn,
+                                    &[arr_ptr.into(), idx_const.into(), boxed_ptr.into()],
+                                    "array_set_ptr_call",
+                                ) {
+                                    Ok(_cs) => (),
+                                    Err(_) => return Err(Diagnostic::simple("operation failed")),
+                                };
+                            }
+                            _ => {
+                                return Err(Diagnostic::simple_with_span(
+                                    "operation failed",
+                                    arr.span.lo.0 as usize,
+                                ));
+                            }
                         }
                     }
                     Ok(arr_ptr.as_basic_value_enum())
                 }
             }
-            ast::Expr::This(_) => {
+            ast::Expr::This(this_expr) => {
                 if let Some((ptr, ty, init, _ignore, _extra, _nominal)) =
                     self.find_local(locals, "this")
                     && init
@@ -2100,25 +2337,91 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     if let Some(pv) = function.get_nth_param(*idx) {
                         return Ok(pv);
                     } else {
-                        return Err(Diagnostic::simple("expression lowering failed"))?;
+                        return Err(Diagnostic::simple_with_span(
+                            "expression lowering failed",
+                            this_expr.span.lo.0 as usize,
+                        ))?;
                     }
                 }
-                Err(Diagnostic::simple("unsupported expression"))
+                Err(Diagnostic::simple_with_span(
+                    "unresolved `this` reference in this context",
+                    this_expr.span.lo.0 as usize,
+                ))
             }
             ast::Expr::Member(member) => {
                 // Support both computed member access (obj[expr]) and dot-member (obj.prop)
                 use deno_ast::swc::ast::MemberProp;
                 match &member.prop {
                     MemberProp::Computed(boxed) => {
-                        // lower object and index
-                        if let Ok(obj_val) =
-                            self.lower_expr(&member.obj, function, param_map, locals)
-                            && let Ok(idx_val) =
-                                self.lower_expr(&boxed.expr, function, param_map, locals)
-                        {
-                            // Only support pointer-array indexing (i8**).
-                            if let BasicValueEnum::PointerValue(arr_ptr) = obj_val {
-                                // compute index as i64 for runtime helpers
+                        // lower object and index separately so we can produce clearer diagnostics
+                        let obj_res = self.lower_expr(&member.obj, function, param_map, locals);
+                        let idx_res = self.lower_expr(&boxed.expr, function, param_map, locals);
+                        let obj_val = match obj_res {
+                            Ok(v) => v,
+                            Err(_) => {
+                                return Err(Diagnostic::simple_with_span(
+                                    "failed to lower member object expression",
+                                    member.span.lo.0 as usize,
+                                ));
+                            }
+                        };
+                        let idx_val = match idx_res {
+                            Ok(v) => v,
+                            Err(_) => {
+                                return Err(Diagnostic::simple_with_span(
+                                    "failed to lower member index expression",
+                                    member.span.lo.0 as usize,
+                                ));
+                            }
+                        };
+
+                        // Only support pointer-array indexing (i8**). Try to
+                        // infer a nominal class for the object (this may be a
+                        // tuple shape we registered earlier) so we can lower
+                        // fixed-field access without calling generic array_get
+                        // runtime helpers.
+                        if let BasicValueEnum::PointerValue(arr_ptr) = obj_val {
+                            // Try to infer a nominal class name from the object
+                            let mut class_name_opt: Option<String> = None;
+                            if let deno_ast::swc::ast::Expr::Ident(ident) = &*member.obj {
+                                let ident_name = ident.sym.to_string();
+                                // check locals for nominal annotation
+                                if let Some((_, _ty, _init, _is_const, _is_weak, nominal)) =
+                                    self.find_local(locals, &ident_name)
+                                    && let Some(nom) = nominal
+                                {
+                                    class_name_opt = Some(nom);
+                                } else if let Some(param_idx) = param_map.get(&ident_name)
+                                    && let Some(param_types) = self
+                                        .fn_param_types
+                                        .borrow()
+                                        .get(function.get_name().to_str().unwrap_or(""))
+                                {
+                                    let idx = *param_idx as usize;
+                                    if idx < param_types.len()
+                                        && let crate::types::OatsType::NominalStruct(n) =
+                                            &param_types[idx]
+                                    {
+                                        class_name_opt = Some(n.clone());
+                                    }
+                                }
+                            } else if matches!(&*member.obj, deno_ast::swc::ast::Expr::This(_)) {
+                                let fname = function.get_name().to_str().unwrap_or("");
+                                if let Some(param_types) = self.fn_param_types.borrow().get(fname)
+                                    && !param_types.is_empty()
+                                    && let crate::types::OatsType::NominalStruct(n) =
+                                        &param_types[0]
+                                {
+                                    class_name_opt = Some(n.clone());
+                                }
+                            }
+
+                            // If we inferred a nominal type and have its fields registered,
+                            // perform field load similar to dot-member lowering.
+                            if let Some(class_name) = class_name_opt.clone()
+                                && let Some(fields) = self.class_fields.borrow().get(&class_name)
+                            {
+                                // compute integer index
                                 let idx_i64 = match idx_val {
                                     BasicValueEnum::IntValue(iv) => self
                                         .builder
@@ -2128,62 +2431,239 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         .builder
                                         .build_float_to_signed_int(fv, self.i64_t, "f2i")
                                         .map_err(|_| Diagnostic::simple("LLVM builder error"))?,
-                                    _ => return Err(Diagnostic::simple("operation failed")),
+                                    _ => {
+                                        return Err(Diagnostic::simple_with_span(
+                                            "unsupported index type for computed member access",
+                                            member.span.lo.0 as usize,
+                                        ));
+                                    }
                                 };
-
-                                // If index is numeric, call typed runtime helper array_get_f64
-                                if matches!(
-                                    idx_val,
-                                    BasicValueEnum::IntValue(_) | BasicValueEnum::FloatValue(_)
-                                ) {
-                                    // cast idx to i64
-                                    let idx_i64 = match idx_val {
-                                        BasicValueEnum::IntValue(iv) => self
+                                // If index is a compile-time constant we can use it to lookup the field
+                                if let Some(const_idx) = idx_i64.get_zero_extended_constant() {
+                                    let idx_usize = const_idx as usize;
+                                    if let Some((field_idx, (_fname, field_ty))) =
+                                        fields.iter().enumerate().find(|(i, _)| *i == idx_usize)
+                                    {
+                                        // compute offset like in dot-member lowering
+                                        let hdr_size = self
+                                            .i64_t
+                                            .const_int(std::mem::size_of::<u64>() as u64, false);
+                                        let ptr_sz = self
+                                            .i64_t
+                                            .const_int(std::mem::size_of::<usize>() as u64, false);
+                                        let idx_const =
+                                            self.i64_t.const_int(field_idx as u64, false);
+                                        let mul = self
                                             .builder
-                                            .build_int_cast(iv, self.i64_t, "idx_i64")
+                                            .build_int_mul(idx_const, ptr_sz, "fld_off_mul")
                                             .map_err(|_| {
                                                 Diagnostic::simple("LLVM builder error")
-                                            })?,
-                                        BasicValueEnum::FloatValue(fv) => self
+                                            })?;
+                                        let meta_slot = self.i64_t.const_int(8u64, false);
+                                        let tmp = self
                                             .builder
-                                            .build_float_to_signed_int(fv, self.i64_t, "f2i_i64")
+                                            .build_int_add(hdr_size, meta_slot, "hdr_plus_meta")
                                             .map_err(|_| {
                                                 Diagnostic::simple("LLVM builder error")
-                                            })?,
-                                        _ => return Err(Diagnostic::simple("operation failed")),
-                                    };
-                                    let array_get = self.get_array_get_f64();
-                                    let cs = match self.builder.build_call(
-                                        array_get,
-                                        &[arr_ptr.into(), idx_i64.into()],
-                                        "array_get_f64_call",
-                                    ) {
-                                        Ok(cs) => cs,
-                                        Err(_) => {
-                                            return Err(Diagnostic::simple("operation failed"));
+                                            })?;
+                                        let offset = self
+                                            .builder
+                                            .build_int_add(tmp, mul, "fld_off")
+                                            .map_err(|_| {
+                                                Diagnostic::simple("LLVM builder error")
+                                            })?;
+                                        let gep_ptr = self
+                                            .i8_ptr_from_offset_i64(arr_ptr, offset, "field_i8ptr")
+                                            .map_err(|_| Diagnostic::simple("operation failed"))?;
+                                        match field_ty {
+                                            crate::types::OatsType::Number => {
+                                                let f64_ptr = self
+                                                    .builder
+                                                    .build_pointer_cast(
+                                                        gep_ptr,
+                                                        self.context
+                                                            .ptr_type(AddressSpace::default()),
+                                                        "f64_ptr_cast",
+                                                    )
+                                                    .map_err(|_| {
+                                                        Diagnostic::simple("LLVM builder error")
+                                                    })?;
+                                                let loaded = self
+                                                    .builder
+                                                    .build_load(
+                                                        self.f64_t,
+                                                        f64_ptr,
+                                                        "field_f64_load",
+                                                    )
+                                                    .map_err(|_| {
+                                                        Diagnostic::simple("operation failed")
+                                                    })?;
+                                                return Ok(loaded.as_basic_value_enum());
+                                            }
+                                            crate::types::OatsType::String
+                                            | crate::types::OatsType::NominalStruct(_)
+                                            | crate::types::OatsType::Array(_) => {
+                                                let slot_ptr_ty =
+                                                    self.context.ptr_type(AddressSpace::default());
+                                                let slot_ptr = self
+                                                    .builder
+                                                    .build_pointer_cast(
+                                                        gep_ptr,
+                                                        slot_ptr_ty,
+                                                        "slot_ptr_cast",
+                                                    )
+                                                    .map_err(|_| {
+                                                        Diagnostic::simple("operation failed")
+                                                    })?;
+                                                let loaded = self
+                                                    .builder
+                                                    .build_load(
+                                                        self.i8ptr_t,
+                                                        slot_ptr,
+                                                        "field_load",
+                                                    )
+                                                    .map_err(|_| {
+                                                        Diagnostic::simple("operation failed")
+                                                    })?;
+                                                return Ok(loaded.as_basic_value_enum());
+                                            }
+                                            crate::types::OatsType::Union(_) => {
+                                                let slot_ptr_ty =
+                                                    self.context.ptr_type(AddressSpace::default());
+                                                let slot_ptr = self
+                                                    .builder
+                                                    .build_pointer_cast(
+                                                        gep_ptr,
+                                                        slot_ptr_ty,
+                                                        "slot_ptr_cast",
+                                                    )
+                                                    .map_err(|_| {
+                                                        Diagnostic::simple("operation failed")
+                                                    })?;
+                                                let boxed = self
+                                                    .builder
+                                                    .build_load(
+                                                        self.i8ptr_t,
+                                                        slot_ptr,
+                                                        "union_boxed_load",
+                                                    )
+                                                    .map_err(|_| {
+                                                        Diagnostic::simple("operation failed")
+                                                    })?;
+                                                if let BasicValueEnum::PointerValue(boxed_ptr) =
+                                                    boxed
+                                                {
+                                                    let unbox_f = self.get_union_unbox_f64();
+                                                    let cs = self
+                                                        .builder
+                                                        .build_call(
+                                                            unbox_f,
+                                                            &[boxed_ptr.into()],
+                                                            "union_unbox_f64_call",
+                                                        )
+                                                        .map_err(|_| {
+                                                            Diagnostic::simple("operation failed")
+                                                        })?;
+                                                    if let inkwell::Either::Left(bv) =
+                                                        cs.try_as_basic_value()
+                                                    {
+                                                        return Ok(bv);
+                                                    }
+                                                    let unbox_p = self.get_union_unbox_ptr();
+                                                    let cs2 = self
+                                                        .builder
+                                                        .build_call(
+                                                            unbox_p,
+                                                            &[boxed_ptr.into()],
+                                                            "union_unbox_ptr_call",
+                                                        )
+                                                        .map_err(|_| {
+                                                            Diagnostic::simple("operation failed")
+                                                        })?;
+                                                    if let inkwell::Either::Left(bv2) =
+                                                        cs2.try_as_basic_value()
+                                                    {
+                                                        return Ok(bv2);
+                                                    }
+                                                }
+                                                return Err(Diagnostic::simple("operation failed"));
+                                            }
+                                            _ => {
+                                                return Err(Diagnostic::simple(
+                                                    "unsupported field type for tuple/nominal access",
+                                                ));
+                                            }
                                         }
-                                    };
-                                    let either = cs.try_as_basic_value();
-                                    if let inkwell::Either::Left(bv) = either {
-                                        return Ok(bv);
                                     }
                                 }
+                            }
+                            // compute index as i64 for runtime helpers
+                            let idx_i64 = match idx_val {
+                                BasicValueEnum::IntValue(iv) => self
+                                    .builder
+                                    .build_int_cast(iv, self.i64_t, "idx_i64")
+                                    .map_err(|_| Diagnostic::simple("LLVM builder error"))?,
+                                BasicValueEnum::FloatValue(fv) => self
+                                    .builder
+                                    .build_float_to_signed_int(fv, self.i64_t, "f2i")
+                                    .map_err(|_| Diagnostic::simple("LLVM builder error"))?,
+                                _ => {
+                                    return Err(Diagnostic::simple_with_span(
+                                        "unsupported index type for computed member access",
+                                        member.span.lo.0 as usize,
+                                    ));
+                                }
+                            };
 
-                                // fallback: call runtime helper that returns a pointer and rc_inc's it
-                                let array_get_ptr_fn = self.get_array_get_ptr();
+                            // If index is numeric, try typed runtime helper array_get_f64 first
+                            if matches!(
+                                idx_val,
+                                BasicValueEnum::IntValue(_) | BasicValueEnum::FloatValue(_)
+                            ) {
+                                let array_get = self.get_array_get_f64();
                                 let cs = match self.builder.build_call(
-                                    array_get_ptr_fn,
+                                    array_get,
                                     &[arr_ptr.into(), idx_i64.into()],
-                                    "array_get_ptr_call",
+                                    "array_get_f64_call",
                                 ) {
                                     Ok(cs) => cs,
-                                    Err(_) => return Err(Diagnostic::simple("operation failed")),
+                                    Err(_) => {
+                                        return Err(Diagnostic::simple_with_span(
+                                            "operation failed",
+                                            member.span.lo.0 as usize,
+                                        ));
+                                    }
                                 };
                                 let either = cs.try_as_basic_value();
                                 if let inkwell::Either::Left(bv) = either {
                                     return Ok(bv);
                                 }
                             }
+
+                            // Fallback: call runtime helper that returns a pointer and rc_inc's it
+                            let array_get_ptr_fn = self.get_array_get_ptr();
+                            let cs = match self.builder.build_call(
+                                array_get_ptr_fn,
+                                &[arr_ptr.into(), idx_i64.into()],
+                                "array_get_ptr_call",
+                            ) {
+                                Ok(cs) => cs,
+                                Err(_) => {
+                                    return Err(Diagnostic::simple_with_span(
+                                        "operation failed",
+                                        member.span.lo.0 as usize,
+                                    ));
+                                }
+                            };
+                            let either = cs.try_as_basic_value();
+                            if let inkwell::Either::Left(bv) = either {
+                                return Ok(bv);
+                            }
+                        } else {
+                            return Err(Diagnostic::simple_with_span(
+                                "computed member access on non-pointer object",
+                                member.span.lo.0 as usize,
+                            ));
                         }
                     }
                     MemberProp::Ident(prop_ident) => {
@@ -2464,7 +2944,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         // not supported
                     }
                 }
-                Err(Diagnostic::simple("unsupported expression"))
+                Err(Diagnostic::simple_with_span(
+                    "unsupported member access expression",
+                    member.span.lo.0 as usize,
+                ))
             }
             ast::Expr::New(new_expr) => {
                 if let ast::Expr::Ident(ident) = &*new_expr.callee {
@@ -2510,10 +2993,16 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             _ => Err(Diagnostic::simple("operation not supported")),
                         }
                     } else {
-                        Err(Diagnostic::simple("unsupported expression"))
+                        Err(Diagnostic::simple_with_span(
+                            "unknown constructor or missing `<Name>_ctor` function",
+                            new_expr.span.lo.0 as usize,
+                        ))
                     }
                 } else {
-                    Err(Diagnostic::simple("unsupported expression"))
+                    Err(Diagnostic::simple_with_span(
+                        "unsupported `new` callee: only identifier constructors are supported",
+                        new_expr.span.lo.0 as usize,
+                    ))
                 }
             }
             ast::Expr::Arrow(arrow) => {
@@ -2804,77 +3293,73 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     for cname in &captures {
                         // First check if it's a parameter in the outer function
                         if let Some(idx) = param_map.get(cname)
-                            && let Some(pv) = function.get_nth_param(*idx) {
-                                // Determine whether this parameter was declared Weak<T>
-                                let mut is_weak = false;
-                                if let Some(param_types) = self
-                                    .fn_param_types
-                                    .borrow()
-                                    .get(function.get_name().to_str().unwrap_or(""))
+                            && let Some(pv) = function.get_nth_param(*idx)
+                        {
+                            // Determine whether this parameter was declared Weak<T>
+                            let mut is_weak = false;
+                            if let Some(param_types) = self
+                                .fn_param_types
+                                .borrow()
+                                .get(function.get_name().to_str().unwrap_or(""))
+                            {
+                                let idx_usize = *idx as usize;
+                                if idx_usize < param_types.len()
+                                    && let crate::types::OatsType::Weak(_) = &param_types[idx_usize]
                                 {
-                                    let idx_usize = *idx as usize;
-                                    if idx_usize < param_types.len()
-                                        && let crate::types::OatsType::Weak(_) =
-                                            &param_types[idx_usize]
-                                        {
-                                            is_weak = true;
-                                        }
+                                    is_weak = true;
                                 }
-                                // If parameter is pointer-like, use directly. If numeric, box it.
-                                if pv.get_type().is_pointer_type() {
-                                    captured_vals.push((pv.as_basic_value_enum(), is_weak));
-                                } else if pv.get_type().is_float_type() {
-                                    // box f64
-                                    let box_fn = self.get_union_box_f64();
-                                    let cs = self.builder.build_call(
-                                        box_fn,
-                                        &[pv.into()],
-                                        "union_box_f64_ctor",
-                                    );
-                                    if let Ok(cs) = cs
-                                        && let inkwell::Either::Left(bv) = cs.try_as_basic_value()
-                                    {
-                                        let boxed_ptr = bv.into_pointer_value();
-                                        captured_vals
-                                            .push((boxed_ptr.as_basic_value_enum(), is_weak));
-                                    } else {
-                                        return Err(Diagnostic::simple(
-                                            "failed to box numeric capture",
-                                        ));
-                                    }
-                                } else if pv.get_type().is_int_type() {
-                                    // convert int->f64 then box
-                                    let iv = pv.into_int_value();
-                                    let fconv = self
-                                        .builder
-                                        .build_signed_int_to_float(iv, self.f64_t, "i_to_f")
-                                        .map_err(|_| {
-                                            Diagnostic::simple("int->float cast failed")
-                                        })?;
-                                    let box_fn = self.get_union_box_f64();
-                                    let cs = self.builder.build_call(
-                                        box_fn,
-                                        &[fconv.into()],
-                                        "union_box_f64_ctor",
-                                    );
-                                    if let Ok(cs) = cs
-                                        && let inkwell::Either::Left(bv) = cs.try_as_basic_value()
-                                    {
-                                        let boxed_ptr = bv.into_pointer_value();
-                                        captured_vals
-                                            .push((boxed_ptr.as_basic_value_enum(), is_weak));
-                                    } else {
-                                        return Err(Diagnostic::simple(
-                                            "failed to box numeric capture",
-                                        ));
-                                    }
+                            }
+                            // If parameter is pointer-like, use directly. If numeric, box it.
+                            if pv.get_type().is_pointer_type() {
+                                captured_vals.push((pv.as_basic_value_enum(), is_weak));
+                            } else if pv.get_type().is_float_type() {
+                                // box f64
+                                let box_fn = self.get_union_box_f64();
+                                let cs = self.builder.build_call(
+                                    box_fn,
+                                    &[pv.into()],
+                                    "union_box_f64_ctor",
+                                );
+                                if let Ok(cs) = cs
+                                    && let inkwell::Either::Left(bv) = cs.try_as_basic_value()
+                                {
+                                    let boxed_ptr = bv.into_pointer_value();
+                                    captured_vals.push((boxed_ptr.as_basic_value_enum(), is_weak));
                                 } else {
                                     return Err(Diagnostic::simple(
-                                        "unsupported capture type: non-pointer parameter",
+                                        "failed to box numeric capture",
                                     ));
                                 }
-                                continue;
+                            } else if pv.get_type().is_int_type() {
+                                // convert int->f64 then box
+                                let iv = pv.into_int_value();
+                                let fconv = self
+                                    .builder
+                                    .build_signed_int_to_float(iv, self.f64_t, "i_to_f")
+                                    .map_err(|_| Diagnostic::simple("int->float cast failed"))?;
+                                let box_fn = self.get_union_box_f64();
+                                let cs = self.builder.build_call(
+                                    box_fn,
+                                    &[fconv.into()],
+                                    "union_box_f64_ctor",
+                                );
+                                if let Ok(cs) = cs
+                                    && let inkwell::Either::Left(bv) = cs.try_as_basic_value()
+                                {
+                                    let boxed_ptr = bv.into_pointer_value();
+                                    captured_vals.push((boxed_ptr.as_basic_value_enum(), is_weak));
+                                } else {
+                                    return Err(Diagnostic::simple(
+                                        "failed to box numeric capture",
+                                    ));
+                                }
+                            } else {
+                                return Err(Diagnostic::simple(
+                                    "unsupported capture type: non-pointer parameter",
+                                ));
                             }
+                            continue;
+                        }
 
                         // Otherwise look up local variable
                         if let Some((
@@ -3470,11 +3955,21 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             let call_site = self
                                 .builder
                                 .build_call(num_to_str_fn, &[num_val.into()], "num_to_str")
-                                .map_err(|_| Diagnostic::simple("failed to build call"))?;
+                                .map_err(|_| {
+                                    Diagnostic::simple_with_span(
+                                        "failed to build call",
+                                        tpl.span.lo.0 as usize,
+                                    )
+                                })?;
                             call_site
                                 .try_as_basic_value()
                                 .left()
-                                .ok_or_else(|| Diagnostic::simple("num_to_str returned no value"))?
+                                .ok_or_else(|| {
+                                    Diagnostic::simple_with_span(
+                                        "num_to_str returned no value",
+                                        tpl.span.lo.0 as usize,
+                                    )
+                                })?
                                 .into_pointer_value()
                         } else if expr_val.is_pointer_value() {
                             // Already a string (or object) - use as-is
@@ -3488,17 +3983,27 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             // Use select to pick the right string
                             self.builder
                                 .build_select(bool_val, true_str, false_str, "bool_str")
-                                .map_err(|_| Diagnostic::simple("failed to build select"))?
+                                .map_err(|_| {
+                                    Diagnostic::simple_with_span(
+                                        "failed to build select",
+                                        tpl.span.lo.0 as usize,
+                                    )
+                                })?
                                 .into_pointer_value()
                         } else {
-                            return Err(Diagnostic::simple(
+                            return Err(Diagnostic::simple_with_span(
                                 "unsupported value type in template literal",
+                                tpl.span.lo.0 as usize,
                             ));
                         };
 
                         // Concatenate expression string with result
-                        let left = result
-                            .ok_or_else(|| Diagnostic::simple("concat left operand missing"))?;
+                        let left = result.ok_or_else(|| {
+                            Diagnostic::simple_with_span(
+                                "concat left operand missing",
+                                tpl.span.lo.0 as usize,
+                            )
+                        })?;
                         let call_site = self
                             .builder
                             .build_call(
@@ -3506,12 +4011,22 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 &[left.into(), expr_str.into()],
                                 "tpl_concat_expr",
                             )
-                            .map_err(|_| Diagnostic::simple("failed to build call"))?;
+                            .map_err(|_| {
+                                Diagnostic::simple_with_span(
+                                    "failed to build call",
+                                    tpl.span.lo.0 as usize,
+                                )
+                            })?;
                         result = Some(
                             call_site
                                 .try_as_basic_value()
                                 .left()
-                                .ok_or_else(|| Diagnostic::simple("concat call returned no value"))?
+                                .ok_or_else(|| {
+                                    Diagnostic::simple_with_span(
+                                        "concat call returned no value",
+                                        tpl.span.lo.0 as usize,
+                                    )
+                                })?
                                 .into_pointer_value(),
                         );
                     }

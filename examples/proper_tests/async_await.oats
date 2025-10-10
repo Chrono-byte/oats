@@ -1,0 +1,19 @@
+export function main(): void {
+    // A function that returns a promise (use Promise.resolve for compatibility)
+    function delayedMessage(ms: number): Promise<string> {
+        // For test purposes use an immediately-resolved promise
+        return Promise.resolve("Done waiting!");
+    }
+
+    async function runAsyncCode(): Promise<void> {
+        println("Starting...");
+        const message = await delayedMessage(0);
+        println(message);
+        println("Finished!");
+    }
+
+    // Fire-and-forget the async work (tests may instead await in a harness)
+    let _p: Promise<void> = runAsyncCode();
+
+    return;
+}

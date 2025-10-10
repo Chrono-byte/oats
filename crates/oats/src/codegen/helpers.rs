@@ -44,6 +44,7 @@ impl<'a> super::CodeGen<'a> {
             | OatsType::NominalStruct(_)
             | OatsType::StructLiteral(_)
             | OatsType::Array(_)
+            | OatsType::Tuple(_)
             | OatsType::Promise(_)
             | OatsType::Weak(_)
             | OatsType::Option(_) => self.i8ptr_t.as_basic_type_enum(),
@@ -98,9 +99,10 @@ impl<'a> super::CodeGen<'a> {
                 {
                     let either = cs.try_as_basic_value();
                     if let inkwell::Either::Left(bv) = either
-                        && let BasicValueEnum::FloatValue(fv) = bv {
-                            return Some(fv);
-                        }
+                        && let BasicValueEnum::FloatValue(fv) = bv
+                    {
+                        return Some(fv);
+                    }
                 }
                 None
             }
@@ -385,11 +387,12 @@ impl<'a> super::CodeGen<'a> {
             // statically-known return type.
             if initialized
                 && let Some(orig) = self.last_expr_origin_local.borrow().clone()
-                    && let Some(rt) = self.closure_local_rettype.borrow().get(&orig) {
-                        self.closure_local_rettype
-                            .borrow_mut()
-                            .insert(key, rt.clone());
-                    }
+                && let Some(rt) = self.closure_local_rettype.borrow().get(&orig)
+            {
+                self.closure_local_rettype
+                    .borrow_mut()
+                    .insert(key, rt.clone());
+            }
         }
     }
 
@@ -428,7 +431,7 @@ impl<'a> super::CodeGen<'a> {
             self.fn_malloc.borrow_mut().replace(f);
         }
 
-    // declare strlen(i8*) -> i64
+        // declare strlen(i8*) -> i64
         if self.module.get_function("strlen").is_none() {
             let i8ptr = self.i8ptr_t;
             let i64t = self.i64_t;
@@ -437,7 +440,7 @@ impl<'a> super::CodeGen<'a> {
             self.fn_strlen.borrow_mut().replace(f);
         }
 
-    // declare memcpy(i8*, i8*, i64) -> i8*
+        // declare memcpy(i8*, i8*, i64) -> i8*
         if self.module.get_function("memcpy").is_none() {
             let i8ptr = self.i8ptr_t;
             let i64t = self.i64_t;
@@ -446,7 +449,7 @@ impl<'a> super::CodeGen<'a> {
             self.fn_memcpy.borrow_mut().replace(f);
         }
 
-    // declare free(i8*) -> void
+        // declare free(i8*) -> void
         if self.module.get_function("free").is_none() {
             let voidt = self.context.void_type();
             let i8ptr = self.i8ptr_t;
@@ -455,7 +458,7 @@ impl<'a> super::CodeGen<'a> {
             self.fn_free.borrow_mut().replace(f);
         }
 
-    // Declare runtime print helpers so user scripts can call them.
+        // Declare runtime print helpers so user scripts can call them.
         if self.module.get_function("print_f64").is_none() {
             let print_ty = self
                 .context
@@ -464,14 +467,55 @@ impl<'a> super::CodeGen<'a> {
             let f = self.module.add_function("print_f64", print_ty, None);
             self.fn_print_f64.borrow_mut().replace(f);
         }
+        // declare print_f64_no_nl(f64) -> void
+        if self.module.get_function("print_f64_no_nl").is_none() {
+            let print_ty = self
+                .context
+                .void_type()
+                .fn_type(&[self.f64_t.into()], false);
+            let _f = self.module.add_function("print_f64_no_nl", print_ty, None);
+        }
         if self.module.get_function("print_str").is_none() {
             let i8ptr = self.i8ptr_t;
             let print_str_ty = self.context.void_type().fn_type(&[i8ptr.into()], false);
             let f = self.module.add_function("print_str", print_str_ty, None);
             self.fn_print_str.borrow_mut().replace(f);
         }
-    // declare sleep_ms(f64) -> void so examples can pause to allow the
-    // background collector to run during demos/tests.
+        // declare print_str_no_nl(i8*) -> void
+        if self.module.get_function("print_str_no_nl").is_none() {
+            let i8ptr = self.i8ptr_t;
+            let print_str_ty = self.context.void_type().fn_type(&[i8ptr.into()], false);
+            let _f = self
+                .module
+                .add_function("print_str_no_nl", print_str_ty, None);
+        }
+        // declare print_newline() -> void
+        if self.module.get_function("print_newline").is_none() {
+            let voidt = self.context.void_type();
+            let _f = self
+                .module
+                .add_function("print_newline", voidt.fn_type(&[], false), None);
+        }
+        // declare array_to_string(i8*) -> i8* (runtime helper that converts
+        // array objects to a printable heap string). The runtime provides an
+        // implementation; declare it here for codegen to call.
+        if self.module.get_function("array_to_string").is_none() {
+            let i8ptr = self.i8ptr_t;
+            let fn_ty = i8ptr.fn_type(&[i8ptr.into()], false);
+            let f = self.module.add_function("array_to_string", fn_ty, None);
+            let _ = f;
+        }
+        // declare rc_dec_str(i8*) -> void so codegen can release temporary
+        // heap strings produced by helpers like `array_to_string`.
+        if self.module.get_function("rc_dec_str").is_none() {
+            let voidt = self.context.void_type();
+            let i8ptr = self.i8ptr_t;
+            let fn_ty = voidt.fn_type(&[i8ptr.into()], false);
+            let f = self.module.add_function("rc_dec_str", fn_ty, None);
+            let _ = f;
+        }
+        // declare sleep_ms(f64) -> void so examples can pause to allow the
+        // background collector to run during demos/tests.
         if self.module.get_function("sleep_ms").is_none() {
             let sleep_ty = self
                 .context
@@ -485,10 +529,11 @@ impl<'a> super::CodeGen<'a> {
         // workspace enables the `collector-test` Cargo feature. This avoids
         // exposing test/debug symbols in normal release builds.
         if cfg!(feature = "collector-test")
-            && self.module.get_function("collector_test_enqueue").is_none() {
-                let ty = self.context.void_type().fn_type(&[], false);
-                let _f = self.module.add_function("collector_test_enqueue", ty, None);
-            }
+            && self.module.get_function("collector_test_enqueue").is_none()
+        {
+            let ty = self.context.void_type().fn_type(&[], false);
+            let _f = self.module.add_function("collector_test_enqueue", ty, None);
+        }
     }
 
     // Emit rc_dec calls for any initialized pointer locals in the provided
@@ -659,15 +704,14 @@ impl<'a> super::CodeGen<'a> {
             // If it's a pointer and not already i8*, cast to i8* for storage
             if val.get_type().is_pointer_type()
                 && val.get_type() != self.i8ptr_t.as_basic_type_enum()
-                    && let inkwell::values::BasicValueEnum::PointerValue(pv) = *val {
-                        let casted = self
-                            .builder
-                            .build_pointer_cast(pv, self.i8ptr_t, "cast_to_i8ptr")
-                            .map_err(|_| {
-                                crate::diagnostics::Diagnostic::simple("pointer cast failed")
-                            })?;
-                        store_val = casted.as_basic_value_enum();
-                    }
+                && let inkwell::values::BasicValueEnum::PointerValue(pv) = *val
+            {
+                let casted = self
+                    .builder
+                    .build_pointer_cast(pv, self.i8ptr_t, "cast_to_i8ptr")
+                    .map_err(|_| crate::diagnostics::Diagnostic::simple("pointer cast failed"))?;
+                store_val = casted.as_basic_value_enum();
+            }
 
             let _ = self.builder.build_store(field_ptr_cast, store_val);
 
@@ -859,15 +903,14 @@ impl<'a> super::CodeGen<'a> {
             let mut store_val = *slot_val;
             if slot_val.get_type().is_pointer_type()
                 && slot_val.get_type() != self.i8ptr_t.as_basic_type_enum()
-                    && let inkwell::values::BasicValueEnum::PointerValue(pv) = *slot_val {
-                        let casted = self
-                            .builder
-                            .build_pointer_cast(pv, self.i8ptr_t, "cast_to_i8ptr")
-                            .map_err(|_| {
-                                crate::diagnostics::Diagnostic::simple("pointer cast failed")
-                            })?;
-                        store_val = casted.as_basic_value_enum();
-                    }
+                && let inkwell::values::BasicValueEnum::PointerValue(pv) = *slot_val
+            {
+                let casted = self
+                    .builder
+                    .build_pointer_cast(pv, self.i8ptr_t, "cast_to_i8ptr")
+                    .map_err(|_| crate::diagnostics::Diagnostic::simple("pointer cast failed"))?;
+                store_val = casted.as_basic_value_enum();
+            }
             let _ = self.builder.build_store(field_ptr_cast, store_val);
 
             // increment RC for pointer fields

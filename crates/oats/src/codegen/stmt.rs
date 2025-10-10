@@ -10,8 +10,9 @@
 //! reference-counting management so future contributors understand the
 //! rationale behind emitted IR.
 
+use inkwell::AddressSpace;
 use inkwell::types::BasicType;
-use inkwell::values::{BasicValueEnum, FunctionValue};
+use inkwell::values::{BasicValue, BasicValueEnum, FunctionValue};
 use std::collections::HashMap;
 
 type LocalEntry<'a> = (
@@ -78,12 +79,14 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             // for uninitialized locals). Also capture a nominal struct
                             // name if the annotation maps to a NominalStruct so member
                             // lowering can use it.
+                            let mut declared_mapped: Option<crate::types::OatsType> = None;
                             let mut declared_union: Option<crate::types::OatsType> = None;
                             let mut declared_is_weak = false;
                             let mut declared_nominal: Option<String> = None;
                             if let Some(type_ann) = &ident.type_ann
                                 && let Some(mapped) = crate::types::map_ts_type(&type_ann.type_ann)
                             {
+                                declared_mapped = Some(mapped.clone());
                                 if let crate::types::OatsType::Union(_) = &mapped {
                                     declared_union = Some(mapped.clone());
                                 }
@@ -92,6 +95,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 }
                                 if let crate::types::OatsType::NominalStruct(n) = &mapped {
                                     declared_nominal = Some(n.clone());
+                                }
+                                // If the declared type is an Array, tag the local with
+                                // a sentinel nominal so lowering sites (like println)
+                                // can detect arrays at compile time.
+                                if let crate::types::OatsType::Array(_) = &mapped {
+                                    declared_nominal = Some("__oats_array".to_string());
                                 }
                             }
 
@@ -111,6 +120,232 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     declared_nominal = Some(ident.sym.to_string());
                                 }
                                 // `init` is an Option<Box<Expr>> (deno_ast wrapper); use `.as_ref()`
+                                // Special-case: if the declared type is a Tuple and the
+                                // initializer is an array literal, allocate a native
+                                // tuple object here and register its field types so
+                                // member/index lowering can treat it as a nominal.
+                                if let Some(crate::types::OatsType::Tuple(elem_types)) =
+                                    &declared_mapped
+                                    && let deno_ast::swc::ast::Expr::Array(arr_lit) = &**init
+                                {
+                                    // number of elements
+                                    let elem_count = arr_lit.elems.len();
+                                    // Generate a nominal name for this tuple shape
+                                    let fname = _function.get_name().to_str().unwrap_or("<fn>");
+                                    let gen_name = format!("tuple_{}_{}", fname, name);
+                                    // Register field list under class_fields as ("0", type0), ...
+                                    let mut fields: Vec<(String, crate::types::OatsType)> =
+                                        Vec::new();
+                                    for (i, et) in elem_types.iter().enumerate() {
+                                        fields.push((format!("{}", i), et.clone()));
+                                    }
+                                    self.class_fields
+                                        .borrow_mut()
+                                        .insert(gen_name.clone(), fields);
+
+                                    // Allocate object: header + meta_slot + elem_count * 8
+                                    let header_size = 8u64;
+                                    let meta_slot = 8u64;
+                                    let total_size =
+                                        header_size + meta_slot + (elem_count as u64 * 8);
+                                    let malloc_fn = self.get_malloc();
+                                    let size_const = self.i64_t.const_int(total_size, false);
+                                    let cs = self.builder.build_call(
+                                        malloc_fn,
+                                        &[size_const.into()],
+                                        "tuple_malloc",
+                                    );
+                                    if let Ok(cs) = cs
+                                        && let inkwell::Either::Left(bv) = cs.try_as_basic_value()
+                                    {
+                                        let malloc_ret = bv.into_pointer_value();
+                                        // store header
+                                        let header_ptr = self
+                                            .builder
+                                            .build_pointer_cast(malloc_ret, self.i8ptr_t, "hdr_ptr")
+                                            .map_err(|_| {
+                                                crate::diagnostics::Diagnostic::simple(
+                                                    "pointer cast failed",
+                                                )
+                                            })?;
+                                        let header_val = self.i64_t.const_int(1u64, false);
+                                        let _ = self.builder.build_store(header_ptr, header_val);
+
+                                        // For each element in the array literal, lower and store
+                                        for (i, opt) in arr_lit.elems.iter().enumerate() {
+                                            if let Some(expr_or_spread) = opt {
+                                                let ev = self.lower_expr(
+                                                    &expr_or_spread.expr,
+                                                    _function,
+                                                    _param_map,
+                                                    _locals_stack,
+                                                )?;
+                                                let offset =
+                                                    header_size + meta_slot + (i as u64 * 8);
+                                                let obj_addr = self
+                                                    .builder
+                                                    .build_ptr_to_int(
+                                                        malloc_ret, self.i64_t, "obj_addr",
+                                                    )
+                                                    .map_err(|_| {
+                                                        crate::diagnostics::Diagnostic::simple(
+                                                            "ptr_to_int failed",
+                                                        )
+                                                    })?;
+                                                let offset_const =
+                                                    self.i64_t.const_int(offset, false);
+                                                let field_addr = self
+                                                    .builder
+                                                    .build_int_add(
+                                                        obj_addr,
+                                                        offset_const,
+                                                        "field_addr",
+                                                    )
+                                                    .map_err(|_| {
+                                                        crate::diagnostics::Diagnostic::simple(
+                                                            "int_add failed",
+                                                        )
+                                                    })?;
+                                                let field_ptr = self
+                                                    .builder
+                                                    .build_int_to_ptr(
+                                                        field_addr,
+                                                        self.i8ptr_t,
+                                                        "field_ptr",
+                                                    )
+                                                    .map_err(|_| {
+                                                        crate::diagnostics::Diagnostic::simple(
+                                                            "int_to_ptr failed",
+                                                        )
+                                                    })?;
+                                                // Store element into slot using same logic as object literal
+                                                // Use the declared element type to choose storage
+                                                let field_ty = elem_types
+                                                    .get(i)
+                                                    .expect("tuple elem type missing");
+                                                match field_ty {
+                                                            crate::types::OatsType::Number => {
+                                                                // Coerce to f64 then store into an f64* slot
+                                                                let fv = if ev.get_type().is_float_type() {
+                                                                    ev.into_float_value()
+                                                                } else if ev.get_type().is_int_type() {
+                                                                    let iv = ev.into_int_value();
+                                                                    self.builder.build_signed_int_to_float(iv, self.f64_t, "i_to_f").map_err(|_| crate::diagnostics::Diagnostic::simple("int->float cast failed"))?
+                                                                } else if let Some(fv) = self.coerce_to_f64(ev) {
+                                                                    fv
+                                                                } else {
+                                                                    return Err(crate::diagnostics::Diagnostic::simple("expected numeric value for tuple number element"));
+                                                                };
+                                                                let f64_ptr_ty = self.context.ptr_type(AddressSpace::default());
+                                                                let elem_f64_ptr = self.builder.build_pointer_cast(field_ptr, f64_ptr_ty, "tuple_elem_f64_ptr").map_err(|_| crate::diagnostics::Diagnostic::simple("pointer cast failed"))?;
+                                                                let _ = self.builder.build_store(elem_f64_ptr, fv.as_basic_value_enum());
+                                                            }
+                                                            crate::types::OatsType::Union(_) => {
+                                                                // Box union payloads into a heap object and store pointer
+                                                                // If ev is float -> union_box_f64, if pointer -> union_box_ptr
+                                                                if ev.get_type().is_float_type() {
+                                                                    let box_fn = self.get_union_box_f64();
+                                                                    let cs2 = self.builder.build_call(box_fn, &[ev.into()], "union_box_f64_ctor");
+                                                                    if let Ok(cs2) = cs2 && let inkwell::Either::Left(bv2) = cs2.try_as_basic_value() {
+                                                                        let boxed_ptr = bv2.into_pointer_value();
+                                                                        let boxed_bv = inkwell::values::BasicValueEnum::PointerValue(boxed_ptr);
+                                                                        let _ = self.builder.build_store(field_ptr, boxed_bv);
+                                                                        let rc_inc = self.get_rc_inc();
+                                                                        let _ = self.builder.build_call(rc_inc, &[boxed_ptr.into()], "rc_inc_field");
+                                                                    }
+                                                                } else if ev.get_type().is_pointer_type() {
+                                                                    let box_fn = self.get_union_box_ptr();
+                                                                    let cs2 = self.builder.build_call(box_fn, &[ev.into()], "union_box_ptr_ctor");
+                                                                    if let Ok(cs2) = cs2 && let inkwell::Either::Left(bv2) = cs2.try_as_basic_value() {
+                                                                        let boxed_ptr = bv2.into_pointer_value();
+                                                                        let boxed_bv = inkwell::values::BasicValueEnum::PointerValue(boxed_ptr);
+                                                                        let _ = self.builder.build_store(field_ptr, boxed_bv);
+                                                                        let rc_inc = self.get_rc_inc();
+                                                                        let _ = self.builder.build_call(rc_inc, &[boxed_ptr.into()], "rc_inc_field");
+                                                                    }
+                                                                } else {
+                                                                    return Err(crate::diagnostics::Diagnostic::simple("unsupported tuple union element type at init"));
+                                                                }
+                                                            }
+                                                            // Pointer-like types: store pointer and rc_inc
+                                                            crate::types::OatsType::String
+                                                            | crate::types::OatsType::NominalStruct(_)
+                                                            | crate::types::OatsType::Array(_)
+                                                            | crate::types::OatsType::Option(_)
+                                                            | crate::types::OatsType::Weak(_)
+                                                            | crate::types::OatsType::Promise(_) => {
+                                                                if let inkwell::values::BasicValueEnum::PointerValue(p) = ev {
+                                                                    let _ = self.builder.build_store(field_ptr, ev);
+                                                                    let rc_inc = self.get_rc_inc();
+                                                                    let _ = self.builder.build_call(rc_inc, &[p.into()], "rc_inc_field");
+                                                                } else {
+                                                                    return Err(crate::diagnostics::Diagnostic::simple("expected pointer for tuple reference element"));
+                                                                }
+                                                            }
+                                                            _ => {
+                                                                // Fallback: store as is (covers booleans/int where appropriate)
+                                                                let _ = self.builder.build_store(field_ptr, ev);
+                                                            }
+                                                        }
+                                            } else {
+                                                return Err(
+                                                    crate::diagnostics::Diagnostic::simple(
+                                                        "elided tuple element not supported",
+                                                    ),
+                                                );
+                                            }
+                                        }
+
+                                        // Create an alloca for the local and store the tuple pointer
+                                        let allocated_ty = self.i8ptr_t.as_basic_type_enum();
+                                        let alloca =
+                                            match self.builder.build_alloca(allocated_ty, &name) {
+                                                Ok(a) => a,
+                                                Err(_) => {
+                                                    crate::diagnostics::emit_diagnostic(
+                                                        &crate::diagnostics::Diagnostic::simple(
+                                                            "alloca failed for local variable",
+                                                        ),
+                                                        Some(self.source),
+                                                    );
+                                                    return Ok(false);
+                                                }
+                                            };
+                                        let _ = self
+                                            .builder
+                                            .build_store(alloca, malloc_ret.as_basic_value_enum());
+                                        // increment rc for stored pointer
+                                        let rc_inc = self.get_rc_inc();
+                                        let _ = self.builder.build_call(
+                                            rc_inc,
+                                            &[malloc_ret.into()],
+                                            "rc_inc_local",
+                                        );
+
+                                        // mark initialized and insert local with nominal pointing to tuple generated name
+                                        self.insert_local_current_scope(
+                                            _locals_stack,
+                                            name,
+                                            alloca,
+                                            allocated_ty,
+                                            true,
+                                            false,
+                                            declared_is_weak,
+                                            Some(gen_name),
+                                        );
+                                        // done handling tuple init
+                                        continue;
+                                    } else {
+                                        crate::diagnostics::emit_diagnostic(
+                                            &crate::diagnostics::Diagnostic::simple(
+                                                "malloc failed for tuple allocation",
+                                            ),
+                                            Some(self.source),
+                                        );
+                                        return Ok(false);
+                                    }
+                                }
+
                                 if let Ok(mut val) =
                                     self.lower_expr(init, _function, _param_map, _locals_stack)
                                 {

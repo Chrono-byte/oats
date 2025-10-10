@@ -27,7 +27,169 @@ fn main() -> Result<()> {
 
     let source = std::fs::read_to_string(&src_path)?;
 
-    let parsed_mod = parser::parse_oats_module(&source, Some(&src_path))?;
+    // Rewrite top-level arrow bindings into function declarations so the
+    // existing codegen can emit them as normal functions. This scanner
+    // handles both concise-expression bodies and block bodies ("{ ... }").
+    fn rewrite_top_level_arrow_decls(src: &str) -> String {
+        let mut out = String::new();
+        let mut i = 0usize;
+        let s = src.as_bytes();
+        while i < s.len() {
+            // Try to detect start of a line with optional whitespace
+            let line_start = i;
+            // read until end of line to examine prefix
+            let mut j = i;
+            while j < s.len() && s[j] != b'\n' { j += 1; }
+            let line = &src[line_start..j];
+            let trimmed = line.trim_start();
+            if trimmed.contains("=>") && (trimmed.starts_with("const ") || trimmed.starts_with("let ") || trimmed.starts_with("export ")) {
+                // We will attempt to parse a top-level binding of the form:
+                // [export] const name = (params) [: ret]? => body
+                if let Some(eq_rel) = trimmed.find('=') {
+                    // compute absolute position of '=' without pointer arithmetic
+                    let pre_ws = line.len() - trimmed.len();
+                    let abs_eq = line_start + pre_ws + eq_rel;
+                    // parse params starting from first '(' after eq
+                    let mut p = abs_eq + 1;
+                    while p < s.len() && (s[p] as char).is_whitespace() { p += 1; }
+                    if p < s.len() && s[p] == b'(' {
+                        // parse balanced parentheses
+                        let mut depth = 0i32;
+                        let params_start = p;
+                        while p < s.len() {
+                            if s[p] == b'(' { depth += 1; }
+                            else if s[p] == b')' { depth -= 1; if depth == 0 { p += 1; break; } }
+                            p += 1;
+                        }
+                        if depth == 0 {
+                            let params = &src[params_start..p];
+                            // skip optional whitespace and optional :ret between ) and =>
+                            let mut q = p;
+                            while q < s.len() && (s[q] as char).is_whitespace() { q += 1; }
+                            let mut ret_type = "";
+                            if q < s.len() && s[q] == b':' {
+                                // read until =>
+                                let colon_start = q + 1;
+                                q = colon_start;
+                                while q < s.len() && !(s[q] == b'=' && q+1 < s.len() && s[q+1] == b'>') {
+                                    q += 1;
+                                }
+                                if q <= s.len() {
+                                    ret_type = src[colon_start..q].trim();
+                                }
+                            }
+                            // find => from q forward
+                            let mut arrow_pos = None;
+                            let mut r = q;
+                            while r+1 < s.len() {
+                                if s[r] == b'=' && s[r+1] == b'>' { arrow_pos = Some(r); break; }
+                                r += 1;
+                            }
+                            if let Some(arrow_abs) = arrow_pos {
+                                let body_start = arrow_abs + 2;
+                                // skip whitespace
+                                let mut bs = body_start;
+                                while bs < s.len() && (s[bs] as char).is_whitespace() { bs += 1; }
+                                if bs < s.len() {
+                                    // If body starts with '{' parse block until matching '}'
+                                    let (body, body_end) = if s[bs] == b'{' {
+                                        let mut bd = bs;
+                                        let mut bdepth = 0i32;
+                                        while bd < s.len() {
+                                            if s[bd] == b'{' { bdepth += 1; }
+                                            else if s[bd] == b'}' { bdepth -= 1; if bdepth == 0 { bd += 1; break; } }
+                                            bd += 1;
+                                        }
+                                        (src[bs..bd].trim(), bd)
+                                    } else {
+                                        // expression body: read until semicolon or newline
+                                        let mut bd = bs;
+                                        while bd < s.len() && s[bd] != b';' && s[bd] != b'\n' { bd += 1; }
+                                        (src[bs..bd].trim(), bd)
+                                    };
+
+                                    // extract name and optional export prefix from left side
+                                    let left = &src[line_start..abs_eq];
+                                    let mut left_trim = left.trim();
+                                    let mut export_prefix = "";
+                                    if left_trim.starts_with("export ") {
+                                        export_prefix = "export ";
+                                        left_trim = left_trim["export ".len()..].trim_start();
+                                    }
+                                    // detect const/let and the identifier after it
+                                    let mut name_opt: Option<&str> = None;
+                                    if let Some(pos) = left_trim.find("const ") {
+                                        let mut idx = pos + "const ".len();
+                                        while idx < left_trim.len() && left_trim.as_bytes()[idx].is_ascii_whitespace() { idx += 1; }
+                                        let start = idx;
+                                        while idx < left_trim.len() {
+                                            let c = left_trim.as_bytes()[idx] as char;
+                                            if c.is_alphanumeric() || c == '_' || c == '$' { idx += 1; } else { break; }
+                                        }
+                                        if start < idx { name_opt = Some(&left_trim[start..idx]); }
+                                    } else if let Some(pos) = left_trim.find("let ") {
+                                        let mut idx = pos + "let ".len();
+                                        while idx < left_trim.len() && left_trim.as_bytes()[idx].is_ascii_whitespace() { idx += 1; }
+                                        let start = idx;
+                                        while idx < left_trim.len() {
+                                            let c = left_trim.as_bytes()[idx] as char;
+                                            if c.is_alphanumeric() || c == '_' || c == '$' { idx += 1; } else { break; }
+                                        }
+                                        if start < idx { name_opt = Some(&left_trim[start..idx]); }
+                                    }
+
+                                    if let Some(name) = name_opt {
+                                        // build function string
+                                        let params_str = params.trim();
+                                        let func_decl = if ret_type.is_empty() {
+                                            if body.starts_with('{') {
+                                                format!("{}function {}{} {}", export_prefix, name, params_str, body)
+                                            } else {
+                                                // expression body -> return wrapper
+                                                format!("{}function {}{} {{ return {}; }}", export_prefix, name, params_str, body)
+                                            }
+                                        } else {
+                                            if body.starts_with('{') {
+                                                format!("{}function {}{}: {} {}", export_prefix, name, params_str, ret_type, body)
+                                            } else {
+                                                format!("{}function {}{}: {} {{ return {}; }}", export_prefix, name, params_str, ret_type, body)
+                                            }
+                                        };
+                                        out.push_str(&func_decl);
+                                        out.push('\n');
+                                        // advance i to body_end (body_end points just after body)
+                                        i = body_end;
+                                        // skip to next line break
+                                        while i < s.len() && s[i] != b'\n' { i += 1; }
+                                        if i < s.len() { i += 1; }
+                                        continue;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            // fallback: copy current line
+            out.push_str(line);
+            out.push('\n');
+            i = j + 1;
+        }
+        out
+    }
+
+    // First parse the original source to run the parser-level checks
+    let initial_parsed_mod = parser::parse_oats_module(&source, Some(&src_path))?;
+
+    // Rewrite top-level arrow bindings into function declarations
+    fn rewrite_top_level_arrows_ast() {
+
+    };
+
+    let transformed_source = rewrite_top_level_arrows_ast(&initial_parsed_mod.parsed, &source);
+    eprintln!("---TRANSFORMED SOURCE START---\n{}\n---TRANSFORMED SOURCE END---", transformed_source);
+
+    let parsed_mod = parser::parse_oats_module(&transformed_source, Some(&src_path))?;
     let parsed = parsed_mod.parsed;
 
     // Scan AST and reject any use of `var` declarations. We purposely do
@@ -573,6 +735,8 @@ fn main() -> Result<()> {
             }
         }
     }
+
+    
 
     // Emit top-level helper functions (non-exported) found in the module so
     // calls to them can be lowered. Skip exported `main` which we handle

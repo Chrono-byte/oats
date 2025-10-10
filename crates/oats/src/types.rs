@@ -45,6 +45,8 @@ pub enum OatsType {
     Option(Box<OatsType>),
     Void,
     String,
+    // Fixed-size tuple type with ordered element types
+    Tuple(Vec<OatsType>),
     NominalStruct(String),
     // Promise type wrapping a result type (e.g. Promise<number>)
     Promise(Box<OatsType>),
@@ -195,6 +197,25 @@ pub fn map_ts_type(ty: &ast::TsType) -> Option<OatsType> {
         ast::TsType::TsArrayType(arr) => {
             // element type
             map_ts_type(&arr.elem_type).map(|elem| OatsType::Array(Box::new(elem)))
+        }
+        // Map tuple types like `[A, B]` to an array-of-union of the element types.
+        // This is a pragmatic compatibility choice: tuples are lowered to runtime
+        // arrays where each slot may contain any of the tuple element types.
+        // It enables expressions like `t[0]` to work with existing array helpers.
+        ast::TsType::TsTupleType(tuple) => {
+            // Collect element types into a Tuple variant
+            let mut elems: Vec<OatsType> = Vec::new();
+            for elem in &tuple.elem_types {
+                if let Some(mapped) = map_ts_type(&elem.ty) {
+                    elems.push(mapped);
+                } else {
+                    return None;
+                }
+            }
+            if elems.is_empty() {
+                return None;
+            }
+            Some(OatsType::Tuple(elems))
         }
         ast::TsType::TsTypeLit(typelit) => {
             // Object literal type: collect property signatures where possible

@@ -48,6 +48,15 @@ const HEADER_FLAGS_MASK: u64 = 0xffffffff00000000u64;
 // Metadata magic used by codegen: ASCII 'OATS' (0x4F415453)
 const META_MAGIC: u64 = 0x4F415453u64;
 
+use std::cell::RefCell;
+
+thread_local! {
+    // Per-thread recursion guard stack storing object addresses to detect cycles.
+    static VISITED_OBJS: RefCell<Vec<usize>> = RefCell::new(Vec::new());
+}
+
+const MAX_RECURSION_DEPTH: usize = 32;
+
 // Create a header value for a heap-allocated object with initial refcount
 #[inline]
 fn make_heap_header(initial_rc: u32) -> u64 {
@@ -135,7 +144,6 @@ fn init_collector() -> Arc<Collector> {
 // chance of immediately dereferencing small/null/unaligned addresses.
 
 #[inline]
-
 fn is_plausible_addr(addr: usize) -> bool {
     // Reject null or very small addresses (below common page sizes),
     // and require 8-byte alignment for our u64-based headers.
@@ -650,9 +658,9 @@ pub unsafe extern "C" fn rc_inc_str(data: *mut c_char) {
     }
     unsafe {
         // Check if this looks like a heap string by checking if there's a valid header at -16
-    // Use a heuristic to detect static/heap pointers: attempt to read the
-    // object header and test the static flag bit. This is tolerant to
-    // both base-pointer and string-data-pointer inputs.
+        // Use a heuristic to detect static/heap pointers: attempt to read the
+        // object header and test the static flag bit. This is tolerant to
+        // both base-pointer and string-data-pointer inputs.
         let obj = heap_str_to_obj(data);
         rc_inc(obj);
     }
@@ -845,6 +853,31 @@ pub extern "C" fn print_i32(v: i32) {
     }
 }
 
+// Print a float without trailing newline
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn print_f64_no_nl(v: f64) {
+    unsafe {
+        libc::printf(b"%g\0".as_ptr() as *const c_char, v);
+        // no newline
+    }
+}
+
+// Print a C string without trailing newline
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn print_str_no_nl(s: *const c_char) {
+    if s.is_null() {
+        return;
+    }
+    let _ = io::stdout().write_all(unsafe { CStr::from_ptr(s).to_bytes() });
+    // no newline
+}
+
+// Print just a newline
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn print_newline() {
+    let _ = io::stdout().write_all(b"\n");
+}
+
 // Convert a number (f64) to a string with RC header
 // Returns a heap-allocated string (data pointer, header is at offset -16)
 /// Convert a number (f64) to a heap-allocated string with RC header.
@@ -880,6 +913,169 @@ pub extern "C" fn number_to_string(num: f64) -> *mut c_char {
 
         data_ptr
     }
+}
+
+// Convert an array object to a printable C string (heap-allocated string data pointer).
+// For numeric arrays we produce a representation like: [1,2,3]
+// For pointer arrays we return a short placeholder indicating a pointer array.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn array_to_string(arr: *mut c_void) -> *mut c_char {
+    if arr.is_null() {
+        return ptr::null_mut();
+    }
+    unsafe {
+        // Read header flags to determine if elements are numbers.
+        let header_ptr = arr as *const u64;
+        let header = *header_ptr;
+        // elem_is_number stored in high 32 bits at bit 32
+        let flags = (header >> 32) as u32;
+        let elem_is_number = (flags & 1) != 0;
+
+        let len_ptr = (arr as *mut u8).add(mem::size_of::<u64>()) as *const u64;
+        let len = *len_ptr as usize;
+
+        if elem_is_number {
+            // Build a Rust String with comma-and-space separated values
+            let mut s = String::new();
+            s.push('[');
+            for i in 0..len {
+                let v = array_get_f64(arr, i);
+                if i != 0 {
+                    s.push_str(", ");
+                }
+                s.push_str(&format!("{}", v));
+            }
+            s.push(']');
+            // Convert to C string and allocate heap string
+            let c = std::ffi::CString::new(s).unwrap_or_default();
+            return heap_str_from_cstr(c.as_ptr());
+        } else {
+            // Pointer arrays: iterate elements and attempt to stringify nested arrays/tuples
+            let mut s = String::new();
+            s.push('[');
+            for i in 0..len {
+                if i != 0 {
+                    s.push_str(", ");
+                }
+                let p = array_get_ptr(arr, i);
+                if p.is_null() {
+                    s.push_str("null");
+                    continue;
+                }
+                // Try to heuristically detect if this pointer is an array
+                // by reading its header and checking the flags. If it looks
+                // like an array, recursively stringify it.
+                let mut printed = false;
+                let header_ptr = p as *const AtomicU64;
+                let header_val = (*header_ptr).load(Ordering::Relaxed);
+                // If the high-most type tag bits are zero, treat as array and recurse
+                let type_tag = (header_val >> HEADER_TYPE_TAG_SHIFT) as u64;
+                if type_tag == 0 {
+                    let nested = array_to_string(p);
+                    if !nested.is_null() {
+                        // read C string
+                        let cstr = CStr::from_ptr(nested);
+                        if let Ok(str_slice) = cstr.to_str() {
+                            s.push_str(str_slice);
+                            printed = true;
+                        }
+                        // release the temporary nested string
+                        rc_dec_str(nested);
+                    }
+                }
+                if !printed {
+                    // Fallback: try to interpret as a C string (common)
+                    let maybe = CStr::from_ptr(p as *const c_char);
+                    if let Ok(st) = maybe.to_str() {
+                        // wrap with quotes
+                        s.push('"');
+                        s.push_str(st);
+                        s.push('"');
+                        printed = true;
+                    }
+                }
+                if !printed {
+                    // As a last resort show a pointer summary
+                    s.push_str(&format!("<ptr {:p}>", p));
+                }
+                // release the owning pointer returned by array_get_ptr
+                rc_dec(p);
+            }
+            s.push(']');
+            let c = std::ffi::CString::new(s).unwrap_or_default();
+            return heap_str_from_cstr(c.as_ptr());
+        }
+    }
+}
+
+// Helper: stringify an arbitrary pointer-or-raw-8-bytes value with depth guard.
+fn stringify_value_raw(val_raw: u64, depth: usize) -> String {
+    if depth > MAX_RECURSION_DEPTH {
+        return "...".to_string();
+    }
+    // Heuristic: treat values that look like plausible addresses as pointers
+    let addr = val_raw as usize;
+    if is_plausible_addr(addr) {
+        let p = addr as *mut c_void;
+        // Try array/tuple/string recursion
+        let s_ptr = unsafe { array_to_string(p) };
+        if !s_ptr.is_null() {
+            let s = unsafe { CStr::from_ptr(s_ptr) };
+            let res = s.to_string_lossy().into_owned();
+            unsafe {
+                rc_dec_str(s_ptr);
+            }
+            return res;
+        }
+        // Fallback: try to interpret as a C string
+        let maybe = unsafe { CStr::from_ptr(p as *const c_char) };
+        if let Ok(st) = maybe.to_str() {
+            return format!("\"{}\"", st);
+        }
+        return format!("<ptr {:p}>", p);
+    }
+    // Otherwise interpret as f64 bits
+    let f = f64::from_bits(val_raw);
+    format!("{}", f)
+}
+
+// tuple_to_string: iterate tuple meta block and stringify each 8-byte field.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tuple_to_string(obj: *mut c_void) -> *mut c_char {
+    if obj.is_null() {
+        return ptr::null_mut();
+    }
+    // Resolve base pointer (handles string-data pointers too)
+    let base = unsafe { get_object_base(obj) };
+    if base.is_null() {
+        return ptr::null_mut();
+    }
+    // meta pointer stored at offset +8
+    let meta_ptr_ptr = unsafe { (base as *mut u8).add(8) as *mut *mut u64 };
+    let meta = unsafe { *meta_ptr_ptr };
+    if meta.is_null() {
+        return ptr::null_mut();
+    }
+    if unsafe { !validate_meta_block(meta, 1024) } {
+        return ptr::null_mut();
+    }
+
+    let len = unsafe { ((*meta) & 0xffffffffu64) as usize };
+    let offsets_ptr = unsafe { meta.add(1) as *const i32 };
+
+    let mut parts: Vec<String> = Vec::new();
+    for i in 0..len {
+        let off_i32 = unsafe { *offsets_ptr.add(i) };
+        let off = off_i32 as isize as usize;
+        let field_addr = unsafe { (base as *mut u8).add(off) as *const u64 };
+        let raw = unsafe { *field_addr as u64 };
+        let s = stringify_value_raw(raw, 0);
+        parts.push(s);
+    }
+    let joined = parts.join(", ");
+    let out = format!("({})", joined);
+    let c = std::ffi::CString::new(out).unwrap_or_default();
+    unsafe { heap_str_from_cstr(c.as_ptr()) }
 }
 
 // Math.random() -> f64 in [0, 1)
@@ -1369,12 +1565,12 @@ pub unsafe extern "C" fn rc_inc(p: *mut c_void) {
         // on the full 64-bit header so strong/weak bits and flags remain
         // consistent. This avoids separate atomics for weak+strong counts and
         // reduces the chance of race conditions during concurrent updates.
-    // Loop performing an atomic compare-exchange on the 64-bit header.
-    // We must do this atomically because other threads may be changing
-    // the refcount concurrently. When the count reaches zero we run
-    // destructor-like cleanup while holding the claim that we are the
-    // thread performing finalization for this object.
-    loop {
+        // Loop performing an atomic compare-exchange on the 64-bit header.
+        // We must do this atomically because other threads may be changing
+        // the refcount concurrently. When the count reaches zero we run
+        // destructor-like cleanup while holding the claim that we are the
+        // thread performing finalization for this object.
+        loop {
             let old_header = (*header).load(Ordering::Relaxed);
             let rc = old_header & HEADER_RC_MASK;
             let new_rc = rc.wrapping_add(1) & HEADER_RC_MASK;
@@ -1417,12 +1613,12 @@ unsafe fn get_object_base(p: *mut c_void) -> *mut c_void {
         let header = p as *const AtomicU64;
         let header_val = (*header).load(Ordering::Relaxed);
 
-    // Valid header check: either has static bit, or has reasonable RC value.
-    // We check that the strong count is not absurdly large and that the
-    // flags are a small set of expected values. These heuristics are
-    // intentionally conservative; the runtime does not attempt to fully
-    // validate arbitrary pointers to avoid UB in the presence of memory
-    // corruption.
+        // Valid header check: either has static bit, or has reasonable RC value.
+        // We check that the strong count is not absurdly large and that the
+        // flags are a small set of expected values. These heuristics are
+        // intentionally conservative; the runtime does not attempt to fully
+        // validate arbitrary pointers to avoid UB in the presence of memory
+        // corruption.
         let rc = header_val & HEADER_RC_MASK;
         let flags = (header_val >> 32) as u32;
 
@@ -1528,7 +1724,7 @@ pub unsafe extern "C" fn rc_dec(p: *mut c_void) {
                 Ordering::Relaxed,
             ) {
                 Ok(_) => {
-                        if new_rc == 0 {
+                    if new_rc == 0 {
                         // An acquire fence ensures that all memory effects that happened
                         // before the last reference was dropped are visible before we run destructor.
                         std::sync::atomic::fence(Ordering::Acquire);

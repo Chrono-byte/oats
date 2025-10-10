@@ -1,0 +1,12 @@
+export function main(): void {
+    // An array of numbers
+    let fibonacci: number[] = [1, 1, 2, 3, 5, 8];
+
+    // A tuple with a specific set of types
+    let person: [string, number] = ["Alice", 30];
+
+    println("Fibonacci sequence: ", fibonacci);
+    println(`Person: ${person[0]}, Age: ${person[1]}`);
+
+    return;
+}

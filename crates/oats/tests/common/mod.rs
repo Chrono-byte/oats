@@ -11,6 +11,11 @@ use inkwell::targets::TargetMachine;
 #[cfg(test)]
 #[allow(dead_code)]
 pub fn gen_ir_for_source(src: &str) -> Result<String> {
+    // Silence diagnostics printed to stderr during test runs to keep test
+    // output focused. The suppress guard restores the previous state when
+    // dropped at the end of this function.
+    let _diag_guard = oats::diagnostics::suppress();
+
     let parsed_mod = parser::parse_oats_module(src, None)?;
     let parsed = &parsed_mod.parsed;
 

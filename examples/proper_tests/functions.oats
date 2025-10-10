@@ -1,0 +1,14 @@
+// Standard function with typed parameters and return value
+function greet(name: string): string {
+    return `Hello, ${name}!`;
+}
+
+// Arrow function
+const multiply = (a: number, b: number): number => a * b;
+
+export function main(): void {
+    println(greet("World"));
+    println(`5 * 7 = ${multiply(5, 7)}`);
+
+    return;
+}

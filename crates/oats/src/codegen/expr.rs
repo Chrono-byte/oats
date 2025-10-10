@@ -135,7 +135,6 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             }
                         }
                     }
-                    // fallback to general lowering below
                 }
 
                 let l = self.lower_expr(&bin.left, function, param_map, locals)?;
@@ -461,12 +460,125 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                     _is_weak,
                                                     nominal,
                                                 )) = self.find_local(locals, &orig)
+                                                    && let Some(n) = nominal
+                                                    && n == "__oats_array"
+                                                    && let Some(array_to_string) =
+                                                        self.module.get_function("array_to_string")
                                                 {
-                                                    if let Some(n) = nominal {
-                                                        if n == "__oats_array" {
-                                                            if let Some(array_to_string) = self
-                                                                .module
-                                                                .get_function("array_to_string")
+                                                    let cs = self.builder.build_call(
+                                                        array_to_string,
+                                                        &[pv.into()],
+                                                        "array_to_string_call",
+                                                    );
+                                                    if let Ok(cs) = cs
+                                                        && let inkwell::Either::Left(bv) =
+                                                            cs.try_as_basic_value()
+                                                    {
+                                                        let str_ptr = bv.into_pointer_value();
+                                                        if let Some(print_fn) = self
+                                                            .module
+                                                            .get_function("print_str_no_nl")
+                                                        {
+                                                            let _ = self
+                                                                .builder
+                                                                .build_call(
+                                                                    print_fn,
+                                                                    &[str_ptr.into()],
+                                                                    "print_str_no_nl_call",
+                                                                )
+                                                                .ok();
+                                                        }
+                                                        if let Some(rc_dec_str) =
+                                                            self.module.get_function("rc_dec_str")
+                                                        {
+                                                            let _ = self
+                                                                .builder
+                                                                .build_call(
+                                                                    rc_dec_str,
+                                                                    &[str_ptr.into()],
+                                                                    "rc_dec_str_call",
+                                                                )
+                                                                .ok();
+                                                        }
+                                                        used = true;
+                                                    }
+                                                }
+                                                if !used
+                                                    && self
+                                                        .class_fields
+                                                        .borrow()
+                                                        .get(&orig)
+                                                        .is_some()
+                                                    && let Some(array_to_string) =
+                                                        self.module.get_function("array_to_string")
+                                                {
+                                                    let cs = self.builder.build_call(
+                                                        array_to_string,
+                                                        &[pv.into()],
+                                                        "array_to_string_call",
+                                                    );
+                                                    if let Ok(cs) = cs
+                                                        && let inkwell::Either::Left(bv) =
+                                                            cs.try_as_basic_value()
+                                                    {
+                                                        let str_ptr = bv.into_pointer_value();
+                                                        if let Some(print_fn) = self
+                                                            .module
+                                                            .get_function("print_str_no_nl")
+                                                        {
+                                                            let _ = self
+                                                                .builder
+                                                                .build_call(
+                                                                    print_fn,
+                                                                    &[str_ptr.into()],
+                                                                    "print_str_no_nl_call",
+                                                                )
+                                                                .ok();
+                                                        }
+                                                        if let Some(rc_dec_str) =
+                                                            self.module.get_function("rc_dec_str")
+                                                        {
+                                                            let _ = self
+                                                                .builder
+                                                                .build_call(
+                                                                    rc_dec_str,
+                                                                    &[str_ptr.into()],
+                                                                    "rc_dec_str_call",
+                                                                )
+                                                                .ok();
+                                                        }
+                                                        used = true;
+                                                    }
+                                                }
+                                                // If still not used, check whether the arg is a function parameter
+                                                if !used {
+                                                    // If the argument was an identifier, see if it maps to a parameter index
+                                                    if let deno_ast::swc::ast::Expr::Ident(ident) =
+                                                        &*a.expr
+                                                    {
+                                                        let arg_name = ident.sym.to_string();
+                                                        if let Some(idx) = param_map.get(&arg_name)
+                                                        {
+                                                            // Look up param types for the current function
+                                                            let fname = function
+                                                                .get_name()
+                                                                .to_str()
+                                                                .unwrap_or("<fn>");
+                                                            if let Some(param_types) = self
+                                                                .fn_param_types
+                                                                .borrow()
+                                                                .get(fname)
+                                                                && let Some(pt) =
+                                                                    param_types.get(*idx as usize)
+                                                                && matches!(
+                                                                    pt,
+                                                                    crate::types::OatsType::Array(
+                                                                        _
+                                                                    )
+                                                                )
+                                                                && let Some(array_to_string) = self
+                                                                    .module
+                                                                    .get_function("array_to_string")
                                                             {
                                                                 let cs = self.builder.build_call(
                                                                     array_to_string,
@@ -505,112 +617,19 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                         }
                                                     }
                                                 }
-                                                if !used
-                                                    && self
-                                                        .class_fields
-                                                        .borrow()
-                                                        .get(&orig)
-                                                        .is_some()
-                                                {
-                                                    if let Some(array_to_string) =
-                                                        self.module.get_function("array_to_string")
-                                                    {
-                                                        let cs = self.builder.build_call(
-                                                            array_to_string,
-                                                            &[pv.into()],
-                                                            "array_to_string_call",
-                                                        );
-                                                        if let Ok(cs) = cs
-                                                            && let inkwell::Either::Left(bv) =
-                                                                cs.try_as_basic_value()
-                                                        {
-                                                            let str_ptr = bv.into_pointer_value();
-                                                            if let Some(print_fn) = self
-                                                                .module
-                                                                .get_function("print_str_no_nl")
-                                                            {
-                                                                let _ = self
-                                                                    .builder
-                                                                    .build_call(
-                                                                        print_fn,
-                                                                        &[str_ptr.into()],
-                                                                        "print_str_no_nl_call",
-                                                                    )
-                                                                    .ok();
-                                                            }
-                                                            if let Some(rc_dec_str) = self
-                                                                .module
-                                                                .get_function("rc_dec_str")
-                                                            {
-                                                                let _ = self
-                                                                    .builder
-                                                                    .build_call(
-                                                                        rc_dec_str,
-                                                                        &[str_ptr.into()],
-                                                                        "rc_dec_str_call",
-                                                                    )
-                                                                    .ok();
-                                                            }
-                                                            used = true;
-                                                        }
-                                                    }
-                                                }
-                                                // If still not used, check whether the arg is a function parameter
-                                                if !used {
-                                                    // If the argument was an identifier, see if it maps to a parameter index
-                                                    if let deno_ast::swc::ast::Expr::Ident(ident) =
-                                                        &*a.expr
-                                                    {
-                                                        let arg_name = ident.sym.to_string();
-                                                        if let Some(idx) = param_map.get(&arg_name)
-                                                        {
-                                                            // Look up param types for the current function
-                                                            let fname = function
-                                                                .get_name()
-                                                                .to_str()
-                                                                .unwrap_or("<fn>");
-                                                            if let Some(param_types) = self
-                                                                .fn_param_types
-                                                                .borrow()
-                                                                .get(fname)
-                                                            {
-                                                                if let Some(pt) =
-                                                                    param_types.get(*idx as usize)
-                                                                {
-                                                                    if matches!(pt, crate::types::OatsType::Array(_)) {
-                                                                        if let Some(array_to_string) = self.module.get_function("array_to_string") {
-                                                                            let cs = self.builder.build_call(array_to_string, &[pv.into()], "array_to_string_call");
-                                                                            if let Ok(cs) = cs && let inkwell::Either::Left(bv) = cs.try_as_basic_value() {
-                                                                                let str_ptr = bv.into_pointer_value();
-                                                                                if let Some(print_fn) = self.module.get_function("print_str_no_nl") {
-                                                                                    let _ = self.builder.build_call(print_fn, &[str_ptr.into()], "print_str_no_nl_call").ok();
-                                                                                }
-                                                                                if let Some(rc_dec_str) = self.module.get_function("rc_dec_str") {
-                                                                                    let _ = self.builder.build_call(rc_dec_str, &[str_ptr.into()], "rc_dec_str_call").ok();
-                                                                                }
-                                                                                used = true;
-                                                                            }
-                                                                        }
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
                                             }
-                                            if !used {
-                                                if let Some(print_fn) =
+                                            if !used
+                                                && let Some(print_fn) =
                                                     self.module.get_function("print_str_no_nl")
-                                                {
-                                                    let _ = self
-                                                        .builder
-                                                        .build_call(
-                                                            print_fn,
-                                                            &[pv.into()],
-                                                            "print_str_no_nl_call",
-                                                        )
-                                                        .ok();
-                                                }
+                                            {
+                                                let _ = self
+                                                    .builder
+                                                    .build_call(
+                                                        print_fn,
+                                                        &[pv.into()],
+                                                        "print_str_no_nl_call",
+                                                    )
+                                                    .ok();
                                             }
                                         }
                                         _ => {
@@ -2712,6 +2731,19 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             class_name_opt = Some(n.clone());
                                         }
                                     }
+                                    // If it's not a parameter, check locals for a nominal annotation
+                                    else if let Some((
+                                        _,
+                                        _ty,
+                                        _init,
+                                        _is_const,
+                                        _is_weak,
+                                        nominal,
+                                    )) = self.find_local(locals, &ident_name)
+                                        && let Some(nom) = nominal
+                                    {
+                                        class_name_opt = Some(nom);
+                                    }
                                 }
                             } else if matches!(&*member.obj, deno_ast::swc::ast::Expr::This(_))
                                 && let Some(param_types) = self
@@ -2944,10 +2976,211 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         // not supported
                     }
                 }
-                Err(Diagnostic::simple_with_span(
-                    "unsupported member access expression",
-                    member.span.lo.0 as usize,
-                ))
+                {
+                    // Build helpful debug context about why member lowering failed
+                    let keys: Vec<String> = self.class_fields.borrow().keys().cloned().collect();
+                    let mut recv_info = String::from("<unknown>");
+                    let mut recv_fields: Vec<String> = Vec::new();
+                    if let deno_ast::swc::ast::Expr::Ident(ident) = &*member.obj {
+                        let name = ident.sym.to_string();
+                        if let Some((_, _ty, _init, _is_const, _is_weak, nominal)) =
+                            self.find_local(locals, &name)
+                        {
+                            recv_info = format!("ident='{}' local_nominal={:?}", name, nominal);
+                            if let Some(n) = nominal
+                                && let Some(fields) = self.class_fields.borrow().get(&n)
+                            {
+                                recv_fields = fields.iter().map(|(n, _)| n.clone()).collect();
+                            }
+                        } else if let Some(idx) = param_map.get(&name) {
+                            recv_info = format!("ident='{}' param_idx={}", name, idx);
+                            if let Some(param_types) = self
+                                .fn_param_types
+                                .borrow()
+                                .get(function.get_name().to_str().unwrap_or(""))
+                            {
+                                recv_info.push_str(&format!(" param_types={:?}", param_types));
+                            }
+                        } else {
+                            recv_info = format!("ident='{}' not found in locals/params", name);
+                        }
+                    }
+
+                    // Also include the lowered ABI kind of the receiver expression.
+                    // If lowering the receiver produced a pointer and the prop is
+                    // an identifier, attempt a last-resort lookup: scan all
+                    // registered nominals for one that contains the requested
+                    // field and perform the field load. This handles cases where
+                    // earlier inference failed to pick the correct nominal but
+                    // the field layout is nevertheless registered.
+                    if let Ok(bv) = self.lower_expr(&member.obj, function, param_map, locals)
+                        && let BasicValueEnum::PointerValue(obj_ptr) = bv {
+                            // If prop is an identifier, try to find a class that
+                            // has this field and load it.
+                            if let deno_ast::swc::ast::MemberProp::Ident(pi) = &member.prop {
+                                let target_field = pi.sym.to_string();
+                                for (_class_name, fields) in self.class_fields.borrow().iter() {
+                                    if let Some((field_idx, (_fname, field_ty))) = fields
+                                        .iter()
+                                        .enumerate()
+                                        .find(|(_, (n, _))| n == &target_field)
+                                    {
+                                        // compute byte offset = sizeof(u64) + meta_slot + idx * ptr_size
+                                        let hdr_size = self.i64_t.const_int(
+                                            std::mem::size_of::<u64>() as u64,
+                                            false,
+                                        );
+                                        let ptr_sz = self.i64_t.const_int(
+                                            std::mem::size_of::<usize>() as u64,
+                                            false,
+                                        );
+                                        let idx_const =
+                                            self.i64_t.const_int(field_idx as u64, false);
+                                        let mul = match self.builder.build_int_mul(
+                                            idx_const,
+                                            ptr_sz,
+                                            "fld_off_mul",
+                                        ) {
+                                            Ok(v) => v,
+                                            Err(_) => continue,
+                                        };
+                                        let meta_slot = self.i64_t.const_int(8u64, false);
+                                        let tmp = match self.builder.build_int_add(
+                                            hdr_size,
+                                            meta_slot,
+                                            "hdr_plus_meta",
+                                        ) {
+                                            Ok(v) => v,
+                                            Err(_) => continue,
+                                        };
+                                        let offset = match self
+                                            .builder
+                                            .build_int_add(tmp, mul, "fld_off")
+                                        {
+                                            Ok(v) => v,
+                                            Err(_) => continue,
+                                        };
+                                        let gep_ptr = match self.i8_ptr_from_offset_i64(
+                                            obj_ptr,
+                                            offset,
+                                            "field_i8ptr",
+                                        ) {
+                                            Ok(p) => p,
+                                            Err(_) => continue,
+                                        };
+                                        match field_ty {
+                                            crate::types::OatsType::Number => {
+                                                let f64_ptr =
+                                                    match self.builder.build_pointer_cast(
+                                                        gep_ptr,
+                                                        self.context
+                                                            .ptr_type(AddressSpace::default()),
+                                                        "f64_ptr_cast",
+                                                    ) {
+                                                        Ok(p) => p,
+                                                        Err(_) => continue,
+                                                    };
+                                                if let Ok(loaded) = self.builder.build_load(
+                                                    self.f64_t,
+                                                    f64_ptr,
+                                                    "field_f64_load",
+                                                ) {
+                                                    return Ok(loaded.as_basic_value_enum());
+                                                }
+                                            }
+                                            crate::types::OatsType::String
+                                            | crate::types::OatsType::NominalStruct(_)
+                                            | crate::types::OatsType::Array(_) => {
+                                                let slot_ptr_ty = self
+                                                    .context
+                                                    .ptr_type(AddressSpace::default());
+                                                let slot_ptr =
+                                                    match self.builder.build_pointer_cast(
+                                                        gep_ptr,
+                                                        slot_ptr_ty,
+                                                        "slot_ptr_cast",
+                                                    ) {
+                                                        Ok(p) => p,
+                                                        Err(_) => continue,
+                                                    };
+                                                if let Ok(loaded) = self.builder.build_load(
+                                                    self.i8ptr_t,
+                                                    slot_ptr,
+                                                    "field_load",
+                                                ) {
+                                                    return Ok(loaded.as_basic_value_enum());
+                                                }
+                                            }
+                                            crate::types::OatsType::Union(_) => {
+                                                let slot_ptr_ty = self
+                                                    .context
+                                                    .ptr_type(AddressSpace::default());
+                                                let slot_ptr =
+                                                    match self.builder.build_pointer_cast(
+                                                        gep_ptr,
+                                                        slot_ptr_ty,
+                                                        "slot_ptr_cast",
+                                                    ) {
+                                                        Ok(p) => p,
+                                                        Err(_) => continue,
+                                                    };
+                                                if let Ok(boxed) = self.builder.build_load(
+                                                    self.i8ptr_t,
+                                                    slot_ptr,
+                                                    "union_boxed_load",
+                                                ) && let BasicValueEnum::PointerValue(
+                                                    boxed_ptr,
+                                                ) = boxed
+                                                {
+                                                    let unbox_f = self.get_union_unbox_f64();
+                                                    if let Ok(cs) = self.builder.build_call(
+                                                        unbox_f,
+                                                        &[boxed_ptr.into()],
+                                                        "union_unbox_f64_call",
+                                                    ) && let inkwell::Either::Left(bv) =
+                                                        cs.try_as_basic_value()
+                                                    {
+                                                        return Ok(bv);
+                                                    }
+                                                    let unbox_p = self.get_union_unbox_ptr();
+                                                    if let Ok(cs2) = self.builder.build_call(
+                                                        unbox_p,
+                                                        &[boxed_ptr.into()],
+                                                        "union_unbox_ptr_call",
+                                                    ) && let inkwell::Either::Left(bv2) =
+                                                        cs2.try_as_basic_value()
+                                                    {
+                                                        return Ok(bv2);
+                                                    }
+                                                }
+                                            }
+                                            _ => {}
+                                        }
+                                    }
+                                }
+                            }
+                            // no matching field found; fall through to diagnostic below
+                        }
+
+                    let lowered_recv =
+                        match self.lower_expr(&member.obj, function, param_map, locals) {
+                            Ok(bv) => match bv.get_type() {
+                                inkwell::types::BasicTypeEnum::PointerType(_) => {
+                                    "pointer".to_string()
+                                }
+                                inkwell::types::BasicTypeEnum::FloatType(_) => "float".to_string(),
+                                inkwell::types::BasicTypeEnum::IntType(_) => "int".to_string(),
+                                _ => "other".to_string(),
+                            },
+                            Err(_) => "lower_failed".to_string(),
+                        };
+
+                    let msg = format!(
+                        "unsupported member access expression; recv={}, lowered_recv={}, recv_fields={:?}, known_nominals={:?}",
+                        recv_info, lowered_recv, recv_fields, keys
+                    );
+                    Err(Diagnostic::simple_with_span(msg, member.span.lo.0 as usize))
+                }
             }
             ast::Expr::New(new_expr) => {
                 if let ast::Expr::Ident(ident) = &*new_expr.callee {
@@ -3783,24 +4016,19 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         .build_int_to_ptr(field_addr, self.i8ptr_t, "field_ptr")
                         .map_err(|_| Diagnostic::simple("int_to_ptr failed"))?;
 
-                    // If it's a float, box it into a pointer; if pointer already, store it and rc_inc.
+                    // If it's a float, store as raw f64 in the slot (no boxing).
                     if fv.get_type().is_float_type() {
-                        let box_fn = self.get_union_box_f64();
-                        let cs = self
+                        // Cast slot pointer to f64* and store the float directly
+                        let f64_slot_ptr = self
                             .builder
-                            .build_call(box_fn, &[fv.into()], "union_box_f64_ctor")
-                            .map_err(|_| Diagnostic::simple("box call failed"))?;
-                        if let inkwell::Either::Left(bv) = cs.try_as_basic_value() {
-                            let boxed_ptr = bv.into_pointer_value();
-                            let boxed_bv = inkwell::values::BasicValueEnum::PointerValue(boxed_ptr);
-                            let _ = self.builder.build_store(field_ptr, boxed_bv);
-                            let rc_inc = self.get_rc_inc();
-                            let _ = self.builder.build_call(
-                                rc_inc,
-                                &[boxed_ptr.into()],
-                                "rc_inc_field",
-                            );
-                        }
+                            .build_pointer_cast(
+                                field_ptr,
+                                self.context.ptr_type(AddressSpace::default()),
+                                "field_f64_slot",
+                            )
+                            .map_err(|_| Diagnostic::simple("pointer cast failed"))?;
+                        // fv is a float value; store it directly
+                        let _ = self.builder.build_store(f64_slot_ptr, fv);
                     } else if fv.get_type().is_pointer_type() {
                         let _ = self.builder.build_store(field_ptr, fv);
                         let rc_inc = self.get_rc_inc();
@@ -3812,28 +4040,21 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             .builder
                             .build_call(rc_inc, &[ptr.into()], "rc_inc_field");
                     } else if fv.get_type().is_int_type() {
-                        // Treat integers as numbers (f64) for now: convert to f64 then box
+                        // Treat integers as numbers (f64): convert to f64 and store inline
                         let intv = fv.into_int_value();
                         let fconv = self
                             .builder
                             .build_signed_int_to_float(intv, self.f64_t, "i_to_f")
                             .map_err(|_| Diagnostic::simple("int->float cast failed"))?;
-                        let box_fn = self.get_union_box_f64();
-                        let cs = self
+                        let f64_slot_ptr = self
                             .builder
-                            .build_call(box_fn, &[fconv.into()], "union_box_f64_ctor")
-                            .map_err(|_| Diagnostic::simple("box call failed"))?;
-                        if let inkwell::Either::Left(bv) = cs.try_as_basic_value() {
-                            let boxed_ptr = bv.into_pointer_value();
-                            let boxed_bv = inkwell::values::BasicValueEnum::PointerValue(boxed_ptr);
-                            let _ = self.builder.build_store(field_ptr, boxed_bv);
-                            let rc_inc = self.get_rc_inc();
-                            let _ = self.builder.build_call(
-                                rc_inc,
-                                &[boxed_ptr.into()],
-                                "rc_inc_field",
-                            );
-                        }
+                            .build_pointer_cast(
+                                field_ptr,
+                                self.context.ptr_type(AddressSpace::default()),
+                                "field_f64_slot",
+                            )
+                            .map_err(|_| Diagnostic::simple("pointer cast failed"))?;
+                        let _ = self.builder.build_store(f64_slot_ptr, fconv);
                     } else {
                         // Fallback: attempt to store as is (may fail at runtime)
                         let _ = self.builder.build_store(field_ptr, fv);

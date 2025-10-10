@@ -1,5 +1,8 @@
 // Auto-generated wrapper for tests in codegen
 
+#[path = "common/mod.rs"]
+mod common;
+
 #[path = "codegen/aot_runner_integration.rs"]
 mod aot_runner_integration;
 #[path = "codegen/arrays_and_loops.rs"]

@@ -1,8 +1,7 @@
 use anyhow::Result;
 
 use oats::parser;
-#[path = "../common/mod.rs"]
-mod common;
+use super::common;
 use common::gen_ir_for_source;
 
 // use the shared helper

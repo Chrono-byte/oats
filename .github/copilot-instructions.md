@@ -1,92 +1,201 @@
-# Oats — Comprehensive AI Agent Guide
+# Oats — AI Agent Guide
 
-This document provides in-depth guidance for AI assistants and contributors working on the Oats project.
+Oats is an experimental AOT compiler transforming TypeScript → native code via LLVM. This guide helps AI agents immediately contribute to the codebase with critical patterns, workflows, and conventions.
 
-## 1\. Project Overview
+## Project Architecture
 
-Oats is an experimental Ahead-of-Time (AOT) compiler that transforms a strict subset of TypeScript into native machine code. It leverages the power of LLVM to produce fast, standalone executables with deterministic memory management via reference counting.
+**Rust workspace:** `crates/oats` (compiler) + `crates/runtime` (C-callable runtime library).
 
-The compilation pipeline is as follows:
+**Compilation Pipeline:**
+1. **Parse** → `deno_ast` parses TypeScript to AST (`parser.rs`)
+2. **Type Check** → Map TS types to `OatsType` enum (`types.rs`)
+3. **Codegen** → Lower AST to LLVM IR (`codegen/*.rs` using `inkwell`)
+4. **Link** → Link object file with runtime to produce executable
 
-1.  **Parse:** The TypeScript/Oats source code is parsed into an Abstract Syntax Tree (AST) using `deno_ast`.
-2.  **Type Check:** The AST is traversed to check type annotations and infer types, mapping them to the internal `OatsType` representation.
-3.  **Codegen:** The typed AST is lowered into LLVM Intermediate Representation (IR) using the `inkwell` crate.
-4.  **Link:** The generated object file is linked with the Oats runtime (`crates/runtime`) to produce a native executable.
+**Key Modules:**
+- `crates/oats/src/parser.rs` - Enforces semicolons, rejects `var` keyword
+- `crates/oats/src/types.rs` - Type system (`OatsType` enum: Number, String, Array, Union, Weak, NominalStruct, etc.)
+- `crates/oats/src/codegen/mod.rs` - `CodeGen` struct with LLVM context, caches runtime function declarations
+- `crates/oats/src/codegen/emit.rs` - Top-level function/constructor lowering
+- `crates/oats/src/codegen/expr.rs` - Expression lowering via `lower_expr()`
+- `crates/oats/src/codegen/stmt.rs` - Statement lowering via `lower_stmt()`
+- `crates/oats/src/diagnostics.rs` - Rustc-style error reporting with `Diagnostic` struct
+- `crates/runtime/src/lib.rs` - RC helpers, allocators, string/array ops
 
------
+## Critical: Heap Object Memory Layout
 
-## 2\. Core Components
+**ALL heap objects have unified 64-bit header at offset 0:**
+- Bits 0-31: Strong refcount (atomic u32)
+- Bit 32: Static flag (1=immortal, don't touch RC)
+- Bits 33-48: Weak refcount (u16)
+- Bits 49-63: Type tag/flags
 
-The project is a Rust workspace with two main crates:
+**Object Layouts (byte offsets):**
+```
+Static string:    [header+static][i64 len][data+NUL]  → codegen returns ptr to data (offset 16)
+Heap string:      [header RC=1][i64 len][data+NUL]    → runtime returns ptr to data (offset 16)
+Array:            [header][i64 len][elements...]      → returns base ptr (offset 0)
+Class/Object:     [header][i64 meta_ptr][fields...]   → returns base ptr (offset 0)
+                  ↑ offset 0  ↑ offset 8 (reserved!)  ↑ fields start at offset 16
+```
 
-  * **`crates/oats`**: The core compiler.
-      * `parser.rs`: Handles source code parsing and enforces syntax rules like semicolon usage.
-      * `types.rs`: Defines the internal type system (`OatsType`) and logic for mapping from TypeScript types.
-      * `codegen/`: The heart of the compiler, responsible for LLVM IR emission. It's modularized into `emit.rs`, `expr.rs`, `stmt.rs`, and `helpers.rs`.
-      * `diagnostics.rs`: Provides utilities for reporting user-friendly, rustc-like error messages with source context.
-  * **`crates/runtime`**: A `staticlib` that provides essential services to the compiled executable, such as memory allocation, reference counting, and helpers for string and array manipulation.
+**CRITICAL:** Offset +8 is the **meta-slot** (field map pointer). Never overwrite with fields. Fields start at offset 16.
 
------
+**Pointer Rules:**
+- Runtime RC helpers accept: base pointers (offset 0) OR string data pointers (offset 16)
+- Runtime uses `get_object_base(p)` to canonicalize both types
+- Always call `rc_inc` when storing pointers, `rc_dec` when releasing
+- Static literals have static bit set → RC ops become no-ops
 
-## 3\. Heap Object System (CRITICAL)
+## Error Handling Pattern
 
-The runtime uses a unified 64-bit header for all heap objects. This is central for correct memory and reference counting behavior.
+**All codegen functions return `Result<T, Diagnostic>` - NO `.unwrap()` or `.expect()`:**
+```rust
+// CORRECT:
+pub fn lower_expr(...) -> Result<BasicValueEnum<'a>, Diagnostic> {
+    let val = some_operation().map_err(|_| 
+        Diagnostic::simple("Operation failed"))?;
+    Ok(val)
+}
 
-**Header Layout (8 bytes at offset 0):**
+// Use Diagnostic::simple(msg) or Diagnostic::simple_with_span(msg, byte_offset)
+// Propagate with `?` operator
+```
 
-  * **Bits 0-31:** Strong reference count (atomic, u32).
-  * **Bit 32:** Static flag (1 = immortal/don't modify RC, 0 = heap-allocated).
-  * **Bits 33-48:** Weak reference count (16 bits).
-  * **Bits 49-63:** Type tag and other flags.
+## Development Workflows
 
-**Object Layouts:**
+**Setup LLVM 18 environment (REQUIRED before building):**
+```bash
+source ./scripts/setup_env.sh
+```
 
-  * **Static string literals:** `[header (static bit set)][length i64][data bytes + NUL]`. The codegen returns a pointer to the data field (offset 16).
-  * **Heap strings:** The runtime allocates a header (RC=1) + length + data; the runtime returns a pointer to the data (offset 16).
-  * **Arrays:** `[header][length i64][elements...]`. Allocators return the base pointer (offset 0).
-  * **Classes/Objects:** `[header][metadata ptr (8)][field0 (8)][field1 (8)]...`. Constructors return the base pointer (offset 0).
+**Build & test:**
+```bash
+cargo build --workspace
+cargo test --workspace
+cargo clippy --workspace
+```
 
-**Pointer Rules & RC Operations:**
+**Compile & run an .oats file:**
+```bash
+cargo run -p oats --bin aot_run -- examples/hello.oats
+./hello
+```
 
-  * The system accepts two pointer kinds: **object base pointers** (offset 0) and **string data pointers** (offset 16). All RC helpers in the runtime are designed to handle either type.
-  * The runtime provides `get_object_base(p)`, which heuristically tests for a valid header at offset 0 and p-16 to find the true base for RC operations.
-  * `rc_inc` / `rc_dec`: Atomically modify the strong count. `rc_dec` will call the object's destructor (if any) and `rc_weak_dec` when the strong count reaches zero.
-  * `rc_weak_inc` / `rc_weak_dec`: Atomically modify the weak count. `rc_weak_dec` frees the object's memory only when both strong and weak counts are zero.
-  * `rc_weak_upgrade`: Attempts to atomically create a strong reference from a weak one, returning `null` if the object is already destroyed.
+**Run all proper_tests examples:**
+```bash
+./scripts/run_all_proper_tests.sh
+```
 
------
+**Snapshot testing (uses `insta`):**
+- Tests in `crates/oats/tests/codegen/` use `insta::assert_snapshot!(ir)`
+- Review snapshots: `cargo insta review`
+- Accept changes: `cargo insta accept`
+- Always explain snapshot changes in PR
 
-## 4\. How to Build & Run
+**Common test utilities:**
+- `crates/oats/tests/common/mod.rs::gen_ir_for_source()` - Generate IR from source string
+- Use `let _guard = oats::diagnostics::suppress();` to silence stderr in tests
 
-1.  **Set up the environment:** The `scripts/setup_env.sh` script detects your LLVM 18 installation and exports the necessary environment variables.
+## Adding Runtime Functions
 
-    ```bash
-    source ./scripts/setup_env.sh
-    ```
+**Two-step process (BOTH required):**
 
-2.  **Compile and Run an Example:** The `aot_run` binary handles the entire compilation and linking process.
+1. **Add to `crates/runtime/src/lib.rs`:**
+```rust
+#[no_mangle]
+pub extern "C" fn my_new_helper(arg: *const c_void) -> i64 {
+    // implementation
+}
+```
 
-    ```bash
-    # This will create an executable at ./aot_out/hello
-    cargo run -p oats --bin aot_run -- examples/hello.oats
+2. **Declare in `crates/oats/src/codegen/mod.rs` in `CodeGen` struct:**
+```rust
+pub struct CodeGen<'a> {
+    // ...
+    pub fn_my_new_helper: RefCell<Option<FunctionValue<'a>>>,
+}
 
-    # Run your compiled program
-    ./aot_out/hello
-    ```
+impl<'a> CodeGen<'a> {
+    fn get_my_new_helper(&self) -> FunctionValue<'a> {
+        if let Some(f) = *self.fn_my_new_helper.borrow() {
+            return f;
+        }
+        let fn_type = self.i64_t.fn_type(&[self.i8ptr_t.into()], false);
+        let f = self.module.add_function("my_new_helper", fn_type, None);
+        *self.fn_my_new_helper.borrow_mut() = Some(f);
+        f
+    }
+}
+```
 
------
+## Reference Counting Rules
 
-## 5\. Development Guidance
+**When to call RC ops:**
+- **Storing pointer in field/local:** Call `rc_inc` first
+- **Overwriting pointer:** Call `rc_dec` on old value before overwrite
+- **Function return:** Call `rc_dec` on locals before returning
+- **Loop break/continue:** Call `rc_dec` on loop-scoped locals before jumping
+- **Weak pointers:** Use `rc_weak_inc`/`rc_weak_dec`/`rc_weak_upgrade` instead
 
-**Roadmap Highlights:**
+**LocalEntry tuple structure (used throughout codegen):**
+```rust
+type LocalEntry<'a> = (
+    PointerValue<'a>,   // alloca ptr
+    BasicTypeEnum<'a>,  // LLVM type
+    bool,               // is_mutable (let vs const)
+    bool,               // is_param
+    bool,               // is_weak (Weak<T>)
+    Option<String>,     // nominal type name (for classes)
+);
+```
 
-  * **Phase 1 (Short-term):** Focus is on achieving basic compatibility by implementing robust **module resolution**, full support for **interfaces and type aliases**, and expanding the **standard library**.
-  * **Phase 2 (Medium-term):** Tackle advanced language features like **closures with capture**, **generics** via monomorphization, and **error handling** with `try/catch`.
-  * **Phase 3 (Long-term):** Aim for production readiness with advanced type system features, `node_modules` compatibility, and performance optimizations like escape analysis.
+## Module System
 
-**Checklist for Code Changes:**
+**Entry point:** `crates/oats/src/main.rs` handles transitive module loading
+- Resolves relative imports (`./foo`, `../bar`) with extensions `.ts`, `.oats`
+- Tries `index.ts`/`index.oats` for directories
+- Canonicalizes paths to avoid duplicates/cycles
+- Stores in `HashMap<String, ParsedModule>`
 
-  * **RC Management:** If adding a pointer field or storing pointers, ensure you call `rc_inc` on store and that `rc_dec` will be called on drop.
-  * **Runtime Helpers:** When adding new runtime functions, you must update both `crates/runtime` and the `CodeGen` struct in `crates/oats` to declare the new function.
-  * **Error Handling:** All fallible operations in the codegen logic should return a `Result<_, Diagnostic>` and propagate errors rather than panicking.
-  * **Testing:** Add unit tests for all new features. Use `insta` for snapshot testing of generated IR and add integration tests for end-to-end functionality.
+## Testing Checklist
+
+Before committing changes:
+- [ ] `cargo test --workspace` passes
+- [ ] No new `.unwrap()`/`.expect()` in `crates/oats/src/` (use `Result<_, Diagnostic>`)
+- [ ] If touching object layout or RC: add runtime test in `crates/runtime/tests/`
+- [ ] If IR changes: update insta snapshots with explanation
+- [ ] If adding runtime function: declared in both runtime AND CodeGen struct
+- [ ] Run `cargo clippy` and fix warnings
+
+## Runtime Diagnostics
+
+```bash
+# Enable runtime logging
+export OATS_RUNTIME_LOG=1
+export OATS_COLLECTOR_LOG=1  # for cycle collector logs
+```
+
+## Common Patterns
+
+**Type mapping:**
+```rust
+// OatsType → LLVM type via CodeGen::map_type_to_llvm()
+Number → f64
+Boolean → i1 or i8 (context dependent)
+String → i8* (pointer to data at offset 16)
+Array(T) → i8* (pointer to base at offset 0)
+NominalStruct(name) → i8* (pointer to base at offset 0)
+Union → f64 (numeric-only) or i8* (mixed/pointer)
+```
+
+**Codegen structure:**
+- `lower_stmts()` returns `bool` (has terminator)
+- `lower_expr()` returns `Result<BasicValueEnum, Diagnostic>`
+- `emit_rc_dec_for_locals(&locals_stack)` cleans up before return/break/continue
+
+## Resources
+
+- **Architecture:** `docs/ARCHITECTURE.md` - Object layouts, contracts
+- **Roadmap:** `docs/ROADMAP.md` - Phases, work items
+- **Development:** `docs/DEVELOPMENT.md` - Contributing guidelines

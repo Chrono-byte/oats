@@ -138,8 +138,7 @@ pub fn gen_ir_for_source(src: &str) -> Result<String> {
                             && let Expr::Assign(assign) = &*expr_stmt.expr
                             && let deno_ast::swc::ast::AssignTarget::Simple(simple_target) =
                                 &assign.left
-                        {
-                            if let deno_ast::swc::ast::SimpleAssignTarget::Member(mem) =
+                            && let deno_ast::swc::ast::SimpleAssignTarget::Member(mem) =
                                 simple_target
                                 && matches!(&*mem.obj, Expr::This(_))
                                 && let MemberProp::Ident(ident) = &mem.prop
@@ -150,7 +149,6 @@ pub fn gen_ir_for_source(src: &str) -> Result<String> {
                                     fields.push((name, inferred));
                                 }
                             }
-                        }
                     }
                 }
             }
@@ -214,7 +212,7 @@ pub fn gen_ir_for_source(src: &str) -> Result<String> {
                             .borrow()
                             .get(&class_name)
                             .cloned()
-                            .unwrap_or_else(|| Vec::new());
+                            .unwrap_or_else(Vec::new);
                         codegen
                             .gen_constructor_ir(&class_name, cons, &fields_vec)
                             .map_err(|d| anyhow::anyhow!(d.message))?;

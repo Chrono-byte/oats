@@ -1,7 +1,6 @@
 use anyhow::Result;
 // Use shared test helper
-#[path = "../common/mod.rs"]
-mod common;
+use super::common;
 use common::gen_ir_for_source;
 
 #[test]

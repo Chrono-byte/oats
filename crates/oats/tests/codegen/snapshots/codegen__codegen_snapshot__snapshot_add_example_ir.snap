@@ -1,6 +1,5 @@
 ---
 source: crates/oats/tests/codegen/codegen_snapshot.rs
-assertion_line: 9
 expression: ir
 ---
 ; ModuleID = 'test_module'
@@ -17,7 +16,17 @@ declare void @free(ptr)
 
 declare void @print_f64(double)
 
+declare void @print_f64_no_nl(double)
+
 declare void @print_str(ptr)
+
+declare void @print_str_no_nl(ptr)
+
+declare void @print_newline()
+
+declare ptr @array_to_string(ptr)
+
+declare void @rc_dec_str(ptr)
 
 declare void @sleep_ms(double)
 

@@ -1344,7 +1344,7 @@ pub extern "C" fn array_set_f64(arr: *mut c_void, idx: usize, v: f64) {
 /// # Safety
 /// Caller must ensure `arr` is a valid pointer-typed array and `idx` is within bounds.
 #[unsafe(no_mangle)]
-pub extern "C" fn array_set_ptr(arr: *mut c_void, idx: usize, p: *mut c_void) {
+pub unsafe extern "C" fn array_set_ptr(arr: *mut c_void, idx: usize, p: *mut c_void) {
     if arr.is_null() {
         return;
     }
@@ -1379,7 +1379,7 @@ pub extern "C" fn array_set_ptr(arr: *mut c_void, idx: usize, p: *mut c_void) {
 /// `arr` must be a valid pointer-typed array. `p` must be either NULL or a pointer
 /// previously returned by this runtime. Passing invalid pointers is undefined behavior.
 #[unsafe(no_mangle)]
-pub extern "C" fn array_set_ptr_weak(arr: *mut c_void, idx: usize, p: *mut c_void) {
+pub unsafe extern "C" fn array_set_ptr_weak(arr: *mut c_void, idx: usize, p: *mut c_void) {
     if arr.is_null() {
         return;
     }
@@ -1460,7 +1460,7 @@ pub extern "C" fn array_pop_f64(arr: *mut c_void) -> f64 {
 /// # Safety
 /// Caller must ensure `arr` is a valid pointer-typed array with sufficient capacity.
 #[unsafe(no_mangle)]
-pub extern "C" fn array_push_ptr(arr: *mut c_void, value: *mut c_void) {
+pub unsafe extern "C" fn array_push_ptr(arr: *mut c_void, value: *mut c_void) {
     if arr.is_null() {
         return;
     }
@@ -1485,7 +1485,7 @@ pub extern "C" fn array_push_ptr(arr: *mut c_void, value: *mut c_void) {
 /// # Safety
 /// Caller must ensure `arr` is a valid pointer-typed array with sufficient capacity.
 #[unsafe(no_mangle)]
-pub extern "C" fn array_push_ptr_weak(arr: *mut c_void, value: *mut c_void) {
+pub unsafe extern "C" fn array_push_ptr_weak(arr: *mut c_void, value: *mut c_void) {
     if arr.is_null() {
         return;
     }
@@ -1990,7 +1990,7 @@ pub extern "C" fn union_box_f64(v: f64) -> *mut c_void {
 /// `p` must be a valid pointer previously returned by the runtime or NULL. The
 /// returned control block is an owning object and must be released with `rc_dec`.
 #[unsafe(no_mangle)]
-pub extern "C" fn union_box_ptr(p: *mut c_void) -> *mut c_void {
+pub unsafe extern "C" fn union_box_ptr(p: *mut c_void) -> *mut c_void {
     unsafe {
         let total = 8 * 4;
         let mem = runtime_malloc(total as size_t) as *mut u8;

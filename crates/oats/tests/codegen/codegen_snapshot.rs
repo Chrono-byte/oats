@@ -1,6 +1,5 @@
 use anyhow::Result;
-#[path = "../common/mod.rs"]
-mod common;
+use super::common;
 use common::gen_ir_for_source;
 
 #[test]

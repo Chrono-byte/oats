@@ -997,12 +997,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             // to lower it and handle closure-object calls below.
                             {
                                 // Attempt to lower the callee expression to a value
-                                if let Ok(callee_val) =
+                                // If it lowered to a pointer, treat it as a closure object
+                                if let Ok(BasicValueEnum::PointerValue(callee_ptr)) =
                                     self.lower_expr(boxed_expr, function, param_map, locals)
                                 {
-                                    // If it lowered to a pointer, treat it as a closure object
-                                    if let BasicValueEnum::PointerValue(callee_ptr) = callee_val {
-                                        // compute offsets for fn_ptr (idx 0) and env_ptr (idx 1)
+                                    // compute offsets for fn_ptr (idx 0) and env_ptr (idx 1)
                                         let header_size = self.i64_t.const_int(8u64, false);
                                         let meta_slot = self.i64_t.const_int(8u64, false);
                                         let ptr_sz = self.i64_t.const_int(8u64, false);
@@ -1132,7 +1131,6 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             return Ok(zero.as_basic_value_enum());
                                         }
                                     }
-                                }
                                 Err(Diagnostic::simple_with_span(
                                     "unsupported member call or dynamic callee",
                                     call.span.lo.0 as usize,
@@ -3734,10 +3732,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
                     // Emit field_map for closure object (two pointer fields at offsets 16 and 24)
                     let closure_gv_name = format!("{}_closure_field_map", arrow_fn_name);
-                    let mut closure_offsets: Vec<u64> = Vec::new();
                     // fields start after header + meta_slot; fn_ptr at idx 0, env_ptr at idx 1
-                    closure_offsets.push(header_size + meta_slot);
-                    closure_offsets.push(header_size + meta_slot + 8);
+                    let closure_offsets: Vec<u64> = vec![
+                        header_size + meta_slot,
+                        header_size + meta_slot + 8,
+                    ];
                     let closure_gv_i8 = self
                         .emit_field_map_global(&closure_gv_name, &closure_offsets)
                         .map_err(|_| Diagnostic::simple("failed to emit closure field_map"))?;
@@ -3841,7 +3840,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             self.lower_expr(expr, arrow_fn, &arrow_param_map, &mut arrow_locals)?;
 
                         // RC cleanup for locals before return
-                        self.emit_rc_dec_for_locals(&mut arrow_locals);
+                        self.emit_rc_dec_for_locals(&arrow_locals);
 
                         let _ = self.builder.build_return(Some(&result));
                     } else {

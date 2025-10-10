@@ -372,13 +372,15 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         // mark initialized and insert local with nominal pointing to tuple generated name
                                         self.insert_local_current_scope(
                                             _locals_stack,
-                                            name,
-                                            alloca,
-                                            allocated_ty,
-                                            true,
-                                            false,
-                                            declared_is_weak,
-                                            Some(gen_name),
+                                            crate::codegen::helpers::LocalVarInfo {
+                                                name,
+                                                ptr: alloca,
+                                                ty: allocated_ty,
+                                                initialized: true,
+                                                is_const: false,
+                                                is_weak: declared_is_weak,
+                                                nominal: Some(gen_name),
+                                            },
                                         );
                                         // done handling tuple init
                                         continue;
@@ -510,13 +512,15 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     // mark initialized in locals; is_const=false by default
                                     self.insert_local_current_scope(
                                         _locals_stack,
-                                        name,
-                                        alloca,
-                                        allocated_ty,
-                                        true,
-                                        false,
-                                        declared_is_weak,
-                                        declared_nominal.clone(),
+                                        crate::codegen::helpers::LocalVarInfo {
+                                            name,
+                                            ptr: alloca,
+                                            ty: allocated_ty,
+                                            initialized: true,
+                                            is_const: false,
+                                            is_weak: declared_is_weak,
+                                            nominal: declared_nominal.clone(),
+                                        },
                                     );
                                 }
                             } else {
@@ -540,13 +544,15 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 };
                                 self.insert_local_current_scope(
                                     _locals_stack,
-                                    name,
-                                    alloca,
-                                    ty,
-                                    false,
-                                    false,
-                                    declared_is_weak,
-                                    declared_nominal.clone(),
+                                    crate::codegen::helpers::LocalVarInfo {
+                                        name,
+                                        ptr: alloca,
+                                        ty,
+                                        initialized: false,
+                                        is_const: false,
+                                        is_weak: declared_is_weak,
+                                        nominal: declared_nominal.clone(),
+                                    },
                                 );
                             }
                         }
@@ -879,13 +885,15 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     let _ = self.builder.build_store(alloca, bv);
                                     self.insert_local_current_scope(
                                         _locals_stack,
-                                        loop_var_name.clone(),
-                                        alloca,
-                                        ty,
-                                        true,
-                                        false,
-                                        false,
-                                        declared_nominal.clone(),
+                                        crate::codegen::helpers::LocalVarInfo {
+                                            name: loop_var_name.clone(),
+                                            ptr: alloca,
+                                            ty,
+                                            initialized: true,
+                                            is_const: false,
+                                            is_weak: false,
+                                            nominal: declared_nominal.clone(),
+                                        },
                                     );
                                 }
                             } else if let Some(array_get_ptr_fn) =
@@ -924,13 +932,15 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     );
                                     self.insert_local_current_scope(
                                         _locals_stack,
-                                        loop_var_name.clone(),
-                                        alloca,
-                                        ty,
-                                        true,
-                                        false,
-                                        false,
-                                        declared_nominal.clone(),
+                                        crate::codegen::helpers::LocalVarInfo {
+                                            name: loop_var_name.clone(),
+                                            ptr: alloca,
+                                            ty,
+                                            initialized: true,
+                                            is_const: false,
+                                            is_weak: false,
+                                            nominal: declared_nominal.clone(),
+                                        },
                                     );
                                 }
                             }

@@ -26,6 +26,17 @@ type LocalEntry<'a> = (
 );
 type LocalsStackLocal<'a> = Vec<HashMap<String, LocalEntry<'a>>>;
 
+/// Parameters for inserting a local variable into the current scope.
+pub(crate) struct LocalVarInfo<'a> {
+    pub name: String,
+    pub ptr: inkwell::values::PointerValue<'a>,
+    pub ty: BasicTypeEnum<'a>,
+    pub initialized: bool,
+    pub is_const: bool,
+    pub is_weak: bool,
+    pub nominal: Option<String>,
+}
+
 impl<'a> super::CodeGen<'a> {
     /// Map an `OatsType` to an LLVM `BasicTypeEnum` for parameter/alloca ABI.
     ///
@@ -373,26 +384,23 @@ impl<'a> super::CodeGen<'a> {
     pub(crate) fn insert_local_current_scope(
         &self,
         locals: &mut LocalsStackLocal<'a>,
-        name: String,
-        ptr: inkwell::values::PointerValue<'a>,
-        ty: BasicTypeEnum<'a>,
-        initialized: bool,
-        is_const: bool,
-        is_weak: bool,
-        nominal: Option<String>,
+        info: LocalVarInfo<'a>,
     ) {
         if locals.is_empty() {
             locals.push(HashMap::new());
         }
         // Safe: we just ensured locals is not empty above
         if let Some(scope) = locals.last_mut() {
-            let key = name.clone();
-            scope.insert(name, (ptr, ty, initialized, is_const, is_weak, nominal));
+            let key = info.name.clone();
+            scope.insert(
+                info.name,
+                (info.ptr, info.ty, info.initialized, info.is_const, info.is_weak, info.nominal.clone()),
+            );
             // If this new local was initialized from a previously-tracked
             // expression origin that we recorded as a freshly-created closure,
             // propagate its return-type mapping so future calls can use the
             // statically-known return type.
-            if initialized
+            if info.initialized
                 && let Some(orig) = self.last_expr_origin_local.borrow().clone()
                 && let Some(rt) = self.closure_local_rettype.borrow().get(&orig)
             {

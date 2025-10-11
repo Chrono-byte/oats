@@ -3,7 +3,6 @@ use inkwell::context::Context;
 use inkwell::targets::TargetMachine;
 use inkwell::values::BasicValue;
 use oats::codegen::CodeGen;
-use std::cell::Cell;
 
 #[test]
 fn test_heap_alloc_with_ptr_fields_weak_emits_rc_weak_inc() -> Result<()> {
@@ -17,7 +16,7 @@ fn test_heap_alloc_with_ptr_fields_weak_emits_rc_weak_inc() -> Result<()> {
         context: &context,
         module,
         builder,
-        next_str_id: Cell::new(0),
+        next_str_id: std::cell::Cell::new(0),
         string_literals: std::cell::RefCell::new(std::collections::HashMap::new()),
         f64_t: context.f64_type(),
         i64_t: context.i64_type(),
@@ -26,9 +25,9 @@ fn test_heap_alloc_with_ptr_fields_weak_emits_rc_weak_inc() -> Result<()> {
         i8ptr_t: context.ptr_type(inkwell::AddressSpace::default()),
         fn_print_f64: std::cell::RefCell::new(None),
         fn_print_str: std::cell::RefCell::new(None),
-        fn_strlen: std::cell::RefCell::new(None),
         fn_malloc: std::cell::RefCell::new(None),
         fn_memcpy: std::cell::RefCell::new(None),
+        fn_strlen: std::cell::RefCell::new(None),
         fn_free: std::cell::RefCell::new(None),
         fn_array_alloc: std::cell::RefCell::new(None),
         fn_rc_inc: std::cell::RefCell::new(None),
@@ -43,10 +42,18 @@ fn test_heap_alloc_with_ptr_fields_weak_emits_rc_weak_inc() -> Result<()> {
         fn_rc_weak_upgrade: std::cell::RefCell::new(None),
         fn_union_get_discriminant: std::cell::RefCell::new(None),
         class_fields: std::cell::RefCell::new(std::collections::HashMap::new()),
-        closure_local_rettype: std::cell::RefCell::new(std::collections::HashMap::new()),
-        last_expr_origin_local: std::cell::RefCell::new(None),
         fn_param_types: std::cell::RefCell::new(std::collections::HashMap::new()),
         loop_context_stack: std::cell::RefCell::new(Vec::new()),
+        current_class_parent: std::cell::RefCell::new(None),
+        closure_local_rettype: std::cell::RefCell::new(std::collections::HashMap::new()),
+        last_expr_origin_local: std::cell::RefCell::new(None),
+        async_await_counter: std::cell::Cell::new(0),
+        async_await_live_sets: std::cell::RefCell::new(None),
+        async_cont_blocks: std::cell::RefCell::new(None),
+        async_local_name_to_slot: std::cell::RefCell::new(None),
+        async_param_count: std::cell::Cell::new(0),
+        async_poll_function: std::cell::RefCell::new(None),
+        async_resume_blocks: std::cell::RefCell::new(None),
         source: "",
     };
 

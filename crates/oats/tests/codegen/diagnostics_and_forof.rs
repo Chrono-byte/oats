@@ -1,8 +1,8 @@
 use anyhow::Result;
 
-use oats::parser;
 use super::common;
 use common::gen_ir_for_source;
+use oats::parser;
 
 // use the shared helper
 

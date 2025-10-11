@@ -15,6 +15,7 @@
 //! these helpers and avoids duplicate declarations.
 
 use deno_ast::swc::ast;
+use inkwell::basic_block::BasicBlock;
 use inkwell::builder::Builder;
 use inkwell::context::Context;
 use inkwell::module::Module;
@@ -89,6 +90,10 @@ pub struct CodeGen<'a> {
     pub class_fields: RefCell<HashMap<String, Vec<(String, crate::types::OatsType)>>>,
     pub fn_param_types: RefCell<HashMap<String, Vec<crate::types::OatsType>>>,
     pub loop_context_stack: RefCell<Vec<LoopContext<'a>>>,
+    // Optional mapping for the currently-emitted constructor's parent class name.
+    // Used to lower `super(...)` calls inside constructors to call the
+    // parent's `<Parent>_init(this, ...)` initializer.
+    pub current_class_parent: RefCell<Option<String>>,
     // Map local names (alloca/local identifiers) that currently hold a
     // freshly-created closure object to the closure's return type. This lets
     // call-lowering emit statically-typed indirect calls when the callee is a
@@ -98,6 +103,17 @@ pub struct CodeGen<'a> {
     // when that expression was a simple load from a local. Used to propagate
     // closure-local typing across assignments.
     pub last_expr_origin_local: RefCell<Option<String>>,
+    // Async-lowering context populated while lowering an `async fn` into
+    // a poll-state machine. These are intentionally optional so the
+    // expression lowering paths can fall back to the Phase-0 behaviour
+    // when not present.
+    pub async_await_live_sets: RefCell<Option<Vec<std::collections::HashSet<String>>>>,
+    pub async_local_name_to_slot: RefCell<Option<std::collections::HashMap<String, usize>>>,
+    pub async_resume_blocks: RefCell<Option<Vec<BasicBlock<'a>>>>,
+    pub async_cont_blocks: RefCell<Option<Vec<BasicBlock<'a>>>>,
+    pub async_poll_function: RefCell<Option<FunctionValue<'a>>>,
+    pub async_await_counter: Cell<u32>,
+    pub async_param_count: Cell<u32>,
     pub source: &'a str,
 }
 
@@ -128,6 +144,81 @@ impl<'a> CodeGen<'a> {
         let f = self.module.add_function("rc_inc", fn_type, None);
         *self.fn_rc_inc.borrow_mut() = Some(f);
         f
+    }
+
+    fn get_promise_resolve(&self) -> FunctionValue<'a> {
+        // promise_resolve(i8*) -> i8*
+        let fn_type = self.i8ptr_t.fn_type(&[self.i8ptr_t.into()], false);
+        self.module
+            .get_function("promise_resolve")
+            .unwrap_or_else(|| self.module.add_function("promise_resolve", fn_type, None))
+    }
+
+    fn get_promise_poll_into(&self) -> FunctionValue<'a> {
+        // promise_poll_into(i8*, i8*) -> i32
+        let fn_type = self
+            .i32_t
+            .fn_type(&[self.i8ptr_t.into(), self.i8ptr_t.into()], false);
+        self.module
+            .get_function("promise_poll_into")
+            .unwrap_or_else(|| self.module.add_function("promise_poll_into", fn_type, None))
+    }
+
+    #[allow(dead_code)]
+    fn get_promise_new_from_state(&self) -> FunctionValue<'a> {
+        // promise_new_from_state(i8*) -> i8*
+        let fn_type = self.i8ptr_t.fn_type(&[self.i8ptr_t.into()], false);
+        self.module
+            .get_function("promise_new_from_state")
+            .unwrap_or_else(|| {
+                self.module
+                    .add_function("promise_new_from_state", fn_type, None)
+            })
+    }
+
+    #[allow(dead_code)]
+    fn get_executor_enqueue(&self) -> FunctionValue<'a> {
+        // executor_enqueue(i8*) -> void
+        let fn_type = self
+            .context
+            .void_type()
+            .fn_type(&[self.i8ptr_t.into()], false);
+        self.module
+            .get_function("executor_enqueue")
+            .unwrap_or_else(|| self.module.add_function("executor_enqueue", fn_type, None))
+    }
+
+    #[allow(dead_code)]
+    fn get_executor_run(&self) -> FunctionValue<'a> {
+        // executor_run() -> void
+        let fn_type = self.context.void_type().fn_type(&[], false);
+        self.module
+            .get_function("executor_run")
+            .unwrap_or_else(|| self.module.add_function("executor_run", fn_type, None))
+    }
+
+    #[allow(dead_code)]
+    fn get_waker_create_for_task(&self) -> FunctionValue<'a> {
+        // waker_create_for_task(i8*) -> i8*
+        let fn_type = self.i8ptr_t.fn_type(&[self.i8ptr_t.into()], false);
+        self.module
+            .get_function("waker_create_for_task")
+            .unwrap_or_else(|| {
+                self.module
+                    .add_function("waker_create_for_task", fn_type, None)
+            })
+    }
+
+    #[allow(dead_code)]
+    fn get_waker_wake(&self) -> FunctionValue<'a> {
+        // waker_wake(i8*) -> void
+        let fn_type = self
+            .context
+            .void_type()
+            .fn_type(&[self.i8ptr_t.into()], false);
+        self.module
+            .get_function("waker_wake")
+            .unwrap_or_else(|| self.module.add_function("waker_wake", fn_type, None))
     }
 
     fn get_math_random(&self) -> FunctionValue<'a> {
@@ -448,10 +539,22 @@ impl<'a> CodeGen<'a> {
             param_map.insert(rname.to_string(), 0u32);
         }
         for (i, p) in func_decl.params.iter().enumerate() {
-            if let ast::Pat::Ident(ident) = &p.pat {
-                let name = ident.id.sym.to_string();
-                let idx = (i + receiver_name.map_or(0, |_| 1)) as u32;
-                param_map.insert(name, idx);
+            use deno_ast::swc::ast;
+            match &p.pat {
+                ast::Pat::Ident(ident) => {
+                    let name = ident.id.sym.to_string();
+                    let idx = (i + receiver_name.map_or(0, |_| 1)) as u32;
+                    param_map.insert(name, idx);
+                }
+                // Support default parameters like `x = 0` where the pattern is an Assign
+                ast::Pat::Assign(assign) => {
+                    if let ast::Pat::Ident(ident) = &*assign.left {
+                        let name = ident.id.sym.to_string();
+                        let idx = (i + receiver_name.map_or(0, |_| 1)) as u32;
+                        param_map.insert(name, idx);
+                    }
+                }
+                _ => {}
             }
         }
 

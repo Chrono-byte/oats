@@ -560,8 +560,16 @@ fn main() -> Result<()> {
         class_fields: std::cell::RefCell::new(std::collections::HashMap::new()),
         fn_param_types: std::cell::RefCell::new(std::collections::HashMap::new()),
         loop_context_stack: std::cell::RefCell::new(Vec::new()),
+        current_class_parent: std::cell::RefCell::new(None),
         closure_local_rettype: std::cell::RefCell::new(std::collections::HashMap::new()),
         last_expr_origin_local: std::cell::RefCell::new(None),
+        async_await_counter: std::cell::Cell::new(0),
+        async_await_live_sets: std::cell::RefCell::new(None),
+        async_cont_blocks: std::cell::RefCell::new(None),
+        async_local_name_to_slot: std::cell::RefCell::new(None),
+        async_param_count: std::cell::Cell::new(0),
+        async_poll_function: std::cell::RefCell::new(None),
+        async_resume_blocks: std::cell::RefCell::new(None),
         source: &parsed_mod.source,
     };
 
@@ -579,6 +587,19 @@ fn main() -> Result<()> {
             && let deno_ast::swc::ast::Decl::Class(c) = &decl.decl
         {
             let class_name = c.ident.sym.to_string();
+            // If this class extends a parent, record the parent name so constructors
+            // and `super(...)` lowering can find the parent's initializer.
+            let parent_name_opt = if let Some(sc) = &c.class.super_class {
+                if let deno_ast::swc::ast::Expr::Ident(id) = &**sc {
+                    Some(id.sym.to_string())
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            *codegen.current_class_parent.borrow_mut() = parent_name_opt.clone();
+
             // Emit members for this class
             for member in &c.class.body {
                 use deno_ast::swc::ast::ClassMember;
@@ -760,6 +781,8 @@ fn main() -> Result<()> {
                     _ => {}
                 }
             }
+            // Done emitting this class; clear current parent
+            codegen.current_class_parent.borrow_mut().take();
         }
 
         // Also handle non-exported top-level class declarations: `class Foo {}`
@@ -767,6 +790,16 @@ fn main() -> Result<()> {
             && let deno_ast::swc::ast::Stmt::Decl(deno_ast::swc::ast::Decl::Class(c)) = stmt
         {
             let class_name = c.ident.sym.to_string();
+            let parent_name_opt = if let Some(sc) = &c.class.super_class {
+                if let deno_ast::swc::ast::Expr::Ident(id) = &**sc {
+                    Some(id.sym.to_string())
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            *codegen.current_class_parent.borrow_mut() = parent_name_opt.clone();
             for member in &c.class.body {
                 use deno_ast::swc::ast::ClassMember;
                 match member {
@@ -892,6 +925,8 @@ fn main() -> Result<()> {
                     _ => {}
                 }
             }
+            // Clear parent after emitting this class
+            codegen.current_class_parent.borrow_mut().take();
         }
     }
 

@@ -80,6 +80,7 @@ export function main(x: number | string): string {
         class_fields: std::cell::RefCell::new(std::collections::HashMap::new()),
         closure_local_rettype: std::cell::RefCell::new(std::collections::HashMap::new()),
         last_expr_origin_local: std::cell::RefCell::new(None),
+    current_class_parent: std::cell::RefCell::new(None),
         fn_param_types: std::cell::RefCell::new(std::collections::HashMap::new()),
         source: &parsed_mod.source,
         loop_context_stack: std::cell::RefCell::new(Vec::new()),

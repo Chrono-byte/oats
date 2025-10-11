@@ -858,9 +858,8 @@ pub unsafe extern "C" fn str_concat(a: *const c_char, b: *const c_char) -> *mut 
 /// Safe to call from any thread.
 #[unsafe(no_mangle)]
 pub extern "C" fn print_f64(v: f64) {
-    unsafe {
-        libc::printf(c"%f\n".as_ptr() as *const c_char, v);
-    }
+    let _ = io::stdout().write_all(format!("{}\n", v).as_bytes());
+    let _ = io::stdout().flush();
 }
 
 /// Print a nul-terminated C string to stdout (with newline).
@@ -876,14 +875,14 @@ pub unsafe extern "C" fn print_str(s: *const c_char) {
         }
         let _ = io::stdout().write_all(CStr::from_ptr(s).to_bytes());
         let _ = io::stdout().write_all(b"\n");
+        let _ = io::stdout().flush();
     }
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn print_i32(v: i32) {
-    unsafe {
-        libc::printf(c"%d\n".as_ptr() as *const c_char, v);
-    }
+    let _ = io::stdout().write_all(format!("{}\n", v).as_bytes());
+    let _ = io::stdout().flush();
 }
 
 /// Print a float without trailing newline.
@@ -893,10 +892,8 @@ pub extern "C" fn print_i32(v: i32) {
 /// in the current environment. This function does not dereference raw pointers.
 #[unsafe(no_mangle)]
 pub extern "C" fn print_f64_no_nl(v: f64) {
-    unsafe {
-        libc::printf(c"%g".as_ptr() as *const c_char, v);
-        // no newline
-    }
+    let _ = io::stdout().write_all(format!("{}", v).as_bytes());
+    let _ = io::stdout().flush();
 }
 
 /// Print a C string without trailing newline.
@@ -921,9 +918,17 @@ pub unsafe extern "C" fn print_str_no_nl(s: *const c_char) {
 /// This function does not dereference raw pointers and is safe to call from any thread.
 #[unsafe(no_mangle)]
 pub extern "C" fn print_newline() {
+    // Write the newline byte to the stdout buffer
     let _ = io::stdout().write_all(b"\n");
+    // Explicitly flush the buffer to ensure it's written to the console
+    let _ = io::stdout().flush();
+    // Also flush C stdio buffers in case other runtime helpers used libc::printf
+    // to write to stdout. This avoids interleaving / buffering issues when
+    // mixing Rust std::io and libc stdio.
+    unsafe {
+        libc::fflush(ptr::null_mut());
+    }
 }
-
 /// Convert a number to a heap string. The returned pointer is an owning data pointer
 /// (offset +16) and must be released with `rc_dec_str`.
 ///
@@ -933,34 +938,11 @@ pub extern "C" fn print_newline() {
 #[allow(clippy::manual_c_str_literals)]
 #[unsafe(no_mangle)]
 pub extern "C" fn number_to_string(num: f64) -> *mut c_char {
-    // Format the number using libc's snprintf
-    unsafe {
-        // First, get the required buffer size
-        let len = libc::snprintf(ptr::null_mut(), 0, c"%g".as_ptr() as *const c_char, num);
-
-        if len < 0 {
-            return ptr::null_mut();
-        }
-
-        // Allocate heap string with RC header
-        let obj = heap_str_alloc(len as size_t);
-        if obj.is_null() {
-            return ptr::null_mut();
-        }
-
-        // Get data pointer (offset +16)
-        let data_ptr = (obj as *mut u8).add(16) as *mut c_char;
-
-        // Format the number into the buffer
-        libc::snprintf(
-            data_ptr,
-            (len + 1) as size_t,
-            c"%g".as_ptr() as *const c_char,
-            num,
-        );
-
-        data_ptr
-    }
+    // Use Rust formatting to produce the string and then create a heap-owned
+    // runtime string using the helper that consumes a C string pointer.
+    let s = format!("{}", num);
+    let c = std::ffi::CString::new(s).unwrap_or_default();
+    unsafe { heap_str_from_cstr(c.as_ptr()) }
 }
 
 /// Convert an array object to a printable C string. The returned pointer is an owning
@@ -1073,7 +1055,9 @@ fn stringify_value_raw(val_raw: u64, depth: usize) -> String {
         if !s_ptr.is_null() {
             let s = unsafe { CStr::from_ptr(s_ptr) };
             let res = s.to_string_lossy().into_owned();
-            unsafe { rc_dec_str(s_ptr); }
+            unsafe {
+                rc_dec_str(s_ptr);
+            }
             return res;
         }
         // Fallback: try to interpret as a C string
@@ -1670,10 +1654,8 @@ pub unsafe extern "C" fn rc_dec(p: *mut c_void) {
         // when OATS_RUNTIME_LOG=1 is set in the environment.
         init_runtime_log();
         if RUNTIME_LOG.load(Ordering::Relaxed) {
-            let _ = libc::printf(
-                c"[oats runtime] rc_dec called p=%p\n".as_ptr() as *const c_char,
-                p,
-            );
+            let _ = io::stdout().write_all(format!("[oats runtime] rc_dec called p={:p}\n", p).as_bytes());
+            let _ = io::stdout().flush();
         }
         // Quick plausibility check to avoid dereferencing obviously invalid
         // pointers (small integers or near-null values). This prevents the
@@ -1681,11 +1663,8 @@ pub unsafe extern "C" fn rc_dec(p: *mut c_void) {
         let p_addr = p as usize;
         if !is_plausible_addr(p_addr) {
             if RUNTIME_LOG.load(Ordering::Relaxed) {
-                let _ = libc::printf(
-                    c"[oats runtime] rc_dec: implausible p=%p, ignoring\n".as_ptr()
-                        as *const c_char,
-                    p,
-                );
+                let _ = io::stdout().write_all(format!("[oats runtime] rc_dec: implausible p={:p}, ignoring\n", p).as_bytes());
+                let _ = io::stdout().flush();
             }
             return;
         }
@@ -2103,6 +2082,247 @@ pub extern "C" fn sleep_ms(ms: f64) {
             usec as u32
         };
         libc::usleep(to_call);
+    }
+}
+
+/// Minimal promise helpers (MVP): promise_resolve + promise_poll_into.
+///
+/// These are simple helpers to allow compiler wiring and initial testing of
+/// `async` lowering. They are intentionally minimal: `promise_resolve`
+/// allocates a tiny heap object that holds a resolved value, and
+/// `promise_poll_into` recognizes such objects and writes the resolved
+/// value into `out_ptr` then returns `1` (ready). Other pointer values are
+/// treated as Pending (return 0) in this MVP.
+#[unsafe(no_mangle)]
+pub extern "C" fn promise_resolve(ptr: *mut std::ffi::c_void) -> *mut std::ffi::c_void {
+    unsafe {
+        // Allocate a tiny box to hold the pointer and a tag; use libc malloc
+        let size = std::mem::size_of::<*mut std::ffi::c_void>() + 8;
+        let mem = libc::malloc(size) as *mut u8;
+        if mem.is_null() {
+            return std::ptr::null_mut();
+        }
+        // store the payload pointer at offset 8 (leave header/meta unused)
+        let payload_ptr = mem.add(8) as *mut *mut std::ffi::c_void;
+        *payload_ptr = ptr;
+        mem as *mut std::ffi::c_void
+    }
+}
+
+/// Poll a promise into `out_ptr`. Returns 1 if ready (and writes the
+/// resolved value into out_ptr as a pointer), or 0 if pending.
+#[unsafe(no_mangle)]
+pub extern "C" fn promise_poll_into(
+    promise: *mut std::ffi::c_void,
+    out_ptr: *mut std::ffi::c_void,
+) -> i32 {
+    unsafe {
+        if promise.is_null() || out_ptr.is_null() {
+            return 0;
+        }
+        // Strategy: support three shapes used by codegen/runtime
+        // 1) Legacy: the `promise` pointer is actually the state object and
+        //    state[0] is a non-null poll function pointer. We detect this by
+        //    reading the first word and calling it if present.
+        // 2) Promise wrapper: the `promise` is an allocated wrapper whose
+        //    second word (offset 8) points to a state object. We read the
+        //    state pointer and dispatch to its poll function (state[0]).
+        // 3) Tiny resolver: an earlier `promise_resolve` returns a tiny box
+        //    that stores the payload at offset 8; in this case we treat the
+        //    second word as the payload and return it as ready.
+
+        // Read the first word
+        let first_ptr = promise as *mut *mut std::ffi::c_void;
+        let first_word = *first_ptr;
+        if !first_word.is_null() {
+            // Legacy/state-as-promise: first word is a poll function pointer.
+            let poll_fn: extern "C" fn(*mut std::ffi::c_void, *mut std::ffi::c_void) -> i32 =
+                std::mem::transmute(first_word);
+            return poll_fn(promise, out_ptr);
+        }
+
+        // Read second word at offset 8
+        let second_ptr = (promise as *mut u8).add(8) as *mut *mut std::ffi::c_void;
+        let second_word = *second_ptr;
+        if second_word.is_null() {
+            // Nothing useful; treat as pending
+            return 0;
+        }
+
+        // If the second word points to a state whose first word is a poll
+        // function pointer, dispatch to it: this is the promise wrapper case
+        // where promise -> [null, state_ptr].
+        let state_first = second_word as *mut *mut std::ffi::c_void;
+        let state_first_word = *state_first;
+        if !state_first_word.is_null() {
+            let poll_fn: extern "C" fn(*mut std::ffi::c_void, *mut std::ffi::c_void) -> i32 =
+                std::mem::transmute(state_first_word);
+            return poll_fn(second_word, out_ptr);
+        }
+
+        // Otherwise, treat second_word as a resolved payload (tiny resolver
+        // format used by promise_resolve): write payload into out_ptr and
+        // return ready.
+        let out_slot = out_ptr as *mut *mut std::ffi::c_void;
+        *out_slot = second_word;
+        1
+    }
+}
+
+// --- Phase-1 compatible executor/waker primitives (MVP) ---
+// These are minimal shims that preserve the Phase-0 behaviour while
+// exposing the symbols and shapes the codegen will expect when emitting
+// real async state-machines. Right now they defer to the simple
+// `promise_poll_into` behavior for resolved promises.
+
+#[unsafe(no_mangle)]
+pub extern "C" fn promise_new_from_state(
+    state_ptr: *mut std::ffi::c_void,
+) -> *mut std::ffi::c_void {
+    // Allocate a small promise wrapper that stores the state pointer at
+    // offset 8. Layout: [reserved/null (8)] [state_ptr (8)].
+    unsafe {
+        let size = std::mem::size_of::<*mut std::ffi::c_void>() * 2;
+        let mem = libc::malloc(size) as *mut u8;
+        if mem.is_null() {
+            return std::ptr::null_mut();
+        }
+        let first = mem as *mut *mut std::ffi::c_void;
+        *first = std::ptr::null_mut();
+        let second = mem.add(8) as *mut *mut std::ffi::c_void;
+        *second = state_ptr;
+        mem as *mut std::ffi::c_void
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn executor_enqueue(_promise: *mut std::ffi::c_void) {
+    if _promise.is_null() {
+        return;
+    }
+    let exec = init_executor();
+    let mut q = exec.queue.lock().unwrap();
+    q.push_back(_promise as usize);
+    exec.cv.notify_one();
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn executor_run() {
+    // Drain the queue synchronously until empty.
+    let exec = init_executor();
+    loop {
+        let mut q = exec.queue.lock().unwrap();
+        if q.is_empty() {
+            break;
+        }
+        let p_addr = q.pop_front().unwrap();
+        let p = p_addr as *mut std::ffi::c_void;
+        drop(q);
+        unsafe {
+            let out_mem = libc::malloc(std::mem::size_of::<*mut c_void>()) as *mut u8;
+            if out_mem.is_null() {
+                continue;
+            }
+            let ready = promise_poll_into(p, out_mem as *mut std::ffi::c_void);
+            if ready == 0 {
+                // not ready: re-enqueue
+                let mut q2 = exec.queue.lock().unwrap();
+                q2.push_back(p as usize);
+                exec.cv.notify_one();
+            } else {
+                libc::free(out_mem as *mut libc::c_void);
+                // We don't free `p` because it may be the state object owned by the generator
+            }
+        }
+    }
+}
+
+// Simple executor state stored in a static OnceLock
+// Executor stores addresses (usize) so the queue is Send/Sync-safe in static storage.
+struct Exec {
+    queue: Mutex<std::collections::VecDeque<usize>>,
+    cv: Condvar,
+}
+
+static EXECUTOR: OnceLock<std::sync::Arc<Exec>> = OnceLock::new();
+
+fn init_executor() -> std::sync::Arc<Exec> {
+    EXECUTOR
+        .get_or_init(|| {
+            let e = std::sync::Arc::new(Exec {
+                queue: Mutex::new(std::collections::VecDeque::new()),
+                cv: Condvar::new(),
+            });
+            // spawn background worker
+            let w = e.clone();
+            std::thread::spawn(move || {
+                loop {
+                    let mut guard = w.queue.lock().unwrap();
+                    while guard.is_empty() {
+                        guard = w.cv.wait(guard).unwrap();
+                    }
+                    if let Some(p_addr) = guard.pop_front() {
+                        drop(guard);
+                        let p = p_addr as *mut std::ffi::c_void;
+                        unsafe {
+                            let out_mem =
+                                libc::malloc(std::mem::size_of::<*mut c_void>()) as *mut u8;
+                            if out_mem.is_null() {
+                                continue;
+                            }
+                            let ready = promise_poll_into(p, out_mem as *mut std::ffi::c_void);
+                            if ready == 0 {
+                                // not ready; re-enqueue
+                                let mut q2 = w.queue.lock().unwrap();
+                                q2.push_back(p as usize);
+                                w.cv.notify_one();
+                            } else {
+                                libc::free(out_mem as *mut libc::c_void);
+                            }
+                        }
+                    }
+                }
+            });
+            e
+        })
+        .clone()
+}
+
+// A trivial waker representation: in Phase-1 we'll create an object that
+// can be cloned and invoked from native code. For now, we return a null
+// pointer as a placeholder and make `waker_wake` a no-op.
+#[unsafe(no_mangle)]
+pub extern "C" fn waker_create_for_task(_task: *mut std::ffi::c_void) -> *mut std::ffi::c_void {
+    if _task.is_null() {
+        return std::ptr::null_mut();
+    }
+    unsafe {
+        // layout: [reserved 8][task_ptr 8]
+        let size = std::mem::size_of::<*mut std::ffi::c_void>() * 2;
+        let mem = libc::malloc(size) as *mut u8;
+        if mem.is_null() {
+            return std::ptr::null_mut();
+        }
+        let first = mem as *mut *mut std::ffi::c_void;
+        *first = std::ptr::null_mut();
+        let second = mem.add(8) as *mut *mut std::ffi::c_void;
+        *second = _task;
+        mem as *mut std::ffi::c_void
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn waker_wake(_w: *mut std::ffi::c_void) {
+    if _w.is_null() {
+        return;
+    }
+    unsafe {
+        let task_ptr_ptr = (_w as *mut u8).add(8) as *mut *mut std::ffi::c_void;
+        let task = *task_ptr_ptr;
+        if task.is_null() {
+            return;
+        }
+        executor_enqueue(task);
     }
 }
 

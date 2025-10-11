@@ -373,6 +373,19 @@ impl<'a> super::CodeGen<'a> {
                 return Some((*ptr, *ty, *init, *is_const, *is_weak, nominal.clone()));
             }
         }
+        // DEBUG: print locals stack keys for troubleshooting lookups
+        #[cfg(debug_assertions)]
+        {
+            let mut all_keys: Vec<Vec<String>> = Vec::new();
+            for scope in locals.iter() {
+                let keys: Vec<String> = scope.keys().cloned().collect();
+                all_keys.push(keys);
+            }
+            eprintln!(
+                "[debug find_local] name='{}' locals_scopes={:?}",
+                name, all_keys
+            );
+        }
         None
     }
 
@@ -394,8 +407,28 @@ impl<'a> super::CodeGen<'a> {
             let key = info.name.clone();
             scope.insert(
                 info.name,
-                (info.ptr, info.ty, info.initialized, info.is_const, info.is_weak, info.nominal.clone()),
+                (
+                    info.ptr,
+                    info.ty,
+                    info.initialized,
+                    info.is_const,
+                    info.is_weak,
+                    info.nominal.clone(),
+                ),
             );
+            // DEBUG: print insertion
+            #[cfg(debug_assertions)]
+            {
+                let keys: Vec<String> = scope.keys().cloned().collect();
+                let entry = scope.get(&key).cloned();
+                let nominal_str = entry
+                    .and_then(|(_, _, _, _, _, nom)| nom)
+                    .unwrap_or("<none>".to_string());
+                eprintln!(
+                    "[debug insert_local] inserted='{}' nominal='{}' keys_now={:?}",
+                    key, nominal_str, keys
+                );
+            }
             // If this new local was initialized from a previously-tracked
             // expression origin that we recorded as a freshly-created closure,
             // propagate its return-type mapping so future calls can use the

@@ -103,7 +103,7 @@ cargo run -p oats --bin aot_run -- examples/hello.oats
 
 1. **Add to `crates/runtime/src/lib.rs`:**
 ```rust
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn my_new_helper(arg: *const c_void) -> i64 {
     // implementation
 }

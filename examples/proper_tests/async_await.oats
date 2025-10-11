@@ -2,6 +2,7 @@ export function main(): void {
     // A function that returns a promise (use Promise.resolve for compatibility)
     function delayedMessage(ms: number): Promise<string> {
         // For test purposes use an immediately-resolved promise
+
         return Promise.resolve("Done waiting!");
     }
 

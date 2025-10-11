@@ -411,7 +411,66 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 // member method calls (e.g., `obj.method()`). More complex
                 // call expressions (computed callees, dynamic property lookups)
                 // can be added when needed.
-                if let ast::Callee::Expr(boxed_expr) = &call.callee {
+                use deno_ast::swc::ast::Callee;
+                if let Callee::Super(_) = &call.callee {
+                    // Lower `super(...)` calls: call parent's `<Parent>_init(this, ...args)`
+                    let parent_opt = self.current_class_parent.borrow().clone();
+                    let parent = if let Some(p) = parent_opt {
+                        p
+                    } else {
+                        return Err(Diagnostic::simple_with_span(
+                            "super used outside of constructor or no parent",
+                            call.span.lo.0 as usize,
+                        ));
+                    };
+
+                    // Find `this` in locals
+                    if let Some((this_ptr, this_ty, _init, _is_const, _extra, _nominal)) =
+                        self.find_local(locals, "this")
+                    {
+                        let this_loaded =
+                            match self.builder.build_load(this_ty, this_ptr, "this_loaded") {
+                                Ok(v) => v,
+                                Err(_) => return Err(Diagnostic::simple("operation failed")),
+                            };
+
+                        let mut args: Vec<inkwell::values::BasicMetadataValueEnum> = Vec::new();
+                        args.push(this_loaded.into());
+                        for a in &call.args {
+                            if let Ok(v) = self.lower_expr(&a.expr, function, param_map, locals) {
+                                args.push(v.into());
+                            } else {
+                                return Err(Diagnostic::simple("expression lowering failed"))?;
+                            }
+                        }
+
+                        let init_name = format!("{}_init", parent);
+                        if let Some(init_f) = self.module.get_function(&init_name) {
+                            let cs = match self.builder.build_call(init_f, &args, "call_super_init")
+                            {
+                                Ok(cs) => cs,
+                                Err(_) => return Err(Diagnostic::simple("operation failed")),
+                            };
+                            let either = cs.try_as_basic_value();
+                            if let inkwell::Either::Left(bv) = either {
+                                Ok(bv)
+                            } else {
+                                let zero = self.f64_t.const_float(0.0);
+                                Ok(zero.as_basic_value_enum())
+                            }
+                        } else {
+                            Err(Diagnostic::simple_with_span(
+                                format!("super target '{}' not found", init_name),
+                                call.span.lo.0 as usize,
+                            ))
+                        }
+                    } else {
+                        Err(Diagnostic::simple_with_span(
+                            "super used but `this` not found",
+                            call.span.lo.0 as usize,
+                        ))
+                    }
+                } else if let ast::Callee::Expr(boxed_expr) = &call.callee {
                     match &**boxed_expr {
                         ast::Expr::Ident(ident) => {
                             let fname = ident.sym.to_string();
@@ -694,10 +753,96 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 )))
                             }
                         }
+                        // (super calls handled by Callee::Super branch below)
                         ast::Expr::Member(member) => {
                             use deno_ast::swc::ast::MemberProp;
                             if let MemberProp::Ident(prop_ident) = &member.prop {
                                 let method_name = prop_ident.sym.to_string();
+
+                                // Lower `Promise.resolve(x)` by calling the runtime
+                                // helper `promise_resolve(i8*) -> i8*` so resolved
+                                // promises are represented by runtime objects. If
+                                // the argument is a numeric value we box it with
+                                // `union_box_f64` so the runtime consistently
+                                // receives an `i8*` payload.
+                                if method_name == "resolve"
+                                    && call.args.len() == 1
+                                    && let deno_ast::swc::ast::Expr::Ident(ident) = &*member.obj
+                                    && ident.sym == "Promise"
+                                {
+                                    // Lower the single argument
+                                    let arg_val = match self.lower_expr(
+                                        &call.args[0].expr,
+                                        function,
+                                        param_map,
+                                        locals,
+                                    ) {
+                                        Ok(v) => v,
+                                        Err(_) => {
+                                            return Err(Diagnostic::simple(
+                                                "expression lowering failed",
+                                            ))?;
+                                        }
+                                    };
+
+                                    // Ensure we pass an `i8*` payload to the runtime.
+                                    let payload_ptr = match arg_val {
+                                        BasicValueEnum::PointerValue(pv) => {
+                                            pv.as_basic_value_enum()
+                                        }
+                                        BasicValueEnum::FloatValue(fv) => {
+                                            // box f64 -> i8*
+                                            let box_fn = self.get_union_box_f64();
+                                            let cs = match self.builder.build_call(
+                                                box_fn,
+                                                &[fv.into()],
+                                                "box_f64",
+                                            ) {
+                                                Ok(cs) => cs,
+                                                Err(_) => {
+                                                    return Err(Diagnostic::simple(
+                                                        "union_box_f64 call failed",
+                                                    ))?;
+                                                }
+                                            };
+                                            match cs.try_as_basic_value() {
+                                                inkwell::Either::Left(bv) => bv,
+                                                _ => {
+                                                    return Err(Diagnostic::simple(
+                                                        "union_box_f64 returned non-value",
+                                                    ))?;
+                                                }
+                                            }
+                                        }
+                                        _ => {
+                                            // Other ABI shapes not expected here; fall back to returning the lowered value
+                                            return Ok(arg_val);
+                                        }
+                                    };
+
+                                    // Call runtime promise_resolve(payload)
+                                    let f = self.get_promise_resolve();
+                                    let cs = match self.builder.build_call(
+                                        f,
+                                        &[payload_ptr.into()],
+                                        "promise_resolve_call",
+                                    ) {
+                                        Ok(cs) => cs,
+                                        Err(_) => {
+                                            return Err(Diagnostic::simple(
+                                                "promise_resolve call failed",
+                                            ))?;
+                                        }
+                                    };
+                                    match cs.try_as_basic_value() {
+                                        inkwell::Either::Left(bv) => return Ok(bv),
+                                        _ => {
+                                            return Err(Diagnostic::simple(
+                                                "promise_resolve returned non-value",
+                                            ))?;
+                                        }
+                                    }
+                                }
 
                                 // Special-case Math.random() -> call runtime math_random()
                                 if method_name == "random" {
@@ -937,12 +1082,57 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     let class_name = if let Some(c) = class_name_opt.clone() {
                                         c
                                     } else {
-                                        return Err(Diagnostic::simple(
-                                            "unsupported member call: could not infer receiver nominal type",
-                                        ));
+                                        // Fallback: if we have a registered nominal whose
+                                        // method symbol `<Nominal>_<method>` exists in the
+                                        // module, prefer that nominal. This is a
+                                        // deterministic lookup using the collected
+                                        // `class_fields` map and avoids scanning all
+                                        // globals or doing dynamic resolution.
+                                        let mut picked: Option<String> = None;
+                                        for k in self.class_fields.borrow().keys() {
+                                            let cand = format!("{}_{}", k, method_name);
+                                            if self.module.get_function(&cand).is_some() {
+                                                picked = Some(k.clone());
+                                                break;
+                                            }
+                                        }
+                                        if let Some(p) = picked {
+                                            p
+                                        } else {
+                                            #[cfg(debug_assertions)]
+                                            {
+                                                // List module functions and known nominals for debugging
+                                                let mut fn_names: Vec<String> = Vec::new();
+                                                for f in self.module.get_functions() {
+                                                    if let Ok(name) = f.get_name().to_str() {
+                                                        fn_names.push(name.to_string());
+                                                    }
+                                                }
+                                                eprintln!(
+                                                    "[debug member_call] module_functions={:?}",
+                                                    fn_names
+                                                );
+                                                let keys: Vec<String> = self
+                                                    .class_fields
+                                                    .borrow()
+                                                    .keys()
+                                                    .cloned()
+                                                    .collect();
+                                                eprintln!(
+                                                    "[debug member_call] known_nominals={:?}",
+                                                    keys
+                                                );
+                                            }
+                                            return Err(Diagnostic::simple(
+                                                "unsupported member call: could not infer receiver nominal type",
+                                            ));
+                                        }
                                     };
 
                                     let cand = format!("{}_{}", class_name, method_name);
+                                    #[cfg(debug_assertions)]
+                                    eprintln!("[debug member_call] trying candidate='{}'", cand);
+                                    // If the exact candidate exists, use it
                                     if let Some(method_f) = self.module.get_function(&cand) {
                                         // lower user args
                                         let mut user_args: Vec<
@@ -985,9 +1175,82 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         if let inkwell::Either::Left(bv) = either {
                                             return Ok(bv);
                                         } else {
-                                            return Err(Diagnostic::simple(
-                                                "expression lowering failed",
-                                            ))?;
+                                            // Call returned void; return a harmless f64 zero
+                                            // so expression contexts can ignore the result.
+                                            let zero = self.f64_t.const_float(0.0);
+                                            return Ok(zero.as_basic_value_enum());
+                                        }
+                                    } else {
+                                        #[cfg(debug_assertions)]
+                                        eprintln!(
+                                            "[debug member_call] method not found on nominal '{}': '{}'",
+                                            class_name, cand
+                                        );
+                                        // Fallback: try to find the method on any known nominal
+                                        let mut found: Option<(
+                                            String,
+                                            inkwell::values::FunctionValue,
+                                        )> = None;
+                                        for k in self.class_fields.borrow().keys() {
+                                            let alt = format!("{}_{}", k, method_name);
+                                            if let Some(fv) = self.module.get_function(&alt) {
+                                                found = Some((k.clone(), fv));
+                                                break;
+                                            }
+                                        }
+                                        if let Some((found_nom, method_f)) = found {
+                                            #[cfg(debug_assertions)]
+                                            eprintln!(
+                                                "[debug member_call] falling back to nominal '{}' for method '{}'",
+                                                found_nom, method_name
+                                            );
+                                            // lower user args
+                                            let mut user_args: Vec<
+                                                inkwell::values::BasicMetadataValueEnum,
+                                            > = Vec::new();
+                                            for a in &call.args {
+                                                if let Ok(v) = self.lower_expr(
+                                                    &a.expr, function, param_map, locals,
+                                                ) {
+                                                    user_args.push(v.into());
+                                                } else {
+                                                    return Err(Diagnostic::simple(
+                                                        "expression lowering failed",
+                                                    ))?;
+                                                }
+                                            }
+
+                                            // if the method expects an extra param (likely `this`), prepend obj_val
+                                            let param_count = method_f.count_params() as usize;
+                                            let mut args: Vec<
+                                                inkwell::values::BasicMetadataValueEnum,
+                                            > = Vec::new();
+                                            if param_count > user_args.len() {
+                                                args.push(obj_val.into());
+                                                args.extend(user_args);
+                                            } else {
+                                                args = user_args;
+                                            }
+
+                                            let cs = match self.builder.build_call(
+                                                method_f,
+                                                &args,
+                                                "call_method",
+                                            ) {
+                                                Ok(cs) => cs,
+                                                Err(_) => {
+                                                    return Err(Diagnostic::simple(
+                                                        "operation failed",
+                                                    ));
+                                                }
+                                            };
+                                            let either = cs.try_as_basic_value();
+                                            if let inkwell::Either::Left(bv) = either {
+                                                return Ok(bv);
+                                            } else {
+                                                let zero = self.f64_t.const_float(0.0);
+                                                return Ok(zero.as_basic_value_enum());
+                                            }
                                         }
                                     }
                                 }
@@ -1002,139 +1265,137 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     self.lower_expr(boxed_expr, function, param_map, locals)
                                 {
                                     // compute offsets for fn_ptr (idx 0) and env_ptr (idx 1)
-                                        let header_size = self.i64_t.const_int(8u64, false);
-                                        let meta_slot = self.i64_t.const_int(8u64, false);
-                                        let ptr_sz = self.i64_t.const_int(8u64, false);
-                                        let off_fn = self
-                                            .builder
-                                            .build_int_add(header_size, meta_slot, "hdr_plus_meta")
-                                            .map_err(|_| {
-                                                Diagnostic::simple("LLVM builder error")
-                                            })?;
-                                        let fn_ptr_i8 = self
-                                            .i8_ptr_from_offset_i64(
-                                                callee_ptr,
-                                                off_fn,
-                                                "closure_fn_i8",
-                                            )
-                                            .map_err(|_| Diagnostic::simple("operation failed"))?;
-                                        let off_env = self
-                                            .builder
-                                            .build_int_add(off_fn, ptr_sz, "off_env")
-                                            .map_err(|_| {
-                                                Diagnostic::simple("LLVM builder error")
-                                            })?;
-                                        let env_ptr_i8 = self
-                                            .i8_ptr_from_offset_i64(
-                                                callee_ptr,
-                                                off_env,
-                                                "closure_env_i8",
-                                            )
-                                            .map_err(|_| Diagnostic::simple("operation failed"))?;
+                                    let header_size = self.i64_t.const_int(8u64, false);
+                                    let meta_slot = self.i64_t.const_int(8u64, false);
+                                    let ptr_sz = self.i64_t.const_int(8u64, false);
+                                    let off_fn = self
+                                        .builder
+                                        .build_int_add(header_size, meta_slot, "hdr_plus_meta")
+                                        .map_err(|_| Diagnostic::simple("LLVM builder error"))?;
+                                    let fn_ptr_i8 = self
+                                        .i8_ptr_from_offset_i64(callee_ptr, off_fn, "closure_fn_i8")
+                                        .map_err(|_| Diagnostic::simple("operation failed"))?;
+                                    let off_env = self
+                                        .builder
+                                        .build_int_add(off_fn, ptr_sz, "off_env")
+                                        .map_err(|_| Diagnostic::simple("LLVM builder error"))?;
+                                    let env_ptr_i8 = self
+                                        .i8_ptr_from_offset_i64(
+                                            callee_ptr,
+                                            off_env,
+                                            "closure_env_i8",
+                                        )
+                                        .map_err(|_| Diagnostic::simple("operation failed"))?;
 
-                                        let fn_ptr_slot_ty =
-                                            self.context.ptr_type(AddressSpace::default());
-                                        let fn_ptr_slot = self
-                                            .builder
-                                            .build_pointer_cast(
-                                                fn_ptr_i8,
-                                                fn_ptr_slot_ty,
-                                                "fn_ptr_slot_cast",
-                                            )
-                                            .map_err(|_| {
-                                                Diagnostic::simple("LLVM builder error")
-                                            })?;
-                                        let fn_ptr_bv = match self.builder.build_load(
-                                            self.i8ptr_t,
-                                            fn_ptr_slot,
-                                            "loaded_fn_ptr",
-                                        ) {
-                                            Ok(v) => v,
-                                            Err(_) => {
-                                                return Err(Diagnostic::simple("operation failed"));
-                                            }
-                                        };
-
-                                        let env_slot_ty =
-                                            self.context.ptr_type(AddressSpace::default());
-                                        let env_slot = self
-                                            .builder
-                                            .build_pointer_cast(
-                                                env_ptr_i8,
-                                                env_slot_ty,
-                                                "env_slot_cast",
-                                            )
-                                            .map_err(|_| {
-                                                Diagnostic::simple("LLVM builder error")
-                                            })?;
-                                        let env_bv = match self.builder.build_load(
-                                            self.i8ptr_t,
-                                            env_slot,
-                                            "loaded_env_ptr",
-                                        ) {
-                                            Ok(v) => v,
-                                            Err(_) => {
-                                                return Err(Diagnostic::simple("operation failed"));
-                                            }
-                                        };
-
-                                        // Prepare user args lowered
-                                        let mut lowered_args: Vec<
-                                            inkwell::values::BasicMetadataValueEnum,
-                                        > = Vec::new();
-                                        for a in &call.args {
-                                            if let Ok(val) = self
-                                                .lower_expr(&a.expr, function, param_map, locals)
-                                            {
-                                                lowered_args.push(val.into());
-                                            } else {
-                                                return Err(Diagnostic::simple(
-                                                    "expression lowering failed",
-                                                ))?;
-                                            }
+                                    let fn_ptr_slot_ty =
+                                        self.context.ptr_type(AddressSpace::default());
+                                    let fn_ptr_slot = self
+                                        .builder
+                                        .build_pointer_cast(
+                                            fn_ptr_i8,
+                                            fn_ptr_slot_ty,
+                                            "fn_ptr_slot_cast",
+                                        )
+                                        .map_err(|_| Diagnostic::simple("LLVM builder error"))?;
+                                    let fn_ptr_bv = match self.builder.build_load(
+                                        self.i8ptr_t,
+                                        fn_ptr_slot,
+                                        "loaded_fn_ptr",
+                                    ) {
+                                        Ok(v) => v,
+                                        Err(_) => {
+                                            return Err(Diagnostic::simple("operation failed"));
                                         }
+                                    };
 
-                                        // Indirect call via loaded function pointer
-                                        if let BasicValueEnum::PointerValue(fn_ptr_pv) = fn_ptr_bv {
-                                            let mut param_types: Vec<
-                                                inkwell::types::BasicMetadataTypeEnum,
-                                            > = Vec::new();
-                                            param_types.push(self.i8ptr_t.into());
-                                            for _ in &lowered_args {
-                                                param_types.push(self.i8ptr_t.into());
-                                            }
-                                            let fn_ty = self.i8ptr_t.fn_type(&param_types, false);
+                                    let env_slot_ty =
+                                        self.context.ptr_type(AddressSpace::default());
+                                    let env_slot = self
+                                        .builder
+                                        .build_pointer_cast(
+                                            env_ptr_i8,
+                                            env_slot_ty,
+                                            "env_slot_cast",
+                                        )
+                                        .map_err(|_| Diagnostic::simple("LLVM builder error"))?;
+                                    let env_bv = match self.builder.build_load(
+                                        self.i8ptr_t,
+                                        env_slot,
+                                        "loaded_env_ptr",
+                                    ) {
+                                        Ok(v) => v,
+                                        Err(_) => {
+                                            return Err(Diagnostic::simple("operation failed"));
+                                        }
+                                    };
 
-                                            let mut call_args: Vec<
-                                                inkwell::values::BasicMetadataValueEnum,
-                                            > = Vec::new();
-                                            call_args.push(env_bv.into());
-                                            call_args.extend(lowered_args);
-                                            let cs = match self.builder.build_indirect_call(
-                                                fn_ty,
-                                                fn_ptr_pv,
-                                                &call_args,
-                                                "call_closure",
-                                            ) {
-                                                Ok(cs) => cs,
-                                                Err(_) => {
-                                                    return Err(Diagnostic::simple(
-                                                        "operation failed",
-                                                    ));
-                                                }
-                                            };
-                                            let either = cs.try_as_basic_value();
-                                            if let inkwell::Either::Left(bv) = either {
-                                                return Ok(bv);
-                                            }
-                                            let zero = self.f64_t.const_float(0.0);
-                                            return Ok(zero.as_basic_value_enum());
+                                    // Prepare user args lowered
+                                    let mut lowered_args: Vec<
+                                        inkwell::values::BasicMetadataValueEnum,
+                                    > = Vec::new();
+                                    for a in &call.args {
+                                        if let Ok(val) =
+                                            self.lower_expr(&a.expr, function, param_map, locals)
+                                        {
+                                            lowered_args.push(val.into());
+                                        } else {
+                                            return Err(Diagnostic::simple(
+                                                "expression lowering failed",
+                                            ))?;
                                         }
                                     }
-                                Err(Diagnostic::simple_with_span(
-                                    "unsupported member call or dynamic callee",
-                                    call.span.lo.0 as usize,
-                                ))
+
+                                    // Indirect call via loaded function pointer
+                                    if let BasicValueEnum::PointerValue(fn_ptr_pv) = fn_ptr_bv {
+                                        let mut param_types: Vec<
+                                            inkwell::types::BasicMetadataTypeEnum,
+                                        > = Vec::new();
+                                        param_types.push(self.i8ptr_t.into());
+                                        for _ in &lowered_args {
+                                            param_types.push(self.i8ptr_t.into());
+                                        }
+                                        let fn_ty = self.i8ptr_t.fn_type(&param_types, false);
+
+                                        let mut call_args: Vec<
+                                            inkwell::values::BasicMetadataValueEnum,
+                                        > = Vec::new();
+                                        call_args.push(env_bv.into());
+                                        call_args.extend(lowered_args);
+                                        let cs = match self.builder.build_indirect_call(
+                                            fn_ty,
+                                            fn_ptr_pv,
+                                            &call_args,
+                                            "call_closure",
+                                        ) {
+                                            Ok(cs) => cs,
+                                            Err(_) => {
+                                                return Err(Diagnostic::simple("operation failed"));
+                                            }
+                                        };
+                                        let either = cs.try_as_basic_value();
+                                        if let inkwell::Either::Left(bv) = either {
+                                            return Ok(bv);
+                                        }
+                                        let zero = self.f64_t.const_float(0.0);
+                                        return Ok(zero.as_basic_value_enum());
+                                    }
+                                }
+                                {
+                                    // Emit a diagnostic with context to aid debugging
+                                    #[cfg(debug_assertions)]
+                                    {
+                                        eprintln!(
+                                            "[debug unsupported_call] callee_span={} callee_cached=...",
+                                            call.span.lo.0
+                                        );
+                                    }
+                                    let d = Diagnostic::simple_with_span(
+                                        "unsupported member call or dynamic callee",
+                                        call.span.lo.0 as usize,
+                                    );
+                                    crate::diagnostics::emit_diagnostic(&d, Some(self.source));
+                                    Err(d)
+                                }
                             }
                         }
                         _ => {
@@ -3225,6 +3486,122 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     ))
                 }
             }
+            ast::Expr::Await(await_expr) => {
+                // Phase 0+ improvement: call runtime `promise_poll_into(promise, out_ptr)`
+                // and branch on the returned i32. If ready (1) load the resolved
+                // value from out_ptr and return it. If pending (0) return the
+                // original promise pointer (so callers still receive a pointer-like value).
+
+                // If async lowering context is present, record that we've
+                // emitted one await so the `gen_function_ir` wiring which
+                // prepared resume/cont blocks and slot maps can correlate
+                // to the lowered awaits. Full save/restore emission will
+                // follow in later changes.
+                if self.async_local_name_to_slot.borrow().is_some() {
+                    let prev = self.async_await_counter.get();
+                    self.async_await_counter.set(prev.wrapping_add(1));
+                }
+
+                let v = self.lower_expr(&await_expr.arg, function, param_map, locals)?;
+                if let BasicValueEnum::PointerValue(pv) = v {
+                    // allocate an i8* out slot
+                    let out_alloca = match self
+                        .builder
+                        .build_alloca(self.i8ptr_t.as_basic_type_enum(), "await_out")
+                    {
+                        Ok(a) => a,
+                        Err(_) => {
+                            return Err(Diagnostic::simple("alloca failed for await out slot"));
+                        }
+                    };
+
+                    // Call promise_poll_into(promise, out_slot)
+                    let poll_fn = self.get_promise_poll_into();
+                    let cs = match self.builder.build_call(
+                        poll_fn,
+                        &[pv.into(), out_alloca.into()],
+                        "promise_poll",
+                    ) {
+                        Ok(c) => c,
+                        Err(_) => return Err(Diagnostic::simple("promise_poll_into call failed")),
+                    };
+
+                    let either = cs.try_as_basic_value();
+                    let ret_iv = either
+                        .left()
+                        .ok_or_else(|| Diagnostic::simple("promise_poll_into returned no value"))?
+                        .into_int_value();
+
+                    use inkwell::IntPredicate;
+                    let one = self.i32_t.const_int(1, false);
+                    let is_ready = match self.builder.build_int_compare(
+                        IntPredicate::EQ,
+                        ret_iv,
+                        one,
+                        "await_ready_cmp",
+                    ) {
+                        Ok(iv) => iv,
+                        Err(_) => return Err(Diagnostic::simple("int_compare failed")),
+                    };
+
+                    let ready_bb = self.context.append_basic_block(function, "await_ready");
+                    let pending_bb = self.context.append_basic_block(function, "await_pending");
+                    let cont_bb = self.context.append_basic_block(function, "await_cont");
+
+                    match self
+                        .builder
+                        .build_conditional_branch(is_ready, ready_bb, pending_bb)
+                    {
+                        Ok(_) => {}
+                        Err(_) => {
+                            return Err(Diagnostic::simple("failed to build branch for await"));
+                        }
+                    }
+
+                    // ready: load out slot and branch to cont
+                    self.builder.position_at_end(ready_bb);
+                    let loaded =
+                        match self
+                            .builder
+                            .build_load(self.i8ptr_t, out_alloca, "await_loaded")
+                        {
+                            Ok(l) => l,
+                            Err(_) => return Err(Diagnostic::simple("await load failed")),
+                        };
+                    match self.builder.build_unconditional_branch(cont_bb) {
+                        Ok(_) => (),
+                        Err(_) => {
+                            return Err(Diagnostic::simple("failed to branch to cont from ready"));
+                        }
+                    };
+
+                    // pending: just use the original promise pointer
+                    self.builder.position_at_end(pending_bb);
+                    let pv_bv = pv.as_basic_value_enum();
+                    match self.builder.build_unconditional_branch(cont_bb) {
+                        Ok(_) => (),
+                        Err(_) => {
+                            return Err(Diagnostic::simple("failed to branch to cont from pending"));
+                        }
+                    };
+
+                    // cont: create phi to select between loaded value and original promise
+                    self.builder.position_at_end(cont_bb);
+                    let phi_ty = self.i8ptr_t.as_basic_type_enum();
+                    let phi = match self.builder.build_phi(phi_ty, "await_phi") {
+                        Ok(p) => p,
+                        Err(_) => return Err(Diagnostic::simple("failed to create phi for await")),
+                    };
+                    // incoming values: from ready_bb use loaded, from pending_bb use pv
+                    phi.add_incoming(&[
+                        (&loaded.as_basic_value_enum(), ready_bb),
+                        (&pv_bv, pending_bb),
+                    ]);
+                    return Ok(phi.as_basic_value());
+                }
+                // Non-pointer awaited values are returned as-is (numbers/booleans)
+                Ok(v)
+            }
             ast::Expr::Arrow(arrow) => {
                 // Detect captured variables in the arrow body by scanning for
                 // identifier usages that are not parameters and that resolve to
@@ -3733,10 +4110,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     // Emit field_map for closure object (two pointer fields at offsets 16 and 24)
                     let closure_gv_name = format!("{}_closure_field_map", arrow_fn_name);
                     // fields start after header + meta_slot; fn_ptr at idx 0, env_ptr at idx 1
-                    let closure_offsets: Vec<u64> = vec![
-                        header_size + meta_slot,
-                        header_size + meta_slot + 8,
-                    ];
+                    let closure_offsets: Vec<u64> =
+                        vec![header_size + meta_slot, header_size + meta_slot + 8];
                     let closure_gv_i8 = self
                         .emit_field_map_global(&closure_gv_name, &closure_offsets)
                         .map_err(|_| Diagnostic::simple("failed to emit closure field_map"))?;

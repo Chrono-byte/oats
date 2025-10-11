@@ -862,7 +862,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             )> = Vec::new();
             if let Some(resume_vec) = &*self.async_resume_blocks.borrow() {
                 for (i, rb) in resume_vec.iter().enumerate() {
-                    let case_val = self.i32_t.const_int(((i as u64 + 1)), false);
+                    let case_val = self.i32_t.const_int((i as u64 + 1), false);
                     cases.push((case_val, *rb));
                 }
             }

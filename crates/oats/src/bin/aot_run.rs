@@ -300,7 +300,6 @@ fn main() -> Result<()> {
         fn_rc_weak_upgrade: std::cell::RefCell::new(None),
         fn_union_get_discriminant: std::cell::RefCell::new(None),
         class_fields: std::cell::RefCell::new(std::collections::HashMap::new()),
-
         fn_param_types: std::cell::RefCell::new(std::collections::HashMap::new()),
         loop_context_stack: std::cell::RefCell::new(Vec::new()),
         current_class_parent: std::cell::RefCell::new(None),
@@ -824,6 +823,7 @@ fn main() -> Result<()> {
     let out_ll = format!("{}/{}.ll", out_dir, src_filename);
     let out_exe = format!("{}/{}", out_dir, src_filename);
     let out_obj = format!("{}/{}.o", out_dir, src_filename);
+    
     // Ensure output directory exists so File::create doesn't fail with ENOENT.
     if let Err(e) = std::fs::create_dir_all(&out_dir) {
         anyhow::bail!("failed to create output directory {}: {}", out_dir, e);

@@ -1,0 +1,26 @@
+export function main(): void {
+    // Helper function that returns a resolved promise
+    function getMessage(msg: string): Promise<string> {
+        return Promise.resolve(msg);
+    }
+
+    async function testMultipleAwaits(): Promise<void> {
+        println("Starting multi-await test...");
+        
+        const first = await getMessage("First message");
+        println(first);
+        
+        const second = await getMessage("Second message");
+        println(second);
+        
+        const third = await getMessage("Third message");
+        println(third);
+        
+        println("All awaits completed!");
+    }
+
+    // Run the async function
+    let _p: Promise<void> = testMultipleAwaits();
+
+    return;
+}

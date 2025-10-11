@@ -1,0 +1,39 @@
+// Simple union test to debug issues
+
+export function main(): void {
+    println("Test 1: Basic number");
+    let x: number = 42;
+    println(x);
+    
+    println("Test 2: Basic string");
+    let s: string = "hello";
+    println(s);
+    
+    println("Test 3: Number union assignment");
+    let u: number | string = 100;
+    println(u);
+    
+    println("Test 4: String union assignment");
+    let v: number | string = "world";
+    println(v);
+    
+    println("Test 5: Typeof on number");
+    let n: number | string = 5;
+    if (typeof n === "number") {
+        println("is number");
+        println(n);
+    } else {
+        println("not number");
+    }
+    
+    println("Test 6: Typeof on string");
+    let t: number | string = "test";
+    if (typeof t === "string") {
+        println("is string");
+        println(t);
+    } else {
+        println("not string");
+    }
+    
+    println("Done");
+}

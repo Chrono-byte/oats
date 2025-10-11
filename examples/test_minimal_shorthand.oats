@@ -1,0 +1,9 @@
+// Minimal shorthand test
+
+export function main(): number {
+    let a = 1;
+    let obj = { a };
+    println("obj created");
+    println(obj.a);
+    return 0;
+}

@@ -1,6 +1,0 @@
-export function main(): number {
-    let x = Math.random();
-    // print via runtime helper directly if desired
-    println(x);
-    return 0;
-}

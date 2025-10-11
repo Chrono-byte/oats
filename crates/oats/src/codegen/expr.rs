@@ -5427,13 +5427,14 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         }
                     }
                     UnaryOp::Bang => {
-                        // Logical NOT: convert to boolean and negate
+                        // Logical NOT: convert to boolean and negate using XOR
                         let cond = self
                             .to_condition_i1(arg_val)
                             .ok_or_else(|| Diagnostic::simple("failed to convert to boolean"))?;
+                        let xor_val = self.context.bool_type().const_int(1, false);
                         let not = self
                             .builder
-                            .build_not(cond, "not")
+                            .build_xor(cond, xor_val, "logical_not")
                             .map_err(|_| Diagnostic::simple("LLVM builder error"))?;
                         Ok(not.as_basic_value_enum())
                     }

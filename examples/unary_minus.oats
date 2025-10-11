@@ -1,6 +1,0 @@
-export function main(): number {
-    let x: number = 5;
-    let y: number = -x;  // unary minus
-    println(y);
-    return 0;
-}

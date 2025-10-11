@@ -1,8 +1,7 @@
 use anyhow::Result;
-use inkwell::context::Context;
 use oats::parser;
 use oats::types::{SymbolTable, check_function_strictness};
-use super::common::create_codegen;
+use super::common::gen_ir_for_source;
 
 #[test]
 fn test_closure_weak_capture_codegen() -> Result<()> {
@@ -34,10 +33,7 @@ export function main(): number {
     let mut symbols = SymbolTable::new();
     check_function_strictness(&func_decl, &mut symbols)?;
 
-    let context = Context::create();
-    let codegen = create_codegen(&context, "closure_weak_capture_test", symbols, source);
-
-    let ir = codegen.module.print_to_string().to_string();
+    let ir = gen_ir_for_source(source)?;
 
     assert!(
         ir.contains("rc_weak_inc") || ir.contains("rc_weak_upgrade") || ir.contains("rc_weak_dec"),

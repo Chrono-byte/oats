@@ -1,9 +1,12 @@
 export class Counter {
-    constructor(public count: number) {
+    private count: number;
+
+    constructor() {
+        this.count = 0;
     }
 
     increment(): void {
-        this.count = this.count + 1.0;
+        this.count += 1;
     }
 
     getCount(): number {
@@ -11,10 +14,8 @@ export class Counter {
     }
 }
 
-export function main(): number {
-    let c = new Counter(5.0);
-    c.increment();
-    let result = c.getCount();
-    print_f64(result);
-    return 0;
+export function main(): void {
+    const counter = new Counter();
+    counter.increment();
+    console.log(counter.getCount());
 }

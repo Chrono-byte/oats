@@ -1,0 +1,73 @@
+// Test basic union types and typeof operator
+
+function testValueUnions(): void {
+    // Test number | boolean union
+    let x: number | boolean = 42;
+    println(x);  // Should print 42
+    
+    // Reassign to boolean
+    x = true;
+    // Can't directly print boolean, so we'll use a workaround
+    if (x) {
+        println(1);  // Should print 1 if true
+    }
+}
+
+function testPointerUnions(): void {
+    // Test string | null (Option type)
+    let name: string | null = "Alice";
+    if (name !== null) {
+        println(name);
+    }
+    
+    name = null;
+    if (name === null) {
+        println("null");
+    }
+}
+
+function testTypeofGuards(): void {
+    // Test typeof with unions
+    let value: number | string = 42;
+    
+    if (typeof value === "number") {
+        println(value);  // Should print 42
+    }
+    
+    value = "hello";
+    if (typeof value === "string") {
+        println(value);  // Should print "hello"
+    }
+}
+
+function testMixedUnions(): void {
+    // Test union with both value and pointer types
+    let mixed: number | string = 100;
+    
+    if (typeof mixed === "number") {
+        println(mixed);  // Should print 100
+    }
+    
+    mixed = "world";
+    if (typeof mixed === "string") {
+        println(mixed);  // Should print "world"
+    }
+}
+
+export function main(): void {
+    println("=== Union Type Tests ===");
+    
+    println("1. Value unions:");
+    testValueUnions();
+    
+    println("2. Pointer unions:");
+    testPointerUnions();
+    
+    println("3. Typeof guards:");
+    testTypeofGuards();
+    
+    println("4. Mixed unions:");
+    testMixedUnions();
+    
+    println("=== All tests complete ===");
+}

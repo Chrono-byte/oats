@@ -3,6 +3,12 @@
 resolver = "2"
 members = ["crates/oats", "crates/runtime"]
 
+[profile.dev]
+debug-assertions = false
+
+[profile.test]
+debug-assertions = false
+
 [profile.release]
 opt-level = 3
 lto = true

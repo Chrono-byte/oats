@@ -83,6 +83,8 @@ export function main(x: number | string): string {
     current_class_parent: std::cell::RefCell::new(None),
         fn_param_types: std::cell::RefCell::new(std::collections::HashMap::new()),
         source: &parsed_mod.source,
+        current_function_return_type: std::cell::RefCell::new(None),
+        last_expr_is_boxed_union: std::cell::Cell::new(false),
         loop_context_stack: std::cell::RefCell::new(Vec::new()),
     };
 

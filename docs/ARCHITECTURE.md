@@ -1,4 +1,7 @@
-# Oats — Architecture (concise reference)
+# Oats — Architecture Reference
+
+**Status:** Current and accurate as of October 10, 2025  
+**For:** Contributors and maintainers implementing or modifying core systems
 
 This document is a concise, developer-facing reference describing the runtime object model, memory management, and important codegen contracts used by the Oats TypeScript→LLVM AOT compiler. Keep this page short and authoritative — it should answer "how objects are laid out, who is responsible for RC, and what codegen must do".
 

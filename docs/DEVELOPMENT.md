@@ -1,79 +1,163 @@
-# Oats — Development guide (practical)
+# Oats — Development Guide
 
-This page collects the most actionable development guidance for contributors: current priorities, engineering contracts, testing rules, and a short checklist to follow before merging changes.
+This document provides practical, actionable guidance for contributors working on the Oats compiler. It covers development workflows, coding standards, testing strategies, and common patterns.
 
-If you want the long-form design history, see `ARCHITECTURE.md` and `ROADMAP.md`.
+## Table of Contents
 
-## Small contract for codegen helpers
+1. [Getting Started](#getting-started)
+2. [Architecture Quick Reference](#architecture-quick-reference)
+3. [Coding Standards](#coding-standards)
+4. [Testing Strategy](#testing-strategy)
+5. [Common Development Tasks](#common-development-tasks)
+6. [Debugging Guide](#debugging-guide)
+7. [Contributing Workflow](#contributing-workflow)
 
-When you add or change a lowering helper, follow this 3-line contract:
+## Getting Started
 
-- Inputs: AST node + CodeGen context (FunctionValue, param/local maps, builder)
-- Output: Result<BasicValueEnum, Diagnostic> (or an appropriate typed Result)
-- Error modes: return Diagnostic for unsupported shapes, builder failures, or coercion errors
+### Prerequisites
 
-Why: keeping lowering functions fallible makes the compiler robust and debuggable. New code must not call `.unwrap()` or `.expect()` in lowering paths.
+**Required:**
+- Rust toolchain (1.70+): Install via [rustup](https://rustup.rs/)
+- LLVM 18: Development headers and libraries
+- Basic understanding of compilers and LLVM IR
 
-## Top priorities (now)
+**Optional:**
+- `llvm-config` for debugging
+- `valgrind` for memory leak detection
+- `perf` for performance profiling
 
-1. Remove remaining panic sites in `crates/oats/src/codegen/*` by migrating helper functions to return Result (high impact, low-medium effort).
-2. Emit per-class `field_map` metadata and ensure the meta slot (@+8) is populated by constructors (high priority for cycle collector work).
-3. Add focused runtime tests in `crates/runtime/tests` that validate header layout and rc_inc/rc_dec semantics (fast to run, high value).
-
-If you want a small starter task: replace one `.unwrap()` call in `crates/oats/src/codegen/helpers.rs` with a Result propagation and run `cargo test -p oats`.
-
-## Practical testing rules
-
-- Unit tests should be small and fast — prefer `#[test]` unit tests for helpers.
-- Snapshot tests (insta) are used for IR output. When IR changes, add a short comment in the PR describing why snapshots changed.
-- Integration tests should compile and run a small example; keep them selective to avoid long CI times.
-
-Quick commands:
+### Environment Setup
 
 ```bash
-# build and test compiler crate
-cargo build -p oats
-cargo test -p oats
+# Clone the repository
+git clone https://github.com/Chrono-byte/oats.git
+cd oats
 
-# run aot_run for a single example
-cargo run -p oats --bin aot_run -- examples/add.oats
+# Setup LLVM environment (required before building)
+source ./scripts/setup_env.sh  # or setup_env.zsh for zsh
+
+# Build the project
+cargo build --workspace
+
+# Run tests
+cargo test --workspace
+
+# Try an example
+cargo run -p oats --bin aot_run -- examples/hello.oats
+./aot_out/hello
 ```
 
-## Developer checklist (before merge)
+### First-Time Build Tips
 
-1. cargo build --workspace
-2. cargo test --workspace (or at least `-p oats` and `-p runtime`)
-3. No new `.unwrap()`/`.expect()` calls in `crates/oats/src` (grep to check)
-4. If codegen field offsets/header changed: add runtime unit tests and update docs
-5. If IR changed: update insta snapshots and add explanation in PR
+- **LLVM errors:** Ensure `LLVM_SYS_180_PREFIX` points to your LLVM 18 installation
+- **Link errors:** You may need to install `clang-18` and `lld-18`
+- **Slow builds:** Use `cargo build -j4` to limit parallelism if memory-constrained
 
-## Design decisions you should know
+## Architecture Quick Reference
 
-- Meta-slot (@+8) is reserved for runtime/class metadata. Never overlap it with fields.
-- Strings are represented as pointer→data (pointer points at offset 16). RC helpers accept both base and data pointers.
-- Codegen should consistently compute byte offsets via ptr→int + add(i64) + int→ptr to avoid platform-dependent GEP differences.
+### Project Structure
 
-## Where to add tests
+```
+oats/
+├── crates/
+│   ├── oats/          # Compiler (parser, typechecker, codegen)
+│   │   ├── src/
+│   │   │   ├── parser.rs       # TypeScript AST parsing
+│   │   │   ├── types.rs        # Type system (OatsType)
+│   │   │   ├── diagnostics.rs  # Error reporting
+│   │   │   ├── codegen/        # LLVM IR generation
+│   │   │   │   ├── mod.rs      # CodeGen struct, function declarations
+│   │   │   │   ├── expr.rs     # Expression lowering
+│   │   │   │   ├── stmt.rs     # Statement lowering
+│   │   │   │   └── emit.rs     # Top-level emission
+│   │   │   └── bin/
+│   │   │       └── aot_run.rs  # CLI driver
+│   │   └── tests/              # Compiler tests
+│   └── runtime/       # C-callable runtime library
+│       ├── src/lib.rs          # RC, allocators, builtins
+│       └── tests/              # Runtime tests
+├── examples/          # Test programs
+└── docs/             # Documentation
+```
 
-- fast runtime tests: `crates/runtime/tests`
-- codegen unit tests: `crates/oats/tests` (use `crates/oats/tests/common/mod.rs` helpers)
-- integration: `crates/oats/tests/end_to_end.rs` (compiles + runs aot_run on small examples)
+### Compilation Pipeline
 
-## Good first issues for contributors
+```
+TypeScript Source (.oats)
+    ↓ [parser.rs - deno_ast]
+Abstract Syntax Tree (AST)
+    ↓ [types.rs - type inference/checking]
+Typed AST
+    ↓ [codegen/*.rs - inkwell]
+LLVM IR (.ll)
+    ↓ [LLVM optimization passes]
+Object File (.o)
+    ↓ [linker with runtime]
+Native Executable
+```
 
-- Convert a single `unwrap()` in `crates/oats/src/codegen` to return Result and add a unit test for the failing case.
-- Add a runtime unit test that validates header format, static bit behaviour, and rc_inc/rc_dec.
-- Add a small insta snapshot for a recent IR change (follow the repo snapshot conventions).
+### Key Abstractions
 
-## Development workflow notes
+**`OatsType` (types.rs):**
+- Represents all type information
+- Variants: Number, Boolean, String, Array, NominalStruct, Union, Weak, Promise, etc.
+- Used for type checking and LLVM type mapping
 
-- Use small, focused PRs. Run `cargo test -p oats` locally before pushing.
-- For changes touching RC or header layout, include runtime tests and a short explanation in the PR for why metadata and offsets remain correct.
-- Prefer conservative changes to lowering; if in doubt, add a debug-only runtime check to assert header invariants.
+**`CodeGen` (codegen/mod.rs):**
+- Main IR generation context
+- Holds LLVM context, module, builder
+- Caches runtime function declarations
+- Thread-local state for current function compilation
 
----
+**`Diagnostic` (diagnostics.rs):**
+- Rustc-style error reporting
+- Includes span information for source location
+- Used throughout for error propagation
 
-This file is intentionally short and prescriptive. If you'd like me to implement one of the top priorities (1. remove a panic, 2. emit field_map, 3. add runtime tests) I can make the change and run tests right away.
+## Coding Standards
+
+### Error Handling
+
+**CRITICAL: All codegen functions must return `Result<T, Diagnostic>`**
+
+```rust
+// ✅ CORRECT
+pub fn lower_expr(...) -> Result<BasicValueEnum<'a>, Diagnostic> {
+    let val = some_operation()
+        .map_err(|_| Diagnostic::simple("Operation failed"))?;
+    Ok(val)
+}
+
+// ❌ WRONG - Never use these in codegen
+pub fn lower_expr(...) -> BasicValueEnum<'a> {
+    let val = some_operation().unwrap();  // Panic!
+    val
+}
+```
+
+**Pattern for LLVM operations:**
+```rust
+let call_site = self.builder.build_call(fn_val, &args, "name")
+    .map_err(|_| Diagnostic::simple("Failed to build call"))?;
+```
+
+**Diagnostic creation:**
+```rust
+// Simple message
+Diagnostic::simple("Type mismatch")
+
+// With source location
+Diagnostic::simple_with_span("Type mismatch", expr.span.lo.0 as usize)
+
+// Multi-line with notes
+Diagnostic {
+    message: "Cannot call non-function type".to_string(),
+    span_start: Some(span_start),
+    notes: vec!["Expected function type".to_string()],
+}
+```
+
+### Memory Management Contracts
 **Batch 6 (cleanup):** Remove remaining `.expect()`/`.unwrap()` calls
 **Batch 7 (tests & CI):** Add tests for diagnostic output
 
@@ -264,136 +348,7 @@ I consolidated the test setup and added stronger integration tests to make the s
 
 - End-to-end testing: `crates/oats/tests/end_to_end.rs` runs the `aot_run` runner to compile `examples/add.oats` into a temporary directory, runs the produced binary, and asserts the numeric output. This test builds `runtime` and `aot_run` as needed, and may take a few seconds on first run.
 
-Notes:
-
-- The shared helper intentionally mirrors `aot_run`'s emission path so unit tests can remain focused and small.
-- When IR output changes, update snapshots with `cargo insta review` or `INSTA_UPDATE=auto` for one-off acceptance.
-
-
-## Contributing Guidelines
-
-### Setting Up Development Environment
-
-1. **Install LLVM 18:**
-   ```bash
-   # Linux
-   sudo apt-get install llvm-18 llvm-18-dev clang-18
-   
-   # macOS  
-   brew install llvm@18
-   ```
-
-2. **Setup Environment:**
-   ```bash
-   cd /path/to/oats
-   source ./scripts/setup_env.sh  # or setup_env.zsh for zsh
-   ```
-
-3. **Build and Test:**
-   ```bash
-   cargo build -p oats
-   cargo test -p oats
-   ./scripts/run_aot_tempdir.sh  # Test with examples/add.oats
-   ```
-
-### Development Commands
-
-**Quick Build and Test:**
-```bash
-cd /home/ellie/Dev/oats 
-OATS_OUT_DIR=./test_out cargo run -p oats --bin aot_run -- examples/YOURFILE.oats
-./test_out/YOURFILE
-```
-
-**Run All Tests:**
-```bash
-cargo test --workspace
-```
-
-**Check for Panics/Unwraps:**
-```bash
-grep -r "\.unwrap()" crates/oats/src/
-grep -r "\.expect(" crates/oats/src/
-```
-
-### Code Quality Standards
-
-**Error Handling:**
-- New code MUST use `Result<_, Diagnostic>` for fallible operations
-- No new `.unwrap()` or `.expect()` calls in production code paths
-- Always provide meaningful error messages with source context
-
-**Testing:**
-- Add unit tests for all new features
-- Integration tests for end-to-end functionality  
-- Update existing tests if behavior changes
-
-**Documentation:**
-- Update architecture docs for significant changes
-- Add inline comments for complex algorithms
-- Update examples/ directory with new language features
-
-### Pull Request Guidelines
-
-1. **Small, Focused Changes:** One logical change per PR
-2. **Tests Included:** All new functionality must have tests
-3. **Documentation:** Update relevant docs and examples
-4. **Build Verification:** Ensure `cargo build` and `cargo test` pass
-5. **No Regressions:** Existing tests must continue passing
-
-### Getting Help
-
-**Good First Issues:**
-- Consolidate type mapping duplication
-- Add labeled break/continue support
-- Convert specific `.unwrap()` calls to proper error handling
-
-**Harder Issues (Need Mentoring):**
-- Module resolution and multi-file compilation
-- Object literals implementation
-- Arrow functions with closure capture
-
-**Recommended Learning Path:**
-1. Start with small fixes (typos, test improvements)
-2. Implement missing unary operators or simple statements
-3. Work on error handling migration
-4. Tackle new language features
-
-### Architecture Principles
-
-This improvement plan focuses on **technical debt reduction** rather than new features. It prepares the codebase for medium-term roadmap items:
-
-- Arrow functions with closure capture
-- Object literals  
-- Module imports/exports
-- Interface types
-- Generics
-
-By eliminating panics and consolidating code now, future features will be easier and safer to implement.
-
 ---
 
-## Additional Notes
-
-### Memory Management Health ✅
-- Unified heap object system operational
-- Reference counting working correctly  
-- 40+ tests verify RC correctness
-- No memory corruption issues
-- **Known Limitation:** Cycle detection not implemented (acceptable for most TypeScript patterns)
-
-### Test Coverage ✅  
-- 51 tests passing
-- All major features covered
-- Integration and unit tests
-- Real-world example programs
-
-### Documentation Status ✅
-- Comprehensive architecture documentation
-- Implementation guides for major features
-- Development workflow documentation
-- Contributor guidelines
-
-**Gap:** Need more examples and tutorials for new contributors
-
-This development guide provides the foundation for maintaining and extending the Oats compiler while ensuring code quality and contributor productivity.
+**Last Updated:** October 10, 2025  
+**For PR guidelines, see:** `CONTRIBUTING.md` at repository root

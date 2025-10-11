@@ -5,12 +5,50 @@
 //! requiring semicolons and banning `var`). The parser returns a
 //! `ParsedModule` containing both the parsed AST and the original source
 //! text, which are used by later passes to report span-based diagnostics.
+//!
+//! # Resource Limits (Security Hardening)
+//!
+//! To prevent denial-of-service attacks, the parser enforces the following limits:
+//!
+//! - **MAX_SOURCE_SIZE**: Maximum source file size (default: 10 MB)
+//!   - Configurable via `OATS_MAX_SOURCE_BYTES` environment variable
+//!   - Prevents memory exhaustion from extremely large input files
+//!
+//! - **Runtime Recursion Depth**: Maximum recursion depth during execution (32 levels)
+//!   - Enforced in the runtime (`crates/runtime/src/lib.rs::MAX_RECURSION_DEPTH`)
+//!   - Prevents stack overflow from deeply recursive functions
+//!   - Not configurable (hard limit)
+//!
+//! These limits provide defense-in-depth against malicious or malformed input.
 
 use crate::diagnostics;
 use anyhow::Result;
 use deno_ast::swc::ast;
 use deno_ast::{MediaType, ParseParams, ParsedSource, SourceTextInfo, parse_module};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use url::Url;
+
+/// Maximum source file size in bytes (default: 10 MB)
+/// Override with OATS_MAX_SOURCE_BYTES environment variable
+static MAX_SOURCE_SIZE: AtomicUsize = AtomicUsize::new(10 * 1024 * 1024);
+
+/// Flag indicating limits have been initialized
+static LIMITS_INITIALIZED: AtomicBool = AtomicBool::new(false);
+
+/// Initialize parser resource limits from environment variables
+fn init_parser_limits() {
+    if LIMITS_INITIALIZED.load(Ordering::Relaxed) {
+        return;
+    }
+
+    // Parse OATS_MAX_SOURCE_BYTES (default: 10 MB)
+    if let Ok(val) = std::env::var("OATS_MAX_SOURCE_BYTES")
+        && let Ok(limit) = val.parse::<usize>() {
+            MAX_SOURCE_SIZE.store(limit, Ordering::Relaxed);
+        }
+
+    LIMITS_INITIALIZED.store(true, Ordering::Relaxed);
+}
 
 pub struct ParsedModule {
     pub parsed: ParsedSource,
@@ -22,6 +60,7 @@ pub struct ParsedModule {
 /// lightweight project-specific checks.
 ///
 /// The function performs the following additional checks beyond parsing:
+/// - Enforces maximum source size limit to prevent resource exhaustion
 /// - Enforces that certain statement kinds end with semicolons (conservative
 ///   style choice to simplify span handling).
 /// - Rejects usage of the `var` keyword in favor of `let`/`const`.
@@ -29,8 +68,33 @@ pub struct ParsedModule {
 /// # Arguments
 /// * `source_code` - source text to parse
 /// * `file_path` - optional path used to create a `file://` URL for diagnostics
+///
+/// # Security
+/// Checks source size against MAX_SOURCE_SIZE before parsing to prevent DoS.
 pub fn parse_oats_module(source_code: &str, file_path: Option<&str>) -> Result<ParsedModule> {
-    let sti = SourceTextInfo::from_string(source_code.to_string());
+    // Initialize resource limits on first call
+    init_parser_limits();
+
+    // SECURITY: Check source size limit before parsing
+    let max_size = MAX_SOURCE_SIZE.load(Ordering::Relaxed);
+    if source_code.len() > max_size {
+        anyhow::bail!(
+            "Source file too large: {} bytes (limit: {} bytes). \
+             Set OATS_MAX_SOURCE_BYTES to increase.",
+            source_code.len(),
+            max_size
+        );
+    }
+
+    // Strip BOM (Byte Order Mark) if present - deno_ast requires this
+    // UTF-8 BOM is 0xEF 0xBB 0xBF
+    let source_without_bom = if source_code.starts_with('\u{FEFF}') {
+        &source_code[3..]
+    } else {
+        source_code
+    };
+
+    let sti = SourceTextInfo::from_string(source_without_bom.to_string());
     // Use the provided file_path (if any) to create a proper file:// URL so
     // diagnostics and span-based tooling can show accurate paths. Fall back
     // to a generic placeholder when no path is available.
@@ -108,7 +172,8 @@ pub fn parse_oats_module(source_code: &str, file_path: Option<&str>) -> Result<P
         if hi < len && bytes[hi] == b';' {
             return true;
         }
-        if hi > 0 && bytes[hi.saturating_sub(1)] == b';' {
+        let prev_idx = hi.saturating_sub(1);
+        if hi > 0 && prev_idx < len && bytes[prev_idx] == b';' {
             return true;
         }
         // If tokens were captured, try a token-based check: find the token

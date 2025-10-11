@@ -96,7 +96,35 @@ export OATS_COLLECTOR_LOG=1
 
 Additionally, the runtime includes a test-only helper `collector_test_enqueue()` which is not present in default release builds — it is compiled only when the `collector-test` Cargo feature is enabled for both the runtime and the compiler crates.
 
-## 📁 Project Structure
+## � Security Features
+
+Oats includes comprehensive security hardening to protect against malicious or malformed input:
+
+### Resource Limits
+- **Heap Limits**: Configurable max heap size (default: 1 GB)
+- **Allocation Limits**: Configurable max single allocation (default: 256 MB)
+- **Source Size Limits**: Configurable max source file size (default: 10 MB)
+- **Recursion Depth**: Hard limit of 32 levels to prevent stack overflow
+
+```bash
+# Configure resource limits
+export OATS_MAX_HEAP_BYTES=536870912      # 512 MB heap
+export OATS_MAX_ALLOC_BYTES=67108864      # 64 MB per allocation
+export OATS_MAX_SOURCE_BYTES=52428800     # 50 MB source files
+```
+
+### Security Hardening
+- **Integer Overflow Protection**: All allocation size calculations use checked arithmetic
+- **Fuzz Testing**: Comprehensive fuzz testing infrastructure (see `docs/FUZZING.md`)
+- **Safety Documentation**: All unsafe code documented with safety contracts (see `docs/RUNTIME_SAFETY.md`)
+
+For more details, see:
+- **`SECURITY.md`**: Security policy and vulnerability reporting
+- **`docs/SECURITY_HARDENING.md`**: Complete security improvements summary
+- **`docs/RUNTIME_SAFETY.md`**: Safety contracts for unsafe code
+- **`docs/FUZZING.md`**: Fuzz testing guide
+
+## �📁 Project Structure
 
 The Oats compiler is organized as a Rust workspace with two main crates:
 

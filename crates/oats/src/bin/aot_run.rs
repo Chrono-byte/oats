@@ -558,6 +558,7 @@ fn main() -> Result<()> {
         fn_rc_weak_upgrade: std::cell::RefCell::new(None),
         fn_union_get_discriminant: std::cell::RefCell::new(None),
         class_fields: std::cell::RefCell::new(std::collections::HashMap::new()),
+    
         fn_param_types: std::cell::RefCell::new(std::collections::HashMap::new()),
         loop_context_stack: std::cell::RefCell::new(Vec::new()),
         current_class_parent: std::cell::RefCell::new(None),
@@ -568,8 +569,9 @@ fn main() -> Result<()> {
         async_cont_blocks: std::cell::RefCell::new(None),
         async_local_name_to_slot: std::cell::RefCell::new(None),
         async_param_count: std::cell::Cell::new(0),
-        async_poll_function: std::cell::RefCell::new(None),
-        async_resume_blocks: std::cell::RefCell::new(None),
+    async_poll_function: std::cell::RefCell::new(None),
+    async_resume_blocks: std::cell::RefCell::new(None),
+    async_poll_locals: std::cell::RefCell::new(None),
         source: &parsed_mod.source,
     };
 

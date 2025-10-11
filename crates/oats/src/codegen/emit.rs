@@ -59,296 +59,178 @@ impl<'a> crate::codegen::CodeGen<'a> {
     /// Notes: we intentionally do NOT traverse into nested function/arrow
     /// bodies so identifiers captured only by inner functions don't count
     /// as live for the outer function. This is a conservative pass that
-    /// is cheap and sufficient for an initial state-slot layout.
-    #[allow(dead_code)]
     fn compute_await_live_sets(
         &self,
         func: &ast::Function,
     ) -> Vec<std::collections::HashSet<String>> {
+        use deno_ast::swc::ast::*;
         use std::collections::HashSet;
 
-        // Simple conservative collector: for each top-level statement, gather idents
-        // appearing in the statement (shallow recursion). Then for each await in that
-        // statement produce a live-set equal to the union of idents in this and
-        // subsequent statements.
+        enum Node {
+            Ident(String),
+            AwaitMarker,
+        }
 
-        fn collect_shallow(e: &ast::Expr, out: &mut HashSet<String>) {
+        fn flatten_expr(e: &ast::Expr, out: &mut Vec<Node>) {
             use deno_ast::swc::ast::*;
             match e {
-                Expr::Ident(id) => {
-                    out.insert(id.sym.to_string());
-                }
+                Expr::Ident(id) => out.push(Node::Ident(id.sym.to_string())),
                 Expr::Call(c) => {
-                    use deno_ast::swc::ast::Callee;
                     if let Callee::Expr(ec) = &c.callee {
-                        collect_shallow(ec, out);
+                        flatten_expr(ec, out);
                     }
                     for a in &c.args {
-                        collect_shallow(&a.expr, out);
+                        flatten_expr(&a.expr, out);
                     }
                 }
                 Expr::Member(m) => {
-                    if let Expr::Ident(id) = &*m.obj {
-                        out.insert(id.sym.to_string());
-                    } else {
-                        collect_shallow(&m.obj, out);
+                    flatten_expr(&m.obj, out);
+                    if let MemberProp::Computed(cmp) = &m.prop {
+                        flatten_expr(&cmp.expr, out);
                     }
                 }
                 Expr::Bin(b) => {
-                    collect_shallow(&b.left, out);
-                    collect_shallow(&b.right, out);
+                    flatten_expr(&b.left, out);
+                    flatten_expr(&b.right, out);
                 }
-                Expr::Unary(u) => collect_shallow(&u.arg, out),
-                Expr::Await(a) => collect_shallow(&a.arg, out),
-                Expr::Paren(p) => collect_shallow(&p.expr, out),
+                Expr::Unary(u) => flatten_expr(&u.arg, out),
+                Expr::Await(a) => {
+                    // Evaluate the awaited expression first, then mark the
+                    // suspension point so idents inside the arg are treated
+                    // as occurring before the await (not after).
+                    flatten_expr(&a.arg, out);
+                    out.push(Node::AwaitMarker);
+                }
+                Expr::Paren(p) => flatten_expr(&p.expr, out),
                 Expr::Array(arr) => {
                     for el in arr.elems.iter().flatten() {
-                        collect_shallow(&el.expr, out);
+                        flatten_expr(&el.expr, out);
                     }
                 }
                 Expr::New(n) => {
-                    collect_shallow(&n.callee, out);
+                    flatten_expr(&n.callee, out);
                     if let Some(args) = &n.args {
                         for a in args {
-                            collect_shallow(&a.expr, out);
+                            flatten_expr(&a.expr, out);
                         }
                     }
+                }
+                Expr::Assign(asg) => {
+                    // Conservatively flatten both sides in source order
+                    flatten_expr(&asg.left, out);
+                    flatten_expr(&asg.right, out);
+                }
+                Expr::MemberProp(_) => {}
+                Expr::Cond(c) => {
+                    flatten_expr(&c.test, out);
+                    flatten_expr(&c.cons, out);
+                    flatten_expr(&c.alt, out);
+                }
+                Expr::ArrayLit(_) | Expr::Tpl(_) | Expr::TplElement(_) | Expr::Lit(_) => {
+                    // literals: no idents to record
+                }
+                Expr::Arrow(a) => {
+                    // don't recurse into nested function/arrow bodies
+                    let _ = a;
+                }
+                _ => {
+                    // conservative: don't traverse into patterns we don't care about
+                }
+            }
+        }
+
+        fn flatten_stmt(s: &ast::Stmt, out: &mut Vec<Node>) {
+            use deno_ast::swc::ast::*;
+            match s {
+                Stmt::Expr(es) => flatten_expr(&es.expr, out),
+                Stmt::Return(r) => {
+                    if let Some(arg) = &r.arg {
+                        flatten_expr(arg, out);
+                    }
+                }
+                Stmt::Decl(ast::Decl::Var(vd)) => {
+                    for decl in &vd.decls {
+                        if let Some(init) = &decl.init {
+                            flatten_expr(&init, out);
+                        }
+                    }
+                }
+                Stmt::If(ifst) => {
+                    flatten_expr(&ifst.test, out);
+                    // shallow: if cons/alt are simple expr statements, flatten
+                    match &*ifst.cons {
+                        Stmt::Expr(e) => flatten_expr(&e.expr, out),
+                        Stmt::Block(b) => for st in &b.stmts { flatten_stmt(st, out); },
+                        _ => {}
+                    }
+                    if let Some(alt) = &ifst.alt {
+                        match &**alt {
+                            Stmt::Expr(e) => flatten_expr(&e.expr, out),
+                            Stmt::Block(b) => for st in &b.stmts { flatten_stmt(st, out); },
+                            _ => {}
+                        }
+                    }
+                }
+                Stmt::Block(b) => {
+                    for st in &b.stmts {
+                        flatten_stmt(st, out);
+                    }
+                }
+                Stmt::While(w) => {
+                    flatten_expr(&w.test, out);
+                    flatten_stmt(&w.body, out);
+                }
+                Stmt::For(f) => {
+                    if let Some(init) = &f.init {
+                        match init {
+                            deno_ast::swc::ast::VarDeclOrExpr::Expr(e) => flatten_expr(e, out),
+                            deno_ast::swc::ast::VarDeclOrExpr::VarDecl(vd) => {
+                                for decl in &vd.decls {
+                                    if let Some(init) = &decl.init {
+                                        flatten_expr(init, out);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if let Some(test) = &f.test {
+                        flatten_expr(test, out);
+                    }
+                    if let Some(update) = &f.update {
+                        flatten_expr(update, out);
+                    }
+                    flatten_stmt(&f.body, out);
                 }
                 _ => {}
             }
         }
 
-        fn count_awaits_in_stmt(s: &ast::Stmt) -> usize {
-            use deno_ast::swc::ast::*;
-            match s {
-                Stmt::Expr(es) => count_awaits_in_expr(&es.expr),
-                Stmt::Return(r) => r.arg.as_ref().map(|a| count_awaits_in_expr(a)).unwrap_or(0),
-                Stmt::Decl(ast::Decl::Var(vd)) => vd
-                    .decls
-                    .iter()
-                    .map(|decl| {
-                        decl.init
-                            .as_ref()
-                            .map(|i| count_awaits_in_expr(i))
-                            .unwrap_or(0)
-                    })
-                    .sum(),
-                Stmt::Decl(_) => 0,
-                Stmt::If(ifst) => {
-                    let mut n = count_awaits_in_expr(&ifst.test);
-                    // cons and alt are Box<Stmt> - handle common cases
-                    match &*ifst.cons {
-                        ast::Stmt::Expr(es) => n += count_awaits_in_expr(&es.expr),
-                        ast::Stmt::Block(b) => {
-                            n += b.stmts.iter().map(count_awaits_in_stmt).sum::<usize>()
-                        }
-                        _ => {}
-                    }
-                    if let Some(alt) = &ifst.alt {
-                        match &**alt {
-                            ast::Stmt::Expr(es) => n += count_awaits_in_expr(&es.expr),
-                            ast::Stmt::Block(b) => {
-                                n += b.stmts.iter().map(count_awaits_in_stmt).sum::<usize>()
-                            }
-                            _ => {}
-                        }
-                    }
-                    n
-                }
-                Stmt::Block(b) => b.stmts.iter().map(count_awaits_in_stmt).sum(),
-                Stmt::While(w) => count_awaits_in_expr(&w.test) + count_awaits_in_stmt(&w.body),
-                Stmt::For(f) => {
-                    let mut n = 0usize;
-                    if let Some(init) = &f.init {
-                        match init {
-                            ast::VarDeclOrExpr::Expr(e) => n += count_awaits_in_expr(e),
-                            ast::VarDeclOrExpr::VarDecl(d) => {
-                                // d is Box<VarDecl>
-                                n += d
-                                    .decls
-                                    .iter()
-                                    .map(|decl| {
-                                        decl.init
-                                            .as_ref()
-                                            .map(|i| count_awaits_in_expr(i))
-                                            .unwrap_or(0)
-                                    })
-                                    .sum::<usize>();
-                            }
-                        }
-                    }
-                    if let Some(test) = &f.test {
-                        n += count_awaits_in_expr(test);
-                    }
-                    if let Some(update) = &f.update {
-                        n += count_awaits_in_expr(update);
-                    }
-                    n + count_awaits_in_stmt(&f.body)
-                }
-                _ => 0,
-            }
-        }
-
-        fn count_awaits_in_expr(e: &ast::Expr) -> usize {
-            use deno_ast::swc::ast::*;
-            match e {
-                Expr::Await(_) => 1,
-                Expr::Call(c) => {
-                    let mut n = 0;
-                    if let Callee::Expr(ec) = &c.callee {
-                        n += count_awaits_in_expr(ec);
-                    }
-                    for a in &c.args {
-                        n += count_awaits_in_expr(&a.expr);
-                    }
-                    n
-                }
-                Expr::New(nw) => {
-                    let mut n = count_awaits_in_expr(&nw.callee);
-                    if let Some(args) = &nw.args {
-                        for a in args {
-                            n += count_awaits_in_expr(&a.expr);
-                        }
-                    }
-                    n
-                }
-                Expr::Unary(u) => count_awaits_in_expr(&u.arg),
-                Expr::Bin(b) => count_awaits_in_expr(&b.left) + count_awaits_in_expr(&b.right),
-                Expr::Assign(asg) => count_awaits_in_expr(&asg.right),
-                Expr::Member(m) => {
-                    let mut n = count_awaits_in_expr(&m.obj);
-                    if let MemberProp::Computed(cmp) = &m.prop {
-                        n += count_awaits_in_expr(&cmp.expr);
-                    }
-                    n
-                }
-                Expr::Paren(p) => count_awaits_in_expr(&p.expr),
-                Expr::Array(a) => a
-                    .elems
-                    .iter()
-                    .flatten()
-                    .map(|el| count_awaits_in_expr(&el.expr))
-                    .sum(),
-                Expr::Cond(c) => {
-                    let mut n = count_awaits_in_expr(&c.test);
-                    n += count_awaits_in_expr(&c.cons);
-                    // In this codebase `Cond.alt` is a Box<Expr>
-                    n += count_awaits_in_expr(&c.alt);
-                    n
-                }
-                Expr::Arrow(a) => {
-                    if a.body.is_block_stmt() {
-                        if let ast::BlockStmtOrExpr::BlockStmt(b) = &*a.body {
-                            b.stmts.iter().map(count_awaits_in_stmt).sum()
-                        } else {
-                            0
-                        }
-                    } else {
-                        0
-                    }
-                }
-                _ => 0,
-            }
-        }
-
-        // Collect shallow idents per top-level statement
-        let mut stmt_idents: Vec<HashSet<String>> = Vec::new();
-        let mut stmt_awaits: Vec<usize> = Vec::new();
+        // Build a single ordered sequence of Nodes for the whole function body
+        let mut nodes: Vec<Node> = Vec::new();
         if let Some(body) = &func.body {
             for s in &body.stmts {
-                let mut ids = HashSet::new();
-                // collect idents by walking expressions shallowly within the statement
-                match s {
-                    ast::Stmt::Expr(es) => collect_shallow(&es.expr, &mut ids),
-                    ast::Stmt::Return(r) => {
-                        if let Some(arg) = &r.arg {
-                            collect_shallow(arg, &mut ids);
-                        }
-                    }
-                    ast::Stmt::Decl(ast::Decl::Var(vd)) => {
-                        for decl in &vd.decls {
-                            if let Some(init) = &decl.init {
-                                collect_shallow(init, &mut ids);
-                            }
-                        }
-                    }
-                    ast::Stmt::Decl(_) => {}
-                    ast::Stmt::If(ifst) => {
-                        collect_shallow(&ifst.test, &mut ids);
-                        // cons is Box<Stmt> - handle common shallow cases
-                        match &*ifst.cons {
-                            ast::Stmt::Expr(es) => collect_shallow(&es.expr, &mut ids),
-                            ast::Stmt::Block(b) => {
-                                for st in &b.stmts {
-                                    if let ast::Stmt::Expr(es) = st {
-                                        collect_shallow(&es.expr, &mut ids);
-                                    }
-                                }
-                            }
-                            _ => {}
-                        }
-                        if let Some(alt) = &ifst.alt {
-                            match &**alt {
-                                ast::Stmt::Expr(es) => collect_shallow(&es.expr, &mut ids),
-                                ast::Stmt::Block(b) => {
-                                    for st in &b.stmts {
-                                        if let ast::Stmt::Expr(es) = st {
-                                            collect_shallow(&es.expr, &mut ids);
-                                        }
-                                    }
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
-                    ast::Stmt::Block(b) => {
-                        for st in &b.stmts {
-                            if let ast::Stmt::Expr(es) = st {
-                                collect_shallow(&es.expr, &mut ids);
-                            }
-                        }
-                    }
-                    ast::Stmt::While(w) => {
-                        collect_shallow(&w.test, &mut ids);
-                    }
-                    ast::Stmt::For(f) => {
-                        if let Some(init) = &f.init {
-                            match init {
-                                ast::VarDeclOrExpr::Expr(e) => collect_shallow(e, &mut ids),
-                                ast::VarDeclOrExpr::VarDecl(d) => {
-                                    // d: Box<VarDecl>
-                                    for decl in &d.decls {
-                                        if let Some(init) = &decl.init {
-                                            collect_shallow(init, &mut ids);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    _ => {}
-                }
-                let cnt = count_awaits_in_stmt(s);
-                stmt_idents.push(ids);
-                stmt_awaits.push(cnt);
+                flatten_stmt(s, &mut nodes);
             }
         }
 
-        // Build suffix union of idents
-        let mut suffix_union: Vec<HashSet<String>> = vec![HashSet::new(); stmt_idents.len() + 1];
-        for i in (0..stmt_idents.len()).rev() {
-            let mut u = suffix_union[i + 1].clone();
-            u.extend(stmt_idents[i].iter().cloned());
-            suffix_union[i] = u;
+        // Find indexes of await markers
+        let mut await_positions: Vec<usize> = Vec::new();
+        for (i, n) in nodes.iter().enumerate() {
+            if let Node::AwaitMarker = n {
+                await_positions.push(i);
+            }
         }
 
+        // For each await position, collect all identifier names that occur after it
         let mut res: Vec<HashSet<String>> = Vec::new();
-        for i in 0..stmt_idents.len() {
-            for _ in 0..stmt_awaits[i] {
-                let mut set = suffix_union[i + 1].clone();
-                set.extend(stmt_idents[i].iter().cloned());
-                res.push(set);
+        for &pos in &await_positions {
+            let mut set = HashSet::new();
+            for n in nodes.iter().skip(pos + 1) {
+                if let Node::Ident(name) = n {
+                    set.insert(name.clone());
+                }
             }
+            res.push(set);
         }
 
         res
@@ -438,12 +320,43 @@ impl<'a> crate::codegen::CodeGen<'a> {
             let poll_f = self.module.add_function(&poll_name, poll_ft, None);
             let poll_entry = self.context.append_basic_block(poll_f, "entry");
             self.builder.position_at_end(poll_entry);
+            // Compute per-await live-sets early so we can reserve state
+            // layout indices and prepare resume/cont basic blocks before
+            // emitting the poll body. This lets the poll function set a
+            // correct "done" sentinel value that does not collide with
+            // resume indices.
+            let param_count = llvm_param_types.len();
+            let await_live_sets = self.compute_await_live_sets(&impl_decl);
+            let mut all_live_names: std::collections::HashSet<String> =
+                std::collections::HashSet::new();
+            for s in &await_live_sets {
+                for n in s.iter() {
+                    all_live_names.insert(n.clone());
+                }
+            }
+            // Reserve one 8-byte slot per live local name (after param slots)
+            let local_slot_count = all_live_names.len();
+            let _total_slots = param_count + local_slot_count;
 
-            // Poll body: read the state field (u32 at offset +8) and dispatch
-            // based on it. Layout: [poll_fn_ptr (8)] [state_u32 (4) + pad(4)] [param slots ...]
-            // If state == 0 => call impl (first run), write result, set state=1 and return ready.
-            // If state != 0 => already completed, return ready immediately.
-            // Load state param and pointer
+            // Prepare resume/cont block vectors sized to number of awaits
+            let mut resume_blocks: Vec<inkwell::basic_block::BasicBlock<'a>> = Vec::new();
+            let mut cont_blocks: Vec<inkwell::basic_block::BasicBlock<'a>> = Vec::new();
+            for i in 0..await_live_sets.len() {
+                resume_blocks.push(
+                    self.context
+                        .append_basic_block(poll_f, &format!("resume_{}", i)),
+                );
+                cont_blocks.push(
+                    self.context
+                        .append_basic_block(poll_f, &format!("cont_{}", i)),
+                );
+            }
+
+            // Now emit the poll body entry: read the state field (u32 at offset +8)
+            // and dispatch based on it. Layout: [poll_fn_ptr (8)] [state_u32 (4) + pad(4)] [param slots ...]
+            // If state == 0 => call impl (first run). If state matches a resume
+            // index (1-based) we will jump into the corresponding resume block.
+            // Otherwise the promise is already completed and we return ready.
             let state_param = poll_f.get_nth_param(0).unwrap();
             let state_ptr = state_param.into_pointer_value();
 
@@ -534,6 +447,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
             // operates on the poll function and can access the state param.
             let (param_map, mut locals_stack) =
                 self.create_param_allocas(poll_f, func_decl, &llvm_param_types, receiver_name)?;
+            // Keep a copy of the poll function's locals stack so resume blocks
+            // can restore saved values into the same allocas later.
+            *self.async_poll_locals.borrow_mut() = Some(locals_stack.clone());
 
             // Lower the body statements into the poll function's run_impl block.
             let mut emitted_terminator = false;
@@ -726,10 +642,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
             let one = self.i32_t.const_int(1, false);
             let _ = self.builder.build_return(Some(&one.as_basic_value_enum()));
 
-            // already_done: immediately return ready
-            self.builder.position_at_end(done_bb);
-            let one2 = self.i32_t.const_int(1, false);
-            let _ = self.builder.build_return(Some(&one2.as_basic_value_enum()));
+            // We will fill in `done_bb` (dispatch to resumes or return ready)
+            // after we compute the resume/cont vectors and the done sentinel
+            // value. For now leave `done_bb` empty and continue lowering the
+            // impl into `run_impl_bb`.
 
             // Move builder back to the wrapper function entry so subsequent
             // allocations and stores are emitted into the exported wrapper
@@ -880,10 +796,15 @@ impl<'a> crate::codegen::CodeGen<'a> {
             // (Optional) Build a name -> slot index map for locals. Locals occupy
             // slots after the parameter slots. We'll attach this mapping to a
             // local variable to be used later when emitting save/restore.
+            // Deterministically assign slot indices to local names by
+            // sorting the name list. This prevents non-deterministic builds
+            // when `HashSet` iteration order varies across runs.
             let mut local_name_to_slot: std::collections::HashMap<String, usize> =
                 std::collections::HashMap::new();
+            let mut names: Vec<String> = all_live_names.into_iter().collect();
+            names.sort();
             let mut idx = param_count;
-            for name in all_live_names.into_iter() {
+            for name in names.into_iter() {
                 local_name_to_slot.insert(name, idx);
                 idx += 1;
             }
@@ -915,6 +836,165 @@ impl<'a> crate::codegen::CodeGen<'a> {
             self.async_await_counter.set(0);
             self.async_param_count.set(param_count as u32);
 
+            // Now populate the `already_done` block to either dispatch to
+            // resume_i blocks (if state contains a resume index) or return
+            // ready immediately when the promise is already completed.
+            // We consider resume indices to be in the range [1..=await_count].
+            let _await_count = await_live_sets.len();
+            self.builder.position_at_end(done_bb);
+            // if state_loaded == 0 -> unreachable here; compare against 1..N
+            // We'll build a switch: default -> return ready; cases 1..N -> branch to resume_i
+            let default_ret = self.i32_t.const_int(1, false);
+            // Build the switch instruction on state_loaded and add cases for
+            // each resume index (1-based -> resume_0..resume_{N-1}).
+            // Build a switch on the state_loaded value. The builder API
+            // expects a SwitchValue with an expected number of cases.
+            // Build an explicit cases slice for the switch instruction.
+            let mut cases: Vec<(inkwell::values::IntValue<'a>, inkwell::basic_block::BasicBlock<'a>)> = Vec::new();
+            if let Some(resume_vec) = &*self.async_resume_blocks.borrow() {
+                for (i, rb) in resume_vec.iter().enumerate() {
+                    let case_val = self.i32_t.const_int((i as u64 + 1) as u64, false);
+                    cases.push((case_val, *rb));
+                }
+            }
+            let _switch_inst = self
+                .builder
+                .build_switch(state_loaded, done_bb, cases.as_slice())
+                .map_err(|_| crate::diagnostics::Diagnostic::simple("failed to build switch in poll"))?;
+
+            // Emit resume handlers: each resume block reloads live locals
+            // from the state slots into the poll function's allocas and then
+            // jumps to the corresponding cont block.
+            if let (Some(local_map), Some(live_sets), Some(poll_locals)) = (
+                &*self.async_local_name_to_slot.borrow(),
+                &*self.async_await_live_sets.borrow(),
+                &*self.async_poll_locals.borrow(),
+            ) {
+                if let (Some(resume_vec), Some(cont_vec)) = (
+                    &*self.async_resume_blocks.borrow(),
+                    &*self.async_cont_blocks.borrow(),
+                ) {
+                    for (i, rb) in resume_vec.iter().enumerate() {
+                        let cont_bb = cont_vec[i];
+                        self.builder.position_at_end(*rb);
+                        if let Some(live_set) = live_sets.get(i) {
+                            for name in live_set.iter() {
+                                if let Some(slot_idx) = local_map.get(name) {
+                                    // locate the alloca for the local in poll_locals
+                                            let mut target_alloca: Option<(
+                                                inkwell::values::PointerValue<'a>,
+                                                inkwell::types::BasicTypeEnum<'a>,
+                                            )> = None;
+                                            for scope in poll_locals.iter().rev() {
+                                        if let Some(entry) = scope.get(name) {
+                                                    target_alloca = Some((entry.0, entry.1));
+                                            break;
+                                        }
+                                    }
+                                    if let Some((alloca_ptr, ty)) = target_alloca {
+                                        // compute slot addr and load i8*
+                                                // Use the poll function's incoming state pointer
+                                                // (state_ptr was defined earlier) to compute the
+                                                // resume slot address.
+                                                let base_int = match self
+                                                    .builder
+                                                    .build_ptr_to_int(state_ptr, self.i64_t, "resume_state_addr")
+                                                {
+                                                    Ok(v) => v,
+                                                    Err(_) => {
+                                                        return Err(crate::diagnostics::Diagnostic::simple(
+                                                            "ptr_to_int failed when resuming locals",
+                                                        ));
+                                                    }
+                                                };
+                                        let off_const = self.i64_t.const_int(16 + (*slot_idx as u64 * 8), false);
+                                                let slot_addr_int = match self
+                                                    .builder
+                                                    .build_int_add(base_int, off_const, "slot_addr_resume")
+                                                {
+                                                    Ok(v) => v,
+                                                    Err(_) => {
+                                                        return Err(crate::diagnostics::Diagnostic::simple(
+                                                            "int_add failed when resuming locals",
+                                                        ));
+                                                    }
+                                                };
+                                                let slot_ptr = match self
+                                                    .builder
+                                                    .build_int_to_ptr(slot_addr_int, self.i8ptr_t, "slot_ptr_resume")
+                                                {
+                                                    Ok(p) => p,
+                                                    Err(_) => {
+                                                        return Err(crate::diagnostics::Diagnostic::simple(
+                                                            "int_to_ptr failed when resuming locals",
+                                                        ));
+                                                    }
+                                                };
+                                                let loaded_slot = match self
+                                                    .builder
+                                                    .build_load(self.i8ptr_t, slot_ptr, &format!("slot_load_{}", name))
+                                                {
+                                                    Ok(v) => v,
+                                                    Err(_) => {
+                                                        return Err(crate::diagnostics::Diagnostic::simple(
+                                                            "failed to load from slot when resuming",
+                                                        ));
+                                                    }
+                                                };
+                                        // store into alloca (unbox for floats)
+                                        match ty {
+                                            inkwell::types::BasicTypeEnum::FloatType(_) => {
+                                                let unbox_fn = self.get_union_unbox_f64();
+                                                        let cs = match self
+                                                            .builder
+                                                            .build_call(unbox_fn, &[loaded_slot.into()], "unbox_resume")
+                                                        {
+                                                            Ok(c) => c,
+                                                            Err(_) => {
+                                                                return Err(crate::diagnostics::Diagnostic::simple(
+                                                                    "union_unbox_f64 call failed when resuming locals",
+                                                                ));
+                                                            }
+                                                        };
+                                                        let fv = cs
+                                                            .try_as_basic_value()
+                                                            .left()
+                                                            .ok_or_else(|| {
+                                                                crate::diagnostics::Diagnostic::simple(
+                                                                    "unbox returned no value when resuming locals",
+                                                                )
+                                                            })?
+                                                            .into_float_value();
+                                                        let _ = self.builder.build_store(alloca_ptr, fv.as_basic_value_enum());
+                                            }
+                                            _ => {
+                                                        let slot_ptr_val = loaded_slot.into_pointer_value();
+                                                        let casted = match self
+                                                            .builder
+                                                            .build_pointer_cast(slot_ptr_val, alloca_ptr.get_type(), "cast_resume")
+                                                        {
+                                                            Ok(c) => c,
+                                                            Err(_) => {
+                                                                return Err(crate::diagnostics::Diagnostic::simple(
+                                                                    "pointer cast failed when resuming locals",
+                                                                ));
+                                                            }
+                                                        };
+                                                        let _ = self.builder.build_store(alloca_ptr, casted.as_basic_value_enum());
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        let _ = self.builder.build_unconditional_branch(cont_bb);
+                    }
+                }
+            }
+
+            // Default: return ready (1)
+            let _ = self.builder.build_return(Some(&default_ret.as_basic_value_enum()));
+
             // Call promise_new_from_state(state_ptr)
             let p_new = self.get_promise_new_from_state();
             let pres_cs = self
@@ -937,6 +1017,19 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 .builder
                 .build_call(enq, &[pres_val.into()], "executor_enqueue");
             let _ = self.builder.build_return(Some(&pres_val));
+
+            // Clear async lowering context stored in CodeGen so subsequent
+            // function compilations don't accidentally reuse state from
+            // this async wrapper. We intentionally `take()` the Option so
+            // the previous values are dropped here.
+            let _ = self.async_await_live_sets.borrow_mut().take();
+            let _ = self.async_local_name_to_slot.borrow_mut().take();
+            let _ = self.async_resume_blocks.borrow_mut().take();
+            let _ = self.async_cont_blocks.borrow_mut().take();
+            let _ = self.async_poll_function.borrow_mut().take();
+            let _ = self.async_poll_locals.borrow_mut().take();
+            self.async_await_counter.set(0);
+            self.async_param_count.set(0);
 
             return Ok(function);
         }

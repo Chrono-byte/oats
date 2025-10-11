@@ -632,7 +632,7 @@ pub extern "C" fn heap_str_alloc(str_len: size_t) -> *mut c_void {
     unsafe {
         // Total size: 8 (header) + 8 (length) + str_len + 1 (null terminator)
         let total_size = 16 + str_len + 1;
-        let p = libc::malloc(total_size);
+    let p = runtime_malloc(total_size);
         if p.is_null() {
             return ptr::null_mut();
         }
@@ -757,7 +757,30 @@ pub unsafe extern "C" fn rc_dec_str(data: *mut c_char) {
 /// Returned pointer must be freed with `runtime_free`.
 #[unsafe(no_mangle)]
 pub extern "C" fn runtime_malloc(size: size_t) -> *mut c_void {
-    unsafe { libc::malloc(size) }
+    // Allocate size + 8 bytes of bookkeeping. Return pointer to the
+    // usable area (bookkeeping precedes returned pointer). The bookkeeping
+    // stores the total allocation size as a u64 so deallocation can find the
+    // original base and layout. This keeps the object-base ABI unchanged
+    // for codegen (returned pointer is the start of the object header).
+    unsafe {
+        if size == 0 {
+            return std::ptr::null_mut();
+        }
+        let total = size.checked_add(std::mem::size_of::<u64>()).unwrap_or(0);
+        if total == 0 {
+            return std::ptr::null_mut();
+        }
+        let layout = std::alloc::Layout::from_size_align(total, 8).unwrap();
+        let base = std::alloc::alloc(layout);
+        if base.is_null() {
+            return std::ptr::null_mut();
+        }
+        // store total size as u64 at base
+        let size_ptr = base as *mut u64;
+        *size_ptr = total as u64;
+        // return pointer to usable area (after bookkeeping u64)
+        base.add(std::mem::size_of::<u64>()) as *mut c_void
+    }
 }
 
 /// Free memory previously allocated by the runtime allocator.
@@ -768,7 +791,21 @@ pub extern "C" fn runtime_malloc(size: size_t) -> *mut c_void {
 /// undefined behavior.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn runtime_free(p: *mut c_void) {
-    unsafe { libc::free(p) }
+    unsafe {
+        if p.is_null() {
+            return;
+        }
+        // compute base pointer where size was stored
+        let base = (p as *mut u8).sub(std::mem::size_of::<u64>());
+        // read stored size
+        let size_ptr = base as *mut u64;
+        let total = *size_ptr as usize;
+        if total == 0 {
+            return;
+        }
+        let layout = std::alloc::Layout::from_size_align(total, 8).unwrap();
+        std::alloc::dealloc(base, layout);
+    }
 }
 
 // --- String Operations ---
@@ -780,12 +817,12 @@ pub unsafe extern "C" fn runtime_free(p: *mut c_void) {
 /// invalid pointer or non-nul-terminated memory is undefined behavior.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn runtime_strlen(s: *const c_char) -> size_t {
-    unsafe {
-        if s.is_null() {
-            return 0;
-        }
-        libc::strlen(s)
+    if s.is_null() {
+        return 0;
     }
+    // Use CStr to compute length safely
+    let c = unsafe { CStr::from_ptr(s) };
+    c.to_bytes().len() as size_t
 }
 
 /// Duplicate a nul-terminated C string into a newly allocated runtime buffer.
@@ -803,11 +840,11 @@ pub unsafe extern "C" fn str_dup(s: *const c_char) -> *mut c_char {
             return ptr::null_mut();
         }
         let len = libc::strlen(s) + 1;
-        let dst = libc::malloc(len) as *mut c_char;
+    let dst = runtime_malloc(len) as *mut c_char;
         if dst.is_null() {
             return ptr::null_mut();
         }
-        libc::memcpy(dst as *mut c_void, s as *const c_void, len);
+    ptr::copy_nonoverlapping(s as *const u8, dst as *mut u8, len);
         dst
     }
 }
@@ -846,12 +883,12 @@ pub unsafe extern "C" fn str_concat(a: *const c_char, b: *const c_char) -> *mut 
         ptr::copy_nonoverlapping(aslice.as_ptr(), data_ptr as *mut u8, la);
         ptr::copy_nonoverlapping(
             bslice.as_ptr(),
-            data_ptr.add(la as usize) as *mut u8,
+            data_ptr.add(la) as *mut u8,
             lb,
         );
 
         // Null terminate
-        *data_ptr.add((la + lb) as usize) = 0;
+        *data_ptr.add(la + lb) = 0;
 
         data_ptr
     }
@@ -931,10 +968,9 @@ pub extern "C" fn print_newline() {
     // Also flush C stdio buffers in case other runtime helpers used libc::printf
     // to write to stdout. This avoids interleaving / buffering issues when
     // mixing Rust std::io and libc stdio.
-    unsafe {
-        // keep fflush for safety; it's inexpensive
-        libc::fflush(ptr::null_mut());
-    }
+    // We intentionally avoid calling C stdio flush here to remain pure-Rust.
+    // If mixing with C stdio is needed, call libc::fflush(ptr::null_mut())
+    // in a separate compatibility shim.
 }
 /// Convert a number to a heap string. The returned pointer is an owning data pointer
 /// (offset +16) and must be released with `rc_dec_str`.
@@ -1214,7 +1250,7 @@ pub extern "C" fn array_alloc(len: usize, elem_size: usize, elem_is_number: i32)
     let data_bytes = len * elem_size;
     let total_bytes = ARRAY_HEADER_SIZE + data_bytes;
     unsafe {
-        let p = libc::malloc(total_bytes) as *mut u8;
+    let p = runtime_malloc(total_bytes) as *mut u8;
         if p.is_null() {
             return ptr::null_mut();
         }
@@ -1859,10 +1895,10 @@ pub unsafe extern "C" fn rc_weak_dec(p: *mut c_void) {
                     // If both strong and weak are now zero, free the object
                     let strong = new_header & HEADER_RC_MASK;
                     let weak_after = header_get_weak_bits(new_header);
-                    if strong == 0 && weak_after == 0 {
+                        if strong == 0 && weak_after == 0 {
                         // As an extra barrier, ensure destructor effects are visible
                         std::sync::atomic::fence(Ordering::Acquire);
-                        libc::free(obj_ptr);
+                        runtime_free(obj_ptr);
                     }
                     break;
                 }
@@ -2108,7 +2144,7 @@ pub extern "C" fn promise_resolve(ptr: *mut std::ffi::c_void) -> *mut std::ffi::
     unsafe {
         // Allocate a tiny box to hold the pointer and a tag; use libc malloc
         let size = std::mem::size_of::<*mut std::ffi::c_void>() + 8;
-        let mem = libc::malloc(size) as *mut u8;
+    let mem = runtime_malloc(size) as *mut u8;
         if mem.is_null() {
             return std::ptr::null_mut();
         }
@@ -2193,7 +2229,7 @@ pub extern "C" fn promise_new_from_state(
     // offset 8. Layout: [reserved/null (8)] [state_ptr (8)].
     unsafe {
         let size = std::mem::size_of::<*mut std::ffi::c_void>() * 2;
-        let mem = libc::malloc(size) as *mut u8;
+    let mem = runtime_malloc(size) as *mut u8;
         if mem.is_null() {
             return std::ptr::null_mut();
         }
@@ -2229,7 +2265,7 @@ pub extern "C" fn executor_run() {
         let p = p_addr as *mut std::ffi::c_void;
         drop(q);
         unsafe {
-            let out_mem = libc::malloc(std::mem::size_of::<*mut c_void>()) as *mut u8;
+                let out_mem = runtime_malloc(std::mem::size_of::<*mut c_void>()) as *mut u8;
             if out_mem.is_null() {
                 continue;
             }
@@ -2240,7 +2276,7 @@ pub extern "C" fn executor_run() {
                 q2.push_back(p as usize);
                 exec.cv.notify_one();
             } else {
-                libc::free(out_mem as *mut libc::c_void);
+                runtime_free(out_mem as *mut c_void);
                 // We don't free `p` because it may be the state object owned by the generator
             }
         }
@@ -2276,7 +2312,7 @@ fn init_executor() -> std::sync::Arc<Exec> {
                         let p = p_addr as *mut std::ffi::c_void;
                         unsafe {
                             let out_mem =
-                                libc::malloc(std::mem::size_of::<*mut c_void>()) as *mut u8;
+                                runtime_malloc(std::mem::size_of::<*mut c_void>()) as *mut u8;
                             if out_mem.is_null() {
                                 continue;
                             }
@@ -2287,7 +2323,7 @@ fn init_executor() -> std::sync::Arc<Exec> {
                                 q2.push_back(p as usize);
                                 w.cv.notify_one();
                             } else {
-                                libc::free(out_mem as *mut libc::c_void);
+                                runtime_free(out_mem as *mut c_void);
                             }
                         }
                     }
@@ -2309,7 +2345,7 @@ pub extern "C" fn waker_create_for_task(_task: *mut std::ffi::c_void) -> *mut st
     unsafe {
         // layout: [reserved 8][task_ptr 8]
         let size = std::mem::size_of::<*mut std::ffi::c_void>() * 2;
-        let mem = libc::malloc(size) as *mut u8;
+        let mem = runtime_malloc(size) as *mut u8;
         if mem.is_null() {
             return std::ptr::null_mut();
         }

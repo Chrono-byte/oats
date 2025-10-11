@@ -152,12 +152,53 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 }
                                 // If initializer is `new ClassName(...)`, record the declared nominal
                                 // so member call lowering can infer the class for locals without
-                                // an explicit type annotation.
+                                // an explicit type annotation. Also pre-allocate a local
+                                // slot for the declared variable before lowering the
+                                // initializer so subsequent statements in the same
+                                // function can resolve the local even if initializer
+                                // lowering emits diagnostics or performs nested
+                                // emissions that temporarily disrupt symbol lookup.
                                 if let deno_ast::swc::ast::Expr::New(new_expr) = &**init
                                     && let deno_ast::swc::ast::Expr::Ident(ident) =
                                         &*new_expr.callee
                                 {
                                     declared_nominal = Some(ident.sym.to_string());
+
+                                    // Pre-allocate an i8* slot and insert the local into
+                                    // the current scope marked as uninitialized. This
+                                    // ensures `find_local` can discover the nominal
+                                    // type for member-call lowering that appears
+                                    // after this declaration.
+                                    let allocated_ty = self.i8ptr_t.as_basic_type_enum();
+                                    let alloca =
+                                        match self.builder.build_alloca(allocated_ty, &name) {
+                                            Ok(a) => a,
+                                            Err(_) => {
+                                                crate::diagnostics::emit_diagnostic(
+                                                    &crate::diagnostics::Diagnostic::simple(
+                                                        "alloca failed for local variable",
+                                                    ),
+                                                    Some(self.source),
+                                                );
+                                                return Ok(false);
+                                            }
+                                        };
+                                    // Insert local early as uninitialized; we'll store to it below
+                                    self.insert_local_current_scope(
+                                        _locals_stack,
+                                        crate::codegen::helpers::LocalVarInfo {
+                                            name: name.clone(),
+                                            ptr: alloca,
+                                            ty: allocated_ty,
+                                            initialized: false,
+                                            is_const: matches!(
+                                                var_decl.kind,
+                                                deno_ast::swc::ast::VarDeclKind::Const
+                                            ),
+                                            is_weak: declared_is_weak,
+                                            nominal: declared_nominal.clone(),
+                                        },
+                                    );
                                 }
                                 // `init` is an Option<Box<Expr>> (deno_ast wrapper); use `.as_ref()`
                                 // Special-case: if the declared type is a Tuple and the
@@ -476,7 +517,23 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         }
                                     }
 
-                                    let alloca =
+                                    // If a local with this name was pre-inserted (for
+                                    // example when we pre-allocated a slot for `new`
+                                    // or `await` initializers), reuse its alloca so we
+                                    // don't create duplicate slots. Otherwise allocate
+                                    // a fresh alloca for the local.
+                                    let maybe_existing = self.find_local(_locals_stack, &name);
+                                    let alloca = if let Some((
+                                        existing_ptr,
+                                        _existing_ty,
+                                        _existing_init,
+                                        _existing_is_const,
+                                        _existing_is_weak,
+                                        _existing_nominal,
+                                    )) = &maybe_existing
+                                    {
+                                        *existing_ptr
+                                    } else {
                                         match self.builder.build_alloca(allocated_ty, &name) {
                                             Ok(a) => a,
                                             Err(_) => {
@@ -488,7 +545,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                 );
                                                 return Ok(false);
                                             }
-                                        };
+                                        }
+                                    };
                                     // store lowered (possibly boxed) value
                                     let _ = self.builder.build_store(alloca, val);
                                     // If this slot is a pointer-like ABI slot then we
@@ -509,19 +567,24 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             "rc_inc_local",
                                         );
                                     }
-                                    // mark initialized in locals; is_const=false by default
-                                    self.insert_local_current_scope(
-                                        _locals_stack,
-                                        crate::codegen::helpers::LocalVarInfo {
-                                            name,
-                                            ptr: alloca,
-                                            ty: allocated_ty,
-                                            initialized: true,
-                                            is_const: false,
-                                            is_weak: declared_is_weak,
-                                            nominal: declared_nominal.clone(),
-                                        },
-                                    );
+                                    // If we reused an existing local, mark it initialized.
+                                    if maybe_existing.is_some() {
+                                        self.set_local_initialized(_locals_stack, &name, true);
+                                    } else {
+                                        // mark initialized in locals; is_const=false by default
+                                        self.insert_local_current_scope(
+                                            _locals_stack,
+                                            crate::codegen::helpers::LocalVarInfo {
+                                                name,
+                                                ptr: alloca,
+                                                ty: allocated_ty,
+                                                initialized: true,
+                                                is_const: false,
+                                                is_weak: declared_is_weak,
+                                                nominal: declared_nominal.clone(),
+                                            },
+                                        );
+                                    }
                                 }
                             } else {
                                 // No initializer: create an uninitialized slot
@@ -558,6 +621,260 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         }
                     }
                 }
+
+                // Handle nested function declarations inside a block/function
+                // (e.g. `function inner() {}` defined within another function).
+                // Emit them as top-level module functions so later call sites
+                // that reference the identifier can resolve via
+                // `module.get_function(name)` during expression lowering.
+                if let deno_ast::swc::ast::Decl::Fn(fdecl) = d {
+                    // Synthesize parameter types from annotations when available;
+                    // otherwise default to Number. For nested functions we don't
+                    // require full strict checking here — emit a best-effort
+                    // function so callsites can resolve the symbol.
+                    use deno_ast::swc::ast;
+                    let fname = fdecl.ident.sym.to_string();
+                    let mut param_types_vec: Vec<crate::types::OatsType> = Vec::new();
+                    for param in &fdecl.function.params {
+                        if let ast::Pat::Ident(ident) = &param.pat
+                            && let Some(type_ann) = &ident.type_ann
+                            && let Some(mapped) = crate::types::map_ts_type(&type_ann.type_ann)
+                        {
+                            param_types_vec.push(mapped);
+                            continue;
+                        }
+                        // Fallback param type
+                        param_types_vec.push(crate::types::OatsType::Number);
+                    }
+
+                    let ret_type = if let Some(rt) = &fdecl.function.return_type {
+                        if let Some(mapped) = crate::types::map_ts_type(&rt.type_ann) {
+                            mapped
+                        } else {
+                            crate::types::OatsType::Void
+                        }
+                    } else {
+                        crate::types::OatsType::Void
+                    };
+
+                    // Preserve current insertion block so we can restore it after
+                    // emitting the nested function. gen_function_ir mutates the
+                    // builder position (it emits into the new function), which
+                    // would otherwise leave us positioned inside the nested
+                    // function and cause later code to be emitted into it.
+                    let prev_block = self.builder.get_insert_block();
+                    if let Err(diag) = self.gen_function_ir(
+                        &fname,
+                        &fdecl.function,
+                        &param_types_vec,
+                        &ret_type,
+                        None,
+                    ) {
+                        crate::diagnostics::emit_diagnostic(&diag, Some(self.source));
+                    }
+                    if let Some(pb) = prev_block {
+                        // Restore to the previous block so lowering resumes
+                        // at the correct location.
+                        self.builder.position_at_end(pb);
+                    }
+                }
+                // Handle nested class declarations inside functions/blocks.
+                // Emit their methods and constructors as top-level module
+                // functions so callsites can resolve <Class>_<method> symbols
+                // during expression lowering. We do not attempt fallbacks;
+                // emit diagnostics when function strictness checking fails.
+                if let deno_ast::swc::ast::Decl::Class(class_decl) = d {
+                    use deno_ast::swc::ast;
+                    let class_name = class_decl.ident.sym.to_string();
+
+                    // Collect class fields (from ClassProp and constructor params)
+                    let mut fields: Vec<(String, crate::types::OatsType)> = Vec::new();
+                    for member in &class_decl.class.body {
+                        if let ast::ClassMember::ClassProp(prop) = member
+                            && let ast::PropName::Ident(id) = &prop.key
+                        {
+                            let fname = id.sym.to_string();
+                            if fields.iter().all(|(n, _)| n != &fname) {
+                                let ftype = if let Some(type_ann) = &prop.type_ann {
+                                    if let Some(mt) = crate::types::map_ts_type(&type_ann.type_ann)
+                                    {
+                                        mt
+                                    } else {
+                                        crate::types::OatsType::Number
+                                    }
+                                } else {
+                                    crate::types::OatsType::Number
+                                };
+                                fields.push((fname, ftype));
+                            }
+                        }
+                    }
+
+                    // Also collect parameter properties from the constructor
+                    // (TypeScript shorthand `constructor(public x: T)`) so methods
+                    // can see these fields during lowering. We scan ctor.params
+                    // for `ParamOrTsParamProp::TsParamProp` entries and add them.
+                    use deno_ast::swc::ast::{ParamOrTsParamProp, TsParamPropParam};
+                    for member in &class_decl.class.body {
+                        if let ast::ClassMember::Constructor(cons) = member {
+                            for p in &cons.params {
+                                if let ParamOrTsParamProp::TsParamProp(ts_param) = p
+                                    && let TsParamPropParam::Ident(binding_ident) = &ts_param.param
+                                {
+                                    let fname = binding_ident.id.sym.to_string();
+                                    if fields.iter().all(|(n, _)| n != &fname) {
+                                        let ty = crate::types::infer_type(
+                                            binding_ident
+                                                .type_ann
+                                                .as_ref()
+                                                .map(|ann| &*ann.type_ann),
+                                            None,
+                                        );
+                                        fields.push((fname, ty));
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Determine parent name (if any) so `super(...)` lowering can work
+                    let parent_name_opt = if let Some(sc) = &class_decl.class.super_class {
+                        if let deno_ast::swc::ast::Expr::Ident(id) = &**sc {
+                            Some(id.sym.to_string())
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
+                    // Set current class parent while emitting members
+                    *self.current_class_parent.borrow_mut() = parent_name_opt.clone();
+
+                    // Emit methods and constructor bodies as module functions.
+                    for member in &class_decl.class.body {
+                        use deno_ast::swc::ast::ClassMember;
+                        match member {
+                            ClassMember::Method(m) => {
+                                let mname = match &m.key {
+                                    ast::PropName::Ident(id) => id.sym.to_string(),
+                                    ast::PropName::Str(s) => s.value.to_string(),
+                                    _ => continue,
+                                };
+                                // Strictness check to obtain parameter/return types. If the
+                                // strict check fails (for example when the method uses
+                                // default params or non-ident patterns), fall back to a
+                                // permissive extraction that maps simple idents and
+                                // defaults unknown types to Number. This keeps nested
+                                // class emission resilient while still producing usable IR.
+                                let mut method_symbols = crate::types::SymbolTable::new();
+                                let mut params: Vec<crate::types::OatsType> = Vec::new();
+                                params.push(crate::types::OatsType::NominalStruct(
+                                    class_name.clone(),
+                                ));
+                                let ret: crate::types::OatsType;
+                                if let Ok(sig) = crate::types::check_function_strictness(
+                                    &m.function,
+                                    &mut method_symbols,
+                                ) {
+                                    params.extend(sig.params.into_iter());
+                                    ret = sig.ret;
+                                } else {
+                                    // Fallback: extract parameter types permissively
+                                    for p in &m.function.params {
+                                        match &p.pat {
+                                            deno_ast::swc::ast::Pat::Ident(ident) => {
+                                                if let Some(type_ann) = &ident.type_ann
+                                                    && let Some(mt) = crate::types::map_ts_type(
+                                                        &type_ann.type_ann,
+                                                    )
+                                                {
+                                                    params.push(mt);
+                                                    continue;
+                                                }
+                                                params.push(crate::types::OatsType::Number);
+                                            }
+                                            _ => {
+                                                params.push(crate::types::OatsType::Number);
+                                            }
+                                        }
+                                    }
+                                    // Fallback return type: use annotated return type if present
+                                    if let Some(rt) = &m.function.return_type {
+                                        if let Some(mapped) =
+                                            crate::types::map_ts_type(&rt.type_ann)
+                                        {
+                                            ret = mapped;
+                                        } else {
+                                            ret = crate::types::OatsType::Void;
+                                        }
+                                    } else {
+                                        ret = crate::types::OatsType::Void;
+                                    }
+                                }
+
+                                let fname = format!("{}_{}", class_name, mname);
+                                let prev_block = self.builder.get_insert_block();
+                                if let Err(d) = self.gen_function_ir(
+                                    &fname,
+                                    &m.function,
+                                    &params,
+                                    &ret,
+                                    Some("this"),
+                                ) {
+                                    crate::diagnostics::emit_diagnostic(&d, Some(self.source));
+                                }
+                                if let Some(pb) = prev_block {
+                                    self.builder.position_at_end(pb);
+                                }
+                            }
+                            ClassMember::Constructor(ctor) => {
+                                // gather constructor param/prop-inferred fields
+                                use deno_ast::swc::ast::{Expr, MemberProp, Stmt};
+                                if let Some(body) = &ctor.body {
+                                    for stmt in &body.stmts {
+                                        if let Stmt::Expr(expr_stmt) = stmt
+                                            && let Expr::Assign(assign) = &*expr_stmt.expr
+                                            && let deno_ast::swc::ast::AssignTarget::Simple(
+                                                simple_target,
+                                            ) = &assign.left
+                                            && let deno_ast::swc::ast::SimpleAssignTarget::Member(
+                                                mem,
+                                            ) = simple_target
+                                            && matches!(&*mem.obj, Expr::This(_))
+                                            && let MemberProp::Ident(ident) = &mem.prop
+                                        {
+                                            let name = ident.sym.to_string();
+                                            let inferred =
+                                                crate::types::infer_type(None, Some(&assign.right));
+                                            if fields.iter().all(|(n, _)| n != &name) {
+                                                fields.push((name, inferred));
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Register class fields for lowering
+                                self.class_fields
+                                    .borrow_mut()
+                                    .insert(class_name.clone(), fields.clone());
+
+                                // Emit constructor IR. Ensure current_class_parent is set so `super(...)` works.
+                                let prev_block = self.builder.get_insert_block();
+                                if let Err(diag) =
+                                    self.gen_constructor_ir(&class_name, ctor, &fields)
+                                {
+                                    crate::diagnostics::emit_diagnostic(&diag, Some(self.source));
+                                }
+                                if let Some(pb) = prev_block {
+                                    self.builder.position_at_end(pb);
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                // Clear current class parent after emitting members
+                self.current_class_parent.borrow_mut().take();
                 Ok(false)
             }
             deno_ast::swc::ast::Stmt::Expr(expr_stmt) => {
@@ -575,6 +892,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 }
                 Ok(false)
             }
+
             deno_ast::swc::ast::Stmt::Return(ret) => {
                 // Lower return expression, emit rc_decs for locals then return.
                 //

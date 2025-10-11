@@ -1,5 +1,5 @@
-use anyhow::Result;
 use super::common;
+use anyhow::Result;
 use common::gen_ir_for_source;
 
 #[test]

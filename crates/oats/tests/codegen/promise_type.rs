@@ -247,16 +247,18 @@ export function main(): number {
     for item in program.body() {
         if let deno_ast::ModuleItemRef::ModuleDecl(module_decl) = item
             && let deno_ast::swc::ast::ModuleDecl::ExportDecl(decl) = module_decl
-                && let deno_ast::swc::ast::Decl::Fn(f) = &decl.decl
-                    && let Some(body) = &f.function.body {
-                        for stmt in &body.stmts {
-                            if let deno_ast::swc::ast::Stmt::Return(ret) = stmt
-                                && let Some(expr) = &ret.arg {
-                                    let inferred = infer_type_from_expr(expr);
-                                    assert_eq!(inferred, Some(OatsType::Number));
-                                }
-                        }
-                    }
+            && let deno_ast::swc::ast::Decl::Fn(f) = &decl.decl
+            && let Some(body) = &f.function.body
+        {
+            for stmt in &body.stmts {
+                if let deno_ast::swc::ast::Stmt::Return(ret) = stmt
+                    && let Some(expr) = &ret.arg
+                {
+                    let inferred = infer_type_from_expr(expr);
+                    assert_eq!(inferred, Some(OatsType::Number));
+                }
+            }
+        }
     }
 
     Ok(())
@@ -277,18 +279,17 @@ export function main(): number {
     for item in program.body() {
         if let deno_ast::ModuleItemRef::Stmt(stmt) = item
             && let deno_ast::swc::ast::Stmt::Decl(decl) = stmt
-                && let deno_ast::swc::ast::Decl::Var(var_decl) = decl {
-                    for decl in &var_decl.decls {
-                        if let Some(init) = &decl.init
-                            && let deno_ast::swc::ast::Expr::Array(_) = &**init {
-                                let inferred = infer_type_from_expr(init);
-                                assert_eq!(
-                                    inferred,
-                                    Some(OatsType::Array(Box::new(OatsType::Number)))
-                                );
-                            }
-                    }
+            && let deno_ast::swc::ast::Decl::Var(var_decl) = decl
+        {
+            for decl in &var_decl.decls {
+                if let Some(init) = &decl.init
+                    && let deno_ast::swc::ast::Expr::Array(_) = &**init
+                {
+                    let inferred = infer_type_from_expr(init);
+                    assert_eq!(inferred, Some(OatsType::Array(Box::new(OatsType::Number))));
                 }
+            }
+        }
     }
 
     Ok(())

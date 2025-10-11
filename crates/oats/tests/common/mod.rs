@@ -76,8 +76,16 @@ pub fn gen_ir_for_source(src: &str) -> Result<String> {
         fn_union_get_discriminant: std::cell::RefCell::new(None),
         class_fields: std::cell::RefCell::new(std::collections::HashMap::new()),
         fn_param_types: std::cell::RefCell::new(std::collections::HashMap::new()),
+        current_class_parent: std::cell::RefCell::new(None),
         closure_local_rettype: std::cell::RefCell::new(std::collections::HashMap::new()),
         last_expr_origin_local: std::cell::RefCell::new(None),
+        async_await_live_sets: std::cell::RefCell::new(None),
+        async_local_name_to_slot: std::cell::RefCell::new(None),
+        async_resume_blocks: std::cell::RefCell::new(None),
+        async_cont_blocks: std::cell::RefCell::new(None),
+        async_poll_function: std::cell::RefCell::new(None),
+        async_await_counter: std::cell::Cell::new(0),
+        async_param_count: std::cell::Cell::new(0),
         source: &parsed_mod.source,
         loop_context_stack: std::cell::RefCell::new(Vec::new()),
     };
@@ -140,15 +148,15 @@ pub fn gen_ir_for_source(src: &str) -> Result<String> {
                                 &assign.left
                             && let deno_ast::swc::ast::SimpleAssignTarget::Member(mem) =
                                 simple_target
-                                && matches!(&*mem.obj, Expr::This(_))
-                                && let MemberProp::Ident(ident) = &mem.prop
-                            {
-                                let name = ident.sym.to_string();
-                                let inferred = oats::types::infer_type(None, Some(&assign.right));
-                                if fields.iter().all(|(n, _)| n != &name) {
-                                    fields.push((name, inferred));
-                                }
+                            && matches!(&*mem.obj, Expr::This(_))
+                            && let MemberProp::Ident(ident) = &mem.prop
+                        {
+                            let name = ident.sym.to_string();
+                            let inferred = oats::types::infer_type(None, Some(&assign.right));
+                            if fields.iter().all(|(n, _)| n != &name) {
+                                fields.push((name, inferred));
                             }
+                        }
                     }
                 }
             }

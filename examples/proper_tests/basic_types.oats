@@ -1,7 +1,7 @@
 export function main(): void {
     // Explicit typing
-    let framework: string = "TypeScript";
-    let version: number = 5.2;
+    let framework = "boop";
+    let version: number = 3.2;
     let isAwesome: boolean = true;
 
     // Type inference

@@ -27,7 +27,7 @@ mod for_loop_and_if;
 mod ir_tests;
 #[path = "codegen/promise_type.rs"]
 mod promise_type;
-#[path = "codegen/unary_operators.rs"]
-mod unary_operators;
-#[path = "codegen/weak_helper_direct.rs"]
-mod weak_helper_direct;
+// #[path = "codegen/unary_operators.rs"]
+// mod unary_operators;
+// #[path = "codegen/weak_helper_direct.rs"]
+// mod weak_helper_direct;

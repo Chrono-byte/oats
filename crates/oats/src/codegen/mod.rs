@@ -115,6 +115,9 @@ pub struct CodeGen<'a> {
     pub async_poll_function: RefCell<Option<FunctionValue<'a>>>,
     pub async_await_counter: Cell<u32>,
     pub async_param_count: Cell<u32>,
+    // Locals stack from the poll function so resume blocks can access
+    // the poll's allocas and restore values into them.
+    pub async_poll_locals: RefCell<Option<LocalsStackLocal<'a>>>,
     pub source: &'a str,
 }
 

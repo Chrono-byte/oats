@@ -3612,15 +3612,29 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 // If async lowering context is present, record that we've
                 // emitted one await so the `gen_function_ir` wiring which
                 // prepared resume/cont blocks and slot maps can correlate
-                // to the lowered awaits. Full save/restore emission will
-                // follow in later changes.
-                if self.async_local_name_to_slot.borrow().is_some() {
+                // to the lowered awaits. We'll record a 1-based resume index
+                // for this await so we can store it into the state when
+                // suspending.
+                // Require async lowering context: awaiting outside an async
+                // poll implementation is an error for Phase-1 lowering. Compute
+                // a concrete resume index (1-based) to store into the state.
+                let resume_idx: u32 = if self.async_poll_function.borrow().is_some() {
                     let prev = self.async_await_counter.get();
                     self.async_await_counter.set(prev.wrapping_add(1));
-                }
+                    prev.wrapping_add(1)
+                } else {
+                    return Err(Diagnostic::simple_with_span(
+                        "`await` used outside of async lowering context",
+                        await_expr.span.lo.0 as usize,
+                    ))?;
+                };
 
                 let v = self.lower_expr(&await_expr.arg, function, param_map, locals)?;
                 if let BasicValueEnum::PointerValue(pv) = v {
+                    // Make the basic-value form of the promise pointer available
+                    // to the continuation's phi node regardless of whether we
+                    // suspend or not.
+                    let pv_bv = pv.as_basic_value_enum();
                     // allocate an i8* out slot
                     let out_alloca = match self
                         .builder
@@ -3692,17 +3706,95 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         }
                     };
 
-                    // pending: just use the original promise pointer
+                    // pending: suspend if async lowering context exists by
+                    // saving live locals into the heap state and setting the
+                    // resume index; otherwise fall back to Phase-0 behaviour
+                    // and continue returning the original promise pointer.
                     self.builder.position_at_end(pending_bb);
-                    let pv_bv = pv.as_basic_value_enum();
-                    match self.builder.build_unconditional_branch(cont_bb) {
-                        Ok(_) => (),
-                        Err(_) => {
-                            return Err(Diagnostic::simple(
-                                "failed to branch to cont from pending",
-                            ));
+                    // We MUST have a resume index here because async lowering
+                    // context was required above. Emit save-to-state and set
+                    // the resume index, then return Pending (0).
+                    {
+                        // The poll function's state param is the first param
+                        // of the poll function. We need to write live locals
+                        // into the state slots and set the state field.
+                        // Here `function` is the current LLVM function (likely
+                        // the *wrapper*); but the poll function is available
+                        // in CodeGen.async_poll_function. Retrieve its param.
+                        if let Some(poll_f) = *self.async_poll_function.borrow() {
+                            let state_param = poll_f.get_nth_param(0).unwrap();
+                            let state_ptr = state_param.into_pointer_value();
+
+                            // load live set and local map
+                            if let Some(live_sets) = &*self.async_await_live_sets.borrow() {
+                                if let Some(local_map) = &*self.async_local_name_to_slot.borrow() {
+                                    if let Some(live_set) = live_sets.get((resume_idx - 1) as usize) {
+                                        for name in live_set.iter() {
+                                            if let Some(slot_idx) = local_map.get(name) {
+                                                if let Some((alloca_ptr, ty, _init, _is_const, _is_weak, _nominal)) = self.find_local(locals, name) {
+                                                    let loaded = match self.builder.build_load(ty, alloca_ptr, &format!("save_{}", name)) {
+                                                        Ok(v) => v,
+                                                        Err(_) => return Err(Diagnostic::simple("failed to load local for save")),
+                                                    };
+
+                                                    // compute slot address: state_base + (16 + slot_idx*8)
+                                                    let base_int = match self.builder.build_ptr_to_int(state_ptr, self.i64_t, "state_addr") {
+                                                        Ok(v) => v,
+                                                        Err(_) => return Err(Diagnostic::simple("ptr_to_int failed when saving locals")),
+                                                    };
+                                                    let off_const = self.i64_t.const_int(16 + (*slot_idx as u64 * 8), false);
+                                                    let slot_addr_int = match self.builder.build_int_add(base_int, off_const, "slot_addr") {
+                                                        Ok(v) => v,
+                                                        Err(_) => return Err(Diagnostic::simple("int_add failed when saving locals")),
+                                                    };
+                                                    let slot_ptr = match self.builder.build_int_to_ptr(slot_addr_int, self.i8ptr_t, "slot_ptr_save") {
+                                                        Ok(p) => p,
+                                                        Err(_) => return Err(Diagnostic::simple("int_to_ptr failed when saving locals")),
+                                                    };
+
+                                                    match ty {
+                                                        inkwell::types::BasicTypeEnum::FloatType(_) => {
+                                                            let box_fn = self.get_union_box_f64();
+                                                            let cs = match self.builder.build_call(box_fn, &[loaded.into()], "box_save") {
+                                                                Ok(cs) => cs,
+                                                                Err(_) => return Err(Diagnostic::simple("union_box_f64 call failed when saving locals")),
+                                                            };
+                                                            let boxed_ptr = cs.try_as_basic_value().left().ok_or_else(|| Diagnostic::simple("boxing returned no value when saving locals"))?.into_pointer_value();
+                                                            let _ = self.builder.build_store(slot_ptr, boxed_ptr.as_basic_value_enum());
+                                                        }
+                                                        _ => {
+                                                            let _ = self.builder.build_store(slot_ptr, loaded);
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            // store resume index into state field at offset 8
+                            let base_int = match self.builder.build_ptr_to_int(state_ptr, self.i64_t, "state_addr_store") {
+                                Ok(v) => v,
+                                Err(_) => return Err(Diagnostic::simple("ptr_to_int failed when storing state index")),
+                            };
+                            let state_off = self.i64_t.const_int(8, false);
+                            let state_field_int = match self.builder.build_int_add(base_int, state_off, "state_field_addr_store") {
+                                Ok(v) => v,
+                                Err(_) => return Err(Diagnostic::simple("int_add failed when storing state index")),
+                            };
+                            let state_field_ptr = match self.builder.build_int_to_ptr(state_field_int, self.context.ptr_type(inkwell::AddressSpace::default()), "state_field_ptr_store") {
+                                Ok(p) => p,
+                                Err(_) => return Err(Diagnostic::simple("int_to_ptr failed when storing state index")),
+                            };
+                            let resume_val = self.i32_t.const_int(resume_idx as u64, false);
+                            let _ = self.builder.build_store(state_field_ptr, resume_val);
+
+                            // return 0 (pending)
+                            let zero = self.i32_t.const_int(0, false);
+                            let _ = self.builder.build_return(Some(&zero.as_basic_value_enum()));
                         }
-                    };
+                    }
 
                     // cont: create phi to select between loaded value and original promise
                     self.builder.position_at_end(cont_bb);

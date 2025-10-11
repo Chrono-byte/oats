@@ -7,7 +7,7 @@ description = "Oats AOT TypeScript compiler"
 repository = "https://github.com/Chrono-byte/oats"
 
 [dependencies]
-deno_ast = "0.50.2"
+deno_ast = "0.50.3"
 inkwell = { version = "0.6.0", features = ["llvm18-1", "llvm18-1-prefer-dynamic"] }
 anyhow = "1.0"
 url = "2.4"

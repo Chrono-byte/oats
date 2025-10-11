@@ -23,7 +23,7 @@
 //!
 
 use libc::{c_char, c_void, size_t};
-use std::ffi::CStr;
+use std::ffi::{CStr, CString};
 use std::io::{self, Write};
 use std::mem;
 use std::process;
@@ -661,15 +661,18 @@ pub unsafe extern "C" fn heap_str_from_cstr(s: *const c_char) -> *mut c_char {
         return ptr::null_mut();
     }
     unsafe {
-        let len = libc::strlen(s);
-        let obj = heap_str_alloc(len);
+        // Use CStr to compute length safely and copy bytes
+        let cstr = CStr::from_ptr(s);
+        let bytes = cstr.to_bytes_with_nul();
+        let len = bytes.len() - 1; // excluding trailing NUL
+        let obj = heap_str_alloc(len as size_t);
         if obj.is_null() {
             return ptr::null_mut();
         }
 
         // Copy string data to offset +16
         let data_ptr = (obj as *mut u8).add(16) as *mut c_char;
-        libc::memcpy(data_ptr as *mut c_void, s as *const c_void, len + 1);
+        ptr::copy_nonoverlapping(bytes.as_ptr(), data_ptr as *mut u8, bytes.len());
 
         data_ptr
     }
@@ -824,8 +827,8 @@ pub unsafe extern "C" fn str_concat(a: *const c_char, b: *const c_char) -> *mut 
         if a.is_null() || b.is_null() {
             return ptr::null_mut();
         }
-        let la = libc::strlen(a);
-        let lb = libc::strlen(b);
+    let la = CStr::from_ptr(a).to_bytes().len();
+    let lb = CStr::from_ptr(b).to_bytes().len();
 
         // Allocate heap string with RC header
         let obj = heap_str_alloc(la + lb);
@@ -837,10 +840,13 @@ pub unsafe extern "C" fn str_concat(a: *const c_char, b: *const c_char) -> *mut 
         let data_ptr = (obj as *mut u8).add(16) as *mut c_char;
 
         // Copy both strings
-        libc::memcpy(data_ptr as *mut c_void, a as *const c_void, la);
-        libc::memcpy(
-            data_ptr.add(la as usize) as *mut c_void,
-            b as *const c_void,
+        // copy bytes from CStrs
+        let aslice = CStr::from_ptr(a).to_bytes();
+        let bslice = CStr::from_ptr(b).to_bytes();
+        ptr::copy_nonoverlapping(aslice.as_ptr(), data_ptr as *mut u8, la);
+        ptr::copy_nonoverlapping(
+            bslice.as_ptr(),
+            data_ptr.add(la as usize) as *mut u8,
             lb,
         );
 
@@ -926,6 +932,7 @@ pub extern "C" fn print_newline() {
     // to write to stdout. This avoids interleaving / buffering issues when
     // mixing Rust std::io and libc stdio.
     unsafe {
+        // keep fflush for safety; it's inexpensive
         libc::fflush(ptr::null_mut());
     }
 }
@@ -941,7 +948,7 @@ pub extern "C" fn number_to_string(num: f64) -> *mut c_char {
     // Use Rust formatting to produce the string and then create a heap-owned
     // runtime string using the helper that consumes a C string pointer.
     let s = format!("{}", num);
-    let c = std::ffi::CString::new(s).unwrap_or_default();
+    let c = CString::new(s).unwrap_or_default();
     unsafe { heap_str_from_cstr(c.as_ptr()) }
 }
 
@@ -1126,31 +1133,42 @@ pub unsafe extern "C" fn tuple_to_string(obj: *mut c_void) -> *mut c_char {
 /// time and process ID for better entropy.
 #[unsafe(no_mangle)]
 pub extern "C" fn math_random() -> f64 {
-    // Seed libc PRNG once per process to avoid deterministic output across runs.
-    // We use std::sync::Once for thread-safe one-time initialization.
-    static INIT_RAND: std::sync::Once = std::sync::Once::new();
-    INIT_RAND.call_once(|| unsafe {
-        // Use gettimeofday for microsecond resolution to avoid same-second collisions.
-        let mut tv: libc::timeval = std::mem::zeroed();
-        if libc::gettimeofday(&mut tv as *mut libc::timeval, std::ptr::null_mut()) == 0 {
-            let secs = tv.tv_sec as u64;
-            let usec = tv.tv_usec as u64;
-            let pid = libc::getpid() as u64;
-            let seed = ((secs << 32) ^ usec ^ (pid as u64)) as u32;
-            libc::srand(seed);
-        } else {
-            // Fallback to time-based seeding
-            let now = libc::time(std::ptr::null_mut()) as u64;
-            libc::srand((now as u32).wrapping_mul(1664525).wrapping_add(1013904223));
-        }
+    // Use a small internal SplitMix64-based PRNG seeded once per process.
+    // This avoids dependence on libc::rand and provides deterministic but
+    // well-distributed values for Math.random() usage in tests/examples.
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static RNG_STATE: AtomicU64 = AtomicU64::new(0);
+    static INIT: std::sync::Once = std::sync::Once::new();
+
+    // splitmix64 next function
+    fn splitmix64_next(s: &AtomicU64) -> u64 {
+        let mut x = s.load(Ordering::Relaxed);
+        // advance by large odd constant
+        x = x.wrapping_add(0x9e3779b97f4a7c15);
+        s.store(x, Ordering::Relaxed);
+        let mut z = x;
+        z = (z ^ (z >> 30)).wrapping_mul(0xbf58476d1ce4e5b9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94d049bb133111eb);
+        z ^ (z >> 31)
+    }
+
+    INIT.call_once(|| {
+        // Seed from SystemTime nanos + process id
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0);
+        let pid = process::id() as u64;
+        let seed = now ^ (pid.wrapping_mul(0x9e3779b97f4a7c15));
+        RNG_STATE.store(seed, Ordering::Relaxed);
     });
 
-    // Simple PRNG using libc::rand() normalized to [0,1).
-    unsafe {
-        let r = libc::rand() as f64;
-        let m = libc::RAND_MAX as f64;
-        if m <= 0.0 { 0.0 } else { r / (m + 1.0) }
-    }
+    let bits = splitmix64_next(&RNG_STATE);
+    // Convert to double in [0,1)
+    let mant = bits >> 12; // keep top 52 bits
+    let denom = (1u64 << 52) as f64;
+    (mant as f64) / denom
 }
 
 // --- Reference Counting ---
@@ -2065,24 +2083,16 @@ pub extern "C" fn union_get_discriminant(u: *mut c_void) -> i64 {
 /// and is safe to call from any thread.
 #[unsafe(no_mangle)]
 pub extern "C" fn sleep_ms(ms: f64) {
-    unsafe {
-        if ms <= 0.0 {
-            return;
-        }
-        // Convert to microseconds for libc::usleep; clamp to reasonable range
-        let mut usec = (ms * 1000.0) as u64;
-        if usec > 10_000_000u64 {
-            // cap at 10s to avoid very long sleeps
-            usec = 10_000_000u64;
-        }
-        // usleep takes useconds_t (usually u32), so saturate if necessary
-        let to_call = if usec > u32::MAX as u64 {
-            u32::MAX
-        } else {
-            usec as u32
-        };
-        libc::usleep(to_call);
+    if ms <= 0.0 {
+        return;
     }
+    // Use std::thread::sleep which is portable and avoids libc::usleep
+    let mut ms_clamped = ms;
+    if ms_clamped > 10_000.0 {
+        ms_clamped = 10_000.0; // cap at 10s
+    }
+    let dur = std::time::Duration::from_millis(ms_clamped as u64);
+    std::thread::sleep(dur);
 }
 
 /// Minimal promise helpers (MVP): promise_resolve + promise_poll_into.

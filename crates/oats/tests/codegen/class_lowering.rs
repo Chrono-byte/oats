@@ -2,13 +2,17 @@ use anyhow::Result;
 
 // common helper provides IR generation for tests
 use super::common;
-use common::gen_ir_for_source;
+use common::create_codegen;
 
 #[test]
 fn class_simple_emits_ctor_and_method() -> Result<()> {
     let src = std::fs::read_to_string("../../examples/class_simple.oats")?;
 
-    let ir = gen_ir_for_source(&src)?;
+    let context = inkwell::context::Context::create();
+    let symbols = oats::types::SymbolTable::new();
+    let codegen = create_codegen(&context, "class_lowering_test", symbols, &src);
+
+    let ir = codegen.module.print_to_string().to_string();
 
     assert!(
         ir.contains("Foo_ctor"),

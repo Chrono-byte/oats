@@ -78,10 +78,15 @@ fn gen_add_function_ir_contains_fadd() -> Result<()> {
         async_cont_blocks: std::cell::RefCell::new(None),
         async_local_name_to_slot: std::cell::RefCell::new(None),
         async_param_count: std::cell::Cell::new(0),
+        async_local_slot_count: std::cell::Cell::new(0),
         async_poll_function: std::cell::RefCell::new(None),
         async_resume_blocks: std::cell::RefCell::new(None),
         async_poll_locals: std::cell::RefCell::new(None),
         source: &parsed_mod.source,
+        current_function_return_type: std::cell::RefCell::new(None),
+        last_expr_is_boxed_union: std::cell::Cell::new(false),
+        global_function_signatures: std::cell::RefCell::new(std::collections::HashMap::new()),
+        symbol_table: std::cell::RefCell::new(symbols),
     };
 
     codegen

@@ -1,4 +1,6 @@
 use anyhow::Result;
+use super::common;
+use common::create_codegen;
 
 #[test]
 fn union_local_and_param_boxing() -> Result<()> {
@@ -10,10 +12,16 @@ fn union_local_and_param_boxing() -> Result<()> {
         }
     "#;
 
-    let ir = crate::tests::common::gen_ir_for_source(src)?;
-    // Should include boxing of the numeric literal into union_box_f64
-    assert!(ir.contains("union_box_f64"), "IR should box numbers into union_box_f64");
-    // Strings may be left as pointers and boxed when assigned to union slots
+    let context = inkwell::context::Context::create();
+    let symbols = oats::types::SymbolTable::new();
+    let codegen = create_codegen(&context, "union_types_test", symbols, src);
+
+    let ir = codegen.module.print_to_string().to_string();
+
+    assert!(
+        ir.contains("union_box_f64"),
+        "IR should box numbers into union_box_f64"
+    );
     Ok(())
 }
 
@@ -27,9 +35,16 @@ fn union_param_boxing() -> Result<()> {
         }
     "#;
 
-    let ir = crate::tests::common::gen_ir_for_source(src)?;
-    // Param boxing should emit union_box_f64 when numbers are passed
-    assert!(ir.contains("union_box_f64") || ir.contains("union_box_ptr"));
+    let context = inkwell::context::Context::create();
+    let symbols = oats::types::SymbolTable::new();
+    let codegen = create_codegen(&context, "union_types_test", symbols, src);
+
+    let ir = codegen.module.print_to_string().to_string();
+
+    assert!(
+        ir.contains("union_box_f64") || ir.contains("union_box_ptr"),
+        "Param boxing should emit union_box_f64 when numbers are passed"
+    );
     Ok(())
 }
 
@@ -45,8 +60,15 @@ fn typeof_guard_uses_discriminant() -> Result<()> {
         }
     "#;
 
-    let ir = crate::tests::common::gen_ir_for_source(src)?;
-    // The lowered IR should test the union discriminant or unbox number - check for union_unbox_f64 or a discriminant helper
-    assert!(ir.contains("union_unbox_f64") || ir.contains("union_get_discriminant"));
+    let context = inkwell::context::Context::create();
+    let symbols = oats::types::SymbolTable::new();
+    let codegen = create_codegen(&context, "union_types_test", symbols, src);
+
+    let ir = codegen.module.print_to_string().to_string();
+
+    assert!(
+        ir.contains("union_unbox_f64") || ir.contains("union_get_discriminant"),
+        "The lowered IR should test the union discriminant or unbox number"
+    );
     Ok(())
 }

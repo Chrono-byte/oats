@@ -1,36 +1,22 @@
 // Test for-loop and if statement lowering
 use anyhow::Result;
+use super::common;
+use common::create_codegen;
 
 #[test]
 fn for_loop_and_if_statement_in_fibonacci() -> Result<()> {
-    // Read the fibonacci example which contains both for-loop and if statement
     let src = std::fs::read_to_string("../../examples/fibonaci.oats")?;
 
-    // Parse and compile it
-    let parsed_mod = oats::parser::parse_oats_module(&src, None)?;
-    let parsed = &parsed_mod.parsed;
+    let context = inkwell::context::Context::create();
+    let symbols = oats::types::SymbolTable::new();
+    let codegen = create_codegen(&context, "for_loop_and_if_test", symbols, &src);
 
-    // Find exported main function
-    let mut found_main = false;
-    for item_ref in parsed.program_ref().body() {
-        if let deno_ast::ModuleItemRef::ModuleDecl(module_decl) = item_ref
-            && let deno_ast::swc::ast::ModuleDecl::ExportDecl(decl) = module_decl
-            && let deno_ast::swc::ast::Decl::Fn(f) = &decl.decl
-        {
-            let name = f.ident.sym.to_string();
-            if name == "main" {
-                found_main = true;
-                break;
-            }
-        }
-    }
+    let ir = codegen.module.print_to_string().to_string();
+
     assert!(
-        found_main,
-        "No exported main function found in fibonaci.oats"
+        ir.contains("for_loop") && ir.contains("if_statement"),
+        "IR should contain for-loop and if-statement lowering"
     );
-
-    // The test just verifies the file parses and has a main function with a for-loop
-    // The actual IR generation is tested by running the aot_run binary
     Ok(())
 }
 

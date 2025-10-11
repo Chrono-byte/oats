@@ -15,6 +15,7 @@
 //! these helpers and avoids duplicate declarations.
 
 use deno_ast::swc::ast;
+use inkwell::AddressSpace;
 use inkwell::basic_block::BasicBlock;
 use inkwell::builder::Builder;
 use inkwell::context::Context;
@@ -22,7 +23,6 @@ use inkwell::module::Module;
 use inkwell::types::{BasicType, BasicTypeEnum};
 use inkwell::values::FunctionValue;
 use inkwell::values::PointerValue;
-use inkwell::AddressSpace;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
@@ -457,6 +457,7 @@ impl<'a> CodeGen<'a> {
                 self.module.add_function("array_set_ptr", fn_type, None)
             })
     }
+    #[allow(dead_code)]
     fn get_array_set_ptr_weak(&self) -> FunctionValue<'a> {
         self.module
             .get_function("array_set_ptr_weak")

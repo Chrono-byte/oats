@@ -84,6 +84,7 @@ export function main(): number {
         async_param_count: std::cell::Cell::new(0),
         async_poll_function: std::cell::RefCell::new(None),
         async_resume_blocks: std::cell::RefCell::new(None),
+        async_poll_locals: std::cell::RefCell::new(None),
         source: &parsed_mod.source,
     };
 

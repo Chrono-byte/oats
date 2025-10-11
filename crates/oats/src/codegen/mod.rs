@@ -25,6 +25,7 @@ use inkwell::values::FunctionValue;
 use inkwell::values::PointerValue;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
+use inkwell::values::BasicValueEnum;
 
 pub mod emit;
 pub mod expr;
@@ -35,14 +36,16 @@ pub mod stmt;
 // helper modules. Use the same alias here so different files agree on the
 // in-memory representation of the locals stack.
 // LocalEntry now includes an `is_weak` bool as the fifth element.
-// LocalEntry now carries an optional nominal type name as the sixth element
+// LocalEntry now carries an optional nominal type name as the sixth element.
+// LocalEntry now carries an optional OatsType as the seventh element for union tracking.
 type LocalEntry<'a> = (
-    PointerValue<'a>,
-    BasicTypeEnum<'a>,
-    bool,
-    bool,
-    bool,
-    Option<String>,
+    PointerValue<'a>,               // alloca ptr
+    BasicTypeEnum<'a>,              // LLVM type
+    bool,                           // is_initialized
+    bool,                           // is_const
+    bool,                           // is_weak
+    Option<String>,                 // nominal type name
+    Option<crate::types::OatsType>, // OatsType for unions
 );
 type LocalsStackLocal<'a> = Vec<std::collections::HashMap<String, LocalEntry<'a>>>;
 
@@ -115,10 +118,22 @@ pub struct CodeGen<'a> {
     pub async_poll_function: RefCell<Option<FunctionValue<'a>>>,
     pub async_await_counter: Cell<u32>,
     pub async_param_count: Cell<u32>,
+    pub async_local_slot_count: Cell<usize>,
     // Locals stack from the poll function so resume blocks can access
     // the poll's allocas and restore values into them.
     pub async_poll_locals: RefCell<Option<LocalsStackLocal<'a>>>,
     pub source: &'a str,
+    // Track the current function's return type so return statements can box
+    // values when the function returns a union type.
+    pub current_function_return_type: RefCell<Option<crate::types::OatsType>>,
+    // Track whether the last lowered expression is already a boxed union
+    // (e.g., from a function call that returns a union). This prevents double-boxing.
+    pub last_expr_is_boxed_union: Cell<bool>,
+    // Global map for function signatures (parameter and return types).
+    pub global_function_signatures:
+        RefCell<HashMap<String, (Vec<crate::types::OatsType>, crate::types::OatsType)>>,
+    // Symbol table for type information
+    pub symbol_table: RefCell<crate::types::SymbolTable>,
 }
 
 impl<'a> CodeGen<'a> {
@@ -730,6 +745,13 @@ impl<'a> CodeGen<'a> {
                 return true;
             }
         };
+
+        // Run the async executor to process any enqueued promises
+        let executor_run_fn = self.get_executor_run();
+        let _ = self
+            .builder
+            .build_call(executor_run_fn, &[], "call_executor");
+
         // Interpret the result depending on its type. If the function returns an i64 or f64
         // we coerce/truncate to i32; if void, return 0.
         let either = call_site.try_as_basic_value();
@@ -806,5 +828,15 @@ impl<'a> CodeGen<'a> {
         let f = self.module.add_function("malloc", fn_type, None);
         *self.fn_malloc.borrow_mut() = Some(f);
         f
+    }
+
+    // Specialize a generic type based on type parameters and arguments
+    pub fn specialize_generic(
+        &self,
+        _type_params: &[crate::types::OatsType],
+        _args: &[deno_ast::swc::ast::ExprOrSpread],
+    ) -> Result<BasicValueEnum<'a>, crate::diagnostics::Diagnostic> {
+        // Logic to specialize the generic type
+        Ok(self.context.ptr_type(AddressSpace::default()).const_null().into())
     }
 }

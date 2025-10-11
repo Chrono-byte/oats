@@ -350,8 +350,13 @@ fn main() -> Result<()> {
         async_poll_function: std::cell::RefCell::new(None),
         async_await_counter: std::cell::Cell::new(0),
         async_param_count: std::cell::Cell::new(0),
+        async_local_slot_count: std::cell::Cell::new(0),
         async_poll_locals: std::cell::RefCell::new(None),
         source: &parsed_mod.source,
+        current_function_return_type: std::cell::RefCell::new(None),
+        last_expr_is_boxed_union: std::cell::Cell::new(false),
+        global_function_signatures: std::cell::RefCell::new(std::collections::HashMap::new()),
+        symbol_table: std::cell::RefCell::new(symbols),
     };
 
     // Merge collected alias_fields from earlier passes into codegen.class_fields so
@@ -522,8 +527,12 @@ fn main() -> Result<()> {
                                 deno_ast::swc::ast::PropName::Str(s) => s.value.to_string(),
                                 _ => continue,
                             };
-                            // Try to type-check the method function
-                            if let Ok(sig) = check_function_strictness(&m.function, &mut symbols) {
+                            // Try to type-check the method function using the symbol table
+                            // stored inside `codegen` (symbols was moved into codegen earlier).
+                            if let Ok(sig) = {
+                                let mut symbols_ref = codegen.symbol_table.borrow_mut();
+                                check_function_strictness(&m.function, &mut *symbols_ref)
+                            } {
                                 // Prepend `this` as the first param (nominal struct pointer)
                                 let mut params = Vec::new();
                                 params
@@ -548,9 +557,10 @@ fn main() -> Result<()> {
                                     })?;
                             } else {
                                 // If strict check failed (e.g., missing return annotation), try to emit with Void return
-                                if let Ok(sig2) =
-                                    check_function_strictness(&m.function, &mut symbols)
-                                {
+                                if let Ok(sig2) = {
+                                    let mut symbols_ref = codegen.symbol_table.borrow_mut();
+                                    check_function_strictness(&m.function, &mut *symbols_ref)
+                                } {
                                     let mut params = Vec::new();
                                     params.push(oats::types::OatsType::NominalStruct(
                                         class_name.clone(),

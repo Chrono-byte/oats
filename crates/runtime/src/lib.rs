@@ -139,15 +139,17 @@ fn init_resource_limits() {
 
     // Parse OATS_MAX_HEAP_BYTES (default: 1 GB)
     if let Ok(val) = std::env::var("OATS_MAX_HEAP_BYTES")
-        && let Ok(limit) = val.parse::<u64>() {
-            MAX_HEAP_BYTES.store(limit, Ordering::Relaxed);
-        }
+        && let Ok(limit) = val.parse::<u64>()
+    {
+        MAX_HEAP_BYTES.store(limit, Ordering::Relaxed);
+    }
 
     // Parse OATS_MAX_ALLOC_BYTES (default: 256 MB)
     if let Ok(val) = std::env::var("OATS_MAX_ALLOC_BYTES")
-        && let Ok(limit) = val.parse::<u64>() {
-            MAX_ALLOC_BYTES.store(limit, Ordering::Relaxed);
-        }
+        && let Ok(limit) = val.parse::<u64>()
+    {
+        MAX_ALLOC_BYTES.store(limit, Ordering::Relaxed);
+    }
 
     LIMITS_INITIALIZED.store(true, Ordering::Relaxed);
 }
@@ -2044,8 +2046,10 @@ unsafe fn get_object_base(p: *mut c_void) -> *mut c_void {
         let rc = header_val & HEADER_RC_MASK;
         let is_static = (header_val & HEADER_STATIC_BIT) != 0;
 
-        // Accept if: reasonable RC (< 10000) OR has static bit set
-        if rc < 10000 || is_static {
+        // Accept if: has static bit set OR (has reasonable RC AND header value > 256)
+        // The "header_val > 256" check helps distinguish real headers from random data bytes
+        // like single-char strings (e.g., "a\0" = 0x61 0x00 = 97, which is < 256)
+        if is_static || (rc > 0 && rc < 10000 && header_val > 256) {
             // Looks like a valid header, use this pointer as-is
             return p;
         }
@@ -2057,7 +2061,7 @@ unsafe fn get_object_base(p: *mut c_void) -> *mut c_void {
         let obj_rc = obj_header_val & HEADER_RC_MASK;
         let obj_is_static = (obj_header_val & HEADER_STATIC_BIT) != 0;
 
-        if obj_rc < 10000 || obj_is_static {
+        if obj_is_static || (obj_rc > 0 && obj_rc < 10000 && obj_header_val > 256) {
             // Found valid header at -16, this is a string data pointer
             return obj_ptr;
         }
@@ -2533,7 +2537,10 @@ pub extern "C" fn promise_resolve(ptr: *mut std::ffi::c_void) -> *mut std::ffi::
         if mem.is_null() {
             return std::ptr::null_mut();
         }
-        // store the payload pointer at offset 8 (leave header/meta unused)
+        // Store a magic sentinel (usize::MAX) at offset 0 to mark this as a resolved promise
+        let header_ptr = mem as *mut usize;
+        *header_ptr = usize::MAX; // Magic value to distinguish from wrapper/state
+        // store the payload pointer at offset 8
         let payload_ptr = mem.add(8) as *mut *mut std::ffi::c_void;
         *payload_ptr = ptr;
         mem as *mut std::ffi::c_void
@@ -2565,6 +2572,19 @@ pub extern "C" fn promise_poll_into(
         // Read the first word
         let first_ptr = promise as *mut *mut std::ffi::c_void;
         let first_word = *first_ptr;
+
+        // Check for resolved promise magic sentinel (usize::MAX)
+        let first_as_usize = first_word as usize;
+        if first_as_usize == usize::MAX {
+            // This is a resolved promise: [usize::MAX, payload]
+            // Read payload at offset 8 and return it as ready
+            let payload_ptr = (promise as *mut u8).add(8) as *mut *mut std::ffi::c_void;
+            let payload = *payload_ptr;
+            let out_slot = out_ptr as *mut *mut std::ffi::c_void;
+            *out_slot = payload;
+            return 1;
+        }
+
         if !first_word.is_null() {
             // Legacy/state-as-promise: first word is a poll function pointer.
             let poll_fn: extern "C" fn(*mut std::ffi::c_void, *mut std::ffi::c_void) -> i32 =

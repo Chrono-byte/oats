@@ -43,9 +43,10 @@ fn init_parser_limits() {
 
     // Parse OATS_MAX_SOURCE_BYTES (default: 10 MB)
     if let Ok(val) = std::env::var("OATS_MAX_SOURCE_BYTES")
-        && let Ok(limit) = val.parse::<usize>() {
-            MAX_SOURCE_SIZE.store(limit, Ordering::Relaxed);
-        }
+        && let Ok(limit) = val.parse::<usize>()
+    {
+        MAX_SOURCE_SIZE.store(limit, Ordering::Relaxed);
+    }
 
     LIMITS_INITIALIZED.store(true, Ordering::Relaxed);
 }

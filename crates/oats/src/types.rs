@@ -52,6 +52,8 @@ pub enum OatsType {
     Promise(Box<OatsType>),
     // Anonymous struct-like type (object literal type) with named fields
     StructLiteral(Vec<(String, OatsType)>),
+    // Generic type with type parameters
+    Generic(Vec<OatsType>),
 }
 
 #[derive(Debug, Clone)]
@@ -105,8 +107,19 @@ pub fn map_ts_type(ty: &ast::TsType) -> Option<OatsType> {
             _ => None,
         },
         ast::TsType::TsTypeRef(type_ref) => {
-            // Check if this is a Promise<T> type
             if let Some(ident) = type_ref.type_name.as_ident() {
+                // Check for generic classes or functions
+                if ident.sym.as_ref() == "Generic" {
+                    if let Some(type_params) = &type_ref.type_params {
+                        let mapped_params: Vec<_> = type_params
+                            .params
+                            .iter()
+                            .filter_map(|param| map_ts_type(param))
+                            .collect();
+                        return Some(OatsType::Generic(mapped_params));
+                    }
+                }
+                // Check if this is a Promise<T> type
                 if ident.sym.as_ref() == "Promise" {
                     // Extract the type parameter
                     if let Some(type_params) = &type_ref.type_params

@@ -23,6 +23,7 @@ type LocalEntry<'a> = (
     bool,
     bool, // is_weak
     Option<String>,
+    Option<crate::types::OatsType>,
 );
 type LocalsStackLocal<'a> = Vec<HashMap<String, LocalEntry<'a>>>;
 
@@ -35,6 +36,7 @@ pub(crate) struct LocalVarInfo<'a> {
     pub is_const: bool,
     pub is_weak: bool,
     pub nominal: Option<String>,
+    pub oats_type: Option<crate::types::OatsType>,
 }
 
 impl<'a> super::CodeGen<'a> {
@@ -86,6 +88,11 @@ impl<'a> super::CodeGen<'a> {
                 // in parameter positions are likely buggy and should be
                 // diagnosed upstream.
                 self.i8ptr_t.as_basic_type_enum()
+            }
+            OatsType::Generic(_) => {
+                // Generics are not directly mappable to LLVM types.
+                // This should be resolved during specialization.
+                panic!("Generic types must be specialized before mapping to LLVM types");
             }
         }
     }
@@ -369,8 +376,16 @@ impl<'a> super::CodeGen<'a> {
         name: &str,
     ) -> Option<LocalEntry<'a>> {
         for scope in locals.iter().rev() {
-            if let Some((ptr, ty, init, is_const, is_weak, nominal)) = scope.get(name) {
-                return Some((*ptr, *ty, *init, *is_const, *is_weak, nominal.clone()));
+            if let Some((ptr, ty, init, is_const, is_weak, nominal, oats_type)) = scope.get(name) {
+                return Some((
+                    *ptr,
+                    *ty,
+                    *init,
+                    *is_const,
+                    *is_weak,
+                    nominal.clone(),
+                    oats_type.clone(),
+                ));
             }
         }
         // DEBUG: print locals stack keys for troubleshooting lookups
@@ -414,6 +429,7 @@ impl<'a> super::CodeGen<'a> {
                     info.is_const,
                     info.is_weak,
                     info.nominal.clone(),
+                    info.oats_type.clone(),
                 ),
             );
             // DEBUG: print insertion
@@ -422,7 +438,7 @@ impl<'a> super::CodeGen<'a> {
                 let keys: Vec<String> = scope.keys().cloned().collect();
                 let entry = scope.get(&key).cloned();
                 let nominal_str = entry
-                    .and_then(|(_, _, _, _, _, nom)| nom)
+                    .and_then(|(_, _, _, _, _, nom, _)| nom)
                     .unwrap_or("<none>".to_string());
                 eprintln!(
                     "[debug insert_local] inserted='{}' nominal='{}' keys_now={:?}",
@@ -592,7 +608,7 @@ impl<'a> super::CodeGen<'a> {
         let rc_dec = self.get_rc_dec();
         let rc_weak_dec = self.get_rc_weak_dec();
         for scope in locals.iter().rev() {
-            for (_name, (ptr, ty, init, _is_const, is_weak, _nominal)) in scope.iter() {
+            for (_name, (ptr, ty, init, _is_const, is_weak, _nominal, _oats_type)) in scope.iter() {
                 if *init && let inkwell::types::BasicTypeEnum::PointerType(_) = ty {
                     // load current pointer value
                     if let Ok(loaded) = self.builder.build_load(*ty, *ptr, "drop_load")
@@ -632,7 +648,7 @@ impl<'a> super::CodeGen<'a> {
         // iterate from innermost scope down to start_index
         let rc_weak_dec = self.get_rc_weak_dec();
         for scope in locals.iter().rev().take(locals.len() - start_index) {
-            for (_name, (ptr, ty, init, _is_const, is_weak, _nominal)) in scope.iter() {
+            for (_name, (ptr, ty, init, _is_const, is_weak, _nominal, _oats_type)) in scope.iter() {
                 if *init
                     && let inkwell::types::BasicTypeEnum::PointerType(_) = ty
                     && let Ok(loaded) = self.builder.build_load(*ty, *ptr, "drop_load")

@@ -112,7 +112,6 @@ FUZZ_TIME=86400 ./scripts/run_fuzzing.sh
 
 1. **Add to `crates/runtime/src/lib.rs`:**
 ```rust
-#[unsafe(no_mangle)]
 pub extern "C" fn my_new_helper(arg: *const c_void) -> i64 {
     // implementation
 }

@@ -31,6 +31,7 @@ use std::collections::HashMap;
 // - Option<String>: if the variable is of a NominalStruct type, the name of
 //   that nominal type; otherwise None. This helps member lowering resolve
 //   fields without fallback heuristics.
+// - Option<OatsType>: the high-level OatsType, for unions
 type LocalsStackLocal<'a> = Vec<
     HashMap<
         String,
@@ -41,6 +42,7 @@ type LocalsStackLocal<'a> = Vec<
             bool,
             bool,
             Option<String>,
+            Option<crate::types::OatsType>,
         ),
     >,
 >;
@@ -304,19 +306,15 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 ));
             };
 
-            // Create a non-async clone of the function AST for the impl
+            // Phase 1: Don't generate a separate _async_impl function.
+            // Instead, we'll lower the body directly into the poll function
+            // with async lowering context active so await expressions work.
+            // The impl_fn variable is kept for compatibility but won't be used.
+            let _impl_fn = function; // Placeholder - we'll generate poll function instead
+
+            // Create a non-async clone of the function AST for processing
             let mut impl_decl = func_decl.clone();
             impl_decl.is_async = false;
-            let impl_name = format!("{}_async_impl", func_name);
-
-            // Generate the synchronous implementation function which returns T
-            let impl_fn = self.gen_function_ir(
-                &impl_name,
-                &impl_decl,
-                param_types,
-                &inner_ret,
-                receiver_name,
-            )?;
 
             // Emit a poll function: `fn <name>_poll(state: i8*, out: i8*) -> i32`
             let poll_name = format!("{}_poll", func_name);
@@ -357,6 +355,36 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         .append_basic_block(poll_f, &format!("cont_{}", i)),
                 );
             }
+
+            // CRITICAL: Set up async lowering context BEFORE generating poll function body
+            // Build a name -> slot index map for locals. Locals occupy
+            // slots after the parameter slots.
+            let mut local_name_to_slot: std::collections::HashMap<String, usize> =
+                std::collections::HashMap::new();
+            let mut names: Vec<String> = all_live_names.clone().into_iter().collect();
+            names.sort();
+            let mut idx = param_count;
+            for name in names.into_iter() {
+                local_name_to_slot.insert(name, idx);
+                idx += 1;
+            }
+
+            // Store async lowering context in CodeGen BEFORE generating poll body
+            self.async_await_live_sets
+                .borrow_mut()
+                .replace(await_live_sets.clone());
+            self.async_local_name_to_slot
+                .borrow_mut()
+                .replace(local_name_to_slot.clone());
+            self.async_resume_blocks
+                .borrow_mut()
+                .replace(resume_blocks.clone());
+            self.async_cont_blocks
+                .borrow_mut()
+                .replace(cont_blocks.clone());
+            self.async_poll_function.borrow_mut().replace(poll_f);
+            self.async_await_counter.set(0);
+            self.async_param_count.set(param_count as u32);
 
             // Now emit the poll body entry: read the state field (u32 at offset +8)
             // and dispatch based on it. Layout: [poll_fn_ptr (8)] [state_u32 (4) + pad(4)] [param slots ...]
@@ -447,68 +475,47 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 }
             }
 
-            // run_impl: lower the original function body here
+            // run_impl: Lower the function body with async context active.
+            // This allows await expressions to properly save/restore state.
             self.builder.position_at_end(run_impl_bb);
-            // Create param allocas & locals mapping for poll_f so lowering
-            // operates on the poll function and can access the state param.
-            let (param_map, mut locals_stack) =
-                self.create_param_allocas(poll_f, func_decl, &llvm_param_types, receiver_name)?;
-            // Keep a copy of the poll function's locals stack so resume blocks
-            // can restore saved values into the same allocas later.
-            *self.async_poll_locals.borrow_mut() = Some(locals_stack.clone());
 
-            // Lower the body statements into the poll function's run_impl block.
-            let mut emitted_terminator = false;
-            if let Some(body) = &func_decl.body {
-                emitted_terminator =
-                    self.lower_stmts(&body.stmts, poll_f, &param_map, &mut locals_stack)?;
-            }
+            // Create param allocas for poll_f and load parameters from state slots
+            // We need to build a param_map with u32 indices for lower_stmts
+            let mut param_map: std::collections::HashMap<String, u32> =
+                std::collections::HashMap::new();
 
-            if !emitted_terminator
-                && self
-                    .builder
-                    .get_insert_block()
-                    .is_none_or(|b| b.get_terminator().is_none())
-            {
-                self.emit_rc_dec_for_locals(&locals_stack);
-                match ret_type {
-                    crate::types::OatsType::Void => {
-                        self.builder.build_return(None).map_err(|_| {
-                            crate::diagnostics::Diagnostic::simple(
-                                "Failed to build implicit return in poll",
-                            )
-                        })?;
-                    }
-                    crate::types::OatsType::Number => {
-                        let zero = self.f64_t.const_float(0.0);
-                        self.builder
-                            .build_return(Some(&zero.as_basic_value_enum()))
-                            .map_err(|_| {
-                                crate::diagnostics::Diagnostic::simple(
-                                    "Failed to build implicit return (number) in poll",
-                                )
-                            })?;
-                    }
-                    _ => {
-                        let nullp = self.i8ptr_t.const_null();
-                        self.builder
-                            .build_return(Some(&nullp.as_basic_value_enum()))
-                            .map_err(|_| {
-                                crate::diagnostics::Diagnostic::simple(
-                                    "Failed to build implicit return (ptr) in poll",
-                                )
-                            })?;
-                    }
-                }
-            }
-            // We reconstruct values with the expected LLVM ABI types and pass
-            // them to the impl function here.
-            // (state_ptr already holds the state base pointer)
+            type LocalEntry<'a> = (
+                inkwell::values::PointerValue<'a>,
+                inkwell::types::BasicTypeEnum<'a>,
+                bool,                           // is_mutable
+                bool,                           // is_param
+                bool,                           // is_weak
+                Option<String>,                 // nominal type name
+                Option<crate::types::OatsType>, // oats_type for unions
+            );
+            let mut locals_stack: Vec<std::collections::HashMap<String, LocalEntry<'a>>> =
+                vec![std::collections::HashMap::new()];
 
-            // Build args by loading each saved slot from the heap state.
-            let mut impl_args: Vec<inkwell::values::BasicMetadataValueEnum> = Vec::new();
-            for (i, pty) in llvm_param_types.iter().enumerate() {
-                // compute slot address: state_base + (16 + i*8)
+            // Load each parameter from state and create allocas
+            for (i, param) in func_decl.params.iter().enumerate() {
+                let param_name = match &param.pat {
+                    ast::Pat::Ident(id) => id.sym.to_string(),
+                    _ => format!("param_{}", i),
+                };
+
+                let llvm_ty = llvm_param_types[i];
+
+                // Create alloca for this parameter
+                let alloca = match self.builder.build_alloca(llvm_ty, &param_name) {
+                    Ok(a) => a,
+                    Err(_) => {
+                        return Err(crate::diagnostics::Diagnostic::simple(
+                            "failed to create parameter alloca in poll",
+                        ));
+                    }
+                };
+
+                // Load value from state slot
                 let base_int =
                     match self
                         .builder
@@ -517,7 +524,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         Ok(v) => v,
                         Err(_) => {
                             return Err(crate::diagnostics::Diagnostic::simple(
-                                "ptr_to_int failed in poll",
+                                "ptr_to_int failed loading param",
                             ));
                         }
                     };
@@ -526,15 +533,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     Ok(v) => v,
                     Err(_) => {
                         return Err(crate::diagnostics::Diagnostic::simple(
-                            "int_add failed in poll",
+                            "int_add failed loading param",
                         ));
                     }
                 };
-
-                // We'll treat state slots as i8* pointers. Numbers are boxed
-                // into union objects when stored, so here we load an i8* and
-                // unbox for Number parameters; pointer-like params are passed
-                // through directly.
                 let slot_ptr =
                     match self
                         .builder
@@ -543,33 +545,36 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         Ok(p) => p,
                         Err(_) => {
                             return Err(crate::diagnostics::Diagnostic::simple(
-                                "int_to_ptr failed in poll",
+                                "int_to_ptr failed loading param",
                             ));
                         }
                     };
 
-                let loaded_ptr = match self.builder.build_load(self.i8ptr_t, slot_ptr, "arg_load") {
+                // Load and unbox if needed
+                let loaded_ptr = match self
+                    .builder
+                    .build_load(self.i8ptr_t, slot_ptr, "param_load")
+                {
                     Ok(v) => v,
                     Err(_) => {
                         return Err(crate::diagnostics::Diagnostic::simple(
-                            "failed to load captured arg in poll",
+                            "failed to load param from state",
                         ));
                     }
                 };
 
-                // If the original param ABI was a float (Number), unbox it.
-                match pty {
+                match llvm_ty {
                     inkwell::types::BasicTypeEnum::FloatType(_) => {
                         let unbox_fn = self.get_union_unbox_f64();
                         let cs = match self.builder.build_call(
                             unbox_fn,
                             &[loaded_ptr.into()],
-                            "unbox_f64_poll",
+                            "unbox_param",
                         ) {
                             Ok(cs) => cs,
                             Err(_) => {
                                 return Err(crate::diagnostics::Diagnostic::simple(
-                                    "union_unbox_f64 call failed in poll",
+                                    "union_unbox_f64 call failed",
                                 ));
                             }
                         };
@@ -580,73 +585,115 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 crate::diagnostics::Diagnostic::simple("unbox returned no value")
                             })?
                             .into_float_value();
-                        impl_args.push(fv.into());
+                        let _ = self.builder.build_store(alloca, fv.as_basic_value_enum());
                     }
                     _ => {
-                        impl_args.push(loaded_ptr.into());
-                    }
-                }
-            }
-
-            let call_site = match self
-                .builder
-                .build_call(impl_fn, &impl_args, "call_impl_in_poll")
-            {
-                Ok(cs) => cs,
-                Err(_) => {
-                    return Err(crate::diagnostics::Diagnostic::simple(
-                        "failed to call impl in poll",
-                    ));
-                }
-            };
-            let either = call_site.try_as_basic_value();
-            let payload_bv = if matches!(*inner_ret, OatsType::Void) {
-                // write null into out_ptr
-                let nullp = self.i8ptr_t.const_null();
-                nullp.as_basic_value_enum()
-            } else {
-                let bv = either.left().ok_or_else(|| {
-                    crate::diagnostics::Diagnostic::simple("async impl did not return value")
-                })?;
-                match *inner_ret {
-                    OatsType::Number => {
-                        // box f64 -> i8*
-                        let fv = bv.into_float_value();
-                        let box_fn = self.get_union_box_f64();
-                        let cs = match self
-                            .builder
-                            .build_call(box_fn, &[fv.into()], "box_f64_poll")
-                        {
-                            Ok(cs) => cs,
+                        let slot_ptr_val = loaded_ptr.into_pointer_value();
+                        let casted = match self.builder.build_pointer_cast(
+                            slot_ptr_val,
+                            alloca.get_type(),
+                            "cast_param",
+                        ) {
+                            Ok(c) => c,
                             Err(_) => {
                                 return Err(crate::diagnostics::Diagnostic::simple(
-                                    "union_box_f64 call failed",
+                                    "pointer cast failed loading param",
                                 ));
                             }
                         };
-                        cs.try_as_basic_value().left().ok_or_else(|| {
-                            crate::diagnostics::Diagnostic::simple("boxing failed")
-                        })?
+                        let loaded_val = match self.builder.build_load(
+                            llvm_ty,
+                            casted,
+                            &format!("{}_val", param_name),
+                        ) {
+                            Ok(v) => v,
+                            Err(_) => {
+                                return Err(crate::diagnostics::Diagnostic::simple(
+                                    "failed to load casted param",
+                                ));
+                            }
+                        };
+                        let _ = self.builder.build_store(alloca, loaded_val);
                     }
-                    _ => bv,
                 }
-            };
 
-            // store payload into out_ptr (assume out_ptr points to i8* slot)
-            let out_param = poll_f.get_nth_param(1).unwrap();
-            let out_ptr_cast = self
-                .builder
-                .build_pointer_cast(out_param.into_pointer_value(), self.i8ptr_t, "out_cast")
-                .map_err(|_| crate::diagnostics::Diagnostic::simple("pointer cast failed"))?;
-            let _ = self.builder.build_store(out_ptr_cast, payload_bv);
+                param_map.insert(param_name.clone(), i as u32);
+                locals_stack[0].insert(
+                    param_name,
+                    (alloca, llvm_ty, false, true, false, None, None),
+                );
+            }
 
-            // set state = 1
-            let one_i32 = self.i32_t.const_int(1, false);
-            let _ = self.builder.build_store(state_field_ptr, one_i32);
+            // Keep a copy of the poll function's locals stack so resume blocks
+            // can restore saved values into the same allocas later.
+            *self.async_poll_locals.borrow_mut() = Some(locals_stack.clone());
 
-            // return 1 (ready)
-            let one = self.i32_t.const_int(1, false);
-            let _ = self.builder.build_return(Some(&one.as_basic_value_enum()));
+            // Lower the body statements with async context active
+            let mut emitted_terminator = false;
+            if let Some(body) = &func_decl.body {
+                emitted_terminator =
+                    self.lower_stmts(&body.stmts, poll_f, &param_map, &mut locals_stack)?;
+            }
+
+            // If no explicit return, write result and return Ready (1)
+            if !emitted_terminator
+                && self
+                    .builder
+                    .get_insert_block()
+                    .is_none_or(|b| b.get_terminator().is_none())
+            {
+                self.emit_rc_dec_for_locals(&locals_stack);
+
+                // Get the out_ptr parameter
+                let out_param = poll_f.get_nth_param(1).unwrap();
+                let out_ptr_cast = self
+                    .builder
+                    .build_pointer_cast(out_param.into_pointer_value(), self.i8ptr_t, "out_cast")
+                    .map_err(|_| crate::diagnostics::Diagnostic::simple("pointer cast failed"))?;
+
+                // Store result based on return type
+                let payload_bv = if matches!(*inner_ret, OatsType::Void) {
+                    let nullp = self.i8ptr_t.const_null();
+                    nullp.as_basic_value_enum()
+                } else {
+                    // For implicit return, use default value
+                    match *inner_ret {
+                        OatsType::Number => {
+                            let zero = self.f64_t.const_float(0.0);
+                            let box_fn = self.get_union_box_f64();
+                            let cs = self
+                                .builder
+                                .build_call(box_fn, &[zero.into()], "box_default")
+                                .map_err(|_| {
+                                    crate::diagnostics::Diagnostic::simple("boxing failed")
+                                })?;
+                            cs.try_as_basic_value().left().ok_or_else(|| {
+                                crate::diagnostics::Diagnostic::simple("boxing returned no value")
+                            })?
+                        }
+                        _ => {
+                            let nullp = self.i8ptr_t.const_null();
+                            nullp.as_basic_value_enum()
+                        }
+                    }
+                };
+
+                let _ = self.builder.build_store(out_ptr_cast, payload_bv);
+
+                // Set state to done (1)
+                let one_i32 = self.i32_t.const_int(1, false);
+                let _ = self.builder.build_store(state_field_ptr, one_i32);
+
+                // Return Ready (1)
+                let one = self.i32_t.const_int(1, false);
+                self.builder
+                    .build_return(Some(&one.as_basic_value_enum()))
+                    .map_err(|_| {
+                        crate::diagnostics::Diagnostic::simple("Failed to build return")
+                    })?;
+            }
+
+            // We no longer call a separate impl function - the body is directly in poll_f
 
             // We will fill in `done_bb` (dispatch to resumes or return ready)
             // after we compute the resume/cont vectors and the done sentinel
@@ -676,7 +723,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
             }
             // Reserve one 8-byte slot per live local name (after param slots)
             let local_slot_count = all_live_names.len();
-            let total_slots = param_count + local_slot_count;
+            // Store for later use in expr.rs
+            self.async_local_slot_count.set(local_slot_count);
+            // Also reserve one slot per await point to store the awaited promise
+            let await_promise_slot_count = await_live_sets.len();
+            let total_slots = param_count + local_slot_count + await_promise_slot_count;
             let state_size_bytes = 16u64 + (total_slots as u64 * 8u64);
             let state_size = self.i64_t.const_int(state_size_bytes, false);
             let cs = match self
@@ -799,48 +850,35 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 }
             }
 
-            // (Optional) Build a name -> slot index map for locals. Locals occupy
-            // slots after the parameter slots. We'll attach this mapping to a
-            // local variable to be used later when emitting save/restore.
-            // Deterministically assign slot indices to local names by
-            // sorting the name list. This prevents non-deterministic builds
-            // when `HashSet` iteration order varies across runs.
-            let mut local_name_to_slot: std::collections::HashMap<String, usize> =
-                std::collections::HashMap::new();
-            let mut names: Vec<String> = all_live_names.into_iter().collect();
-            names.sort();
-            let mut idx = param_count;
-            for name in names.into_iter() {
-                local_name_to_slot.insert(name, idx);
-                idx += 1;
-            }
+            // CRITICAL: Create promise from state and return it from wrapper function
+            // The builder is currently positioned in the wrapper function's entry block
+            let p_new = self.get_promise_new_from_state();
+            let pres_cs = self
+                .builder
+                .build_call(
+                    p_new,
+                    &[state_ptr.as_basic_value_enum().into()],
+                    "promise_new_from_state",
+                )
+                .map_err(|_| {
+                    crate::diagnostics::Diagnostic::simple(
+                        "promise_new_from_state call failed in wrapper",
+                    )
+                })?;
+            let pres_val = pres_cs.try_as_basic_value().left().ok_or_else(|| {
+                crate::diagnostics::Diagnostic::simple(
+                    "promise_new_from_state returned no value in wrapper",
+                )
+            })?;
 
-            // Store async lowering context in CodeGen so expression lowering
-            // (await) can consult live-sets and the name->slot map.
-            self.async_await_live_sets
-                .borrow_mut()
-                .replace(await_live_sets.clone());
-            self.async_local_name_to_slot
-                .borrow_mut()
-                .replace(local_name_to_slot.clone());
-            // Prepare empty resume/cont block vectors sized to number of awaits
-            let mut resume_blocks: Vec<inkwell::basic_block::BasicBlock<'a>> = Vec::new();
-            let mut cont_blocks: Vec<inkwell::basic_block::BasicBlock<'a>> = Vec::new();
-            for i in 0..await_live_sets.len() {
-                resume_blocks.push(
-                    self.context
-                        .append_basic_block(poll_f, &format!("resume_{}", i)),
-                );
-                cont_blocks.push(
-                    self.context
-                        .append_basic_block(poll_f, &format!("cont_{}", i)),
-                );
-            }
-            self.async_resume_blocks.borrow_mut().replace(resume_blocks);
-            self.async_cont_blocks.borrow_mut().replace(cont_blocks);
-            self.async_poll_function.borrow_mut().replace(poll_f);
-            self.async_await_counter.set(0);
-            self.async_param_count.set(param_count as u32);
+            // Enqueue the promise (executor will schedule it)
+            let enq = self.get_executor_enqueue();
+            let _ = self
+                .builder
+                .build_call(enq, &[pres_val.into()], "executor_enqueue");
+
+            // Return the promise from the wrapper function
+            let _ = self.builder.build_return(Some(&pres_val));
 
             // Now populate the `already_done` block to either dispatch to
             // resume_i blocks (if state contains a resume index) or return
@@ -851,10 +889,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
             // if state_loaded == 0 -> unreachable here; compare against 1..N
             // We'll build a switch: default -> return ready; cases 1..N -> branch to resume_i
             let default_ret = self.i32_t.const_int(1, false);
+            // Create a block for the default case (already completed, return ready)
+            let ready_return_bb = self.context.append_basic_block(poll_f, "ready_return");
             // Build the switch instruction on state_loaded and add cases for
             // each resume index (1-based -> resume_0..resume_{N-1}).
-            // Build a switch on the state_loaded value. The builder API
-            // expects a SwitchValue with an expected number of cases.
             // Build an explicit cases slice for the switch instruction.
             let mut cases: Vec<(
                 inkwell::values::IntValue<'a>,
@@ -868,7 +906,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             }
             let _switch_inst = self
                 .builder
-                .build_switch(state_loaded, done_bb, cases.as_slice())
+                .build_switch(state_loaded, ready_return_bb, cases.as_slice())
                 .map_err(|_| {
                     crate::diagnostics::Diagnostic::simple("failed to build switch in poll")
                 })?;
@@ -990,19 +1028,19 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         _ => {
                                             let slot_ptr_val = loaded_slot.into_pointer_value();
                                             let casted = match self.builder.build_pointer_cast(
-                                                slot_ptr_val,
-                                                alloca_ptr.get_type(),
-                                                "cast_resume",
-                                            ) {
-                                                Ok(c) => c,
-                                                Err(_) => {
-                                                    return Err(
-                                                        crate::diagnostics::Diagnostic::simple(
-                                                            "pointer cast failed when resuming locals",
-                                                        ),
-                                                    );
-                                                }
-                                            };
+                            slot_ptr_val,
+                            alloca_ptr.get_type(),
+                            "cast_resume",
+                        ) {
+                            Ok(c) => c,
+                            Err(_) => {
+                                return Err(
+                                    crate::diagnostics::Diagnostic::simple(
+                                        "pointer cast failed when resuming locals",
+                                    ),
+                                );
+                            }
+                        };
                                             let _ = self.builder.build_store(
                                                 alloca_ptr,
                                                 casted.as_basic_value_enum(),
@@ -1013,37 +1051,132 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             }
                         }
                     }
+
+                    // Before branching to cont, re-poll the awaited promise to get the result
+                    // The promise was saved in the await promise slot during await_pending
+                    // Get the poll function's state parameter (first param)
+                    let poll_f_val = *self.async_poll_function.borrow();
+                    let poll_state_param = poll_f_val.unwrap().get_nth_param(0).unwrap();
+                    let poll_state_ptr = poll_state_param.into_pointer_value();
+
+                    let param_count = llvm_param_types.len();
+                    let local_slot_count = all_live_names.len();
+                    let await_slot_offset =
+                        16 + (param_count * 8) + (local_slot_count * 8) + (i * 8);
+                    let base_int = match self.builder.build_ptr_to_int(
+                        poll_state_ptr,
+                        self.i64_t,
+                        "resume_state_addr_promise",
+                    ) {
+                        Ok(v) => v,
+                        Err(_) => {
+                            return Err(crate::diagnostics::Diagnostic::simple(
+                                "ptr_to_int failed when loading awaited promise",
+                            ));
+                        }
+                    };
+                    let off_const = self.i64_t.const_int(await_slot_offset as u64, false);
+                    let slot_addr_int = match self.builder.build_int_add(
+                        base_int,
+                        off_const,
+                        "promise_slot_addr_resume",
+                    ) {
+                        Ok(v) => v,
+                        Err(_) => {
+                            return Err(crate::diagnostics::Diagnostic::simple(
+                                "int_add failed when loading awaited promise",
+                            ));
+                        }
+                    };
+                    let slot_ptr = match self.builder.build_int_to_ptr(
+                        slot_addr_int,
+                        self.i8ptr_t,
+                        "promise_slot_ptr_resume",
+                    ) {
+                        Ok(p) => p,
+                        Err(_) => {
+                            return Err(crate::diagnostics::Diagnostic::simple(
+                                "int_to_ptr failed when loading awaited promise",
+                            ));
+                        }
+                    };
+                    // Load the promise pointer
+                    let promise_ptr =
+                        match self
+                            .builder
+                            .build_load(self.i8ptr_t, slot_ptr, "resume_promise_load")
+                        {
+                            Ok(v) => v,
+                            Err(_) => {
+                                return Err(crate::diagnostics::Diagnostic::simple(
+                                    "load failed when loading awaited promise",
+                                ));
+                            }
+                        };
+
+                    // Allocate output slot and re-poll the promise
+                    let out_alloca =
+                        match self.builder.build_alloca(self.i8ptr_t, "resume_await_out") {
+                            Ok(a) => a,
+                            Err(_) => {
+                                return Err(crate::diagnostics::Diagnostic::simple(
+                                    "alloca failed for resume await out slot",
+                                ));
+                            }
+                        };
+                    let poll_fn = self.get_promise_poll_into();
+                    let _cs = match self.builder.build_call(
+                        poll_fn,
+                        &[promise_ptr.into(), out_alloca.into()],
+                        "resume_promise_poll",
+                    ) {
+                        Ok(cs) => cs,
+                        Err(_) => {
+                            return Err(crate::diagnostics::Diagnostic::simple(
+                                "promise_poll_into call failed on resume",
+                            ));
+                        }
+                    };
+                    // Load the result (assuming it's ready now - executor wouldn't wake us if not)
+                    let resumed_value = match self.builder.build_load(
+                        self.i8ptr_t,
+                        out_alloca,
+                        "resume_await_loaded",
+                    ) {
+                        Ok(v) => v,
+                        Err(_) => {
+                            return Err(crate::diagnostics::Diagnostic::simple(
+                                "load failed when loading resumed value",
+                            ));
+                        }
+                    };
+
                     let _ = self.builder.build_unconditional_branch(cont_bb);
+
+                    // Fix up phi nodes in cont_bb: add incoming edge from this resume block
+                    // The phi node expects the awaited value - provide the re-polled result
+                    let first_inst = cont_bb.get_first_instruction();
+                    if let Some(inst) = first_inst {
+                        if inst.get_opcode() == inkwell::values::InstructionOpcode::Phi {
+                            // The first instruction is a phi - add resumed_value as incoming from resume
+                            // We need to get the phi value from the instruction
+                            // Try using unsafe cast via LLVM context
+                            unsafe {
+                                use inkwell::values::AsValueRef;
+                                let phi_value = inkwell::values::PhiValue::new(inst.as_value_ref());
+                                phi_value
+                                    .add_incoming(&[(&resumed_value.as_basic_value_enum(), *rb)]);
+                            }
+                        }
+                    }
                 }
             }
 
-            // Default: return ready (1)
+            // Populate the ready_return block (promise already completed)
+            self.builder.position_at_end(ready_return_bb);
             let _ = self
                 .builder
                 .build_return(Some(&default_ret.as_basic_value_enum()));
-
-            // Call promise_new_from_state(state_ptr)
-            let p_new = self.get_promise_new_from_state();
-            let pres_cs = self
-                .builder
-                .build_call(
-                    p_new,
-                    &[state_ptr.as_basic_value_enum().into()],
-                    "promise_new_from_state",
-                )
-                .map_err(|_| {
-                    crate::diagnostics::Diagnostic::simple("promise_new_from_state call failed")
-                })?;
-            let pres_val = pres_cs.try_as_basic_value().left().ok_or_else(|| {
-                crate::diagnostics::Diagnostic::simple("promise_new_from_state returned no value")
-            })?;
-
-            // Enqueue the promise (no-op for MVP) and return it
-            let enq = self.get_executor_enqueue();
-            let _ = self
-                .builder
-                .build_call(enq, &[pres_val.into()], "executor_enqueue");
-            let _ = self.builder.build_return(Some(&pres_val));
 
             // Clear async lowering context stored in CodeGen so subsequent
             // function compilations don't accidentally reuse state from
@@ -1083,6 +1216,15 @@ impl<'a> crate::codegen::CodeGen<'a> {
             .insert(func_name.to_string(), param_types_owned.clone());
         let (param_map, mut locals_stack) =
             self.create_param_allocas(function, func_decl, &llvm_param_types, receiver_name)?;
+
+        // Store the function signature in the global map.
+        self.global_function_signatures.borrow_mut().insert(
+            func_name.to_string(),
+            (param_types.to_vec(), ret_type.clone()),
+        );
+
+        // Store the function's return type so return statements can box values appropriately.
+        *self.current_function_return_type.borrow_mut() = Some(ret_type.clone());
 
         // 4. Lower the function body statements into IR.
         let mut emitted_terminator = false;
@@ -1241,6 +1383,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     }
                 }
                 OatsType::Void => continue,
+                OatsType::Generic(_) => {
+                    // Generics should be resolved during specialization.
+                    panic!("Generic types must be specialized before mapping to LLVM types");
+                }
             };
             llvm_param_types.push(llvm_ty);
         }
@@ -1344,6 +1490,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 true,
                 false,
                 Some(class_name.to_string()),
+                None, // oats_type
             ),
         );
 
@@ -1406,7 +1553,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             };
             scope.insert(
                 pname.clone(),
-                (alloca, param_ty, true, true, is_param_weak, nominal),
+                (alloca, param_ty, true, true, is_param_weak, nominal, None),
             );
             param_map.insert(pname.clone(), i as u32);
         }

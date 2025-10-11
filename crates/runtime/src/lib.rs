@@ -632,7 +632,7 @@ pub extern "C" fn heap_str_alloc(str_len: size_t) -> *mut c_void {
     unsafe {
         // Total size: 8 (header) + 8 (length) + str_len + 1 (null terminator)
         let total_size = 16 + str_len + 1;
-    let p = runtime_malloc(total_size);
+        let p = runtime_malloc(total_size);
         if p.is_null() {
             return ptr::null_mut();
         }
@@ -840,11 +840,11 @@ pub unsafe extern "C" fn str_dup(s: *const c_char) -> *mut c_char {
             return ptr::null_mut();
         }
         let len = libc::strlen(s) + 1;
-    let dst = runtime_malloc(len) as *mut c_char;
+        let dst = runtime_malloc(len) as *mut c_char;
         if dst.is_null() {
             return ptr::null_mut();
         }
-    ptr::copy_nonoverlapping(s as *const u8, dst as *mut u8, len);
+        ptr::copy_nonoverlapping(s as *const u8, dst as *mut u8, len);
         dst
     }
 }
@@ -864,8 +864,8 @@ pub unsafe extern "C" fn str_concat(a: *const c_char, b: *const c_char) -> *mut 
         if a.is_null() || b.is_null() {
             return ptr::null_mut();
         }
-    let la = CStr::from_ptr(a).to_bytes().len();
-    let lb = CStr::from_ptr(b).to_bytes().len();
+        let la = CStr::from_ptr(a).to_bytes().len();
+        let lb = CStr::from_ptr(b).to_bytes().len();
 
         // Allocate heap string with RC header
         let obj = heap_str_alloc(la + lb);
@@ -881,11 +881,7 @@ pub unsafe extern "C" fn str_concat(a: *const c_char, b: *const c_char) -> *mut 
         let aslice = CStr::from_ptr(a).to_bytes();
         let bslice = CStr::from_ptr(b).to_bytes();
         ptr::copy_nonoverlapping(aslice.as_ptr(), data_ptr as *mut u8, la);
-        ptr::copy_nonoverlapping(
-            bslice.as_ptr(),
-            data_ptr.add(la) as *mut u8,
-            lb,
-        );
+        ptr::copy_nonoverlapping(bslice.as_ptr(), data_ptr.add(la) as *mut u8, lb);
 
         // Null terminate
         *data_ptr.add(la + lb) = 0;
@@ -1250,7 +1246,7 @@ pub extern "C" fn array_alloc(len: usize, elem_size: usize, elem_is_number: i32)
     let data_bytes = len * elem_size;
     let total_bytes = ARRAY_HEADER_SIZE + data_bytes;
     unsafe {
-    let p = runtime_malloc(total_bytes) as *mut u8;
+        let p = runtime_malloc(total_bytes) as *mut u8;
         if p.is_null() {
             return ptr::null_mut();
         }
@@ -1708,7 +1704,8 @@ pub unsafe extern "C" fn rc_dec(p: *mut c_void) {
         // when OATS_RUNTIME_LOG=1 is set in the environment.
         init_runtime_log();
         if RUNTIME_LOG.load(Ordering::Relaxed) {
-            let _ = io::stdout().write_all(format!("[oats runtime] rc_dec called p={:p}\n", p).as_bytes());
+            let _ = io::stdout()
+                .write_all(format!("[oats runtime] rc_dec called p={:p}\n", p).as_bytes());
             let _ = io::stdout().flush();
         }
         // Quick plausibility check to avoid dereferencing obviously invalid
@@ -1717,7 +1714,9 @@ pub unsafe extern "C" fn rc_dec(p: *mut c_void) {
         let p_addr = p as usize;
         if !is_plausible_addr(p_addr) {
             if RUNTIME_LOG.load(Ordering::Relaxed) {
-                let _ = io::stdout().write_all(format!("[oats runtime] rc_dec: implausible p={:p}, ignoring\n", p).as_bytes());
+                let _ = io::stdout().write_all(
+                    format!("[oats runtime] rc_dec: implausible p={:p}, ignoring\n", p).as_bytes(),
+                );
                 let _ = io::stdout().flush();
             }
             return;
@@ -1895,7 +1894,7 @@ pub unsafe extern "C" fn rc_weak_dec(p: *mut c_void) {
                     // If both strong and weak are now zero, free the object
                     let strong = new_header & HEADER_RC_MASK;
                     let weak_after = header_get_weak_bits(new_header);
-                        if strong == 0 && weak_after == 0 {
+                    if strong == 0 && weak_after == 0 {
                         // As an extra barrier, ensure destructor effects are visible
                         std::sync::atomic::fence(Ordering::Acquire);
                         runtime_free(obj_ptr);
@@ -2144,7 +2143,7 @@ pub extern "C" fn promise_resolve(ptr: *mut std::ffi::c_void) -> *mut std::ffi::
     unsafe {
         // Allocate a tiny box to hold the pointer and a tag; use libc malloc
         let size = std::mem::size_of::<*mut std::ffi::c_void>() + 8;
-    let mem = runtime_malloc(size) as *mut u8;
+        let mem = runtime_malloc(size) as *mut u8;
         if mem.is_null() {
             return std::ptr::null_mut();
         }
@@ -2229,7 +2228,7 @@ pub extern "C" fn promise_new_from_state(
     // offset 8. Layout: [reserved/null (8)] [state_ptr (8)].
     unsafe {
         let size = std::mem::size_of::<*mut std::ffi::c_void>() * 2;
-    let mem = runtime_malloc(size) as *mut u8;
+        let mem = runtime_malloc(size) as *mut u8;
         if mem.is_null() {
             return std::ptr::null_mut();
         }
@@ -2265,7 +2264,7 @@ pub extern "C" fn executor_run() {
         let p = p_addr as *mut std::ffi::c_void;
         drop(q);
         unsafe {
-                let out_mem = runtime_malloc(std::mem::size_of::<*mut c_void>()) as *mut u8;
+            let out_mem = runtime_malloc(std::mem::size_of::<*mut c_void>()) as *mut u8;
             if out_mem.is_null() {
                 continue;
             }

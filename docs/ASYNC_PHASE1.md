@@ -1,7 +1,10 @@
-Oats Async Phase 1 — State Machine & Executor Design
+# Oats Async Phase 1 — State Machine & Executor Design
 
-Goal
-----
+**Status:** Design Document - Implementation In Progress (40% complete)  
+**Last Updated:** October 10, 2025  
+**See Also:** `ASYNC_AWAIT.md` for overview and current status
+
+## Goal
 Design and implement Phase 1: compile-time transformation of `async fn` into
 heap-allocated state machines and a minimal single-threaded executor/waker
 model that supports `await` suspension/resume for simple cases.

@@ -1,7 +1,10 @@
-Cycle-Collecting Reference Counting (concise design)
+# Cycle-Collecting Reference Counting
 
-Purpose
--------
+**Status:** Design Complete, Implementation Planned for Phase 4  
+**Last Updated:** October 10, 2025
+
+## Purpose
+
 Provide a compact, actionable design that eliminates leaks caused by reference cycles while keeping deterministic ARC semantics for the common case.
 
 Two complementary features:
@@ -47,3 +50,10 @@ When to use each feature
 - Use the automatic collector as a safety net for user code that doesn't use Weak<T>.
 
 This doc is intentionally short — for the full rationale and the implementation narrative see `DEVELOPMENT.md` and `ARCHITECTURE.md`.
+
+---
+
+**Related Documents:**
+- `ARCHITECTURE.md` - Memory layout and RC fundamentals
+- `ROADMAP.md` - Phase 4 timeline and priorities  
+- `DEVELOPMENT.md` - Implementation guidelines

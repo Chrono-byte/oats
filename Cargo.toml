@@ -2,6 +2,7 @@
 [workspace]
 resolver = "2"
 members = ["crates/oats", "crates/runtime"]
+exclude = ["fuzz"]
 
 [profile.dev]
 debug-assertions = false

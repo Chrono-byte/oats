@@ -1,7 +1,10 @@
-Oats Async Primitives — Phase 1 Complete Primitive Design
+# Oats Async Primitives — Complete Specification
 
-Purpose
--------
+**Status:** Detailed Design Document - Partially Implemented  
+**Last Updated:** October 10, 2025  
+**Implementation Status:** Phase 0 primitives complete, Phase 1 primitives pending
+
+## Purpose
 This document specifies a complete set of runtime primitives, ABIs, object
 layouts, and codegen contracts needed to implement native async/await in
 Oats. It focuses on Phase 1: producing correct cooperative async semantics

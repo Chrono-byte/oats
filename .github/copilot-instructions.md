@@ -13,14 +13,14 @@ Oats is an experimental AOT compiler transforming TypeScript → native code via
 4. **Link** → Link object file with runtime to produce executable
 
 **Key Modules:**
-- `crates/oats/src/parser.rs` - Enforces semicolons, rejects `var` keyword
+- `crates/oats/src/parser.rs` - Enforces semicolons, rejects `var` keyword, enforces source size limits
 - `crates/oats/src/types.rs` - Type system (`OatsType` enum: Number, String, Array, Union, Weak, NominalStruct, etc.)
 - `crates/oats/src/codegen/mod.rs` - `CodeGen` struct with LLVM context, caches runtime function declarations
 - `crates/oats/src/codegen/emit.rs` - Top-level function/constructor lowering
 - `crates/oats/src/codegen/expr.rs` - Expression lowering via `lower_expr()`
 - `crates/oats/src/codegen/stmt.rs` - Statement lowering via `lower_stmt()`
 - `crates/oats/src/diagnostics.rs` - Rustc-style error reporting with `Diagnostic` struct
-- `crates/runtime/src/lib.rs` - RC helpers, allocators, string/array ops
+- `crates/runtime/src/lib.rs` - RC helpers, allocators, string/array ops (with resource limits)
 
 ## Critical: Heap Object Memory Layout
 
@@ -85,6 +85,15 @@ cargo run -p oats --bin aot_run -- examples/hello.oats
 **Run all proper_tests examples:**
 ```bash
 ./scripts/run_all_proper_tests.sh
+```
+
+**Fuzz testing (security testing):**
+```bash
+# Quick 60-second test
+./scripts/run_fuzzing.sh
+
+# Continuous fuzzing (24 hours)
+FUZZ_TIME=86400 ./scripts/run_fuzzing.sh
 ```
 
 **Snapshot testing (uses `insta`):**

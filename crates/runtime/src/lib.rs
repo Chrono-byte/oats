@@ -55,6 +55,19 @@ thread_local! {
     static VISITED_OBJS: RefCell<Vec<usize>> = const { RefCell::new(Vec::new()) };
 }
 
+/// Maximum recursion depth for runtime operations (SECURITY LIMIT)
+///
+/// This hard limit prevents stack overflow from deeply recursive function calls
+/// or cyclic data structures. When exceeded, the runtime aborts with an error.
+///
+/// This limit is NOT configurable and provides defense-in-depth protection
+/// against:
+/// - Stack overflow from excessive recursion
+/// - Infinite loops in recursive algorithms
+/// - Malicious deeply nested data structures
+///
+/// The value of 32 provides reasonable depth for most use cases while preventing
+/// stack exhaustion on typical systems (default stack size ~8MB).
 const MAX_RECURSION_DEPTH: usize = 32;
 
 // Create a header value for a heap-allocated object with initial refcount
@@ -98,6 +111,85 @@ static COLLECTOR_LOG: AtomicBool = AtomicBool::new(false);
 // Global runtime logging flag for ad-hoc diagnostics. Disabled by default.
 // Set OATS_RUNTIME_LOG=1 in the environment to enable.
 static RUNTIME_LOG: AtomicBool = AtomicBool::new(false);
+
+// --- Resource Limits (Security Hardening) ---
+// These limits prevent malicious or buggy programs from exhausting system resources.
+// Configurable via environment variables at runtime initialization.
+
+/// Maximum total heap allocation in bytes (default: 1 GB)
+/// Override with OATS_MAX_HEAP_BYTES environment variable
+static MAX_HEAP_BYTES: AtomicU64 = AtomicU64::new(1024 * 1024 * 1024);
+
+/// Maximum size for a single allocation in bytes (default: 256 MB)
+/// Override with OATS_MAX_ALLOC_BYTES environment variable
+static MAX_ALLOC_BYTES: AtomicU64 = AtomicU64::new(256 * 1024 * 1024);
+
+/// Current total allocated bytes (tracked atomically)
+static CURRENT_HEAP_BYTES: AtomicU64 = AtomicU64::new(0);
+
+/// Flag indicating resource limits have been initialized
+static LIMITS_INITIALIZED: AtomicBool = AtomicBool::new(false);
+
+/// Initialize resource limits from environment variables
+fn init_resource_limits() {
+    // Fast path: already initialized
+    if LIMITS_INITIALIZED.load(Ordering::Relaxed) {
+        return;
+    }
+
+    // Parse OATS_MAX_HEAP_BYTES (default: 1 GB)
+    if let Ok(val) = std::env::var("OATS_MAX_HEAP_BYTES")
+        && let Ok(limit) = val.parse::<u64>() {
+            MAX_HEAP_BYTES.store(limit, Ordering::Relaxed);
+        }
+
+    // Parse OATS_MAX_ALLOC_BYTES (default: 256 MB)
+    if let Ok(val) = std::env::var("OATS_MAX_ALLOC_BYTES")
+        && let Ok(limit) = val.parse::<u64>() {
+            MAX_ALLOC_BYTES.store(limit, Ordering::Relaxed);
+        }
+
+    LIMITS_INITIALIZED.store(true, Ordering::Relaxed);
+}
+
+/// Check if an allocation would exceed limits, and if not, reserve the space.
+/// Returns true if allocation is allowed, false if it would exceed limits.
+fn check_and_reserve_allocation(size: u64) -> bool {
+    init_resource_limits();
+
+    // Check single allocation limit
+    let max_alloc = MAX_ALLOC_BYTES.load(Ordering::Relaxed);
+    if size > max_alloc {
+        return false;
+    }
+
+    // Check total heap limit with atomic compare-exchange loop
+    let max_heap = MAX_HEAP_BYTES.load(Ordering::Relaxed);
+    loop {
+        let current = CURRENT_HEAP_BYTES.load(Ordering::Relaxed);
+        let new_total = current.saturating_add(size);
+
+        if new_total > max_heap {
+            return false; // Would exceed limit
+        }
+
+        // Try to atomically update current allocation
+        match CURRENT_HEAP_BYTES.compare_exchange_weak(
+            current,
+            new_total,
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+        ) {
+            Ok(_) => return true, // Successfully reserved
+            Err(_) => continue,   // Retry on contention
+        }
+    }
+}
+
+/// Release allocated space back to the pool
+fn release_allocation(size: u64) {
+    CURRENT_HEAP_BYTES.fetch_sub(size, Ordering::Relaxed);
+}
 
 fn init_runtime_log() {
     // Fast-path: if already enabled, do nothing
@@ -626,11 +718,45 @@ pub extern "C" fn collector_test_enqueue() {
 /// The returned pointer must be released via `rc_dec_str` when no longer used.
 ///
 /// The refcount is initialized to 1.
+///
+/// # Security
+/// Uses checked arithmetic to prevent integer overflow. Returns null if
+/// str_len + overhead would overflow usize or exceed allocation limits.
 #[unsafe(no_mangle)]
 pub extern "C" fn heap_str_alloc(str_len: size_t) -> *mut c_void {
     unsafe {
+        // SECURITY: Use checked arithmetic to prevent integer overflow
         // Total size: 8 (header) + 8 (length) + str_len + 1 (null terminator)
-        let total_size = 16 + str_len + 1;
+        let total_size = match 16usize.checked_add(str_len) {
+            Some(s) => match s.checked_add(1) {
+                Some(total) => total,
+                None => {
+                    if RUNTIME_LOG.load(Ordering::Relaxed) {
+                        let _ = io::stderr().write_all(
+                            format!(
+                                "[oats runtime] heap_str_alloc: integer overflow (str_len={})\n",
+                                str_len
+                            )
+                            .as_bytes(),
+                        );
+                    }
+                    return ptr::null_mut();
+                }
+            },
+            None => {
+                if RUNTIME_LOG.load(Ordering::Relaxed) {
+                    let _ = io::stderr().write_all(
+                        format!(
+                            "[oats runtime] heap_str_alloc: integer overflow (str_len={})\n",
+                            str_len
+                        )
+                        .as_bytes(),
+                    );
+                }
+                return ptr::null_mut();
+            }
+        };
+
         let p = runtime_malloc(total_size);
         if p.is_null() {
             return ptr::null_mut();
@@ -747,13 +873,21 @@ pub unsafe extern "C" fn rc_dec_str(data: *mut c_char) {
 
 // --- Memory Management ---
 
-/// Allocate memory from the runtime allocator.
+/// Allocate memory from the runtime allocator with resource limits.
 ///
-/// This wrapper currently delegates to `libc::malloc`. The runtime and
-/// codegen use this allocator for heap objects whose headers follow the
-/// unified layout described in the crate-level documentation.
+/// This wrapper enforces heap size limits and tracks total allocations.
+/// The allocator stores bookkeeping data (allocation size) at offset -8
+/// from the returned pointer for use by `runtime_free`.
 ///
+/// Resource limits can be configured via environment variables:
+/// - OATS_MAX_HEAP_BYTES: Total heap size limit (default: 1 GB)
+/// - OATS_MAX_ALLOC_BYTES: Single allocation limit (default: 256 MB)
+///
+/// Returns null if allocation would exceed limits or if system allocator fails.
 /// Returned pointer must be freed with `runtime_free`.
+///
+/// # Safety
+/// Caller must not exceed the allocated size when writing to the returned pointer.
 #[unsafe(no_mangle)]
 pub extern "C" fn runtime_malloc(size: size_t) -> *mut c_void {
     // Allocate size + 8 bytes of bookkeeping. Return pointer to the
@@ -769,9 +903,27 @@ pub extern "C" fn runtime_malloc(size: size_t) -> *mut c_void {
         if total == 0 {
             return std::ptr::null_mut();
         }
+
+        // Check resource limits before allocating
+        if !check_and_reserve_allocation(total as u64) {
+            // Allocation would exceed limits
+            if RUNTIME_LOG.load(Ordering::Relaxed) {
+                let _ = io::stderr().write_all(
+                    format!(
+                        "[oats runtime] runtime_malloc: allocation of {} bytes denied (exceeds limits)\n",
+                        total
+                    )
+                    .as_bytes(),
+                );
+            }
+            return std::ptr::null_mut();
+        }
+
         let layout = std::alloc::Layout::from_size_align(total, 8).unwrap();
         let base = std::alloc::alloc(layout);
         if base.is_null() {
+            // System allocator failed, release reserved space
+            release_allocation(total as u64);
             return std::ptr::null_mut();
         }
         // store total size as u64 at base
@@ -782,7 +934,7 @@ pub extern "C" fn runtime_malloc(size: size_t) -> *mut c_void {
     }
 }
 
-/// Free memory previously allocated by the runtime allocator.
+/// Free memory previously allocated by the runtime allocator and release allocation count.
 ///
 /// # Safety
 /// The pointer `p` must have been allocated by `runtime_malloc` (or compatible
@@ -802,6 +954,10 @@ pub unsafe extern "C" fn runtime_free(p: *mut c_void) {
         if total == 0 {
             return;
         }
+
+        // Release allocation from resource tracking
+        release_allocation(total as u64);
+
         let layout = std::alloc::Layout::from_size_align(total, 8).unwrap();
         std::alloc::dealloc(base, layout);
     }
@@ -857,6 +1013,9 @@ pub unsafe extern "C" fn str_dup(s: *const c_char) -> *mut c_char {
 ///
 /// # Safety
 /// Both `a` and `b` must be valid pointers to nul-terminated C strings.
+///
+/// # Security
+/// Uses checked arithmetic to prevent integer overflow when computing total length.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn str_concat(a: *const c_char, b: *const c_char) -> *mut c_char {
     unsafe {
@@ -866,8 +1025,25 @@ pub unsafe extern "C" fn str_concat(a: *const c_char, b: *const c_char) -> *mut 
         let la = CStr::from_ptr(a).to_bytes().len();
         let lb = CStr::from_ptr(b).to_bytes().len();
 
-        // Allocate heap string with RC header
-        let obj = heap_str_alloc(la + lb);
+        // SECURITY: Check for integer overflow when adding lengths
+        let total_len = match la.checked_add(lb) {
+            Some(len) => len,
+            None => {
+                if RUNTIME_LOG.load(Ordering::Relaxed) {
+                    let _ = io::stderr().write_all(
+                        format!(
+                            "[oats runtime] str_concat: integer overflow (len_a={}, len_b={})\n",
+                            la, lb
+                        )
+                        .as_bytes(),
+                    );
+                }
+                return ptr::null_mut();
+            }
+        };
+
+        // Allocate heap string with RC header (this also checks for overflow)
+        let obj = heap_str_alloc(total_len);
         if obj.is_null() {
             return ptr::null_mut();
         }
@@ -1252,8 +1428,39 @@ fn runtime_index_oob_abort(_arr: *mut c_void, idx: usize, len: usize) -> ! {
 pub extern "C" fn array_alloc(len: usize, elem_size: usize, elem_is_number: i32) -> *mut c_void {
     // For empty arrays, allocate with minimum capacity to allow push/assignment
     let capacity = if len == 0 { MIN_ARRAY_CAPACITY } else { len };
-    let data_bytes = capacity * elem_size;
-    let total_bytes = ARRAY_HEADER_SIZE + data_bytes;
+
+    // SECURITY: Use checked arithmetic to prevent integer overflow attacks
+    // An attacker could pass huge len or elem_size values to cause overflow,
+    // leading to under-allocation and buffer overflows.
+    let data_bytes = match capacity.checked_mul(elem_size) {
+        Some(bytes) => bytes,
+        None => {
+            // Overflow detected - refuse allocation
+            if RUNTIME_LOG.load(Ordering::Relaxed) {
+                let _ = io::stderr().write_all(
+                    format!(
+                        "[oats runtime] array_alloc: integer overflow (capacity={}, elem_size={})\n",
+                        capacity, elem_size
+                    )
+                    .as_bytes(),
+                );
+            }
+            return ptr::null_mut();
+        }
+    };
+
+    let total_bytes = match ARRAY_HEADER_SIZE.checked_add(data_bytes) {
+        Some(total) => total,
+        None => {
+            if RUNTIME_LOG.load(Ordering::Relaxed) {
+                let _ = io::stderr().write_all(
+                    b"[oats runtime] array_alloc: integer overflow in total size calculation\n",
+                );
+            }
+            return ptr::null_mut();
+        }
+    };
+
     unsafe {
         let p = runtime_malloc(total_bytes) as *mut u8;
         if p.is_null() {
@@ -2570,7 +2777,7 @@ mod tests {
     fn test_rc_dec_calls_destructor() {
         // Reset CALLED flag at start of test
         CALLED.store(false, Ordering::SeqCst);
-        
+
         unsafe {
             // allocate two u64 words: header + dtor pointer via runtime_malloc
             let size = std::mem::size_of::<u64>() * 2;

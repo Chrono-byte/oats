@@ -27,324 +27,66 @@ fn main() -> Result<()> {
 
     let source = std::fs::read_to_string(&src_path)?;
 
-    // Note: the older textual `rewrite_top_level_arrow_decls` helper was removed
-    // in favor of the AST-based `rewrite_top_level_arrows_ast` implementation
-    // defined later in this function. Keeping the AST-based approach ensures
-    // more accurate rewrites and avoids duplicated parsing logic.
+    // Note: Arrow functions declared at top-level as `const foo = (...) => ...`
+    // are now handled directly in codegen without text-level rewriting.
+    // This eliminates redundant parsing and improves compilation performance.
 
-    // First parse the original source to run the parser-level checks
+    // Parse the source once - no transformation needed
     let initial_parsed_mod = parser::parse_oats_module(&source, Some(&src_path))?;
 
-    // Rewrite top-level arrow bindings into function declarations
-    fn rewrite_top_level_arrows_ast(parsed: &deno_ast::ParsedSource, source: &str) -> String {
-        use deno_ast::swc::ast;
+    // Instead of rewriting source text and re-parsing, we'll use the original
+    // parsed AST and extract arrow functions directly during codegen.
+    let parsed_mod = initial_parsed_mod;
+    let parsed = &parsed_mod.parsed;
 
-        // Collect replacements as (start, end, replacement_text)
-        let mut repls: Vec<(usize, usize, String)> = Vec::new();
+    // Helper: Extract top-level arrow functions from variable declarations
+    // Returns: Vec<(name, arrow_function, is_exported)>
+    fn extract_arrow_functions(
+        parsed: &deno_ast::ParsedSource,
+    ) -> Vec<(String, deno_ast::swc::ast::ArrowExpr, bool)> {
+        use deno_ast::swc::ast;
+        let mut arrows = Vec::new();
 
         for item in parsed.program_ref().body() {
             match item {
+                // Non-exported: const foo = () => {}
                 deno_ast::ModuleItemRef::Stmt(stmt) => {
                     if let ast::Stmt::Decl(ast::Decl::Var(vdecl)) = stmt {
-                        // Only handle single-declarator top-level const/let bindings
-                        if vdecl.decls.len() != 1 {
-                            continue;
-                        }
-                        // only const/let (not var)
-                        if matches!(vdecl.kind, ast::VarDeclKind::Var) {
-                            continue;
-                        }
-                        let decl = &vdecl.decls[0];
-                        // Only simple identifier patterns
-                        if let ast::Pat::Ident(binding_ident) = &decl.name
-                            && let Some(init_expr) = &decl.init
-                            && let ast::Expr::Arrow(_arrow) = &**init_expr
-                        {
-                            // Rather than rely on child spans (which may not include
-                            // opening paren), scan from the var decl to find '=' then
-                            // parse params/ret/=>/body from the source text to preserve
-                            // original formatting and types.
-                            let decl_lo = vdecl.span.lo.0 as usize;
-                            // compute line start
-                            let start = source[..decl_lo].rfind('\n').map(|i| i + 1).unwrap_or(0);
-                            // find '=' after decl_lo
-                            let mut eq = None;
-                            let mut p = decl_lo;
-                            while p < source.len() {
-                                let ch = source.as_bytes()[p];
-                                if ch == b'=' {
-                                    eq = Some(p);
-                                    break;
-                                }
-                                p += 1;
-                            }
-                            let eq = match eq {
-                                Some(x) => x,
-                                None => continue,
-                            };
-                            // scan forward from eq to find '=>' and parse params/ret/body
-                            let mut iidx = eq + 1;
-                            while iidx < source.len()
-                                && source.as_bytes()[iidx].is_ascii_whitespace()
+                        if vdecl.decls.len() == 1 && !matches!(vdecl.kind, ast::VarDeclKind::Var) {
+                            let decl = &vdecl.decls[0];
+                            if let ast::Pat::Ident(binding_ident) = &decl.name
+                                && let Some(init_expr) = &decl.init
+                                && let ast::Expr::Arrow(arrow) = &**init_expr
                             {
-                                iidx += 1;
+                                let name = binding_ident.id.sym.to_string();
+                                arrows.push((name, (*arrow).clone(), false));
                             }
-                            // params
-                            let (params_text, after_params_idx) =
-                                if iidx < source.len() && source.as_bytes()[iidx] == b'(' {
-                                    // collect balanced parens
-                                    let mut depth = 0i32;
-                                    let mut j = iidx;
-                                    while j < source.len() {
-                                        let ch = source.as_bytes()[j];
-                                        if ch == b'(' {
-                                            depth += 1;
-                                        } else if ch == b')' {
-                                            depth -= 1;
-                                            if depth == 0 {
-                                                j += 1;
-                                                break;
-                                            }
-                                        }
-                                        j += 1;
-                                    }
-                                    (source[iidx..j].to_string(), j)
-                                } else {
-                                    // single identifier param
-                                    let mut j = iidx;
-                                    while j < source.len()
-                                        && (source.as_bytes()[j] as char).is_alphanumeric()
-                                        || source.as_bytes()[j] == b'_'
-                                    {
-                                        j += 1;
-                                    }
-                                    (format!("({})", source[iidx..j].trim()), j)
-                                };
-                            // skip whitespace and optional return type
-                            let mut j = after_params_idx;
-                            while j < source.len() && (source.as_bytes()[j] as char).is_whitespace()
-                            {
-                                j += 1;
-                            }
-                            let mut ret_text = String::new();
-                            if j < source.len() && source.as_bytes()[j] == b':' {
-                                let rt_start = j;
-                                // scan until =>
-                                while j < source.len()
-                                    && !(source.as_bytes()[j] == b'='
-                                        && j + 1 < source.len()
-                                        && source.as_bytes()[j + 1] == b'>')
-                                {
-                                    j += 1;
-                                }
-                                ret_text = source[rt_start..j].trim().to_string();
-                            }
-                            // find =>
-                            let mut arrow_pos = None;
-                            while j + 1 < source.len() {
-                                if source.as_bytes()[j] == b'=' && source.as_bytes()[j + 1] == b'>'
-                                {
-                                    arrow_pos = Some(j);
-                                    break;
-                                }
-                                j += 1;
-                            }
-                            let arrow_pos = match arrow_pos {
-                                Some(x) => x,
-                                None => continue,
-                            };
-                            let mut body_start = arrow_pos + 2;
-                            while body_start < source.len()
-                                && (source.as_bytes()[body_start] as char).is_whitespace()
-                            {
-                                body_start += 1;
-                            }
-                            // body: block or expression
-                            let (body_text, body_end) = if body_start < source.len()
-                                && source.as_bytes()[body_start] == b'{'
-                            {
-                                let mut bd = body_start;
-                                let mut depth = 0i32;
-                                while bd < source.len() {
-                                    let ch = source.as_bytes()[bd];
-                                    if ch == b'{' {
-                                        depth += 1;
-                                    } else if ch == b'}' {
-                                        depth -= 1;
-                                        if depth == 0 {
-                                            bd += 1;
-                                            break;
-                                        }
-                                    }
-                                    bd += 1;
-                                }
-                                (source[body_start..bd].to_string(), bd)
-                            } else {
-                                let mut bd = body_start;
-                                while bd < source.len()
-                                    && source.as_bytes()[bd] != b';'
-                                    && source.as_bytes()[bd] != b'\n'
-                                {
-                                    bd += 1;
-                                }
-                                (
-                                    format!("{{ return {}; }}", source[body_start..bd].trim()),
-                                    bd,
-                                )
-                            };
-
-                            let func_decl = if ret_text.is_empty() {
-                                format!(
-                                    "function {}{} {}\n",
-                                    binding_ident.id.sym, params_text, body_text
-                                )
-                            } else {
-                                format!(
-                                    "function {}{} {} {}\n",
-                                    binding_ident.id.sym, params_text, ret_text, body_text
-                                )
-                            };
-
-                            repls.push((start, body_end, func_decl));
                         }
                     }
                 }
+                // Exported: export const foo = () => {}
                 deno_ast::ModuleItemRef::ModuleDecl(module_decl) => {
-                    // handle `export const foo = (...) => ...;`
                     if let ast::ModuleDecl::ExportDecl(decl) = module_decl
                         && let ast::Decl::Var(vdecl) = &decl.decl
                     {
-                        if vdecl.decls.len() != 1 {
-                            continue;
-                        }
-                        if matches!(vdecl.kind, ast::VarDeclKind::Var) {
-                            continue;
-                        }
-                        let declarator = &vdecl.decls[0];
-                        if let ast::Pat::Ident(binding_ident) = &declarator.name
-                            && let Some(init_expr) = &declarator.init
-                            && let ast::Expr::Arrow(arrow) = &**init_expr
-                        {
-                            // For export decl use the inner decl span so we cover
-                            // exactly the `export const ...;` range
-                            let start = decl.span.lo.0 as usize;
-                            let mut end = decl.span.hi.0 as usize;
-                            let sbytes = source.as_bytes();
-                            while end < sbytes.len() && sbytes[end] != b'\n' {
-                                end += 1;
-                            }
-                            if end < sbytes.len() {
-                                end += 1;
-                            }
-
-                            // Use arrow span-based extraction similar to the non-export path
-                            let alo = arrow.span.lo.0 as usize;
-                            let ahi = arrow.span.hi.0 as usize;
-                            let arrow_src = if alo < ahi && ahi <= source.len() {
-                                &source[alo..ahi]
-                            } else {
-                                ""
-                            };
-                            if let Some(apos) = arrow_src.find("=>") {
-                                let left = arrow_src[..apos].trim();
-                                let right = arrow_src[apos + 2..].trim();
-                                let params_text = if let Some(lp) = left.find('(') {
-                                    // find matching )
-                                    let mut depth = 0i32;
-                                    let mut match_idx: Option<usize> = None;
-                                    for (i, ch) in left.char_indices().skip(lp) {
-                                        if ch == '(' {
-                                            depth += 1;
-                                        } else if ch == ')' {
-                                            depth -= 1;
-                                            if depth == 0 {
-                                                match_idx = Some(i);
-                                                break;
-                                            }
-                                        }
-                                    }
-                                    if let Some(rp) = match_idx {
-                                        left[lp..=rp].to_string()
-                                    } else {
-                                        format!("({})", left)
-                                    }
-                                } else {
-                                    let mut end_idx = left.len();
-                                    if let Some(colon) = left.find(':') {
-                                        end_idx = colon;
-                                    }
-                                    let id = left[..end_idx].trim();
-                                    format!("({})", id)
-                                };
-                                let mut ret_text = String::new();
-                                if let Some(params_pos) = left.find(&params_text) {
-                                    let after = left[params_pos + params_text.len()..].trim_start();
-                                    if after.starts_with(':') {
-                                        let rt = after;
-                                        if !rt.is_empty() {
-                                            ret_text = format!(" {}", rt);
-                                        }
-                                    }
-                                }
-                                let body_text = if right.starts_with('{') {
-                                    let mut depth = 0i32;
-                                    let mut end_rel: Option<usize> = None;
-                                    for (i, ch) in right.char_indices() {
-                                        if ch == '{' {
-                                            depth += 1;
-                                        } else if ch == '}' {
-                                            depth -= 1;
-                                            if depth == 0 {
-                                                end_rel = Some(i);
-                                                break;
-                                            }
-                                        }
-                                    }
-                                    if let Some(er) = end_rel {
-                                        right[..=er].to_string()
-                                    } else {
-                                        format!("{{ {} }}", right)
-                                    }
-                                } else {
-                                    format!("{{ return {}; }}", right.trim_end_matches(';').trim())
-                                };
+                        if vdecl.decls.len() == 1 && !matches!(vdecl.kind, ast::VarDeclKind::Var) {
+                            let declarator = &vdecl.decls[0];
+                            if let ast::Pat::Ident(binding_ident) = &declarator.name
+                                && let Some(init_expr) = &declarator.init
+                                && let ast::Expr::Arrow(arrow) = &**init_expr
+                            {
                                 let name = binding_ident.id.sym.to_string();
-                                let func_decl = format!(
-                                    "export function {}{}{} {}\n",
-                                    name, params_text, ret_text, body_text
-                                );
-                                repls.push((start, end, func_decl));
+                                arrows.push((name, (*arrow).clone(), true));
                             }
                         }
                     }
                 }
             }
         }
-
-        if repls.is_empty() {
-            return source.to_string();
-        }
-
-        // Apply replacements from end->start so indices remain valid
-        repls.sort_by_key(|r| r.0);
-        let mut out = String::new();
-        let mut last = 0usize;
-        for (start, end, text) in repls.iter() {
-            if *start < last {
-                continue;
-            }
-            out.push_str(&source[last..*start]);
-            out.push_str(text);
-            last = *end;
-        }
-        out.push_str(&source[last..]);
-        out
+        arrows
     }
 
-    let transformed_source = rewrite_top_level_arrows_ast(&initial_parsed_mod.parsed, &source);
-
-    let parsed_mod = parser::parse_oats_module(&transformed_source, Some(&src_path))?;
-    let parsed = parsed_mod.parsed;
+    let arrow_functions = extract_arrow_functions(&parsed);
 
     // Scan AST and reject any use of `var` declarations. We purposely do
     // this early so users get a clear error rather than surprising
@@ -569,10 +311,15 @@ fn main() -> Result<()> {
         async_cont_blocks: std::cell::RefCell::new(None),
         async_local_name_to_slot: std::cell::RefCell::new(None),
         async_param_count: std::cell::Cell::new(0),
+        async_local_slot_count: std::cell::Cell::new(0),
         async_poll_function: std::cell::RefCell::new(None),
         async_resume_blocks: std::cell::RefCell::new(None),
         async_poll_locals: std::cell::RefCell::new(None),
         source: &parsed_mod.source,
+        current_function_return_type: std::cell::RefCell::new(None),
+        last_expr_is_boxed_union: std::cell::Cell::new(false),
+        global_function_signatures: std::cell::RefCell::new(std::collections::HashMap::new()),
+        symbol_table: std::cell::RefCell::new(SymbolTable::new()),
     };
 
     // Note: class field metadata is computed per-class when emitting
@@ -976,6 +723,72 @@ fn main() -> Result<()> {
         }
     }
 
+    // Emit arrow functions declared as top-level const/let bindings
+    // Example: const foo = (x: number): number => x + 1;
+    for (fname, arrow, is_exported) in &arrow_functions {
+        // Skip exported main - it will be handled separately
+        if fname == "main" && *is_exported {
+            continue;
+        }
+        // Skip non-exported main as well
+        if fname == "main" {
+            continue;
+        }
+
+        // Convert arrow function to regular function format that gen_function_ir expects
+        // Arrow functions need special handling because their structure differs slightly
+        use deno_ast::swc::ast::{BlockStmt, BlockStmtOrExpr, Function, Param};
+
+        // Convert arrow params (Vec<Pat>) to function params (Vec<Param>)
+        let func_params: Vec<Param> = arrow
+            .params
+            .iter()
+            .map(|pat| Param {
+                span: Default::default(),
+                decorators: vec![],
+                pat: pat.clone(),
+            })
+            .collect();
+
+        // Convert arrow body to function body (BlockStmt)
+        let func_body = match &*arrow.body {
+            BlockStmtOrExpr::BlockStmt(block) => Some(block.clone()),
+            BlockStmtOrExpr::Expr(expr) => {
+                // Wrap expression in a return statement
+                use deno_ast::swc::ast::{ReturnStmt, Stmt};
+                Some(BlockStmt {
+                    span: arrow.span,
+                    ctxt: Default::default(),
+                    stmts: vec![Stmt::Return(ReturnStmt {
+                        span: arrow.span,
+                        arg: Some(expr.clone()),
+                    })],
+                })
+            }
+        };
+
+        let func = Function {
+            params: func_params,
+            decorators: vec![],
+            span: arrow.span,
+            ctxt: Default::default(),
+            body: func_body,
+            is_generator: false,
+            is_async: arrow.is_async,
+            type_params: arrow.type_params.clone(),
+            return_type: arrow.return_type.clone(),
+        };
+
+        let mut inner_symbols = SymbolTable::new();
+        let fsig = check_function_strictness(&func, &mut inner_symbols)?;
+        codegen
+            .gen_function_ir(fname, &func, &fsig.params, &fsig.ret, None)
+            .map_err(|d| {
+                oats::diagnostics::emit_diagnostic(&d, Some(source.as_str()));
+                anyhow::anyhow!("{}", d.message)
+            })?;
+    }
+
     // Emit the user's exported `main` under an internal symbol name to avoid
     // conflicting with the C runtime entrypoint. The script must export
     // `main`, but we generate `oats_main` as the emitted symbol the host
@@ -997,6 +810,7 @@ fn main() -> Result<()> {
     // required. Recompute IR after emission.
     let emitted_host_main = codegen.emit_host_main(&func_sig.params, &func_sig.ret);
 
+    // Note: LLVM optimizations (inlining, loop opts) are applied via clang -O3 during compilation
     let ir = codegen.module.print_to_string().to_string();
 
     // determine output directory (optional)
@@ -1048,14 +862,21 @@ fn main() -> Result<()> {
             anyhow::anyhow!("runtime staticlib not found; please build the runtime crate")
         })?;
 
-    // Compile IR to object file using clang
-    let status = Command::new("clang")
-        .arg("-O2")
+    // Compile IR to object file using clang with aggressive optimizations
+    // -O3: Aggressive optimizations (inlining, loop opts, vectorization)
+    // -march=native: Use all available CPU instructions for this machine
+    // -ffast-math: Enable aggressive floating-point optimizations (safe for most code)
+    let mut clang_cmd = Command::new("clang");
+    clang_cmd
+        .arg("-O3") // Aggressive optimizations (was -O2)
+        .arg("-march=native") // Use native CPU features
+        .arg("-ffast-math") // Fast floating-point math
         .arg("-c")
         .arg(&out_ll)
         .arg("-o")
-        .arg(&out_obj)
-        .status()?;
+        .arg(&out_obj);
+
+    let status = clang_cmd.status()?;
     if !status.success() {
         anyhow::bail!("clang failed to compile IR to object");
     }
@@ -1093,7 +914,10 @@ fn main() -> Result<()> {
     // module then `rt_main_obj` will be empty and we skip adding it to the
     // link line.
     let mut link_cmd = Command::new("clang");
-    link_cmd.arg("-O2");
+    link_cmd
+        .arg("-O3") // Link-time optimizations (was -O2)
+        .arg("-flto"); // Enable Link-Time Optimization for cross-module inlining
+
     if !rt_main_obj.is_empty() {
         link_cmd.arg(&rt_main_obj);
     }

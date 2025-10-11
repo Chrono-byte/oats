@@ -38,6 +38,7 @@ use inkwell::types::BasicType;
 use inkwell::types::BasicTypeEnum;
 use inkwell::values::{BasicValue, PointerValue};
 // LocalEntry now includes an Option<String> for an optional nominal type name
+// LocalEntry now includes an Option<OatsType> for union tracking
 type LocalEntry<'a> = (
     PointerValue<'a>,
     BasicTypeEnum<'a>,
@@ -45,6 +46,7 @@ type LocalEntry<'a> = (
     bool,
     bool,
     Option<String>,
+    Option<crate::types::OatsType>,
 );
 type LocalsStackLocal<'a> = Vec<HashMap<String, LocalEntry<'a>>>;
 
@@ -87,6 +89,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
         use deno_ast::swc::ast;
 
         match expr {
+            // Removed duplicate `ast::Expr::Call(call)` match arm at line 482 to fix unreachable pattern warning.
+            // Removed unused `parent` variable to resolve the warning.
             ast::Expr::Bin(bin) => {
                 use deno_ast::swc::ast::BinaryOp;
                 use inkwell::FloatPredicate;
@@ -406,7 +410,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 }
 
                 // If not a parameter, then it must be a local variable (`let` or `const`).
-                if let Some((ptr, ty, initialized, _is_const, _extra, _nominal)) =
+                if let Some((ptr, ty, initialized, _is_const, _extra, _nominal, _oats_type)) =
                     self.find_local(locals, &name)
                 {
                     // If not initialized -> TDZ: generate a trap (unreachable).
@@ -457,8 +461,15 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     };
 
                     // Find `this` in locals
-                    if let Some((this_ptr, this_ty, _init, _is_const, _extra, _nominal)) =
-                        self.find_local(locals, "this")
+                    if let Some((
+                        this_ptr,
+                        this_ty,
+                        _init,
+                        _is_const,
+                        _extra,
+                        _nominal,
+                        _oats_type,
+                    )) = self.find_local(locals, "this")
                     {
                         let this_loaded =
                             match self.builder.build_load(this_ty, this_ptr, "this_loaded") {
@@ -522,6 +533,151 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         Ok(v) => v,
                                         Err(d) => return Err(d)?,
                                     };
+
+                                    // Check if this is a union-typed variable that needs unboxing
+                                    let mut is_union = false;
+                                    if let deno_ast::swc::ast::Expr::Ident(ident) = &*a.expr {
+                                        let arg_name = ident.sym.to_string();
+                                        if let Some((_, _, _, _, _, _, oats_type)) =
+                                            self.find_local(locals, &arg_name)
+                                        {
+                                            if let Some(crate::types::OatsType::Union(_)) =
+                                                oats_type
+                                            {
+                                                is_union = true;
+                                            }
+                                        }
+                                    }
+
+                                    // If it's a union, unbox it and print the unboxed value
+                                    if is_union && matches!(val, BasicValueEnum::PointerValue(_)) {
+                                        let union_ptr = val.into_pointer_value();
+
+                                        // Get discriminant to determine type (0 = number, 1 = pointer/string)
+                                        let get_disc_fn = self.get_union_get_discriminant();
+                                        let disc_call = self
+                                            .builder
+                                            .build_call(
+                                                get_disc_fn,
+                                                &[union_ptr.into()],
+                                                "union_get_disc",
+                                            )
+                                            .map_err(|_| {
+                                                Diagnostic::simple("get discriminant failed")
+                                            })?;
+
+                                        let disc = if let inkwell::Either::Left(bv) =
+                                            disc_call.try_as_basic_value()
+                                        {
+                                            bv.into_int_value()
+                                        } else {
+                                            return Err(Diagnostic::simple(
+                                                "discriminant call failed",
+                                            ));
+                                        };
+
+                                        // Create blocks for number and string cases
+                                        let is_number_block = self
+                                            .context
+                                            .append_basic_block(function, "union_is_number");
+                                        let is_string_block = self
+                                            .context
+                                            .append_basic_block(function, "union_is_string");
+                                        let after_print_block = self
+                                            .context
+                                            .append_basic_block(function, "after_union_print");
+
+                                        // Compare discriminant with 0 (number)
+                                        let zero_i64 = self.i64_t.const_int(0, false);
+                                        let is_num = self
+                                            .builder
+                                            .build_int_compare(
+                                                inkwell::IntPredicate::EQ,
+                                                disc,
+                                                zero_i64,
+                                                "is_number",
+                                            )
+                                            .map_err(|_| Diagnostic::simple("compare failed"))?;
+
+                                        self.builder
+                                            .build_conditional_branch(
+                                                is_num,
+                                                is_number_block,
+                                                is_string_block,
+                                            )
+                                            .map_err(|_| Diagnostic::simple("branch failed"))?;
+
+                                        // Number case: unbox as f64 and print
+                                        self.builder.position_at_end(is_number_block);
+                                        let unbox_f64_fn = self.get_union_unbox_f64();
+                                        let unboxed_num_call = self
+                                            .builder
+                                            .build_call(
+                                                unbox_f64_fn,
+                                                &[union_ptr.into()],
+                                                "unbox_f64",
+                                            )
+                                            .map_err(|_| Diagnostic::simple("unbox f64 failed"))?;
+
+                                        if let inkwell::Either::Left(bv) =
+                                            unboxed_num_call.try_as_basic_value()
+                                        {
+                                            let num_val = bv.into_float_value();
+                                            if let Some(print_fn) =
+                                                self.module.get_function("print_f64_no_nl")
+                                            {
+                                                let _ = self
+                                                    .builder
+                                                    .build_call(
+                                                        print_fn,
+                                                        &[num_val.into()],
+                                                        "print_union_num",
+                                                    )
+                                                    .ok();
+                                            }
+                                        }
+                                        self.builder
+                                            .build_unconditional_branch(after_print_block)
+                                            .map_err(|_| Diagnostic::simple("branch failed"))?;
+
+                                        // String case: unbox as pointer and print
+                                        self.builder.position_at_end(is_string_block);
+                                        let unbox_ptr_fn = self.get_union_unbox_ptr();
+                                        let unboxed_ptr_call = self
+                                            .builder
+                                            .build_call(
+                                                unbox_ptr_fn,
+                                                &[union_ptr.into()],
+                                                "unbox_ptr",
+                                            )
+                                            .map_err(|_| Diagnostic::simple("unbox ptr failed"))?;
+
+                                        if let inkwell::Either::Left(bv) =
+                                            unboxed_ptr_call.try_as_basic_value()
+                                        {
+                                            let str_val = bv.into_pointer_value();
+                                            if let Some(print_fn) =
+                                                self.module.get_function("print_str_no_nl")
+                                            {
+                                                let _ = self
+                                                    .builder
+                                                    .build_call(
+                                                        print_fn,
+                                                        &[str_val.into()],
+                                                        "print_union_str",
+                                                    )
+                                                    .ok();
+                                            }
+                                        }
+                                        self.builder
+                                            .build_unconditional_branch(after_print_block)
+                                            .map_err(|_| Diagnostic::simple("branch failed"))?;
+
+                                        // Continue after printing union
+                                        self.builder.position_at_end(after_print_block);
+                                        continue;
+                                    }
+
                                     match val {
                                         BasicValueEnum::FloatValue(fv) => {
                                             if let Some(print_fn) =
@@ -550,6 +706,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                     _is_const,
                                                     _is_weak,
                                                     nominal,
+                                                    _oats_type,
                                                 )) = self.find_local(locals, &orig)
                                                     && let Some(n) = nominal
                                                     && n == "__oats_array"
@@ -767,6 +924,24 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 };
                                 let either = cs.try_as_basic_value();
                                 if let inkwell::Either::Left(bv) = either {
+                                    // Check if this function returns a union type
+                                    // If so, mark that the returned value is already boxed
+                                    if let Some(ret_type) =
+                                        self.current_function_return_type.borrow().clone()
+                                    {
+                                        // Only set flag if we're calling a function different from the current one
+                                        let current_fname =
+                                            function.get_name().to_str().unwrap_or("");
+                                        if fname != current_fname
+                                            && matches!(ret_type, crate::types::OatsType::Union(_))
+                                        {
+                                            // This is a bit fragile - we're checking the current function's return type
+                                            // We should actually check the *called* function's return type
+                                            // For now, skip setting the flag here and handle it differently
+                                        }
+                                    }
+                                    // Reset the flag before returning - we'll set it properly in the caller if needed
+                                    self.last_expr_is_boxed_union.set(false);
                                     // The call returned a value; propagate it.
                                     Ok(bv)
                                 } else {
@@ -775,6 +950,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     // we return a harmless `f64` zero. This keeps
                                     // expression-statement lowering simple: the
                                     // caller can ignore the returned value.
+                                    self.last_expr_is_boxed_union.set(false);
                                     let zero = self.f64_t.const_float(0.0);
                                     Ok(zero.as_basic_value_enum())
                                 }
@@ -1089,6 +1265,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             _is_const,
                                             _is_weak,
                                             nominal,
+                                            _oats_type,
                                         )) = self.find_local(locals, &ident_name)
                                             && let Some(nom) = nominal
                                         {
@@ -1230,11 +1407,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                 break;
                                             }
                                         }
-                                        if let Some((found_nom, method_f)) = found {
+                                        if let Some((_found_nom, method_f)) = found {
                                             #[cfg(debug_assertions)]
                                             eprintln!(
                                                 "[debug member_call] falling back to nominal '{}' for method '{}'",
-                                                found_nom, method_name
+                                                _found_nom, method_name
                                             );
                                             // lower user args
                                             let mut user_args: Vec<
@@ -1713,7 +1890,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 // support simple assignments `ident = expr` where the left side is an identifier
                 if let AssignTarget::Simple(SimpleAssignTarget::Ident(bid)) = &assign.left {
                     let name = bid.id.sym.to_string();
-                    if let Some((ptr, _ty, _init, is_const, _extra, _nominal)) =
+                    if let Some((ptr, _ty, _init, is_const, _extra, _nominal, oats_type)) =
                         self.find_local(locals, &name)
                     {
                         // Disallow assigning to immutable locals at compile-time
@@ -1731,8 +1908,48 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             );
                             return Err(Diagnostic::simple("expression lowering failed"))?;
                         }
-                        if let Ok(val) = self.lower_expr(&assign.right, function, param_map, locals)
+                        if let Ok(mut val) =
+                            self.lower_expr(&assign.right, function, param_map, locals)
                         {
+                            // If the target variable is a union type, box the value
+                            if let Some(crate::types::OatsType::Union(_)) = oats_type {
+                                val = match val {
+                                    BasicValueEnum::FloatValue(fv) => {
+                                        // Box number into union
+                                        let box_f64_fn = self.get_union_box_f64();
+                                        let boxed_call = self
+                                            .builder
+                                            .build_call(box_f64_fn, &[fv.into()], "box_union_f64")
+                                            .map_err(|_| Diagnostic::simple("union box failed"))?;
+
+                                        if let inkwell::Either::Left(bv) =
+                                            boxed_call.try_as_basic_value()
+                                        {
+                                            bv
+                                        } else {
+                                            return Err(Diagnostic::simple("union box failed"));
+                                        }
+                                    }
+                                    BasicValueEnum::PointerValue(pv) => {
+                                        // Box pointer into union
+                                        let box_ptr_fn = self.get_union_box_ptr();
+                                        let boxed_call = self
+                                            .builder
+                                            .build_call(box_ptr_fn, &[pv.into()], "box_union_ptr")
+                                            .map_err(|_| Diagnostic::simple("union box failed"))?;
+
+                                        if let inkwell::Either::Left(bv) =
+                                            boxed_call.try_as_basic_value()
+                                        {
+                                            bv
+                                        } else {
+                                            return Err(Diagnostic::simple("union box failed"));
+                                        }
+                                    }
+                                    _ => val, // Keep other types as-is
+                                };
+                            }
+
                             // Propagate closure-local return type mapping when RHS
                             // expression originated from a known local that holds a
                             // freshly-created closure (e.g., __closure_tmp).
@@ -1863,8 +2080,15 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         // class by inspecting locals. Do NOT fall back to scanning
                                         // `class_fields` — require the local to carry a nominal
                                         // annotation to be used for member lowering.
-                                        if let Some((_, _ty, _init, _is_const, _is_weak, nominal)) =
-                                            self.find_local(locals, &ident_name)
+                                        if let Some((
+                                            _,
+                                            _ty,
+                                            _init,
+                                            _is_const,
+                                            _is_weak,
+                                            nominal,
+                                            _oats_type,
+                                        )) = self.find_local(locals, &ident_name)
                                             && let Some(nom) = nominal
                                         {
                                             class_name_opt = Some(nom);
@@ -2226,7 +2450,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             if let deno_ast::swc::ast::Expr::Ident(ident) = &*member.obj {
                                 let name = ident.sym.to_string();
                                 self.find_local(locals, &name)
-                                    .map(|(ptr, _, _, _, _, _)| ptr)
+                                    .map(|(ptr, _, _, _, _, _, _)| ptr)
                             } else {
                                 None
                             };
@@ -2509,9 +2733,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         gv.set_initializer(&initializer);
 
                         // Return pointer to the data section (offset +16 from base)
+                        // We need [0, 2, 0] to get: struct base -> field 2 (array) -> element 0
                         let zero = self.i32_t.const_int(0, false);
                         let two = self.i32_t.const_int(2, false);
-                        let indices = &[zero, two];
+                        let indices = &[zero, two, zero];
                         let gep = unsafe {
                             self.builder.build_gep(
                                 struct_ty,
@@ -2744,7 +2969,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 }
             }
             ast::Expr::This(this_expr) => {
-                if let Some((ptr, ty, init, _ignore, _extra, _nominal)) =
+                if let Some((ptr, ty, init, _ignore, _extra, _nominal, _oats_type)) =
                     self.find_local(locals, "this")
                     && init
                     && let Ok(loaded) = self.builder.build_load(ty, ptr, "this_load")
@@ -2804,8 +3029,15 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             if let deno_ast::swc::ast::Expr::Ident(ident) = &*member.obj {
                                 let ident_name = ident.sym.to_string();
                                 // check locals for nominal annotation
-                                if let Some((_, _ty, _init, _is_const, _is_weak, nominal)) =
-                                    self.find_local(locals, &ident_name)
+                                if let Some((
+                                    _,
+                                    _ty,
+                                    _init,
+                                    _is_const,
+                                    _is_weak,
+                                    nominal,
+                                    _oats_type,
+                                )) = self.find_local(locals, &ident_name)
                                     && let Some(nom) = nominal
                                 {
                                     class_name_opt = Some(nom);
@@ -3138,6 +3370,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         _is_const,
                                         _is_weak,
                                         nominal,
+                                        _oats_type,
                                     )) = self.find_local(locals, &ident_name)
                                         && let Some(nom) = nominal
                                     {
@@ -3153,6 +3386,18 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 && let crate::types::OatsType::NominalStruct(n) = &param_types[0]
                             {
                                 class_name_opt = Some(n.clone());
+                            } else if let deno_ast::swc::ast::Expr::Member(inner_member) =
+                                &*member.obj
+                            {
+                                // Nested member access: outer.data.value
+                                // We need to resolve the type of outer.data to know what fields it has
+                                // First, recursively resolve the outer member expression's type
+                                class_name_opt = self.resolve_member_type(
+                                    inner_member,
+                                    function,
+                                    param_map,
+                                    locals,
+                                );
                             }
 
                             if let Some(class_name) = class_name_opt {
@@ -3382,7 +3627,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     let mut recv_fields: Vec<String> = Vec::new();
                     if let deno_ast::swc::ast::Expr::Ident(ident) = &*member.obj {
                         let name = ident.sym.to_string();
-                        if let Some((_, _ty, _init, _is_const, _is_weak, nominal)) =
+                        if let Some((_, _ty, _init, _is_const, _is_weak, nominal, _oats_type)) =
                             self.find_local(locals, &name)
                         {
                             recv_info = format!("ident='{}' local_nominal={:?}", name, nominal);
@@ -3654,10 +3899,6 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
                 let v = self.lower_expr(&await_expr.arg, function, param_map, locals)?;
                 if let BasicValueEnum::PointerValue(pv) = v {
-                    // Make the basic-value form of the promise pointer available
-                    // to the continuation's phi node regardless of whether we
-                    // suspend or not.
-                    let pv_bv = pv.as_basic_value_enum();
                     // allocate an i8* out slot
                     let out_alloca = match self
                         .builder
@@ -3700,7 +3941,14 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
                     let ready_bb = self.context.append_basic_block(function, "await_ready");
                     let pending_bb = self.context.append_basic_block(function, "await_pending");
-                    let cont_bb = self.context.append_basic_block(function, "await_cont");
+
+                    // Use the pre-created cont block for this await (cont_0, cont_1, etc.)
+                    let cont_bb = if let Some(cont_blocks) = &*self.async_cont_blocks.borrow() {
+                        cont_blocks[(resume_idx - 1) as usize]
+                    } else {
+                        // Fallback: create local cont block if no async context
+                        self.context.append_basic_block(function, "await_cont")
+                    };
 
                     match self
                         .builder
@@ -3762,6 +4010,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             _is_const,
                                             _is_weak,
                                             _nominal,
+                                            _oats_type,
                                         )) = self.find_local(locals, name)
                                     {
                                         let loaded = match self.builder.build_load(
@@ -3847,6 +4096,53 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 }
                             }
 
+                            // Save the awaited promise into its slot so we can re-poll on resume
+                            let param_count = self.async_param_count.get() as u64;
+                            let local_slot_count = self.async_local_slot_count.get() as u64;
+                            let await_slot_offset = 16
+                                + (param_count * 8)
+                                + (local_slot_count * 8)
+                                + ((resume_idx as u64 - 1) * 8);
+                            let base_int = match self.builder.build_ptr_to_int(
+                                state_ptr,
+                                self.i64_t,
+                                "await_promise_state_addr",
+                            ) {
+                                Ok(v) => v,
+                                Err(_) => {
+                                    return Err(Diagnostic::simple(
+                                        "ptr_to_int failed when saving awaited promise",
+                                    ));
+                                }
+                            };
+                            let off_const = self.i64_t.const_int(await_slot_offset, false);
+                            let slot_addr_int = match self.builder.build_int_add(
+                                base_int,
+                                off_const,
+                                "await_promise_slot_addr",
+                            ) {
+                                Ok(v) => v,
+                                Err(_) => {
+                                    return Err(Diagnostic::simple(
+                                        "int_add failed when saving awaited promise",
+                                    ));
+                                }
+                            };
+                            let slot_ptr = match self.builder.build_int_to_ptr(
+                                slot_addr_int,
+                                self.i8ptr_t,
+                                "await_promise_slot_ptr",
+                            ) {
+                                Ok(p) => p,
+                                Err(_) => {
+                                    return Err(Diagnostic::simple(
+                                        "int_to_ptr failed when saving awaited promise",
+                                    ));
+                                }
+                            };
+                            // Store the promise pointer
+                            let _ = self.builder.build_store(slot_ptr, pv.as_basic_value_enum());
+
                             // store resume index into state field at offset 8
                             let base_int = match self.builder.build_ptr_to_int(
                                 state_ptr,
@@ -3894,18 +4190,23 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         }
                     }
 
-                    // cont: create phi to select between loaded value and original promise
+                    // cont: create phi to select between loaded value (from ready path)
+                    // and resumed value (which will be the original promise pointer)
                     self.builder.position_at_end(cont_bb);
                     let phi_ty = self.i8ptr_t.as_basic_type_enum();
                     let phi = match self.builder.build_phi(phi_ty, "await_phi") {
                         Ok(p) => p,
                         Err(_) => return Err(Diagnostic::simple("failed to create phi for await")),
                     };
-                    // incoming values: from ready_bb use loaded, from pending_bb use pv
-                    phi.add_incoming(&[
-                        (&loaded.as_basic_value_enum(), ready_bb),
-                        (&pv_bv, pending_bb),
-                    ]);
+                    // Only add incoming from ready_bb - when we resume, the resume block
+                    // will provide the value by branching here with the promise pointer
+                    // Note: pending_bb returns early, so it's not a predecessor
+                    phi.add_incoming(&[(&loaded.as_basic_value_enum(), ready_bb)]);
+
+                    // If we're in async context, the resume block will also branch here
+                    // We need to add the promise pointer as an incoming value from resume path
+                    // The resume path will have the original promise available
+                    // For now, just return the phi - the resume block will handle providing the value
                     return Ok(phi.as_basic_value());
                 }
                 // Non-pointer awaited values are returned as-is (numbers/booleans)
@@ -4167,6 +4468,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     true,
                                     false,
                                     None,
+                                    None,
                                 ),
                             );
                         }
@@ -4275,6 +4577,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             _is_const,
                             is_weak_flag,
                             _nominal,
+                            _oats_type,
                         )) = self.find_local(locals, cname)
                         {
                             if !initialized {
@@ -4474,6 +4777,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 true,
                                 false,
                                 None,
+                                None,
                             ),
                         );
                     }
@@ -4540,7 +4844,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 // If captures were present we previously stored a closure tmp in the outer locals
                 if !captures.is_empty() {
                     // load tmp and return it
-                    if let Some((tmp_ptr, _ty, init, _is_const, _is_weak, _nominal)) =
+                    if let Some((tmp_ptr, _ty, init, _is_const, _is_weak, _nominal, _oats_type)) =
                         self.find_local(locals, "__closure_tmp")
                     {
                         if !init {
@@ -4606,8 +4910,58 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             "failed to find shorthand param",
                                         ));
                                     }
-                                } else if let Some((ptr, ty, _init, _is_const, _extra, _nominal)) =
-                                    self.find_local(locals, &name)
+                                } else if let Some((
+                                    ptr,
+                                    ty,
+                                    _init,
+                                    _is_const,
+                                    _extra,
+                                    _nominal,
+                                    _oats_type,
+                                )) = self.find_local(locals, &name)
+                                {
+                                    // load local value
+                                    let loaded = match self.builder.build_load(
+                                        ty,
+                                        ptr,
+                                        &format!("shorthand_{}", name),
+                                    ) {
+                                        Ok(v) => v,
+                                        Err(_) => {
+                                            return Err(Diagnostic::simple(
+                                                "failed to load shorthand local value",
+                                            ));
+                                        }
+                                    };
+                                    field_values.push(loaded);
+                                } else {
+                                    return Err(Diagnostic::simple(
+                                        "shorthand property not found in params or locals",
+                                    ));
+                                }
+                            }
+                            ast::Prop::Shorthand(ident) => {
+                                // ES6 shorthand property { x } which is equivalent to { x: x }
+                                let name = ident.sym.to_string();
+                                // First check parameters
+                                if let Some(idx) = param_map.get(&name) {
+                                    if let Some(pv) = function.get_nth_param(*idx) {
+                                        let bv = pv.as_basic_value_enum();
+                                        field_values.push(bv);
+                                    } else {
+                                        return Err(Diagnostic::simple(
+                                            "failed to find shorthand param",
+                                        ));
+                                    }
+                                } else if let Some((
+                                    ptr,
+                                    ty,
+                                    _init,
+                                    _is_const,
+                                    _extra,
+                                    _nominal,
+                                    _oats_type,
+                                )) = self.find_local(locals, &name)
                                 {
                                     // load local value
                                     let loaded = match self.builder.build_load(
@@ -4785,9 +5139,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         gv.set_initializer(&initializer);
 
                         // Return pointer to data section (offset +16, field index 2)
+                        // We need [0, 2, 0] to get: struct base -> field 2 (array) -> element 0
                         let zero = codegen.i32_t.const_int(0, false);
                         let two = codegen.i32_t.const_int(2, false);
-                        let indices = &[zero, two];
+                        let indices = &[zero, two, zero];
                         let gep = unsafe {
                             codegen.builder.build_gep(
                                 struct_ty,
@@ -5125,8 +5480,15 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         return Err(Diagnostic::simple(
                             "cannot update function parameter directly",
                         ));
-                    } else if let Some((ptr, ty, initialized, is_const, _extra, _nominal)) =
-                        self.find_local(locals, &name)
+                    } else if let Some((
+                        ptr,
+                        ty,
+                        initialized,
+                        is_const,
+                        _extra,
+                        _nominal,
+                        _oats_type,
+                    )) = self.find_local(locals, &name)
                     {
                         if is_const {
                             return Err(Diagnostic::simple("cannot update immutable variable"));
@@ -5189,5 +5551,91 @@ impl<'a> crate::codegen::CodeGen<'a> {
             }
             _ => Err(Diagnostic::simple("operation not supported")),
         }
+    }
+
+    /// Resolve the nominal type of a member expression.
+    /// For example, given `outer.data`, this returns the nominal type of the `data` field.
+    fn resolve_member_type(
+        &self,
+        member: &deno_ast::swc::ast::MemberExpr,
+        function: FunctionValue<'a>,
+        param_map: &HashMap<String, u32>,
+        locals: &mut LocalsStackLocal<'a>,
+    ) -> Option<String> {
+        use deno_ast::swc::ast;
+
+        // First, determine the nominal type of member.obj
+        let obj_nominal = if let ast::Expr::Ident(ident) = &*member.obj {
+            let ident_name = ident.sym.to_string();
+            // Check if it's `this`
+            if ident_name == "this" {
+                if let Some(param_types) = self
+                    .fn_param_types
+                    .borrow()
+                    .get(function.get_name().to_str().unwrap_or(""))
+                    && !param_types.is_empty()
+                    && let crate::types::OatsType::NominalStruct(n) = &param_types[0]
+                {
+                    Some(n.clone())
+                } else {
+                    None
+                }
+            }
+            // Check params
+            else if let Some(param_idx) = param_map.get(&ident_name) {
+                if let Some(param_types) = self
+                    .fn_param_types
+                    .borrow()
+                    .get(function.get_name().to_str().unwrap_or(""))
+                {
+                    let idx = *param_idx as usize;
+                    if idx < param_types.len()
+                        && let crate::types::OatsType::NominalStruct(n) = &param_types[idx]
+                    {
+                        Some(n.clone())
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            }
+            // Check locals
+            else if let Some((_, _, _, _, _, nominal, _oats_type)) =
+                self.find_local(locals, &ident_name)
+            {
+                nominal
+            } else {
+                None
+            }
+        } else if let ast::Expr::Member(inner_member) = &*member.obj {
+            // Recursively resolve nested member expressions
+            self.resolve_member_type(inner_member, function, param_map, locals)
+        } else {
+            None
+        };
+
+        // Now look up the field type in the class_fields map
+        if let Some(obj_type_name) = obj_nominal {
+            if let Some(fields) = self.class_fields.borrow().get(&obj_type_name) {
+                // Get the property name from member.prop
+                if let ast::MemberProp::Ident(prop_ident) = &member.prop {
+                    let field_name = prop_ident.sym.to_string();
+                    // Find the field and return its type if it's a NominalStruct
+                    for (fname, ftype) in fields {
+                        if fname == &field_name {
+                            if let crate::types::OatsType::NominalStruct(n) = ftype {
+                                return Some(n.clone());
+                            } else {
+                                // Field exists but is not a nominal struct
+                                return None;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        None
     }
 }

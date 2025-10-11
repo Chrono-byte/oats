@@ -22,14 +22,16 @@ type LocalEntry<'a> = (
     bool,
     bool,
     Option<String>,
+    Option<crate::types::OatsType>,
 );
 // A stack of per-scope local maps.
 //
 // Each entry in the vector is a HashMap representing a lexical scope's
 // locals. The maps store `LocalEntry` tuples describing the alloca pointer,
 // the ABI type of the slot, initialization flag, const flag, whether the
-// local is a Weak<T> (affects RC semantics), and an optional nominal type
-// name used to guide member access lowering.
+// local is a Weak<T> (affects RC semantics), an optional nominal type
+// name used to guide member access lowering, and an optional OatsType
+// for union tracking.
 type LocalsStackLocal<'a> = Vec<HashMap<String, LocalEntry<'a>>>;
 
 impl<'a> crate::codegen::CodeGen<'a> {
@@ -197,6 +199,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             ),
                                             is_weak: declared_is_weak,
                                             nominal: declared_nominal.clone(),
+                                            oats_type: declared_union.clone(),
                                         },
                                     );
                                 }
@@ -421,6 +424,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                 is_const: false,
                                                 is_weak: declared_is_weak,
                                                 nominal: Some(gen_name),
+                                                oats_type: declared_union.clone(),
                                             },
                                         );
                                         // done handling tuple init
@@ -434,6 +438,212 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         );
                                         return Ok(false);
                                     }
+                                }
+
+                                // Special case: object literal without explicit type annotation
+                                // Generate a nominal name, register fields, and handle like tuple
+                                if declared_nominal.is_none()
+                                    && let deno_ast::swc::ast::Expr::Object(obj_lit) = &**init
+                                {
+                                    use deno_ast::swc::ast;
+                                    // Generate nominal name for this anonymous object literal
+                                    let fname = _function.get_name().to_str().unwrap_or("<fn>");
+                                    let gen_name = format!("objlit_{}_{}", fname, name);
+
+                                    // Infer field types from the object literal properties
+                                    let mut fields: Vec<(String, crate::types::OatsType)> =
+                                        Vec::new();
+                                    for prop in &obj_lit.props {
+                                        if let ast::PropOrSpread::Prop(prop_box) = prop {
+                                            match &**prop_box {
+                                                ast::Prop::KeyValue(kv) => {
+                                                    if let ast::PropName::Ident(id) = &kv.key {
+                                                        let field_name = id.sym.to_string();
+
+                                                        // Try to infer type more intelligently
+                                                        let field_ty = if let ast::Expr::Ident(
+                                                            val_ident,
+                                                        ) = &*kv.value
+                                                        {
+                                                            // Value is an identifier - look it up in locals
+                                                            let val_name =
+                                                                val_ident.sym.to_string();
+                                                            if let Some((
+                                                                _,
+                                                                ty,
+                                                                _,
+                                                                _,
+                                                                _,
+                                                                nominal,
+                                                                _oats_type,
+                                                            )) = self.find_local(
+                                                                _locals_stack,
+                                                                &val_name,
+                                                            ) {
+                                                                // If it has a nominal type, use that
+                                                                if let Some(nom_name) = nominal {
+                                                                    crate::types::OatsType::NominalStruct(nom_name)
+                                                                } else if ty.is_float_type() {
+                                                                    crate::types::OatsType::Number
+                                                                } else if ty.is_pointer_type() {
+                                                                    crate::types::OatsType::String
+                                                                } else {
+                                                                    crate::types::OatsType::Number
+                                                                }
+                                                            } else {
+                                                                // Fallback to expression-based inference
+                                                                crate::types::infer_type(
+                                                                    None,
+                                                                    Some(&kv.value),
+                                                                )
+                                                            }
+                                                        } else if let ast::Expr::Object(
+                                                            nested_obj,
+                                                        ) = &*kv.value
+                                                        {
+                                                            // Value is an inline object literal - generate a nominal name for it
+                                                            let nested_name = format!(
+                                                                "objlit_{}_{}_{}",
+                                                                fname, name, field_name
+                                                            );
+
+                                                            // Infer its fields recursively
+                                                            let mut nested_fields: Vec<(
+                                                                String,
+                                                                crate::types::OatsType,
+                                                            )> = Vec::new();
+                                                            for nested_prop in &nested_obj.props {
+                                                                if let ast::PropOrSpread::Prop(
+                                                                    nested_prop_box,
+                                                                ) = nested_prop
+                                                                {
+                                                                    if let ast::Prop::KeyValue(
+                                                                        nested_kv,
+                                                                    ) = &**nested_prop_box
+                                                                    {
+                                                                        if let ast::PropName::Ident(nested_id) = &nested_kv.key {
+                                                                            let nested_field_name = nested_id.sym.to_string();
+                                                                            let nested_field_ty = crate::types::infer_type(None, Some(&nested_kv.value));
+                                                                            nested_fields.push((nested_field_name, nested_field_ty));
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+
+                                                            // Register the nested object's fields
+                                                            if !nested_fields.is_empty() {
+                                                                self.class_fields
+                                                                    .borrow_mut()
+                                                                    .insert(
+                                                                        nested_name.clone(),
+                                                                        nested_fields,
+                                                                    );
+                                                            }
+
+                                                            crate::types::OatsType::NominalStruct(
+                                                                nested_name,
+                                                            )
+                                                        } else {
+                                                            // Not an identifier or object, use expression-based inference
+                                                            crate::types::infer_type(
+                                                                None,
+                                                                Some(&kv.value),
+                                                            )
+                                                        };
+
+                                                        fields.push((field_name.clone(), field_ty));
+                                                    }
+                                                }
+                                                ast::Prop::Assign(assign) => {
+                                                    // Shorthand property { x } - infer from identifier
+                                                    let field_name = assign.key.sym.to_string();
+                                                    // Try to infer type from param or local
+                                                    let field_ty = if _param_map
+                                                        .contains_key(&field_name)
+                                                    {
+                                                        crate::types::OatsType::Number // default for params
+                                                    } else if let Some((
+                                                        _,
+                                                        ty,
+                                                        _,
+                                                        _,
+                                                        _,
+                                                        nominal,
+                                                        _oats_type,
+                                                    )) =
+                                                        self.find_local(_locals_stack, &field_name)
+                                                    {
+                                                        // Check if this local has a nominal type annotation
+                                                        if let Some(nom_name) = nominal {
+                                                            crate::types::OatsType::NominalStruct(
+                                                                nom_name,
+                                                            )
+                                                        }
+                                                        // Try to map LLVM type back to OatsType
+                                                        else if ty.is_float_type() {
+                                                            crate::types::OatsType::Number
+                                                        } else if ty.is_pointer_type() {
+                                                            crate::types::OatsType::String // assume string/pointer
+                                                        } else {
+                                                            crate::types::OatsType::Number
+                                                        }
+                                                    } else {
+                                                        crate::types::OatsType::Number
+                                                    };
+                                                    fields.push((field_name.clone(), field_ty));
+                                                }
+                                                ast::Prop::Shorthand(ident) => {
+                                                    // Shorthand property { x } in deno_ast
+                                                    let field_name = ident.sym.to_string();
+                                                    // Try to infer type from param or local
+                                                    let field_ty = if _param_map
+                                                        .contains_key(&field_name)
+                                                    {
+                                                        crate::types::OatsType::Number // default for params
+                                                    } else if let Some((
+                                                        _,
+                                                        ty,
+                                                        _,
+                                                        _,
+                                                        _,
+                                                        nominal,
+                                                        _oats_type,
+                                                    )) =
+                                                        self.find_local(_locals_stack, &field_name)
+                                                    {
+                                                        // Check if this local has a nominal type annotation
+                                                        if let Some(nom_name) = nominal {
+                                                            crate::types::OatsType::NominalStruct(
+                                                                nom_name,
+                                                            )
+                                                        }
+                                                        // Try to map LLVM type back to OatsType
+                                                        else if ty.is_float_type() {
+                                                            crate::types::OatsType::Number
+                                                        } else if ty.is_pointer_type() {
+                                                            crate::types::OatsType::String // assume string/pointer
+                                                        } else {
+                                                            crate::types::OatsType::Number
+                                                        }
+                                                    } else {
+                                                        crate::types::OatsType::Number
+                                                    };
+                                                    fields.push((field_name.clone(), field_ty));
+                                                }
+                                                _ => {}
+                                            }
+                                        }
+                                    }
+
+                                    // Register the fields under the generated nominal name
+                                    if !fields.is_empty() {
+                                        self.class_fields
+                                            .borrow_mut()
+                                            .insert(gen_name.clone(), fields);
+                                    }
+
+                                    // Now set declared_nominal so the rest of the logic uses it
+                                    declared_nominal = Some(gen_name);
                                 }
 
                                 if let Ok(mut val) =
@@ -454,6 +664,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     // pointer. Boxing keeps the runtime layout
                                     // uniform for pointer-like unions and simplifies
                                     // RC handling.
+                                    //
+                                    // NOTE: We don't box pointer values here because
+                                    // they might already be boxed unions from function
+                                    // calls. This prevents double-boxing. Only scalar
+                                    // values (f64, bool) are boxed.
                                     let mut allocated_ty = val.get_type().as_basic_type_enum();
                                     if let Some(crate::types::OatsType::Union(parts)) =
                                         &declared_union
@@ -468,7 +683,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             )
                                         });
                                         if any_ptr {
-                                            // Ensure val is boxed pointer (union_box_f64 or union_box_ptr)
+                                            // Only box scalar values (f64, i1)
+                                            // Pointers are assumed to be either already boxed
+                                            // or need to be treated as direct pointer values
                                             if val.get_type().is_float_type() {
                                                 let box_fn = self.get_union_box_f64();
                                                 let cs = self.builder.build_call(
@@ -482,21 +699,37 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                 {
                                                     val = bv;
                                                 }
-                                            } else if let BasicValueEnum::PointerValue(pv) = val {
-                                                let box_fn = self.get_union_box_ptr();
-                                                let cs = self.builder.build_call(
-                                                    box_fn,
-                                                    &[pv.into()],
-                                                    "union_box_ptr_ctor",
-                                                );
-                                                if let Ok(cs) = cs
-                                                    && let inkwell::Either::Left(bv) =
-                                                        cs.try_as_basic_value()
-                                                {
-                                                    val = bv;
+                                                allocated_ty = self.i8ptr_t.as_basic_type_enum();
+                                            } else if val.get_type().is_int_type() {
+                                                // Boolean -> convert to f64, then box
+                                                if let BasicValueEnum::IntValue(iv) = val {
+                                                    let as_f64 =
+                                                        self.builder.build_unsigned_int_to_float(
+                                                            iv,
+                                                            self.f64_t,
+                                                            "bool_to_f64",
+                                                        );
+                                                    if let Ok(fv) = as_f64 {
+                                                        let box_fn = self.get_union_box_f64();
+                                                        let cs = self.builder.build_call(
+                                                            box_fn,
+                                                            &[fv.into()],
+                                                            "union_box_f64_ctor",
+                                                        );
+                                                        if let Ok(cs) = cs
+                                                            && let inkwell::Either::Left(bv) =
+                                                                cs.try_as_basic_value()
+                                                        {
+                                                            val = bv;
+                                                        }
+                                                    }
                                                 }
+                                                allocated_ty = self.i8ptr_t.as_basic_type_enum();
+                                            } else if val.get_type().is_pointer_type() {
+                                                // Pointer value - don't box it, might already be boxed
+                                                // Just use it directly
+                                                allocated_ty = self.i8ptr_t.as_basic_type_enum();
                                             }
-                                            allocated_ty = self.i8ptr_t.as_basic_type_enum();
                                         } else {
                                             // union of only numbers -> use f64 slot
                                             allocated_ty = self.f64_t.as_basic_type_enum();
@@ -530,6 +763,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         _existing_is_const,
                                         _existing_is_weak,
                                         _existing_nominal,
+                                        _existing_oats_type,
                                     )) = &maybe_existing
                                     {
                                         *existing_ptr
@@ -582,6 +816,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                 is_const: false,
                                                 is_weak: declared_is_weak,
                                                 nominal: declared_nominal.clone(),
+                                                oats_type: declared_union.clone(),
                                             },
                                         );
                                     }
@@ -592,7 +827,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 // slot will be marked uninitialized so further
                                 // lowering can detect reads of uninitialized
                                 // locals and emit diagnostics if necessary.
-                                let ty = self.i64_t.as_basic_type_enum();
+                                // For union types, use i8ptr since unions are boxed.
+                                let ty = if declared_union.is_some() {
+                                    self.i8ptr_t.as_basic_type_enum()
+                                } else {
+                                    self.i64_t.as_basic_type_enum()
+                                };
                                 let alloca = match self.builder.build_alloca(ty, &name) {
                                     Ok(a) => a,
                                     Err(_) => {
@@ -615,6 +855,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         is_const: false,
                                         is_weak: declared_is_weak,
                                         nominal: declared_nominal.clone(),
+                                        oats_type: declared_union.clone(),
                                     },
                                 );
                             }
@@ -902,7 +1143,92 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 // run before the caller resumes. This models deterministic
                 // destruction and matches the runtime's RC expectations.
                 if let Some(arg) = &ret.arg {
-                    if let Ok(val) = self.lower_expr(arg, _function, _param_map, _locals_stack) {
+                    if let Ok(mut val) = self.lower_expr(arg, _function, _param_map, _locals_stack)
+                    {
+                        // Check if function returns a union type and box if necessary
+                        if let Some(return_type) =
+                            self.current_function_return_type.borrow().clone()
+                        {
+                            if matches!(return_type, crate::types::OatsType::Union(_)) {
+                                // Box the value as a union
+                                use inkwell::values::BasicValueEnum;
+                                val = match val {
+                                    BasicValueEnum::FloatValue(fv) => {
+                                        let box_fn = self.get_union_box_f64();
+                                        let boxed = self
+                                            .builder
+                                            .build_call(box_fn, &[fv.into()], "union_box")
+                                            .map_err(|_| {
+                                                crate::diagnostics::Diagnostic::simple(
+                                                    "Failed to box f64 as union in return",
+                                                )
+                                            })?
+                                            .try_as_basic_value()
+                                            .left()
+                                            .ok_or_else(|| {
+                                                crate::diagnostics::Diagnostic::simple(
+                                                    "union_box_f64 did not return value",
+                                                )
+                                            })?;
+                                        boxed
+                                    }
+                                    BasicValueEnum::PointerValue(pv) => {
+                                        let box_fn = self.get_union_box_ptr();
+                                        let boxed = self
+                                            .builder
+                                            .build_call(box_fn, &[pv.into()], "union_box")
+                                            .map_err(|_| {
+                                                crate::diagnostics::Diagnostic::simple(
+                                                    "Failed to box ptr as union in return",
+                                                )
+                                            })?
+                                            .try_as_basic_value()
+                                            .left()
+                                            .ok_or_else(|| {
+                                                crate::diagnostics::Diagnostic::simple(
+                                                    "union_box_ptr did not return value",
+                                                )
+                                            })?;
+                                        boxed
+                                    }
+                                    BasicValueEnum::IntValue(iv)
+                                        if iv.get_type().get_bit_width() == 1 =>
+                                    {
+                                        // Boolean -> convert to f64 and box
+                                        let as_f64 = self
+                                            .builder
+                                            .build_unsigned_int_to_float(
+                                                iv,
+                                                self.f64_t,
+                                                "bool_to_f64",
+                                            )
+                                            .map_err(|_| {
+                                                crate::diagnostics::Diagnostic::simple(
+                                                    "Failed to convert bool to f64 in union return",
+                                                )
+                                            })?;
+                                        let box_fn = self.get_union_box_f64();
+                                        let boxed = self
+                                            .builder
+                                            .build_call(box_fn, &[as_f64.into()], "union_box")
+                                            .map_err(|_| {
+                                                crate::diagnostics::Diagnostic::simple(
+                                                    "Failed to box bool as union in return",
+                                                )
+                                            })?
+                                            .try_as_basic_value()
+                                            .left()
+                                            .ok_or_else(|| {
+                                                crate::diagnostics::Diagnostic::simple(
+                                                    "union_box_f64 did not return value",
+                                                )
+                                            })?;
+                                        boxed
+                                    }
+                                    _ => val, // Already boxed or unsupported type
+                                };
+                            }
+                        }
                         // emit rc decs for locals
                         self.emit_rc_dec_for_locals(_locals_stack);
                         // build return with the lowered value
@@ -1043,6 +1369,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
                         // Position at merge
                         self.builder.position_at_end(merge_bb);
+
+                        // If both branches terminated, the merge block is unreachable.
+                        // Add an unreachable instruction to make LLVM happy.
+                        if then_terminated && else_terminated {
+                            let _ = self.builder.build_unreachable();
+                        }
 
                         // If both branches terminated, the if statement terminates
                         Ok(then_terminated && else_terminated)
@@ -1211,6 +1543,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             is_const: false,
                                             is_weak: false,
                                             nominal: declared_nominal.clone(),
+                                            oats_type: None,
                                         },
                                     );
                                 }
@@ -1258,6 +1591,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             is_const: false,
                                             is_weak: false,
                                             nominal: declared_nominal.clone(),
+                                            oats_type: None,
                                         },
                                     );
                                 }

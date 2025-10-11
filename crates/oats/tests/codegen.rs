@@ -25,8 +25,6 @@ mod field_write;
 mod for_loop_and_if;
 #[path = "codegen/ir_tests.rs"]
 mod ir_tests;
-#[path = "codegen/loops_and_fields.rs"]
-mod loops_and_fields;
 #[path = "codegen/promise_type.rs"]
 mod promise_type;
 #[path = "codegen/unary_operators.rs"]

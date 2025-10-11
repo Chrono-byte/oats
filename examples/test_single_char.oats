@@ -1,0 +1,9 @@
+// Test single-char strings without unions
+export function main(): void {
+    let a: string = "a";
+    let b: string = "b";
+    let c: string = "c";
+    println(a);
+    println(b);
+    println(c);
+}

@@ -2,25 +2,21 @@ use anyhow::Result;
 
 // common helper provides IR generation for tests
 use super::common;
-use common::create_codegen;
+use common::gen_ir_for_source;
 
 #[test]
-fn class_simple_emits_ctor_and_method() -> Result<()> {
-    let src = std::fs::read_to_string("../../examples/class_simple.oats")?;
+fn class_field_emits_ctor_and_method() -> Result<()> {
+    let src = std::fs::read_to_string("../../examples/class_field.oats")?;
 
-    let context = inkwell::context::Context::create();
-    let symbols = oats::types::SymbolTable::new();
-    let codegen = create_codegen(&context, "class_lowering_test", symbols, &src);
-
-    let ir = codegen.module.print_to_string().to_string();
+    let ir = gen_ir_for_source(&src)?;
 
     assert!(
-        ir.contains("Foo_ctor"),
+        ir.contains("Point_ctor"),
         "expected generated IR to contain `Foo_ctor`: {}",
         ir
     );
     assert!(
-        ir.contains("Foo_bar"),
+        ir.contains("Point_sum"),
         "expected generated IR to contain `Foo_bar`: {}",
         ir
     );

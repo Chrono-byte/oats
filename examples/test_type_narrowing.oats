@@ -1,0 +1,23 @@
+// Test type narrowing with typeof guards
+export function main(): void {
+    let x: number | string = 42;
+    
+    if (typeof x === "number") {
+        println(x);  // x is number here, should print: 42
+    }
+    
+    x = "hello";
+    
+    if (typeof x === "string") {
+        println(x);  // x is string here, should print: hello
+    }
+    
+    // Test with else branch
+    let y: number | string = 100;
+    
+    if (typeof y === "string") {
+        println(y);  // This won't execute
+    } else {
+        println(y);  // y should still be union here, should print: 100
+    }
+}

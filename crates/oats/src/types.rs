@@ -93,6 +93,13 @@ impl SymbolTable {
             scope.insert(name, ty);
         }
     }
+
+    pub fn all_symbols(&self) -> Vec<(String, OatsType)> {
+        self.scopes
+            .iter()
+            .flat_map(|scope| scope.iter().map(|(k, v)| (k.clone(), v.clone())))
+            .collect()
+    }
 }
 
 // Map a TypeScript AST type to an OatsType.

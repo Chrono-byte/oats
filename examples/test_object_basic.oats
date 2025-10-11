@@ -1,0 +1,11 @@
+// Test object literal without shorthand
+
+export function main(): number {
+    let point = { x: 100, y: 200 };
+    
+    println("Object test:");
+    println(point.x);
+    println(point.y);
+    
+    return 0;
+}

@@ -1,0 +1,11 @@
+// Debug reassignment issue
+export function main(): void {
+    let x: number | string = 1;
+    println(x);  // Should print: 1
+    
+    x = "p";
+    println(x);  // Should print: hello
+    
+    x = 2;
+    println(x);  // Should print: 2
+}

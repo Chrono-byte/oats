@@ -4,6 +4,8 @@ use oats::codegen::CodeGen;
 use oats::parser;
 use oats::types::{SymbolTable, check_function_strictness};
 use std::cell::Cell;
+use std::cell::RefCell;
+use std::collections::HashMap;
 
 use inkwell::context::Context;
 use inkwell::targets::TargetMachine;
@@ -44,7 +46,6 @@ pub fn gen_ir_for_source(src: &str) -> Result<String> {
     let module = context.create_module("test_module");
     let triple = TargetMachine::get_default_triple();
     module.set_triple(&triple);
-    let builder = context.create_builder();
     let codegen = create_codegen(&context, "test_module", symbols, &parsed_mod.source);
 
     // gen_function_ir returns Diagnostic on failures; convert to anyhow for `?` compatibility
@@ -204,17 +205,47 @@ pub fn gen_ir_for_source(src: &str) -> Result<String> {
 
 // Ensure `builder` is directly passed to `CodeGen`
 // Updated `create_codegen` to wrap `SymbolTable` in `RefCell` internally
-pub fn create_codegen<'a>(context: &'a Context, module_name: &str, symbols: SymbolTable, source: &'a str) -> CodeGen<'a> {
+pub fn create_codegen<'a>(context: &'a Context, module_name: &str, mut symbols: SymbolTable, source: &'a str) -> CodeGen<'a> {
     let module = context.create_module(module_name);
     let builder = context.create_builder();
 
     builder.clear_insertion_position();
 
+    // Simulate module resolution and symbol registration
+    let mut modules = std::collections::HashMap::new();
+    let parsed_mod = oats::parser::parse_oats_module(source, None).expect("Failed to parse module");
+    modules.insert(module_name.to_string(), parsed_mod);
+
+    for (_, parsed_module) in modules.iter() {
+        let pm = &parsed_module.parsed;
+        for item_ref in pm.program_ref().body() {
+            if let deno_ast::ModuleItemRef::ModuleDecl(module_decl) = item_ref
+                && let deno_ast::swc::ast::ModuleDecl::ExportDecl(decl) = module_decl
+            {
+                match &decl.decl {
+                    deno_ast::swc::ast::Decl::Class(c) => {
+                        let name = c.ident.sym.to_string();
+                        symbols.insert(name.clone(), oats::types::OatsType::NominalStruct(name));
+                    }
+                    deno_ast::swc::ast::Decl::TsInterface(iface) => {
+                        let name = iface.id.sym.to_string();
+                        symbols.insert(name.clone(), oats::types::OatsType::NominalStruct(name));
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    println!("Creating CodeGen for module: {}", module_name);
+    println!("Source length: {}", source.len());
+    println!("Builder initialized: {:?}", builder);
+
     CodeGen {
-        context,
+        context: &context,
         module,
         builder,
-        next_str_id: Cell::new(0),
+        next_str_id: std::cell::Cell::new(0),
         string_literals: std::cell::RefCell::new(std::collections::HashMap::new()),
         f64_t: context.f64_type(),
         i64_t: context.i64_type(),
@@ -239,25 +270,25 @@ pub fn create_codegen<'a>(context: &'a Context, module_name: &str, symbols: Symb
         fn_rc_weak_dec: std::cell::RefCell::new(None),
         fn_rc_weak_upgrade: std::cell::RefCell::new(None),
         fn_union_get_discriminant: std::cell::RefCell::new(None),
-        class_fields: std::cell::RefCell::new(std::collections::HashMap::new()),
-        fn_param_types: std::cell::RefCell::new(std::collections::HashMap::new()),
-        current_class_parent: std::cell::RefCell::new(None),
-        closure_local_rettype: std::cell::RefCell::new(std::collections::HashMap::new()),
-        last_expr_origin_local: std::cell::RefCell::new(None),
-        async_await_live_sets: std::cell::RefCell::new(None),
-        async_local_name_to_slot: std::cell::RefCell::new(None),
-        async_resume_blocks: std::cell::RefCell::new(None),
-        async_cont_blocks: std::cell::RefCell::new(None),
-        async_poll_function: std::cell::RefCell::new(None),
-        async_await_counter: std::cell::Cell::new(0),
-        async_param_count: std::cell::Cell::new(0),
-        async_local_slot_count: std::cell::Cell::new(0),
-        async_poll_locals: std::cell::RefCell::new(None),
+        class_fields: RefCell::new(HashMap::new()),
+        fn_param_types: RefCell::new(HashMap::new()),
+        loop_context_stack: RefCell::new(Vec::new()),
+        current_class_parent: RefCell::new(None),
+        closure_local_rettype: RefCell::new(HashMap::new()),
+        last_expr_origin_local: RefCell::new(None),
+        async_await_live_sets: RefCell::new(None),
+        async_local_name_to_slot: RefCell::new(None),
+        async_resume_blocks: RefCell::new(None),
+        async_cont_blocks: RefCell::new(None),
+        async_poll_function: RefCell::new(None),
+        async_await_counter: Cell::new(0),
+        async_param_count: Cell::new(0),
+        async_local_slot_count: Cell::new(0),
+        async_poll_locals: RefCell::new(None),
         source,
-        loop_context_stack: std::cell::RefCell::new(Vec::new()),
-        current_function_return_type: std::cell::RefCell::new(None),
-        last_expr_is_boxed_union: std::cell::Cell::new(false),
-        global_function_signatures: std::cell::RefCell::new(std::collections::HashMap::new()),
-        symbol_table: std::cell::RefCell::new(symbols),
+        current_function_return_type: RefCell::new(None),
+        last_expr_is_boxed_union: Cell::new(false),
+        global_function_signatures: RefCell::new(HashMap::new()),
+        symbol_table: RefCell::new(symbols),
     }
 }

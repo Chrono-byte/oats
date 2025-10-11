@@ -1,0 +1,38 @@
+export function main(): void {
+    println("Control Flow Tests");
+
+    // Test 1: While loop
+    let i = 0;
+    while (i < 5) {
+        println(`While loop iteration: ${i}`);
+        i = i + 1;
+    }
+
+    // Test 2: Do-while loop
+    let j = 0;
+    do {
+        println(`Do-while loop iteration: ${j}`);
+        j = j + 1;
+    } while (j < 5);
+
+    // Test 3: Break statement
+    for (let k = 0; k < 10; k = k + 1) {
+        if (k === 3) {
+            println("Breaking at k=3");
+            break;
+        }
+        println(`For loop iteration: ${k}`);
+    }
+
+    // Test 4: Continue statement
+    for (let l = 0; l < 5; l = l + 1) {
+        if (l % 2 === 0) {
+            println(`Skipping even number: ${l}`);
+            continue;
+        }
+        println(`Processing odd number: ${l}`);
+    }
+
+    println("Control Flow Tests Completed");
+    return;
+}

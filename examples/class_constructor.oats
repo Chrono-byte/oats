@@ -1,10 +1,12 @@
 export class Counter {
-    constructor(public value: number) {
-        // Constructor parameter 'value' automatically becomes a field
+    private value: number;
+
+    constructor(initialValue: number) {
+        this.value = initialValue;
     }
 
     increment(): number {
-        this.value = this.value + 1.0;
+        this.value += 1;
         return this.value;
     }
 
@@ -13,10 +15,8 @@ export class Counter {
     }
 }
 
-export function main(): number {
-    let c = new Counter(5.0);
-    print_f64(c.getValue());
-    c.increment();
-    print_f64(c.getValue());
-    return 0;
+export function main(): void {
+    const counter = new Counter(10);
+    counter.increment();
+    console.log(counter.getValue());
 }

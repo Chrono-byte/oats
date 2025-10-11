@@ -1,0 +1,30 @@
+export function main(): void {
+    println("Unary Operators Tests");
+
+    // Test 1: Unary minus
+    let a = 5;
+    println(`Unary minus: ${-a}`);
+
+    // Test 2: Unary plus
+    let b = "42";
+    println(`Unary plus: ${+b}`);
+
+    // Test 3: Logical NOT
+    let c = true;
+    println(`Logical NOT: ${!c}`);
+
+    // Test 4: Bitwise NOT
+    let d = 5;
+    println(`Bitwise NOT: ${~d}`);
+
+    // Test 5: Increment
+    let e = 1;
+    println(`Increment: ${++e}`);
+
+    // Test 6: Decrement
+    let f = 10;
+    println(`Decrement: ${--f}`);
+
+    println("Unary Operators Tests Completed");
+    return;
+}

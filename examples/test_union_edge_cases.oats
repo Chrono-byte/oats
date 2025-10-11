@@ -1,0 +1,31 @@
+// Test edge cases with unions (without function returns)
+export function main(): void {
+    // Test 1: Multiple reassignments including single-char
+    let x: number | string = 1;
+    println(x);
+    x = "a";
+    println(x);
+    x = 2;
+    println(x);
+    x = "b";
+    println(x);
+    
+    // Test 2: typeof guards work correctly
+    let y: number | string = 42;
+    if (typeof y === "number") {
+        println(y);
+    }
+    
+    y = "test";
+    if (typeof y === "string") {
+        println(y);
+    }
+    
+    // Test 3: Multiple union variables
+    let a: number | string = 10;
+    let b: number | string = "twenty";
+    let c: number | string = 30;
+    println(a);
+    println(b);
+    println(c);
+}

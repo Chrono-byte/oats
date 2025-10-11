@@ -1,5 +1,0 @@
-export function main(): void {
-    const name = "World";
-    const greeting = `Hello ${name}`;
-    println(greeting);
-}

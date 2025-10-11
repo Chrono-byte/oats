@@ -1432,6 +1432,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
             combined_fields.push((pname.clone(), param_types_vec[i].clone()));
         }
 
+        eprintln!("[DEBUG] gen_constructor_ir: fields = {:?}", fields);
+        eprintln!("[DEBUG] gen_constructor_ir: param_names = {:?}", param_names);
+        println!("Combined fields: {:?}", combined_fields);
+
         // Layout: [ header (8) | metadata ptr (8) | field0 (8) | field1 (8) | ... ]
         // Reserve an 8-byte metadata slot immediately after the header so the
         // runtime can store a pointer to the class field_map at offset 8.
@@ -1614,6 +1618,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 let boxed_bv =
                                     inkwell::values::BasicValueEnum::PointerValue(boxed_ptr);
                                 let _ = self.builder.build_store(field_ptr_cast, boxed_bv);
+
                                 // For union-boxed pointers we treat the stored pointer as strong by default.
                                 // If the declared field type within the union is Weak, more refined handling
                                 // The weak/strong distinction will be added later.
@@ -1640,11 +1645,16 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 let boxed_bv =
                                     inkwell::values::BasicValueEnum::PointerValue(boxed_ptr);
                                 let _ = self.builder.build_store(field_ptr_cast, boxed_bv);
-                                let rc_inc_fn = self.get_rc_inc();
+
+                                // Use rc_weak_inc for weak fields
+                                let rc_fn = match _field_type {
+                                    OatsType::Weak(_) => self.get_rc_weak_inc(),
+                                    _ => self.get_rc_inc(),
+                                };
                                 let _ = self.builder.build_call(
-                                    rc_inc_fn,
+                                    rc_fn,
                                     &[boxed_ptr.into()],
-                                    "rc_inc_field",
+                                    "rc_field",
                                 );
                             }
                         } else {
@@ -1659,6 +1669,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             // If the declared field type is Weak<T>, use rc_weak_inc; otherwise rc_inc
                             match _field_type {
                                 OatsType::Weak(_) => {
+                                    println!("Invoking rc_weak_inc for field: {:?}", field_name);
                                     let rc_weak_inc = self.get_rc_weak_inc();
                                     let _ = self.builder.build_call(
                                         rc_weak_inc,

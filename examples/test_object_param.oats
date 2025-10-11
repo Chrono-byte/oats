@@ -1,0 +1,17 @@
+// Test object as function parameter with interface/type
+
+export function main(): number {
+    // Define a point
+    let point = { x: 100, y: 200 };
+    
+    // Pass to function with explicit nominal type
+    function getX(p: { x: number, y: number }): number {
+        return p.x;
+    }
+    
+    let result = getX(point);
+    println("Result:");
+    println(result);
+    
+    return 0;
+}

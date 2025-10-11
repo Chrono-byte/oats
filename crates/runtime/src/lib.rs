@@ -176,7 +176,6 @@ fn is_plausible_addr(addr: usize) -> bool {
 // - Use prior to dereferencing class metadata blocks that were previously
 //   stored by the code generator. If `validate_meta_block` returns `true`, the
 //   caller may proceed with cautious reads of the metadata fields.
-
 unsafe fn validate_meta_block(meta: *mut u64, max_len: usize) -> bool {
     if meta.is_null() {
         return false;
@@ -1829,15 +1828,17 @@ unsafe fn get_object_base(p: *mut c_void) -> *mut c_void {
         let header_val = (*header).load(Ordering::Relaxed);
 
         // Valid header check: either has static bit, or has reasonable RC value.
-        // We check that the strong count is not absurdly large and that the
-        // flags are a small set of expected values. These heuristics are
-        // intentionally conservative; the runtime does not attempt to fully
-        // validate arbitrary pointers to avoid UB in the presence of memory
-        // corruption.
+        // The header layout is:
+        // - bits 0-31: strong refcount
+        // - bit 32: static bit
+        // - bits 33-48: weak refcount (16 bits)
+        // - bits 49-63: type tag
+        // We check that the strong count is reasonable and not too large.
         let rc = header_val & HEADER_RC_MASK;
-        let flags = (header_val >> 32) as u32;
+        let is_static = (header_val & HEADER_STATIC_BIT) != 0;
 
-        if rc < 10000 && (flags == 0 || flags == 1) {
+        // Accept if: reasonable RC (< 10000) OR has static bit set
+        if rc < 10000 || is_static {
             // Looks like a valid header, use this pointer as-is
             return p;
         }
@@ -1847,9 +1848,9 @@ unsafe fn get_object_base(p: *mut c_void) -> *mut c_void {
         let obj_header = obj_ptr as *const AtomicU64;
         let obj_header_val = (*obj_header).load(Ordering::Relaxed);
         let obj_rc = obj_header_val & HEADER_RC_MASK;
-        let obj_flags = (obj_header_val >> 32) as u32;
+        let obj_is_static = (obj_header_val & HEADER_STATIC_BIT) != 0;
 
-        if obj_rc < 10000 && (obj_flags == 0 || obj_flags == 1) {
+        if obj_rc < 10000 || obj_is_static {
             // Found valid header at -16, this is a string data pointer
             return obj_ptr;
         }
@@ -2171,11 +2172,12 @@ pub extern "C" fn union_box_f64(v: f64) -> *mut c_void {
             return ptr::null_mut();
         }
 
-        // header: type_tag=1 (dtor present) | rc=1
+        // header: type_tag=1 (dtor present) | rc=1 | weak=1
+        // weak=1 represents the object's own existence
         let header_ptr = mem as *mut u64;
         let type_tag: u64 = 1u64 << HEADER_TYPE_TAG_SHIFT;
         let refcount: u64 = 1u64;
-        *header_ptr = header_with_weak(type_tag | refcount, 0);
+        *header_ptr = header_with_weak(type_tag | refcount, 1);
 
         // store dtor pointer at offset +8
         let dtor_ptr = mem.add(8) as *mut *mut c_void;
@@ -2210,7 +2212,7 @@ pub unsafe extern "C" fn union_box_ptr(p: *mut c_void) -> *mut c_void {
         let header_ptr = mem as *mut u64;
         let type_tag: u64 = 1u64 << HEADER_TYPE_TAG_SHIFT;
         let refcount: u64 = 1u64;
-        *header_ptr = header_with_weak(type_tag | refcount, 0);
+        *header_ptr = header_with_weak(type_tag | refcount, 1);
 
         // store dtor
         let dtor_ptr = mem.add(8) as *mut *mut c_void;
@@ -2566,17 +2568,22 @@ mod tests {
 
     #[test]
     fn test_rc_dec_calls_destructor() {
+        // Reset CALLED flag at start of test
+        CALLED.store(false, Ordering::SeqCst);
+        
         unsafe {
             // allocate two u64 words: header + dtor pointer via runtime_malloc
             let size = std::mem::size_of::<u64>() * 2;
             let mem = runtime_malloc(size) as *mut u8;
             assert!(!mem.is_null());
 
-            // set header: type_tag=1, refcount=1, weak=0
+            // set header: type_tag=1, refcount=1, weak=1
+            // weak=1 represents the object's own existence; when strong reaches 0,
+            // rc_weak_dec will decrement weak from 1→0 and free the memory.
             let header_ptr = mem as *mut u64;
             let type_tag: u64 = 1u64 << HEADER_TYPE_TAG_SHIFT;
             let refcount: u64 = 1u64;
-            let header_val: u64 = header_with_weak(type_tag | refcount, 0);
+            let header_val: u64 = header_with_weak(type_tag | refcount, 1);
             *header_ptr = header_val;
 
             // store destructor pointer at second word

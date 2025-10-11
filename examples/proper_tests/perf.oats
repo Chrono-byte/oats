@@ -1,0 +1,65 @@
+export function main(): void {
+    println("Starting performance test...");
+
+    // A series of nonsensical calculations to test the compiler's ability to handle complex arithmetic expressions.
+    let result = 0;
+    for (let i = 0; i < 100; i = i + 1) {
+        result = (result + i) * 1.000000000000001 - (i / 1.000000000000001);
+        if (i % 2 == 0) {
+            result = result + 1;
+        } else {
+            result = result - 1;
+        }
+    }
+    println("Complex arithmetic test finished.");
+
+    // A recursive function to test the compiler's ability to handle recursion and nested loops.
+    function recursive(n: number): number {
+        if (n <= 0) {
+            return 1;
+        }
+        let total = 0;
+        for (let i = 0; i < n; i = i + 1) {
+            total = total + recursive(n - 1);
+        }
+        return total;
+    }
+    recursive(5);
+    println("Recursive function test finished.");
+
+    // A large array to test the compiler's ability to handle large data structures.
+    let arr: number[] = [];
+    for (let i = 0; i < 1000; i = i + 1) {
+        arr[i] = i;
+    }
+    println("Large array test finished.");
+
+
+    // A series of string manipulations to test the compiler's ability to handle string operations.
+    let str = "";
+    for (let i = 0; i < 100; i = i + 1) {
+        str = str + "a";
+    }
+    println("String manipulation test finished.");
+
+
+    // A class with a lot of methods to test the compiler's ability to handle classes.
+    class ManyMethods {
+        constructor() {}
+        method1(): void {}
+        method2(): void {}
+        method3(): void {}
+        method4(): void {}
+        method5(): void {}
+        method6(): void {}
+        method7(): void {}
+        method8(): void {}
+        method9(): void {}
+        method10(): void {}
+    }
+    let manyMethods = new ManyMethods();
+    println("Class with many methods test finished.");
+
+
+    println("Performance test finished.");
+}

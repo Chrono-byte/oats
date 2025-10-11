@@ -22,6 +22,7 @@ use inkwell::module::Module;
 use inkwell::types::{BasicType, BasicTypeEnum};
 use inkwell::values::FunctionValue;
 use inkwell::values::PointerValue;
+use inkwell::AddressSpace;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
@@ -424,20 +425,35 @@ impl<'a> CodeGen<'a> {
             })
     }
 
+    fn get_array_set_f64(&self) -> FunctionValue<'a> {
+        self.module
+            .get_function("array_set_f64")
+            .unwrap_or_else(|| {
+                // array_set_f64(arr_ptr: i8**, idx: i64, v: f64) -> void
+                // Takes pointer-to-pointer to allow reallocation
+                let ptr_ptr_t = self.context.ptr_type(AddressSpace::default());
+                let fn_type = self.context.void_type().fn_type(
+                    &[ptr_ptr_t.into(), self.i64_t.into(), self.f64_t.into()],
+                    false,
+                );
+                self.module.add_function("array_set_f64", fn_type, None)
+            })
+    }
+
     fn get_array_set_ptr(&self) -> FunctionValue<'a> {
         self.module
             .get_function("array_set_ptr")
             .unwrap_or_else(|| {
-                // array_set_ptr(arr: i8*, idx: i64, p: i8*) -> void
+                // array_set_ptr(arr_ptr: i8**, idx: i64, p: i8*) -> void
+                // Takes pointer-to-pointer to allow reallocation
+                let ptr_ptr_t = self.context.ptr_type(AddressSpace::default());
                 let fn_type = self.context.void_type().fn_type(
-                    &[self.i8ptr_t.into(), self.i64_t.into(), self.i8ptr_t.into()],
+                    &[ptr_ptr_t.into(), self.i64_t.into(), self.i8ptr_t.into()],
                     false,
                 );
                 self.module.add_function("array_set_ptr", fn_type, None)
             })
     }
-
-    #[allow(dead_code)]
     fn get_array_set_ptr_weak(&self) -> FunctionValue<'a> {
         self.module
             .get_function("array_set_ptr_weak")

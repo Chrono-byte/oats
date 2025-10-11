@@ -142,8 +142,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
                 // Handle string concatenation BEFORE numeric coercion
                 // If both operands are pointers and op is Add, treat as string concat
-                if let BinaryOp::Add = bin.op {
-                    if let (BasicValueEnum::PointerValue(lp), BasicValueEnum::PointerValue(rp)) = (l, r) {
+                if let BinaryOp::Add = bin.op
+                    && let (BasicValueEnum::PointerValue(lp), BasicValueEnum::PointerValue(rp)) =
+                        (l, r)
+                    {
                         if let Some(strcat) = self.module.get_function("str_concat") {
                             let call_site = match self.builder.build_call(
                                 strcat,
@@ -156,9 +158,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             let either = call_site.try_as_basic_value();
                             match either {
                                 inkwell::Either::Left(bv) => return Ok(bv),
-                                _ => return Err(Diagnostic::simple(
-                                    "operation not supported (bin strcat result)",
-                                )),
+                                _ => {
+                                    return Err(Diagnostic::simple(
+                                        "operation not supported (bin strcat result)",
+                                    ));
+                                }
                             }
                         } else {
                             return Err(Diagnostic::simple_with_span(
@@ -167,7 +171,6 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             ));
                         }
                     }
-                }
 
                 // Coercion and unboxing notes:
                 // - `coerce_to_f64` will convert ints/bools to f64 where
@@ -1706,7 +1709,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             // (Duplicate closure-call lowering removed; handled in the primary Call arm above.)
             ast::Expr::Assign(assign) => {
                 use deno_ast::swc::ast::{AssignTarget, SimpleAssignTarget};
-                
+
                 // support simple assignments `ident = expr` where the left side is an identifier
                 if let AssignTarget::Simple(SimpleAssignTarget::Ident(bid)) = &assign.left {
                     let name = bid.id.sym.to_string();
@@ -2211,42 +2214,58 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 // Check if left side is a subscript expression
                 if let AssignTarget::Simple(SimpleAssignTarget::SuperProp(_)) = &assign.left {
                     // SuperProp is not supported yet
-                } else if let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = &assign.left {
+                } else if let AssignTarget::Simple(SimpleAssignTarget::Member(member)) =
+                    &assign.left
+                {
                     use deno_ast::swc::ast::MemberProp;
                     if let MemberProp::Computed(computed) = &member.prop {
                         // This is arr[idx] = value
-                        
+
                         // Get the alloca pointer for the array variable (needed for reallocation)
-                        let arr_alloca_opt = if let deno_ast::swc::ast::Expr::Ident(ident) = &*member.obj {
-                            let name = ident.sym.to_string();
-                            self.find_local(locals, &name).map(|(ptr, _, _, _, _, _)| ptr)
-                        } else {
-                            None
-                        };
-                        
+                        let arr_alloca_opt =
+                            if let deno_ast::swc::ast::Expr::Ident(ident) = &*member.obj {
+                                let name = ident.sym.to_string();
+                                self.find_local(locals, &name)
+                                    .map(|(ptr, _, _, _, _, _)| ptr)
+                            } else {
+                                None
+                            };
+
                         if arr_alloca_opt.is_none() {
                             return Err(Diagnostic::simple_with_span(
                                 "array element assignment requires array stored in a variable",
                                 assign.span.lo.0 as usize,
                             ));
                         }
-                        
+
                         let arr_alloca = arr_alloca_opt.unwrap();
-                        
+
                         // Lower the index expression
-                        let idx_val = self.lower_expr(&computed.expr, function, param_map, locals)?;
+                        let idx_val =
+                            self.lower_expr(&computed.expr, function, param_map, locals)?;
                         let idx_i64 = if let BasicValueEnum::FloatValue(fv) = idx_val {
                             // Convert f64 to i64
-                            match self.builder.build_float_to_signed_int(fv, self.i64_t, "idx_i64") {
+                            match self
+                                .builder
+                                .build_float_to_signed_int(fv, self.i64_t, "idx_i64")
+                            {
                                 Ok(v) => v,
-                                Err(_) => return Err(Diagnostic::simple("failed to convert index to i64")),
+                                Err(_) => {
+                                    return Err(Diagnostic::simple(
+                                        "failed to convert index to i64",
+                                    ));
+                                }
                             }
                         } else if let BasicValueEnum::IntValue(iv) = idx_val {
                             // Extend to i64 if needed
                             if iv.get_type().get_bit_width() < 64 {
                                 match self.builder.build_int_s_extend(iv, self.i64_t, "idx_i64") {
                                     Ok(v) => v,
-                                    Err(_) => return Err(Diagnostic::simple("failed to extend index to i64")),
+                                    Err(_) => {
+                                        return Err(Diagnostic::simple(
+                                            "failed to extend index to i64",
+                                        ));
+                                    }
                                 }
                             } else {
                                 iv
@@ -2254,10 +2273,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         } else {
                             return Err(Diagnostic::simple("array index must be a number"));
                         };
-                        
+
                         // Lower the value to assign
                         let val = self.lower_expr(&assign.right, function, param_map, locals)?;
-                        
+
                         // Determine if this is a pointer or numeric assignment
                         if let BasicValueEnum::PointerValue(pv) = val {
                             // Pointer assignment: array_set_ptr(arr_alloca, idx, val)
@@ -2268,7 +2287,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 "array_set_ptr",
                             ) {
                                 Ok(cs) => cs,
-                                Err(_) => return Err(Diagnostic::simple("failed to call array_set_ptr")),
+                                Err(_) => {
+                                    return Err(Diagnostic::simple("failed to call array_set_ptr"));
+                                }
                             };
                         } else if let BasicValueEnum::FloatValue(fv) = val {
                             // Numeric assignment: array_set_f64(arr_alloca, idx, val)
@@ -2279,12 +2300,14 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 "array_set_f64",
                             ) {
                                 Ok(cs) => cs,
-                                Err(_) => return Err(Diagnostic::simple("failed to call array_set_f64")),
+                                Err(_) => {
+                                    return Err(Diagnostic::simple("failed to call array_set_f64"));
+                                }
                             };
                         } else {
                             return Err(Diagnostic::simple("unsupported array element value type"));
                         }
-                        
+
                         return Ok(val);
                     }
                 }
@@ -3726,30 +3749,80 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             let state_ptr = state_param.into_pointer_value();
 
                             // load live set and local map
-                            if let Some(live_sets) = &*self.async_await_live_sets.borrow() {
-                                if let Some(local_map) = &*self.async_local_name_to_slot.borrow() {
-                                    if let Some(live_set) = live_sets.get((resume_idx - 1) as usize) {
+                            if let Some(live_sets) = &*self.async_await_live_sets.borrow()
+                                && let Some(local_map) = &*self.async_local_name_to_slot.borrow()
+                                    && let Some(live_set) = live_sets.get((resume_idx - 1) as usize)
+                                    {
                                         for name in live_set.iter() {
-                                            if let Some(slot_idx) = local_map.get(name) {
-                                                if let Some((alloca_ptr, ty, _init, _is_const, _is_weak, _nominal)) = self.find_local(locals, name) {
-                                                    let loaded = match self.builder.build_load(ty, alloca_ptr, &format!("save_{}", name)) {
+                                            if let Some(slot_idx) = local_map.get(name)
+                                                && let Some((
+                                                    alloca_ptr,
+                                                    ty,
+                                                    _init,
+                                                    _is_const,
+                                                    _is_weak,
+                                                    _nominal,
+                                                )) = self.find_local(locals, name)
+                                                {
+                                                    let loaded = match self.builder.build_load(
+                                                        ty,
+                                                        alloca_ptr,
+                                                        &format!("save_{}", name),
+                                                    ) {
                                                         Ok(v) => v,
-                                                        Err(_) => return Err(Diagnostic::simple("failed to load local for save")),
+                                                        Err(_) => {
+                                                            return Err(Diagnostic::simple(
+                                                                "failed to load local for save",
+                                                            ));
+                                                        }
                                                     };
 
                                                     // compute slot address: state_base + (16 + slot_idx*8)
-                                                    let base_int = match self.builder.build_ptr_to_int(state_ptr, self.i64_t, "state_addr") {
+                                                    let base_int = match self
+                                                        .builder
+                                                        .build_ptr_to_int(
+                                                            state_ptr,
+                                                            self.i64_t,
+                                                            "state_addr",
+                                                        ) {
                                                         Ok(v) => v,
-                                                        Err(_) => return Err(Diagnostic::simple("ptr_to_int failed when saving locals")),
+                                                        Err(_) => {
+                                                            return Err(Diagnostic::simple(
+                                                                "ptr_to_int failed when saving locals",
+                                                            ));
+                                                        }
                                                     };
-                                                    let off_const = self.i64_t.const_int(16 + (*slot_idx as u64 * 8), false);
-                                                    let slot_addr_int = match self.builder.build_int_add(base_int, off_const, "slot_addr") {
+                                                    let off_const = self.i64_t.const_int(
+                                                        16 + (*slot_idx as u64 * 8),
+                                                        false,
+                                                    );
+                                                    let slot_addr_int = match self
+                                                        .builder
+                                                        .build_int_add(
+                                                            base_int,
+                                                            off_const,
+                                                            "slot_addr",
+                                                        ) {
                                                         Ok(v) => v,
-                                                        Err(_) => return Err(Diagnostic::simple("int_add failed when saving locals")),
+                                                        Err(_) => {
+                                                            return Err(Diagnostic::simple(
+                                                                "int_add failed when saving locals",
+                                                            ));
+                                                        }
                                                     };
-                                                    let slot_ptr = match self.builder.build_int_to_ptr(slot_addr_int, self.i8ptr_t, "slot_ptr_save") {
+                                                    let slot_ptr = match self
+                                                        .builder
+                                                        .build_int_to_ptr(
+                                                            slot_addr_int,
+                                                            self.i8ptr_t,
+                                                            "slot_ptr_save",
+                                                        ) {
                                                         Ok(p) => p,
-                                                        Err(_) => return Err(Diagnostic::simple("int_to_ptr failed when saving locals")),
+                                                        Err(_) => {
+                                                            return Err(Diagnostic::simple(
+                                                                "int_to_ptr failed when saving locals",
+                                                            ));
+                                                        }
                                                     };
 
                                                     match ty {
@@ -3767,25 +3840,46 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                         }
                                                     }
                                                 }
-                                            }
                                         }
                                     }
-                                }
-                            }
 
                             // store resume index into state field at offset 8
-                            let base_int = match self.builder.build_ptr_to_int(state_ptr, self.i64_t, "state_addr_store") {
+                            let base_int = match self.builder.build_ptr_to_int(
+                                state_ptr,
+                                self.i64_t,
+                                "state_addr_store",
+                            ) {
                                 Ok(v) => v,
-                                Err(_) => return Err(Diagnostic::simple("ptr_to_int failed when storing state index")),
+                                Err(_) => {
+                                    return Err(Diagnostic::simple(
+                                        "ptr_to_int failed when storing state index",
+                                    ));
+                                }
                             };
                             let state_off = self.i64_t.const_int(8, false);
-                            let state_field_int = match self.builder.build_int_add(base_int, state_off, "state_field_addr_store") {
+                            let state_field_int = match self.builder.build_int_add(
+                                base_int,
+                                state_off,
+                                "state_field_addr_store",
+                            ) {
                                 Ok(v) => v,
-                                Err(_) => return Err(Diagnostic::simple("int_add failed when storing state index")),
+                                Err(_) => {
+                                    return Err(Diagnostic::simple(
+                                        "int_add failed when storing state index",
+                                    ));
+                                }
                             };
-                            let state_field_ptr = match self.builder.build_int_to_ptr(state_field_int, self.context.ptr_type(inkwell::AddressSpace::default()), "state_field_ptr_store") {
+                            let state_field_ptr = match self.builder.build_int_to_ptr(
+                                state_field_int,
+                                self.context.ptr_type(inkwell::AddressSpace::default()),
+                                "state_field_ptr_store",
+                            ) {
                                 Ok(p) => p,
-                                Err(_) => return Err(Diagnostic::simple("int_to_ptr failed when storing state index")),
+                                Err(_) => {
+                                    return Err(Diagnostic::simple(
+                                        "int_to_ptr failed when storing state index",
+                                    ));
+                                }
                             };
                             let resume_val = self.i32_t.const_int(resume_idx as u64, false);
                             let _ = self.builder.build_store(state_field_ptr, resume_val);

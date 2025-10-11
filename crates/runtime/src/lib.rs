@@ -1294,48 +1294,48 @@ unsafe fn array_grow(arr: *mut c_void, min_capacity: usize) -> *mut c_void {
     if arr.is_null() {
         return ptr::null_mut();
     }
-    
+
     unsafe {
         // Read current metadata
         let header_ptr = arr as *const u64;
         let header = *header_ptr;
         let elem_is_number = ((header >> 32) & 1) as i32;
-        
+
         let len_ptr = (arr as *mut u8).add(mem::size_of::<u64>()) as *const u64;
         let len = *len_ptr as usize;
-        
+
         let cap_ptr = (arr as *mut u8).add(mem::size_of::<u64>() * 2) as *const u64;
         let old_capacity = *cap_ptr as usize;
-        
+
         // Calculate new capacity with geometric growth (1.5x)
         let mut new_capacity = old_capacity + (old_capacity / 2).max(1);
         if new_capacity < min_capacity {
             new_capacity = min_capacity;
         }
-        
+
         // Determine element size
         let elem_size = if elem_is_number != 0 {
             mem::size_of::<f64>()
         } else {
             mem::size_of::<*mut c_void>()
         };
-        
+
         // Allocate new array with new_capacity but same length
         // We pass new_capacity as the length parameter to allocate that many elements
         let new_arr = array_alloc(new_capacity, elem_size, elem_is_number);
         if new_arr.is_null() {
             return ptr::null_mut();
         }
-        
+
         // Update new array's length to match old array's length (not capacity)
         let new_len_ptr = (new_arr as *mut u8).add(mem::size_of::<u64>()) as *mut u64;
         *new_len_ptr = len as u64;
-        
+
         // Copy data from old to new
         let old_data = (arr as *mut u8).add(ARRAY_HEADER_SIZE);
         let new_data = (new_arr as *mut u8).add(ARRAY_HEADER_SIZE);
         ptr::copy_nonoverlapping(old_data, new_data, len * elem_size);
-        
+
         // If pointer array, increment refcounts for copied pointers
         if elem_is_number == 0 {
             let ptrs = new_data as *mut *mut c_void;
@@ -1346,11 +1346,10 @@ unsafe fn array_grow(arr: *mut c_void, min_capacity: usize) -> *mut c_void {
                 }
             }
         }
-        
+
         new_arr
     }
 }
-
 
 /// Grow an array to accommodate at least min_capacity elements.
 /// Returns a new array pointer with the same refcount and data copied over.
@@ -1360,7 +1359,6 @@ unsafe fn array_grow(arr: *mut c_void, min_capacity: usize) -> *mut c_void {
 ///
 /// # Safety
 /// Caller must ensure arr is a valid array pointer and manage refcounts appropriately.
-
 
 /// Load a f64 element from an array.
 ///
@@ -1459,10 +1457,10 @@ pub extern "C" fn array_set_f64(arr_ptr: *mut *mut c_void, idx: usize, v: f64) {
         if arr.is_null() {
             return;
         }
-        
+
         let cap_ptr = (arr as *mut u8).add(mem::size_of::<u64>() * 2) as *mut u64;
         let capacity = *cap_ptr as usize;
-        
+
         // If index is beyond capacity, grow the array
         if idx >= capacity {
             let new_arr = array_grow(arr, idx + 1);
@@ -1474,11 +1472,11 @@ pub extern "C" fn array_set_f64(arr_ptr: *mut *mut c_void, idx: usize, v: f64) {
             arr = new_arr;
             *arr_ptr = new_arr;
         }
-        
+
         // Re-get pointers in case arr changed
         let len_ptr = (arr as *mut u8).add(mem::size_of::<u64>()) as *mut u64;
         let len = *len_ptr as usize;
-        
+
         // If index is beyond length, zero-fill and extend length
         if idx >= len {
             let data_start = (arr as *mut u8).add(ARRAY_HEADER_SIZE);
@@ -1489,7 +1487,7 @@ pub extern "C" fn array_set_f64(arr_ptr: *mut *mut c_void, idx: usize, v: f64) {
             }
             *len_ptr = (idx + 1) as u64;
         }
-        
+
         // Set the value
         let data_start = (arr as *mut u8).add(ARRAY_HEADER_SIZE);
         let elem_ptr = data_start.add(idx * mem::size_of::<f64>()) as *mut f64;
@@ -1519,10 +1517,10 @@ pub unsafe extern "C" fn array_set_ptr(arr_ptr: *mut *mut c_void, idx: usize, p:
         if arr.is_null() {
             return;
         }
-        
+
         let cap_ptr = (arr as *mut u8).add(mem::size_of::<u64>() * 2) as *mut u64;
         let capacity = *cap_ptr as usize;
-        
+
         // If index is beyond capacity, grow the array
         if idx >= capacity {
             let new_arr = array_grow(arr, idx + 1);
@@ -1534,22 +1532,23 @@ pub unsafe extern "C" fn array_set_ptr(arr_ptr: *mut *mut c_void, idx: usize, p:
             arr = new_arr;
             *arr_ptr = new_arr;
         }
-        
+
         // Re-get pointers in case arr changed
         let len_ptr = (arr as *mut u8).add(mem::size_of::<u64>()) as *mut u64;
         let len = *len_ptr as usize;
-        
+
         // If index is beyond length, null-fill and extend length
         if idx >= len {
             let data_start = (arr as *mut u8).add(ARRAY_HEADER_SIZE);
-            let nulls_start = data_start.add(len * mem::size_of::<*mut c_void>()) as *mut *mut c_void;
+            let nulls_start =
+                data_start.add(len * mem::size_of::<*mut c_void>()) as *mut *mut c_void;
             let nulls_count = idx - len;
             for i in 0..nulls_count {
                 *nulls_start.add(i) = ptr::null_mut();
             }
             *len_ptr = (idx + 1) as u64;
         }
-        
+
         let data_start = (arr as *mut u8).add(ARRAY_HEADER_SIZE);
         let elem_ptr =
             data_start.add(idx * mem::size_of::<*mut c_void>()) as *mut AtomicPtr<c_void>;
@@ -1618,7 +1617,7 @@ pub extern "C" fn array_push_f64(arr: *mut c_void, value: f64) {
         let len = *len_ptr as usize;
         let cap_ptr = (arr as *mut u8).add(mem::size_of::<u64>() * 2) as *const u64;
         let capacity = *cap_ptr as usize;
-        
+
         if len >= capacity {
             let _ = io::stderr().write_all(b"OATS runtime: array push capacity exceeded\n");
             let _ = io::stderr().write_all(b"Length: ");
@@ -1627,10 +1626,11 @@ pub extern "C" fn array_push_f64(arr: *mut c_void, value: f64) {
             let _ = io::stderr().write_all(b"\nCapacity: ");
             let s2 = capacity.to_string();
             let _ = io::stderr().write_all(s2.as_bytes());
-            let _ = io::stderr().write_all(b"\nConsider using array[i] = value for dynamic growth\n");
+            let _ =
+                io::stderr().write_all(b"\nConsider using array[i] = value for dynamic growth\n");
             process::abort();
         }
-        
+
         let data_start = (arr as *mut u8).add(ARRAY_HEADER_SIZE);
         let elem_ptr = data_start.add(len * mem::size_of::<f64>()) as *mut f64;
         *elem_ptr = value;

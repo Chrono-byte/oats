@@ -86,6 +86,7 @@ pub fn gen_ir_for_source(src: &str) -> Result<String> {
         async_poll_function: std::cell::RefCell::new(None),
         async_await_counter: std::cell::Cell::new(0),
         async_param_count: std::cell::Cell::new(0),
+        async_poll_locals: std::cell::RefCell::new(None),
         source: &parsed_mod.source,
         loop_context_stack: std::cell::RefCell::new(Vec::new()),
     };

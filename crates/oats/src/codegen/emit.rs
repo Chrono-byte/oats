@@ -63,7 +63,6 @@ impl<'a> crate::codegen::CodeGen<'a> {
         &self,
         func: &ast::Function,
     ) -> Vec<std::collections::HashSet<String>> {
-        use deno_ast::swc::ast::*;
         use std::collections::HashSet;
 
         enum Node {
@@ -116,17 +115,16 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     }
                 }
                 Expr::Assign(asg) => {
-                    // Conservatively flatten both sides in source order
-                    flatten_expr(&asg.left, out);
+                    // Conservatively flatten assignment
+                    // Note: asg.left is an AssignTarget, not Expr, so we only flatten the RHS
                     flatten_expr(&asg.right, out);
                 }
-                Expr::MemberProp(_) => {}
                 Expr::Cond(c) => {
                     flatten_expr(&c.test, out);
                     flatten_expr(&c.cons, out);
                     flatten_expr(&c.alt, out);
                 }
-                Expr::ArrayLit(_) | Expr::Tpl(_) | Expr::TplElement(_) | Expr::Lit(_) => {
+                Expr::Tpl(_) | Expr::Lit(_) => {
                     // literals: no idents to record
                 }
                 Expr::Arrow(a) => {
@@ -151,7 +149,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 Stmt::Decl(ast::Decl::Var(vd)) => {
                     for decl in &vd.decls {
                         if let Some(init) = &decl.init {
-                            flatten_expr(&init, out);
+                            flatten_expr(init, out);
                         }
                     }
                 }
@@ -160,13 +158,21 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     // shallow: if cons/alt are simple expr statements, flatten
                     match &*ifst.cons {
                         Stmt::Expr(e) => flatten_expr(&e.expr, out),
-                        Stmt::Block(b) => for st in &b.stmts { flatten_stmt(st, out); },
+                        Stmt::Block(b) => {
+                            for st in &b.stmts {
+                                flatten_stmt(st, out);
+                            }
+                        }
                         _ => {}
                     }
                     if let Some(alt) = &ifst.alt {
                         match &**alt {
                             Stmt::Expr(e) => flatten_expr(&e.expr, out),
-                            Stmt::Block(b) => for st in &b.stmts { flatten_stmt(st, out); },
+                            Stmt::Block(b) => {
+                                for st in &b.stmts {
+                                    flatten_stmt(st, out);
+                                }
+                            }
                             _ => {}
                         }
                     }
@@ -850,17 +856,22 @@ impl<'a> crate::codegen::CodeGen<'a> {
             // Build a switch on the state_loaded value. The builder API
             // expects a SwitchValue with an expected number of cases.
             // Build an explicit cases slice for the switch instruction.
-            let mut cases: Vec<(inkwell::values::IntValue<'a>, inkwell::basic_block::BasicBlock<'a>)> = Vec::new();
+            let mut cases: Vec<(
+                inkwell::values::IntValue<'a>,
+                inkwell::basic_block::BasicBlock<'a>,
+            )> = Vec::new();
             if let Some(resume_vec) = &*self.async_resume_blocks.borrow() {
                 for (i, rb) in resume_vec.iter().enumerate() {
-                    let case_val = self.i32_t.const_int((i as u64 + 1) as u64, false);
+                    let case_val = self.i32_t.const_int(((i as u64 + 1)), false);
                     cases.push((case_val, *rb));
                 }
             }
             let _switch_inst = self
                 .builder
                 .build_switch(state_loaded, done_bb, cases.as_slice())
-                .map_err(|_| crate::diagnostics::Diagnostic::simple("failed to build switch in poll"))?;
+                .map_err(|_| {
+                    crate::diagnostics::Diagnostic::simple("failed to build switch in poll")
+                })?;
 
             // Emit resume handlers: each resume block reloads live locals
             // from the state slots into the poll function's allocas and then
@@ -869,8 +880,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 &*self.async_local_name_to_slot.borrow(),
                 &*self.async_await_live_sets.borrow(),
                 &*self.async_poll_locals.borrow(),
-            ) {
-                if let (Some(resume_vec), Some(cont_vec)) = (
+            )
+                && let (Some(resume_vec), Some(cont_vec)) = (
                     &*self.async_resume_blocks.borrow(),
                     &*self.async_cont_blocks.borrow(),
                 ) {
@@ -881,82 +892,99 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             for name in live_set.iter() {
                                 if let Some(slot_idx) = local_map.get(name) {
                                     // locate the alloca for the local in poll_locals
-                                            let mut target_alloca: Option<(
-                                                inkwell::values::PointerValue<'a>,
-                                                inkwell::types::BasicTypeEnum<'a>,
-                                            )> = None;
-                                            for scope in poll_locals.iter().rev() {
+                                    let mut target_alloca: Option<(
+                                        inkwell::values::PointerValue<'a>,
+                                        inkwell::types::BasicTypeEnum<'a>,
+                                    )> = None;
+                                    for scope in poll_locals.iter().rev() {
                                         if let Some(entry) = scope.get(name) {
-                                                    target_alloca = Some((entry.0, entry.1));
+                                            target_alloca = Some((entry.0, entry.1));
                                             break;
                                         }
                                     }
                                     if let Some((alloca_ptr, ty)) = target_alloca {
                                         // compute slot addr and load i8*
-                                                // Use the poll function's incoming state pointer
-                                                // (state_ptr was defined earlier) to compute the
-                                                // resume slot address.
-                                                let base_int = match self
-                                                    .builder
-                                                    .build_ptr_to_int(state_ptr, self.i64_t, "resume_state_addr")
-                                                {
-                                                    Ok(v) => v,
-                                                    Err(_) => {
-                                                        return Err(crate::diagnostics::Diagnostic::simple(
-                                                            "ptr_to_int failed when resuming locals",
-                                                        ));
-                                                    }
-                                                };
-                                        let off_const = self.i64_t.const_int(16 + (*slot_idx as u64 * 8), false);
-                                                let slot_addr_int = match self
-                                                    .builder
-                                                    .build_int_add(base_int, off_const, "slot_addr_resume")
-                                                {
-                                                    Ok(v) => v,
-                                                    Err(_) => {
-                                                        return Err(crate::diagnostics::Diagnostic::simple(
-                                                            "int_add failed when resuming locals",
-                                                        ));
-                                                    }
-                                                };
-                                                let slot_ptr = match self
-                                                    .builder
-                                                    .build_int_to_ptr(slot_addr_int, self.i8ptr_t, "slot_ptr_resume")
-                                                {
-                                                    Ok(p) => p,
-                                                    Err(_) => {
-                                                        return Err(crate::diagnostics::Diagnostic::simple(
-                                                            "int_to_ptr failed when resuming locals",
-                                                        ));
-                                                    }
-                                                };
-                                                let loaded_slot = match self
-                                                    .builder
-                                                    .build_load(self.i8ptr_t, slot_ptr, &format!("slot_load_{}", name))
-                                                {
-                                                    Ok(v) => v,
-                                                    Err(_) => {
-                                                        return Err(crate::diagnostics::Diagnostic::simple(
-                                                            "failed to load from slot when resuming",
-                                                        ));
-                                                    }
-                                                };
+                                        // Use the poll function's incoming state pointer
+                                        // (state_ptr was defined earlier) to compute the
+                                        // resume slot address.
+                                        let base_int = match self.builder.build_ptr_to_int(
+                                            state_ptr,
+                                            self.i64_t,
+                                            "resume_state_addr",
+                                        ) {
+                                            Ok(v) => v,
+                                            Err(_) => {
+                                                return Err(
+                                                    crate::diagnostics::Diagnostic::simple(
+                                                        "ptr_to_int failed when resuming locals",
+                                                    ),
+                                                );
+                                            }
+                                        };
+                                        let off_const = self
+                                            .i64_t
+                                            .const_int(16 + (*slot_idx as u64 * 8), false);
+                                        let slot_addr_int = match self.builder.build_int_add(
+                                            base_int,
+                                            off_const,
+                                            "slot_addr_resume",
+                                        ) {
+                                            Ok(v) => v,
+                                            Err(_) => {
+                                                return Err(
+                                                    crate::diagnostics::Diagnostic::simple(
+                                                        "int_add failed when resuming locals",
+                                                    ),
+                                                );
+                                            }
+                                        };
+                                        let slot_ptr = match self.builder.build_int_to_ptr(
+                                            slot_addr_int,
+                                            self.i8ptr_t,
+                                            "slot_ptr_resume",
+                                        ) {
+                                            Ok(p) => p,
+                                            Err(_) => {
+                                                return Err(
+                                                    crate::diagnostics::Diagnostic::simple(
+                                                        "int_to_ptr failed when resuming locals",
+                                                    ),
+                                                );
+                                            }
+                                        };
+                                        let loaded_slot = match self.builder.build_load(
+                                            self.i8ptr_t,
+                                            slot_ptr,
+                                            &format!("slot_load_{}", name),
+                                        ) {
+                                            Ok(v) => v,
+                                            Err(_) => {
+                                                return Err(
+                                                    crate::diagnostics::Diagnostic::simple(
+                                                        "failed to load from slot when resuming",
+                                                    ),
+                                                );
+                                            }
+                                        };
                                         // store into alloca (unbox for floats)
                                         match ty {
                                             inkwell::types::BasicTypeEnum::FloatType(_) => {
                                                 let unbox_fn = self.get_union_unbox_f64();
-                                                        let cs = match self
-                                                            .builder
-                                                            .build_call(unbox_fn, &[loaded_slot.into()], "unbox_resume")
-                                                        {
-                                                            Ok(c) => c,
-                                                            Err(_) => {
-                                                                return Err(crate::diagnostics::Diagnostic::simple(
-                                                                    "union_unbox_f64 call failed when resuming locals",
-                                                                ));
-                                                            }
-                                                        };
-                                                        let fv = cs
+                                                let cs = match self.builder.build_call(
+                                                    unbox_fn,
+                                                    &[loaded_slot.into()],
+                                                    "unbox_resume",
+                                                ) {
+                                                    Ok(c) => c,
+                                                    Err(_) => {
+                                                        return Err(
+                                                            crate::diagnostics::Diagnostic::simple(
+                                                                "union_unbox_f64 call failed when resuming locals",
+                                                            ),
+                                                        );
+                                                    }
+                                                };
+                                                let fv = cs
                                                             .try_as_basic_value()
                                                             .left()
                                                             .ok_or_else(|| {
@@ -965,22 +993,31 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                                 )
                                                             })?
                                                             .into_float_value();
-                                                        let _ = self.builder.build_store(alloca_ptr, fv.as_basic_value_enum());
+                                                let _ = self.builder.build_store(
+                                                    alloca_ptr,
+                                                    fv.as_basic_value_enum(),
+                                                );
                                             }
                                             _ => {
-                                                        let slot_ptr_val = loaded_slot.into_pointer_value();
-                                                        let casted = match self
-                                                            .builder
-                                                            .build_pointer_cast(slot_ptr_val, alloca_ptr.get_type(), "cast_resume")
-                                                        {
-                                                            Ok(c) => c,
-                                                            Err(_) => {
-                                                                return Err(crate::diagnostics::Diagnostic::simple(
-                                                                    "pointer cast failed when resuming locals",
-                                                                ));
-                                                            }
-                                                        };
-                                                        let _ = self.builder.build_store(alloca_ptr, casted.as_basic_value_enum());
+                                                let slot_ptr_val = loaded_slot.into_pointer_value();
+                                                let casted = match self.builder.build_pointer_cast(
+                                                    slot_ptr_val,
+                                                    alloca_ptr.get_type(),
+                                                    "cast_resume",
+                                                ) {
+                                                    Ok(c) => c,
+                                                    Err(_) => {
+                                                        return Err(
+                                                            crate::diagnostics::Diagnostic::simple(
+                                                                "pointer cast failed when resuming locals",
+                                                            ),
+                                                        );
+                                                    }
+                                                };
+                                                let _ = self.builder.build_store(
+                                                    alloca_ptr,
+                                                    casted.as_basic_value_enum(),
+                                                );
                                             }
                                         }
                                     }
@@ -990,10 +1027,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         let _ = self.builder.build_unconditional_branch(cont_bb);
                     }
                 }
-            }
 
             // Default: return ready (1)
-            let _ = self.builder.build_return(Some(&default_ret.as_basic_value_enum()));
+            let _ = self
+                .builder
+                .build_return(Some(&default_ret.as_basic_value_enum()));
 
             // Call promise_new_from_state(state_ptr)
             let p_new = self.get_promise_new_from_state();

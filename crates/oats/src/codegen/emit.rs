@@ -532,12 +532,14 @@ impl<'a> crate::codegen::CodeGen<'a> {
             self.builder.position_at_end(run_impl_bb);
             // Create param allocas & locals mapping for poll_f so lowering
             // operates on the poll function and can access the state param.
-            let (param_map, mut locals_stack) = self.create_param_allocas(poll_f, func_decl, &llvm_param_types, receiver_name)?;
+            let (param_map, mut locals_stack) =
+                self.create_param_allocas(poll_f, func_decl, &llvm_param_types, receiver_name)?;
 
             // Lower the body statements into the poll function's run_impl block.
             let mut emitted_terminator = false;
             if let Some(body) = &func_decl.body {
-                emitted_terminator = self.lower_stmts(&body.stmts, poll_f, &param_map, &mut locals_stack)?;
+                emitted_terminator =
+                    self.lower_stmts(&body.stmts, poll_f, &param_map, &mut locals_stack)?;
             }
 
             if !emitted_terminator
@@ -550,7 +552,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 match ret_type {
                     crate::types::OatsType::Void => {
                         self.builder.build_return(None).map_err(|_| {
-                            crate::diagnostics::Diagnostic::simple("Failed to build implicit return in poll")
+                            crate::diagnostics::Diagnostic::simple(
+                                "Failed to build implicit return in poll",
+                            )
                         })?;
                     }
                     crate::types::OatsType::Number => {

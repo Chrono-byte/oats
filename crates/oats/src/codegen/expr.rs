@@ -3581,7 +3581,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     match self.builder.build_unconditional_branch(cont_bb) {
                         Ok(_) => (),
                         Err(_) => {
-                            return Err(Diagnostic::simple("failed to branch to cont from pending"));
+                            return Err(Diagnostic::simple(
+                                "failed to branch to cont from pending",
+                            ));
                         }
                     };
 

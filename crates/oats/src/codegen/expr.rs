@@ -140,6 +140,35 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 let l = self.lower_expr(&bin.left, function, param_map, locals)?;
                 let r = self.lower_expr(&bin.right, function, param_map, locals)?;
 
+                // Handle string concatenation BEFORE numeric coercion
+                // If both operands are pointers and op is Add, treat as string concat
+                if let BinaryOp::Add = bin.op {
+                    if let (BasicValueEnum::PointerValue(lp), BasicValueEnum::PointerValue(rp)) = (l, r) {
+                        if let Some(strcat) = self.module.get_function("str_concat") {
+                            let call_site = match self.builder.build_call(
+                                strcat,
+                                &[lp.into(), rp.into()],
+                                "concat",
+                            ) {
+                                Ok(cs) => cs,
+                                Err(_) => return Err(Diagnostic::simple("operation failed")),
+                            };
+                            let either = call_site.try_as_basic_value();
+                            match either {
+                                inkwell::Either::Left(bv) => return Ok(bv),
+                                _ => return Err(Diagnostic::simple(
+                                    "operation not supported (bin strcat result)",
+                                )),
+                            }
+                        } else {
+                            return Err(Diagnostic::simple_with_span(
+                                "string concatenation helper `str_concat` not found",
+                                bin.span.lo.0 as usize,
+                            ));
+                        }
+                    }
+                }
+
                 // Coercion and unboxing notes:
                 // - `coerce_to_f64` will convert ints/bools to f64 where
                 //   appropriate and will also attempt to unbox numeric payloads
@@ -1676,8 +1705,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
             }
             // (Duplicate closure-call lowering removed; handled in the primary Call arm above.)
             ast::Expr::Assign(assign) => {
+                use deno_ast::swc::ast::{AssignTarget, SimpleAssignTarget};
+                
                 // support simple assignments `ident = expr` where the left side is an identifier
-                if let Some(bid) = assign.left.as_ident() {
+                if let AssignTarget::Simple(SimpleAssignTarget::Ident(bid)) = &assign.left {
                     let name = bid.id.sym.to_string();
                     if let Some((ptr, _ty, _init, is_const, _extra, _nominal)) =
                         self.find_local(locals, &name)
@@ -1761,7 +1792,6 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
                 // Handle member assignment: obj.field = expr
                 // Check if left side is a member expression
-                use deno_ast::swc::ast::{AssignTarget, SimpleAssignTarget};
                 if let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = &assign.left {
                     // Lower the right-hand side value
                     if let Ok(new_val) = self.lower_expr(&assign.right, function, param_map, locals)
@@ -2176,10 +2206,97 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         ));
                     }
                 }
+
+                // Handle array element assignment: arr[idx] = value
+                // Check if left side is a subscript expression
+                if let AssignTarget::Simple(SimpleAssignTarget::SuperProp(_)) = &assign.left {
+                    // SuperProp is not supported yet
+                } else if let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = &assign.left {
+                    use deno_ast::swc::ast::MemberProp;
+                    if let MemberProp::Computed(computed) = &member.prop {
+                        // This is arr[idx] = value
+                        
+                        // Get the alloca pointer for the array variable (needed for reallocation)
+                        let arr_alloca_opt = if let deno_ast::swc::ast::Expr::Ident(ident) = &*member.obj {
+                            let name = ident.sym.to_string();
+                            self.find_local(locals, &name).map(|(ptr, _, _, _, _, _)| ptr)
+                        } else {
+                            None
+                        };
+                        
+                        if arr_alloca_opt.is_none() {
+                            return Err(Diagnostic::simple_with_span(
+                                "array element assignment requires array stored in a variable",
+                                assign.span.lo.0 as usize,
+                            ));
+                        }
+                        
+                        let arr_alloca = arr_alloca_opt.unwrap();
+                        
+                        // Lower the index expression
+                        let idx_val = self.lower_expr(&computed.expr, function, param_map, locals)?;
+                        let idx_i64 = if let BasicValueEnum::FloatValue(fv) = idx_val {
+                            // Convert f64 to i64
+                            match self.builder.build_float_to_signed_int(fv, self.i64_t, "idx_i64") {
+                                Ok(v) => v,
+                                Err(_) => return Err(Diagnostic::simple("failed to convert index to i64")),
+                            }
+                        } else if let BasicValueEnum::IntValue(iv) = idx_val {
+                            // Extend to i64 if needed
+                            if iv.get_type().get_bit_width() < 64 {
+                                match self.builder.build_int_s_extend(iv, self.i64_t, "idx_i64") {
+                                    Ok(v) => v,
+                                    Err(_) => return Err(Diagnostic::simple("failed to extend index to i64")),
+                                }
+                            } else {
+                                iv
+                            }
+                        } else {
+                            return Err(Diagnostic::simple("array index must be a number"));
+                        };
+                        
+                        // Lower the value to assign
+                        let val = self.lower_expr(&assign.right, function, param_map, locals)?;
+                        
+                        // Determine if this is a pointer or numeric assignment
+                        if let BasicValueEnum::PointerValue(pv) = val {
+                            // Pointer assignment: array_set_ptr(arr_alloca, idx, val)
+                            let array_set_ptr = self.get_array_set_ptr();
+                            let _ = match self.builder.build_call(
+                                array_set_ptr,
+                                &[arr_alloca.into(), idx_i64.into(), pv.into()],
+                                "array_set_ptr",
+                            ) {
+                                Ok(cs) => cs,
+                                Err(_) => return Err(Diagnostic::simple("failed to call array_set_ptr")),
+                            };
+                        } else if let BasicValueEnum::FloatValue(fv) = val {
+                            // Numeric assignment: array_set_f64(arr_alloca, idx, val)
+                            let array_set_f64 = self.get_array_set_f64();
+                            let _ = match self.builder.build_call(
+                                array_set_f64,
+                                &[arr_alloca.into(), idx_i64.into(), fv.into()],
+                                "array_set_f64",
+                            ) {
+                                Ok(cs) => cs,
+                                Err(_) => return Err(Diagnostic::simple("failed to call array_set_f64")),
+                            };
+                        } else {
+                            return Err(Diagnostic::simple("unsupported array element value type"));
+                        }
+                        
+                        return Ok(val);
+                    }
+                }
+
                 Err(Diagnostic::simple_with_span(
                     "unsupported assignment target or pattern",
                     assign.span.lo.0 as usize,
                 ))
+            }
+            ast::Expr::Paren(paren) => {
+                // Unwrap parenthesized expression
+                self.lower_expr(&paren.expr, function, param_map, locals)
             }
             ast::Expr::Cond(cond) => {
                 // Ternary expression: test ? cons : alt

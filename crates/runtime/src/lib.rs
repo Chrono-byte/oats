@@ -1209,11 +1209,16 @@ pub extern "C" fn math_random() -> f64 {
 
 // --- Array Operations ---
 //
-// Array Layout: [header: u64][len: u64][data...]
+// Array Layout: [header: u64][len: u64][capacity: u64][data...]
 // header: high 32 bits = flags/type, low 32 bits = refcount
+// len: current number of elements
+// capacity: allocated space (in number of elements, not bytes)
 //
-// The header offset for data is consistently 16 bytes (2 * u64).
-const ARRAY_HEADER_SIZE: usize = mem::size_of::<u64>() * 2;
+// The header offset for data is 24 bytes (3 * u64).
+const ARRAY_HEADER_SIZE: usize = mem::size_of::<u64>() * 3;
+
+// Minimum initial capacity for empty arrays
+const MIN_ARRAY_CAPACITY: usize = 8;
 
 // Called when an array index is out-of-bounds. Prints a helpful message
 // to stderr and aborts the process to avoid undefined behavior.
@@ -1233,9 +1238,12 @@ fn runtime_index_oob_abort(_arr: *mut c_void, idx: usize, len: usize) -> ! {
 
 /// Allocate an array on the runtime heap.
 ///
-/// Layout: `[header: u64][len: u64][data...]`
+/// Layout: `[header: u64][len: u64][capacity: u64][data...]`
 /// - header: high 32 bits = flags/type, low 32 bits = refcount
-/// - length stored as u64 at offset +8
+/// - length: current number of elements
+/// - capacity: allocated space (in number of elements)
+///
+/// If len is 0, allocates with MIN_ARRAY_CAPACITY to allow for growth.
 ///
 /// # Safety
 /// This function performs raw memory allocation and writes to raw pointers.
@@ -1243,7 +1251,9 @@ fn runtime_index_oob_abort(_arr: *mut c_void, idx: usize, len: usize) -> ! {
 /// dereferenced from safe Rust code without proper checks.
 #[unsafe(no_mangle)]
 pub extern "C" fn array_alloc(len: usize, elem_size: usize, elem_is_number: i32) -> *mut c_void {
-    let data_bytes = len * elem_size;
+    // For empty arrays, allocate with minimum capacity to allow push/assignment
+    let capacity = if len == 0 { MIN_ARRAY_CAPACITY } else { len };
+    let data_bytes = capacity * elem_size;
     let total_bytes = ARRAY_HEADER_SIZE + data_bytes;
     unsafe {
         let p = runtime_malloc(total_bytes) as *mut u8;
@@ -1263,10 +1273,94 @@ pub extern "C" fn array_alloc(len: usize, elem_size: usize, elem_is_number: i32)
         let len_ptr = p.add(mem::size_of::<u64>()) as *mut u64;
         *len_ptr = len as u64;
 
+        // Initialize capacity (new field at offset +16).
+        let cap_ptr = p.add(mem::size_of::<u64>() * 2) as *mut u64;
+        *cap_ptr = capacity as u64;
+
         // The data area is not zeroed by default.
         p as *mut c_void
     }
 }
+
+/// Grow an array to accommodate at least min_capacity elements.
+/// Returns a new array pointer with the same refcount and data copied over.
+/// The old array is NOT freed - caller is responsible for managing refcounts.
+///
+/// Uses geometric growth (1.5x) to amortize reallocation costs.
+///
+/// # Safety
+/// Caller must ensure arr is a valid array pointer and manage refcounts appropriately.
+unsafe fn array_grow(arr: *mut c_void, min_capacity: usize) -> *mut c_void {
+    if arr.is_null() {
+        return ptr::null_mut();
+    }
+    
+    unsafe {
+        // Read current metadata
+        let header_ptr = arr as *const u64;
+        let header = *header_ptr;
+        let elem_is_number = ((header >> 32) & 1) as i32;
+        
+        let len_ptr = (arr as *mut u8).add(mem::size_of::<u64>()) as *const u64;
+        let len = *len_ptr as usize;
+        
+        let cap_ptr = (arr as *mut u8).add(mem::size_of::<u64>() * 2) as *const u64;
+        let old_capacity = *cap_ptr as usize;
+        
+        // Calculate new capacity with geometric growth (1.5x)
+        let mut new_capacity = old_capacity + (old_capacity / 2).max(1);
+        if new_capacity < min_capacity {
+            new_capacity = min_capacity;
+        }
+        
+        // Determine element size
+        let elem_size = if elem_is_number != 0 {
+            mem::size_of::<f64>()
+        } else {
+            mem::size_of::<*mut c_void>()
+        };
+        
+        // Allocate new array with new_capacity but same length
+        // We pass new_capacity as the length parameter to allocate that many elements
+        let new_arr = array_alloc(new_capacity, elem_size, elem_is_number);
+        if new_arr.is_null() {
+            return ptr::null_mut();
+        }
+        
+        // Update new array's length to match old array's length (not capacity)
+        let new_len_ptr = (new_arr as *mut u8).add(mem::size_of::<u64>()) as *mut u64;
+        *new_len_ptr = len as u64;
+        
+        // Copy data from old to new
+        let old_data = (arr as *mut u8).add(ARRAY_HEADER_SIZE);
+        let new_data = (new_arr as *mut u8).add(ARRAY_HEADER_SIZE);
+        ptr::copy_nonoverlapping(old_data, new_data, len * elem_size);
+        
+        // If pointer array, increment refcounts for copied pointers
+        if elem_is_number == 0 {
+            let ptrs = new_data as *mut *mut c_void;
+            for i in 0..len {
+                let p = *ptrs.add(i);
+                if !p.is_null() {
+                    rc_inc(p);
+                }
+            }
+        }
+        
+        new_arr
+    }
+}
+
+
+/// Grow an array to accommodate at least min_capacity elements.
+/// Returns a new array pointer with the same refcount and data copied over.
+/// The old array is NOT freed - caller is responsible for managing refcounts.
+///
+/// Uses geometric growth (1.5x) to amortize reallocation costs.
+///
+/// # Safety
+/// Caller must ensure arr is a valid array pointer and manage refcounts appropriately.
+
 
 /// Load a f64 element from an array.
 ///
@@ -1348,20 +1442,55 @@ pub extern "C" fn array_get_ptr_borrow(arr: *mut c_void, idx: usize) -> *mut c_v
 }
 
 /// Set a f64 element in an array.
+/// Set a f64 value in an array at the given index.
+/// If idx >= length, extends the array with zeros and sets the value.
+/// If idx >= capacity, reallocates the array and updates the pointer at arr_ptr.
 ///
 /// # Safety
-/// Caller must ensure `arr` is a valid array pointer and `idx` is within bounds.
+/// Caller must ensure `arr_ptr` points to a valid array pointer variable.
+/// The array pointer may be updated if reallocation occurs.
 #[unsafe(no_mangle)]
-pub extern "C" fn array_set_f64(arr: *mut c_void, idx: usize, v: f64) {
-    if arr.is_null() {
+pub extern "C" fn array_set_f64(arr_ptr: *mut *mut c_void, idx: usize, v: f64) {
+    if arr_ptr.is_null() {
         return;
     }
     unsafe {
-        let len_ptr = (arr as *mut u8).add(mem::size_of::<u64>()) as *const u64;
-        let len = *len_ptr as usize;
-        if idx >= len {
-            runtime_index_oob_abort(arr, idx, len);
+        let mut arr = *arr_ptr;
+        if arr.is_null() {
+            return;
         }
+        
+        let cap_ptr = (arr as *mut u8).add(mem::size_of::<u64>() * 2) as *mut u64;
+        let capacity = *cap_ptr as usize;
+        
+        // If index is beyond capacity, grow the array
+        if idx >= capacity {
+            let new_arr = array_grow(arr, idx + 1);
+            if new_arr.is_null() {
+                return; // allocation failed
+            }
+            // Decrement old array refcount and update pointer
+            rc_dec(arr);
+            arr = new_arr;
+            *arr_ptr = new_arr;
+        }
+        
+        // Re-get pointers in case arr changed
+        let len_ptr = (arr as *mut u8).add(mem::size_of::<u64>()) as *mut u64;
+        let len = *len_ptr as usize;
+        
+        // If index is beyond length, zero-fill and extend length
+        if idx >= len {
+            let data_start = (arr as *mut u8).add(ARRAY_HEADER_SIZE);
+            let zeros_start = data_start.add(len * mem::size_of::<f64>()) as *mut f64;
+            let zeros_count = idx - len;
+            for i in 0..zeros_count {
+                *zeros_start.add(i) = 0.0;
+            }
+            *len_ptr = (idx + 1) as u64;
+        }
+        
+        // Set the value
         let data_start = (arr as *mut u8).add(ARRAY_HEADER_SIZE);
         let elem_ptr = data_start.add(idx * mem::size_of::<f64>()) as *mut f64;
         *elem_ptr = v;
@@ -1369,6 +1498,8 @@ pub extern "C" fn array_set_f64(arr: *mut c_void, idx: usize, v: f64) {
 }
 
 /// Set a pointer into a pointer-typed array, managing refcounts correctly.
+/// If idx >= length, extends the array with nulls and sets the value.
+/// If idx >= capacity, reallocates the array and updates the pointer at arr_ptr.
 ///
 /// This function increments the new pointer's refcount (if not null) before
 /// swapping it into the array and decrements the old pointer's refcount after
@@ -1376,18 +1507,49 @@ pub extern "C" fn array_set_f64(arr: *mut c_void, idx: usize, v: f64) {
 /// could be freed while another thread reads it.
 ///
 /// # Safety
-/// Caller must ensure `arr` is a valid pointer-typed array and `idx` is within bounds.
+/// Caller must ensure `arr_ptr` points to a valid array pointer variable.
+/// The array pointer may be updated if reallocation occurs.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn array_set_ptr(arr: *mut c_void, idx: usize, p: *mut c_void) {
-    if arr.is_null() {
+pub unsafe extern "C" fn array_set_ptr(arr_ptr: *mut *mut c_void, idx: usize, p: *mut c_void) {
+    if arr_ptr.is_null() {
         return;
     }
     unsafe {
-        let len_ptr = (arr as *mut u8).add(mem::size_of::<u64>()) as *const u64;
-        let len = *len_ptr as usize;
-        if idx >= len {
-            runtime_index_oob_abort(arr, idx, len);
+        let mut arr = *arr_ptr;
+        if arr.is_null() {
+            return;
         }
+        
+        let cap_ptr = (arr as *mut u8).add(mem::size_of::<u64>() * 2) as *mut u64;
+        let capacity = *cap_ptr as usize;
+        
+        // If index is beyond capacity, grow the array
+        if idx >= capacity {
+            let new_arr = array_grow(arr, idx + 1);
+            if new_arr.is_null() {
+                return; // allocation failed
+            }
+            // Decrement old array refcount and update pointer
+            rc_dec(arr);
+            arr = new_arr;
+            *arr_ptr = new_arr;
+        }
+        
+        // Re-get pointers in case arr changed
+        let len_ptr = (arr as *mut u8).add(mem::size_of::<u64>()) as *mut u64;
+        let len = *len_ptr as usize;
+        
+        // If index is beyond length, null-fill and extend length
+        if idx >= len {
+            let data_start = (arr as *mut u8).add(ARRAY_HEADER_SIZE);
+            let nulls_start = data_start.add(len * mem::size_of::<*mut c_void>()) as *mut *mut c_void;
+            let nulls_count = idx - len;
+            for i in 0..nulls_count {
+                *nulls_start.add(i) = ptr::null_mut();
+            }
+            *len_ptr = (idx + 1) as u64;
+        }
+        
         let data_start = (arr as *mut u8).add(ARRAY_HEADER_SIZE);
         let elem_ptr =
             data_start.add(idx * mem::size_of::<*mut c_void>()) as *mut AtomicPtr<c_void>;
@@ -1454,6 +1616,21 @@ pub extern "C" fn array_push_f64(arr: *mut c_void, value: f64) {
     unsafe {
         let len_ptr = (arr as *mut u8).add(mem::size_of::<u64>()) as *mut u64;
         let len = *len_ptr as usize;
+        let cap_ptr = (arr as *mut u8).add(mem::size_of::<u64>() * 2) as *const u64;
+        let capacity = *cap_ptr as usize;
+        
+        if len >= capacity {
+            let _ = io::stderr().write_all(b"OATS runtime: array push capacity exceeded\n");
+            let _ = io::stderr().write_all(b"Length: ");
+            let s = len.to_string();
+            let _ = io::stderr().write_all(s.as_bytes());
+            let _ = io::stderr().write_all(b"\nCapacity: ");
+            let s2 = capacity.to_string();
+            let _ = io::stderr().write_all(s2.as_bytes());
+            let _ = io::stderr().write_all(b"\nConsider using array[i] = value for dynamic growth\n");
+            process::abort();
+        }
+        
         let data_start = (arr as *mut u8).add(ARRAY_HEADER_SIZE);
         let elem_ptr = data_start.add(len * mem::size_of::<f64>()) as *mut f64;
         *elem_ptr = value;

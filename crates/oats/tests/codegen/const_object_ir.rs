@@ -82,8 +82,10 @@ export function main(): number {
                 }
                 Expr::Object(obj) => {
                     for prop in &obj.props {
-                        if let PropOrSpread::Prop(Prop::KeyValue(kv)) = prop {
-                            collect_idents(&kv.value, out);
+                        if let PropOrSpread::Prop(pb) = prop {
+                            if let Prop::KeyValue(kv) = pb.as_ref() {
+                                collect_idents(&kv.value, out);
+                            }
                         }
                     }
                 }

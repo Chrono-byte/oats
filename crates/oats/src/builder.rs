@@ -1245,47 +1245,112 @@ pub fn run_from_args(args: &[String]) -> Result<()> {
             "No rt_main.o found and no runtime/rt_main/src/main.rs available; please provide a runtime main (rt_main.o) or add a runtime/rt_main/src/main.rs"
         );
     };
-    // Link final binary with clang. If we emitted the host `main` in the
-    // module then `rt_main_obj` will be empty and we skip adding it to the
-    // link line.
-    // Link final binary with clang. Try the same fallback list as above to
-    // handle CI images with only versioned clang binaries installed.
+    // Link final binary. Prefer explicit linker via OATS_LINKER, otherwise
+    // use clang (with -fuse-ld=lld when available) or fall back to ld.lld/lld.
+    let oats_linker = std::env::var("OATS_LINKER").ok();
+
+    // helper to test whether a program is runnable
+    fn is_prog_available(name: &str) -> bool {
+        match Command::new(name).arg("--version").status() {
+            Ok(s) => s.success(),
+            Err(_) => false,
+        }
+    }
+
+    // Detect available tools
     let clang_candidates = ["clang", "clang-18", "clang-17"];
-    let mut link_run_err: Option<std::io::Error> = None;
+    let mut found_clang: Option<String> = None;
+    for &c in &clang_candidates {
+        if is_prog_available(c) {
+            found_clang = Some(c.to_string());
+            break;
+        }
+    }
+    // detect lld (prefer ld.lld then lld)
+    let lld_candidate = if is_prog_available("ld.lld") {
+        Some("ld.lld".to_string())
+    } else if is_prog_available("lld") {
+        Some("lld".to_string())
+    } else {
+        None
+    };
+
     let mut linked_ok = false;
-    for &candidate in &clang_candidates {
-        let mut cmd = Command::new(candidate);
-        cmd.arg("-O3").arg("-flto");
+    let mut link_run_err: Option<std::io::Error> = None;
+
+    if let Some(linker) = oats_linker {
+        // Try the user-specified linker exactly once
+        let mut cmd = Command::new(&linker);
         if !rt_main_obj.is_empty() {
             cmd.arg(&rt_main_obj);
         }
         cmd.arg(&out_obj).arg(&rust_lib).arg("-o").arg(&out_exe);
-
         match cmd.status() {
             Ok(status) => {
                 if status.success() {
                     linked_ok = true;
-                    break;
                 } else {
-                    anyhow::bail!("{} failed to link final binary", candidate);
+                    anyhow::bail!("{} failed to link final binary", linker);
                 }
             }
-            Err(e) => {
-                link_run_err = Some(e);
-            }
+            Err(e) => link_run_err = Some(e),
         }
+    } else if let Some(clang_bin) = found_clang.clone() {
+        // Use clang; if lld is present, prefer clang + -fuse-ld=lld so we keep clang's driver behavior
+        let mut cmd = Command::new(&clang_bin);
+        cmd.arg("-O3").arg("-flto");
+        if let Some(ref lld) = lld_candidate {
+            // use clang driver with lld
+            cmd.arg(format!("-fuse-ld={}", lld));
+        }
+        if !rt_main_obj.is_empty() {
+            cmd.arg(&rt_main_obj);
+        }
+        cmd.arg(&out_obj).arg(&rust_lib).arg("-o").arg(&out_exe);
+        match cmd.status() {
+            Ok(status) => {
+                if status.success() {
+                    linked_ok = true;
+                } else {
+                    anyhow::bail!("{} failed to link final binary", clang_bin);
+                }
+            }
+            Err(e) => link_run_err = Some(e),
+        }
+    } else if let Some(lld_bin) = lld_candidate.clone() {
+        // Last resort: call lld directly (may not support LTO flags)
+        let mut cmd = Command::new(&lld_bin);
+        if !rt_main_obj.is_empty() {
+            cmd.arg(&rt_main_obj);
+        }
+        cmd.arg(&out_obj).arg(&rust_lib).arg("-o").arg(&out_exe);
+        match cmd.status() {
+            Ok(status) => {
+                if status.success() {
+                    linked_ok = true;
+                } else {
+                    anyhow::bail!("{} failed to link final binary", lld_bin);
+                }
+            }
+            Err(e) => link_run_err = Some(e),
+        }
+    } else {
+        anyhow::bail!(
+            "No suitable linker found: please install clang or lld, or set OATS_LINKER to a linker path"
+        );
     }
+
     if !linked_ok {
         if let Some(e) = link_run_err {
             if e.kind() == std::io::ErrorKind::NotFound {
                 anyhow::bail!(
-                    "`clang` not found in PATH and no fallback was available; install clang or add a symlink (e.g. `apt install clang-18 && ln -s /usr/bin/clang-18 /usr/bin/clang`)"
+                    "linker not found in PATH; install clang or lld, or set OATS_LINKER to a path"
                 );
             } else {
                 return Err(e.into());
             }
         } else {
-            anyhow::bail!("failed to run clang to link final binary");
+            anyhow::bail!("failed to link final binary");
         }
     }
 

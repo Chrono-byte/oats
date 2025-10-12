@@ -52,7 +52,57 @@ struct Opts {
     out_dir: Option<String>,
 }
 
+// Preflight dependency check so CLI users and CI get a clear error early.
+fn preflight_check() -> anyhow::Result<()> {
+    use std::process::Command;
+
+    // Check rustc
+    match Command::new("rustc").arg("--version").status() {
+        Ok(s) if s.success() => {}
+        Ok(_) => {
+            anyhow::bail!("`rustc` present but returned non-zero when invoked with --version")
+        }
+        Err(e) => {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                anyhow::bail!(
+                    "`rustc` not found in PATH; please install Rust toolchain (rustup) or ensure `rustc` is available"
+                )
+            } else {
+                return Err(e.into());
+            }
+        }
+    }
+
+    // Try clang candidates (unversioned or common versioned names)
+    let clang_candidates = ["clang", "clang-18", "clang-17"];
+    let mut any_ok = false;
+    for &c in &clang_candidates {
+        match Command::new(c).arg("--version").status() {
+            Ok(s) if s.success() => {
+                any_ok = true;
+                break;
+            }
+            Ok(_) => {
+                // Found binary but it returned non-zero; continue looking
+            }
+            Err(_e) => {
+                // not found; try next
+            }
+        }
+    }
+    if !any_ok {
+        anyhow::bail!(
+            "`clang` not found in PATH (tried clang, clang-18, clang-17). Please install clang or add a symlink to a versioned clang binary."
+        );
+    }
+
+    Ok(())
+}
+
 fn main() -> Result<()> {
+    // Perform preflight checks to ensure required tools are available
+    preflight_check()?;
+
     // ARCHITECTURE: Delegate to the core builder infrastructure while providing
     // a user-friendly CLI interface. This approach maintains compatibility with
     // existing workflows while offering improved usability for common scenarios.

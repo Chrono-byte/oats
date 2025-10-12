@@ -39,54 +39,7 @@ use oats::types::{OatsType, SymbolTable, check_function_strictness};
 use inkwell::context::Context;
 use inkwell::targets::TargetMachine;
 
-// Check for required external binaries and return a helpful error if missing.
-fn preflight_check() -> anyhow::Result<()> {
-    use std::process::Command;
-
-    // Check rustc
-    match Command::new("rustc").arg("--version").status() {
-        Ok(s) if s.success() => {}
-        Ok(_) => anyhow::bail!("`rustc` present but returned non-zero when invoked with --version"),
-        Err(e) => {
-            if e.kind() == std::io::ErrorKind::NotFound {
-                anyhow::bail!(
-                    "`rustc` not found in PATH; please install Rust toolchain (rustup) or ensure `rustc` is available"
-                )
-            } else {
-                return Err(e.into());
-            }
-        }
-    }
-
-    // Try clang candidates (unversioned or common versioned names)
-    let clang_candidates = ["clang", "clang-18", "clang-17"];
-    let mut any_ok = false;
-    for &c in &clang_candidates {
-        match Command::new(c).arg("--version").status() {
-            Ok(s) if s.success() => {
-                any_ok = true;
-                break;
-            }
-            Ok(_) => {
-                // Found binary but it returned non-zero; continue looking
-            }
-            Err(_e) => {
-                // not found; try next
-            }
-        }
-    }
-    if !any_ok {
-        anyhow::bail!(
-            "`clang` not found in PATH (tried clang, clang-18, clang-17). Please install clang or add a symlink to a versioned clang binary."
-        );
-    }
-
-    Ok(())
-}
-
 fn main() -> Result<()> {
-    // Preflight dependency check to fail fast with a clear message on CI
-    preflight_check()?;
     // Resolve source file location from command-line arguments or environment
     let args: Vec<String> = std::env::args().collect();
     let src_path = if args.len() > 1 {

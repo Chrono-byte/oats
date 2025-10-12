@@ -1,0 +1,22 @@
+[package]
+name = "toasty"
+version = "0.1.0"
+edition = "2024"
+description = "Toasty CLI for Oats compiler"
+
+[dependencies]
+anyhow = "1.0"
+clap = { version = "4.4", features = ["derive"] }
+colored = "2.0"
+
+# note: oats is a workspace member; use a path dependency
+[dependencies.oats]
+path = "../oats"
+
+[dev-dependencies]
+assert_cmd = "2.0"
+predicates = "2.1"
+
+[[bin]]
+name = "toasty"
+path = "src/main.rs"

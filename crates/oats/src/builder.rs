@@ -42,7 +42,7 @@ use inkwell::targets::{
 ///
 /// # Returns
 /// `Ok(())` on successful compilation, or an error describing the failure point
-pub fn run_from_args(args: &[String]) -> Result<()> {
+pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
     // Resolve source file location from arguments or environment
     let src_path = if args.len() > 1 {
         args[1].clone()
@@ -1081,7 +1081,12 @@ pub fn run_from_args(args: &[String]) -> Result<()> {
         .and_then(|s| s.to_str())
         .unwrap_or("out");
     let out_ll = format!("{}/{}.ll", out_dir, src_filename);
-    let out_exe = format!("{}/{}", out_dir, src_filename);
+    // Allow overriding output name with OATS_OUT_NAME
+    let out_exe = if let Ok(name) = std::env::var("OATS_OUT_NAME") {
+        format!("{}/{}", out_dir, name)
+    } else {
+        format!("{}/{}", out_dir, src_filename)
+    };
     let out_obj = format!("{}/{}.o", out_dir, src_filename);
 
     // Ensure output directory exists so File::create doesn't fail with ENOENT.
@@ -1147,7 +1152,23 @@ pub fn run_from_args(args: &[String]) -> Result<()> {
         // misinterpreted for some LLVM targets (causing subtarget errors).
         vec!["".to_string(), "native".to_string()]
     };
-    let opt_level = OptimizationLevel::Aggressive;
+    // Determine optimization level. Priority:
+    // 1. OATS_OPT_LEVEL env var (explicit)
+    // 2. OATS_BUILD_PROFILE=release -> Aggressive
+    // 3. Default -> None (fastest)
+    let build_profile = std::env::var("OATS_BUILD_PROFILE").unwrap_or_default();
+    let opt_level = if let Ok(opt_str) = std::env::var("OATS_OPT_LEVEL") {
+        match opt_str.as_str() {
+            "none" | "0" => OptimizationLevel::None,
+            "1" | "default" => OptimizationLevel::Default,
+            "2" | "3" | "aggressive" => OptimizationLevel::Aggressive,
+            _ => OptimizationLevel::Default,
+        }
+    } else if build_profile == "release" {
+        OptimizationLevel::Aggressive
+    } else {
+        OptimizationLevel::None
+    };
     let features = env_features.unwrap_or_default();
 
     // Try to create a target machine from candidates
@@ -1199,7 +1220,7 @@ pub fn run_from_args(args: &[String]) -> Result<()> {
             "OATS_EMIT_OBJECT_ONLY set; emitted {} and skipping link",
             out_obj
         );
-        return Ok(());
+        return Ok(None);
     }
 
     // Locate or produce rt_main object. Prefer an existing top-level `rt_main.o` so
@@ -1298,7 +1319,38 @@ pub fn run_from_args(args: &[String]) -> Result<()> {
     } else if let Some(clang_bin) = found_clang.clone() {
         // Use clang; if lld is present, prefer clang + -fuse-ld=lld so we keep clang's driver behavior
         let mut cmd = Command::new(&clang_bin);
-        cmd.arg("-O3").arg("-flto");
+        // Host-side optimization flags / LTO
+        let lto_mode = std::env::var("OATS_LTO").unwrap_or_else(|_| {
+            if build_profile == "release" {
+                "auto".to_string()
+            } else {
+                "none".to_string()
+            }
+        });
+        // opt-level env may also instruct host flags
+        if let Ok(opt_str) = std::env::var("OATS_OPT_LEVEL") {
+            if opt_str == "3" || opt_str == "aggressive" {
+                cmd.arg("-O3");
+            }
+        } else if build_profile == "release" {
+            cmd.arg("-O3");
+        }
+        // LTO handling
+        match lto_mode.as_str() {
+            "none" => {}
+            "thin" => {
+                cmd.arg("-flto=thin");
+            }
+            "fat" | "full" => {
+                cmd.arg("-flto");
+            }
+            "auto" => {
+                if build_profile == "release" {
+                    cmd.arg("-flto");
+                }
+            }
+            _ => {}
+        }
         if let Some(ref lld) = lld_candidate {
             // use clang driver with lld
             cmd.arg(format!("-fuse-ld={}", lld));
@@ -1354,5 +1406,5 @@ pub fn run_from_args(args: &[String]) -> Result<()> {
         }
     }
 
-    Ok(())
+    Ok(Some(out_exe))
 }

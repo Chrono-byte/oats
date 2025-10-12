@@ -2505,7 +2505,7 @@ mod tests {
         unsafe {
             let len: usize = 2;
             // allocate enough u64 words to hold meta0 + len*i32
-            let words = 1 + ((len * 4 + 7) / 8);
+            let words = 1 + (len * 4).div_ceil(8);
             let mut buf: Vec<u64> = vec![0u64; words];
             buf[0] = (META_MAGIC << 32) | (len as u64 & 0xffffffffu64);
             let ptr_u8 = buf.as_mut_ptr() as *mut u8;
@@ -2520,7 +2520,7 @@ mod tests {
     fn validate_meta_block_bad_magic() {
         unsafe {
             let len: usize = 1;
-            let words = 1 + ((len * 4 + 7) / 8);
+            let words = 1 + (len * 4).div_ceil(8);
             let mut buf: Vec<u64> = vec![0u64; words];
             // wrong magic
             buf[0] = ((0x1234u64) << 32) | (len as u64 & 0xffffffffu64);
@@ -2533,7 +2533,7 @@ mod tests {
     fn validate_meta_block_bad_offset_small() {
         unsafe {
             let len: usize = 1;
-            let words = 1 + ((len * 4 + 7) / 8);
+            let words = 1 + (len * 4).div_ceil(8);
             let mut buf: Vec<u64> = vec![0u64; words];
             buf[0] = (META_MAGIC << 32) | (len as u64 & 0xffffffffu64);
             let ptr_u8 = buf.as_mut_ptr() as *mut u8;
@@ -2548,7 +2548,7 @@ mod tests {
     fn validate_meta_block_bad_unaligned() {
         unsafe {
             let len: usize = 1;
-            let words = 1 + ((len * 4 + 7) / 8);
+            let words = 1 + (len * 4).div_ceil(8);
             let mut buf: Vec<u64> = vec![0u64; words];
             buf[0] = (META_MAGIC << 32) | (len as u64 & 0xffffffffu64);
             let ptr_u8 = buf.as_mut_ptr() as *mut u8;

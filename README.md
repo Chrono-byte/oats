@@ -34,17 +34,16 @@ manual memory management.
 
 #### Installing LLVM 18
 
-**Ubuntu/Debian**:
-
-```bash
-sudo apt-get update
-sudo apt-get install -y llvm-18-dev clang-18
-```
-
 **Fedora**:
 
 ```bash
 sudo dnf install llvm18 llvm18-devel clang18
+```
+
+**Mac**:
+
+```bash
+brew install llvm@18
 ```
 
 ### Compile Your First Program

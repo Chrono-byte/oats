@@ -16,11 +16,31 @@ use crate::types::{SymbolTable, check_function_strictness};
 use inkwell::context::Context;
 use inkwell::targets::TargetMachine;
 
-/// Run the AOT build using the provided argv-style args slice.
-/// The function expects the same semantics as the old CLI: first arg is the
-/// source path (or OATS_SRC_FILE env var is used).
+/// Executes the complete AOT compilation pipeline from source to executable.
+///
+/// This function serves as the main entry point for the Oats AOT compiler,
+/// orchestrating parsing, type checking, code generation, and linking phases.
+/// The function accepts command-line arguments and environment variables for
+/// configuration, following standard CLI conventions for source file specification.
+///
+/// # Arguments
+/// * `args` - Command-line arguments where the first argument (if present) is the source file path
+///
+/// # Environment Variables
+/// * `OATS_SRC_FILE` - Alternative source file specification when not provided as argument
+///
+/// # Compilation Pipeline
+/// 1. **Source Resolution**: Determines input file from arguments or environment
+/// 2. **Parsing**: Converts TypeScript/Oats source to AST representation
+/// 3. **Arrow Function Extraction**: Identifies and processes top-level arrow functions
+/// 4. **Code Generation**: Emits LLVM IR for all functions and constructs
+/// 5. **Object Generation**: Compiles IR to native object files
+/// 6. **Linking**: Combines object files with runtime to produce executable
+///
+/// # Returns
+/// `Ok(())` on successful compilation, or an error describing the failure point
 pub fn run_from_args(args: &[String]) -> Result<()> {
-    // Read source from first CLI arg or from OATS_SRC_FILE env var.
+    // Resolve source file location from arguments or environment
     let src_path = if args.len() > 1 {
         args[1].clone()
     } else if let Ok(p) = std::env::var("OATS_SRC_FILE") {
@@ -33,20 +53,29 @@ pub fn run_from_args(args: &[String]) -> Result<()> {
 
     let source = std::fs::read_to_string(&src_path)?;
 
-    // Note: Arrow functions declared at top-level as `let foo = (...) => ...`
-    // are now handled directly in codegen without text-level rewriting.
-    // This eliminates redundant parsing and improves compilation performance.
+    // OPTIMIZATION: Arrow functions declared as `let foo = (...) => ...` are now
+    // processed directly during codegen without intermediate source transformation.
+    // This eliminates redundant parsing passes and improves compilation performance.
 
-    // Parse the source once - no transformation needed
+    // Parse source into AST representation (single pass, no transformations)
     let initial_parsed_mod = parser::parse_oats_module(&source, Some(&src_path))?;
 
-    // Instead of rewriting source text and re-parsing, we'll use the original
-    // parsed AST and extract arrow functions directly during codegen.
+    // Use original parsed AST for all subsequent processing phases.
+    // Arrow function extraction happens during codegen traversal.
     let parsed_mod = initial_parsed_mod;
     let parsed = &parsed_mod.parsed;
 
-    // Helper: Extract top-level arrow functions from variable declarations
-    // Returns: Vec<(name, arrow_function, is_exported)>
+    /// Extracts top-level arrow function declarations from variable statements.
+    ///
+    /// This helper function identifies arrow functions bound to top-level variables,
+    /// which need special handling during code generation. The function distinguishes
+    /// between exported and non-exported arrow functions for proper symbol visibility.
+    ///
+    /// # Arguments
+    /// * `parsed` - Parsed AST containing the module structure
+    ///
+    /// # Returns
+    /// Vector of tuples containing (function_name, arrow_expr, is_exported)
     fn extract_arrow_functions(
         parsed: &deno_ast::ParsedSource,
     ) -> Vec<(String, deno_ast::swc::ast::ArrowExpr, bool)> {
@@ -55,7 +84,7 @@ pub fn run_from_args(args: &[String]) -> Result<()> {
 
         for item in parsed.program_ref().body() {
             match item {
-                // Non-exported: const/let foo = () => {}
+                // Process non-exported variable declarations: const/let foo = () => {}
                 deno_ast::ModuleItemRef::Stmt(stmt) => {
                     if let ast::Stmt::Decl(ast::Decl::Var(vdecl)) = stmt
                         && vdecl.decls.len() == 1
@@ -71,7 +100,7 @@ pub fn run_from_args(args: &[String]) -> Result<()> {
                         }
                     }
                 }
-                // Exported: export const foo = () => {}
+                // Process exported variable declarations: export const foo = () => {}
                 deno_ast::ModuleItemRef::ModuleDecl(module_decl) => {
                     if let ast::ModuleDecl::ExportDecl(decl) = module_decl
                         && let ast::Decl::Var(vdecl) = &decl.decl
@@ -95,15 +124,28 @@ pub fn run_from_args(args: &[String]) -> Result<()> {
 
     let arrow_functions = extract_arrow_functions(parsed);
 
-    // Scan AST and reject any use of `var` declarations. We purposely do
-    // this early so users get a clear error rather than surprising
-    // codegen/runtime behavior later.
+    // SECURITY: Perform early validation to reject `var` declarations which are
+    // not supported by the Oats type system. This provides clear error messaging
+    // rather than allowing confusing runtime behavior in later compilation phases.
+
+    /// Recursively scans statement AST nodes for prohibited `var` declarations.
+    ///
+    /// This function implements a conservative policy against `var` declarations,
+    /// which have function-scoped semantics that conflict with Oats' lexical
+    /// scoping model. The function recursively traverses nested statement
+    /// structures to ensure comprehensive detection.
+    ///
+    /// # Arguments
+    /// * `stmt` - Statement AST node to scan for `var` usage
+    ///
+    /// # Returns
+    /// `true` if any `var` declarations are found, `false` otherwise
     fn stmt_contains_var(stmt: &deno_ast::swc::ast::Stmt) -> bool {
         use deno_ast::swc::ast;
         match stmt {
-            // Only consider true `var` (function-scoped) declarations as
-            // rejected. `let` and `const` are represented by the same
-            // `Decl::Var` AST node but have a different `kind`.
+            // Distinguish `var` (function-scoped) from `let`/`const` (block-scoped).
+            // Only true `var` declarations are rejected; `let` and `const` use the
+            // same AST node type but have different `kind` discriminators.
             ast::Stmt::Decl(ast::Decl::Var(vdecl)) => {
                 matches!(vdecl.kind, ast::VarDeclKind::Var)
             }

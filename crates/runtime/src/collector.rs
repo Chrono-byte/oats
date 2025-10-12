@@ -1,3 +1,30 @@
+//! Background cycle collector for reclaiming unreachable reference cycles.
+//!
+//! This module implements a conservative trial-deletion cycle collector that
+//! runs in a background thread to reclaim memory from unreachable reference
+//! cycles. The collector uses a queue-based approach where potential cycle
+//! roots are submitted for analysis and processed asynchronously.
+//!
+//! # Algorithm
+//!
+//! The collector implements a conservative trial-deletion algorithm:
+//! 1. **Root Submission**: Objects with strong reference count drops to zero submit themselves
+//! 2. **Trial Deletion**: Temporarily decrement reference counts in the candidate subgraph
+//! 3. **Reachability Analysis**: Check if any objects in the subgraph are still reachable
+//! 4. **Cleanup or Restoration**: Delete unreachable cycles or restore reference counts
+//!
+//! # Concurrency
+//!
+//! The collector runs in a dedicated background thread and communicates with
+//! the main execution thread through a protected queue. The collector uses
+//! conservative assumptions to ensure memory safety in concurrent scenarios.
+//!
+//! # Performance
+//!
+//! The collector is designed to be non-intrusive, running with low priority
+//! and using timeouts to avoid blocking program execution. Collection frequency
+//! can be tuned based on allocation patterns and performance requirements.
+
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{self, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -5,15 +32,30 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::Duration;
 
-/// Collector: background worker that accepts root candidates and runs a
-/// conservative trial-deletion pass to reclaim cyclic garbage.
+/// Background cycle collector that processes potential garbage collection roots.
+///
+/// The collector maintains a queue of objects that may be part of unreachable
+/// reference cycles and processes them using a conservative trial-deletion
+/// algorithm. The collector runs in a separate thread to avoid blocking
+/// program execution during garbage collection cycles.
 pub struct Collector {
+    /// Queue of potential cycle roots submitted for analysis
     queue: Mutex<Vec<usize>>,
+    /// Condition variable for signaling new work to the collector thread
     cv: Condvar,
+    /// Flag indicating whether the collector thread is currently running
     running: AtomicBool,
 }
 
 impl Collector {
+    /// Creates a new collector instance ready for background operation.
+    ///
+    /// The collector is created in a stopped state and must be explicitly
+    /// started using the `start` method. This separation allows for proper
+    /// initialization and configuration before beginning collection cycles.
+    ///
+    /// # Returns
+    /// An `Arc<Collector>` suitable for sharing between threads
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
             queue: Mutex::new(Vec::new()),
@@ -22,9 +64,18 @@ impl Collector {
         })
     }
 
+    /// Starts the background collector thread for processing cycle collection.
+    ///
+    /// This method spawns a dedicated thread that waits for potential cycle
+    /// roots to be submitted and processes them using the trial-deletion
+    /// algorithm. The collector thread runs until explicitly stopped.
+    ///
+    /// # Thread Safety
+    /// Multiple calls to `start` are safe; subsequent calls are ignored if
+    /// the collector is already running.
     pub fn start(self: &Arc<Self>) {
         if self.running.swap(true, Ordering::SeqCst) {
-            return; // already running
+            return; // Collector thread already running
         }
         let c = Arc::clone(self);
         thread::spawn(move || {

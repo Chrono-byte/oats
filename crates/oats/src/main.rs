@@ -1,3 +1,35 @@
+//! Main entry point for the Oats AOT compiler.
+//!
+//! This module implements the primary compilation driver that orchestrates
+//! the complete pipeline from TypeScript/Oats source files to native executables.
+//! The compiler supports transitive module loading, type checking, LLVM code
+//! generation, and native linking with the Oats runtime library.
+//!
+//! # Compilation Pipeline
+//!
+//! 1. **Module Resolution**: Discovers and loads all modules transitively from the entry point
+//! 2. **Parsing**: Converts source text to AST using the deno_ast TypeScript parser
+//! 3. **Type Analysis**: Performs type checking and validates function signatures
+//! 4. **Code Generation**: Emits LLVM IR for all functions and top-level constructs
+//! 5. **Object Compilation**: Compiles IR to native object files via LLVM
+//! 6. **Runtime Linking**: Links object files with the Oats runtime to produce executables
+//!
+//! # Module System
+//!
+//! The compiler implements a simple module system supporting relative imports:
+//! - Resolves `./module` and `../module` style imports
+//! - Supports `.ts`, `.oats`, and extension-less files
+//! - Attempts `index.ts`/`index.oats` fallbacks for directory imports
+//! - Maintains a dependency graph to prevent cycles and duplicates
+//!
+//! # Usage
+//!
+//! The compiler accepts source files via command-line arguments or environment variables:
+//! ```bash
+//! cargo run -- main.oats                    # Via argument
+//! OATS_SRC_FILE=main.oats cargo run         # Via environment variable
+//! ```
+
 use anyhow::Result;
 
 use oats::codegen::CodeGen;
@@ -8,7 +40,7 @@ use inkwell::context::Context;
 use inkwell::targets::TargetMachine;
 
 fn main() -> Result<()> {
-    // Read source from first CLI arg or OATS_SRC_FILE env var
+    // Resolve source file location from command-line arguments or environment
     let args: Vec<String> = std::env::args().collect();
     let src_path = if args.len() > 1 {
         args[1].clone()
@@ -20,33 +52,44 @@ fn main() -> Result<()> {
         );
     };
 
-    // src_root was previously used for resolution; keep note for future
-    // enhancements. Currently unused.
-
-    // Load and parse modules transitively. We support simple relative imports
-    // Currently resolves relative module paths (./foo, ../bar). Modules are
-    // keyed by canonicalized absolute paths.
-    // paths to avoid duplicates and cycles.
+    // ARCHITECTURE: Transitive module loading with dependency resolution.
+    // The compiler loads and parses modules transitively, resolving relative imports
+    // and maintaining a dependency graph to prevent cycles and duplicate processing.
+    // Module paths are canonicalized to absolute paths for consistent keying.
     use std::collections::{HashMap, VecDeque};
     let mut modules: HashMap<String, parser::ParsedModule> = HashMap::new();
     let mut queue: VecDeque<String> = VecDeque::new();
 
-    // Start with entry file
+    // Initialize module loading with the entry point file
     let entry_abs = std::fs::canonicalize(&src_path)?;
     let entry_str = entry_abs.to_string_lossy().to_string();
     queue.push_back(entry_str.clone());
 
-    // Helper: resolve a relative import specifier against a module path.
-    // Tries common extensions and index file fallbacks. Returns a canonical
-    // absolute path string when a file is found.
+    /// Resolves relative import specifiers to absolute file paths.
+    ///
+    /// This function implements the module resolution algorithm for relative imports,
+    /// supporting common TypeScript/JavaScript conventions including file extension
+    /// inference and index file fallbacks for directory imports.
+    ///
+    /// # Arguments
+    /// * `from` - Absolute path of the importing module
+    /// * `spec` - Relative import specifier (e.g., "./module", "../utils")
+    ///
+    /// # Returns
+    /// Canonical absolute path string if a matching file is found, `None` otherwise
+    ///
+    /// # Resolution Strategy
+    /// 1. **Direct file matching**: Tries `.ts`, `.oats`, and extension-less variants
+    /// 2. **Directory resolution**: Attempts `index.ts`/`index.oats` for directories
+    /// 3. **Index fallbacks**: Additional index file patterns for compatibility
     fn resolve_relative_import(from: &str, spec: &str) -> Option<String> {
         let base = std::path::Path::new(from)
             .parent()
             .unwrap_or_else(|| std::path::Path::new("."));
         let candidate = base.join(spec);
-        let exts = [".ts", ".oats", ""]; // prefer .ts then .oats then raw
+        let exts = [".oats", ".ts", ""]; // Prioritize .ts, then .oats, then raw
 
-        // Try direct file with extensions
+        // Attempt direct file resolution with extension inference
         for ext in &exts {
             let mut c = candidate.clone();
             if c.extension().is_none() && !ext.is_empty() {
@@ -59,7 +102,7 @@ fn main() -> Result<()> {
             }
         }
 
-        // If candidate is a directory or bare module, try index file fallbacks
+        // Handle directory imports with index file resolution
         if candidate.exists() && candidate.is_dir() {
             for idx in &["index.ts", "index.oats", "index"] {
                 let c = candidate.join(idx);
@@ -71,7 +114,7 @@ fn main() -> Result<()> {
             }
         }
 
-        // Also try appending /index.* to the original spec (in case spec had ext)
+        // Additional index file resolution for edge cases
         for idx in &["index.ts", "index.oats", "index"] {
             let c = candidate.join(idx);
             if c.exists()
@@ -84,20 +127,21 @@ fn main() -> Result<()> {
         None
     }
 
+    // PHASE 1: Transitive module loading and dependency resolution
     while let Some(path) = queue.pop_front() {
         if modules.contains_key(&path) {
-            continue; // already loaded
+            continue; // Skip already processed modules
         }
         let src = std::fs::read_to_string(&path)?;
         let parsed = parser::parse_oats_module(&src, Some(&path))?;
-        // enqueue discovered relative imports found in this module
-        // look for Import declarations and resolve relative specifiers
+        
+        // Discover and enqueue relative imports from this module
         for item_ref in parsed.parsed.program_ref().body() {
             if let deno_ast::ModuleItemRef::ModuleDecl(module_decl) = item_ref
                 && let deno_ast::swc::ast::ModuleDecl::Import(import_decl) = module_decl
             {
                 let src_val = import_decl.src.value.to_string();
-                // Only relative paths are handled by this code path.
+                // Process only relative import paths (absolute imports are not supported)
                 if (src_val.starts_with("./") || src_val.starts_with("../"))
                     && let Some(fpath) = resolve_relative_import(&path, &src_val)
                     && !modules.contains_key(&fpath)
@@ -109,30 +153,29 @@ fn main() -> Result<()> {
         modules.insert(path.clone(), parsed);
     }
 
-    // For downstream logic we pick the entry parsed module and also have all
-    // other parsed modules available in `modules` for symbol collection.
+    // PHASE 2: Symbol table construction and entry point validation
+    // Extract the entry module and prepare for symbol resolution across all loaded modules
     let parsed_mod = modules
         .get(&entry_str)
         .ok_or_else(|| anyhow::anyhow!("entry module missing after load"))?;
-    // `parsed_mod` is available if callers need the entry module parsed AST.
 
-    // Require the user script to export a `main` function as the program entrypoint
-    // Also pre-populate the symbol table with imported names and exported class
-    // declarations so nominal type references can be resolved during typecheck.
-    // We also scan all loaded modules to register exported classes, interfaces,
-    // and type aliases so cross-file nominal references can be resolved.
+    // REQUIREMENT: User programs must export a `main` function as the entry point.
+    // Additionally, build a comprehensive symbol table by collecting exported symbols
+    // from all loaded modules to enable cross-module type resolution and nominal
+    // type references during the type checking phase.
     let mut func_decl_opt: Option<deno_ast::swc::ast::Function> = None;
     let mut pre_symbols = SymbolTable::new();
 
-    // First pass: collect exported type-like symbols per module (classes,
-    // interfaces, and type aliases) so imports can be resolved to their
-    // real types when possible.
+    // PHASE 2A: First pass - collect exported type declarations across all modules.
+    // This enables cross-module type resolution for imported symbols and establishes
+    // the foundation for nominal type checking throughout the compilation unit.
     let mut exports_map: std::collections::HashMap<
         String,
         std::collections::HashMap<String, OatsType>,
     > = std::collections::HashMap::new();
-    // Collect fields for top-level type aliases that are object literal types
-    // so we can register them as nominal structs for lowering.
+    
+    // Maintain field information for type aliases that resolve to object literal types,
+    // enabling their registration as nominal structs for proper code generation.
     let mut alias_fields: std::collections::HashMap<String, Vec<(String, OatsType)>> =
         std::collections::HashMap::new();
     for (mkey, parsed_module) in modules.iter() {

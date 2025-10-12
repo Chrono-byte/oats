@@ -141,8 +141,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     }
                 }
 
+                // Lower left operand and capture its origin (whether it came from a local)
                 let l = self.lower_expr(&bin.left, function, param_map, locals)?;
+                let left_origin = self.last_expr_origin_local.borrow().clone();
+                // Lower right operand and capture its origin
                 let r = self.lower_expr(&bin.right, function, param_map, locals)?;
+                let right_origin = self.last_expr_origin_local.borrow().clone();
 
                 // Handle string concatenation BEFORE numeric coercion
                 // If both operands are pointers and op is Add, treat as string concat
@@ -151,17 +155,30 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         (l, r)
                 {
                     if let Some(strcat) = self.module.get_function("str_concat") {
-                        let call_site =
-                            match self
-                                .builder
-                                .build_call(strcat, &[lp.into(), rp.into()], "concat")
-                            {
-                                Ok(cs) => cs,
-                                Err(_) => return Err(Diagnostic::simple("operation failed")),
-                            };
+                        let call_site = match self
+                            .builder
+                            .build_call(strcat, &[lp.into(), rp.into()], "concat")
+                        {
+                            Ok(cs) => cs,
+                            Err(_) => return Err(Diagnostic::simple("operation failed")),
+                        };
                         let either = call_site.try_as_basic_value();
                         match either {
-                            inkwell::Either::Left(bv) => return Ok(bv),
+                            inkwell::Either::Left(bv) => {
+                                // After creating the concatenated string, decrement
+                                // temporary operands that didn't originate from locals.
+                                if left_origin.is_none() {
+                                    if let Some(rc_dec_fn) = self.module.get_function("rc_dec") {
+                                        let _ = self.builder.build_call(rc_dec_fn, &[lp.into()], "rc_dec_tmp_left").ok();
+                                    }
+                                }
+                                if right_origin.is_none() {
+                                    if let Some(rc_dec_fn) = self.module.get_function("rc_dec") {
+                                        let _ = self.builder.build_call(rc_dec_fn, &[rp.into()], "rc_dec_tmp_right").ok();
+                                    }
+                                }
+                                return Ok(bv);
+                            }
                             _ => {
                                 return Err(Diagnostic::simple(
                                     "operation not supported (bin strcat result)",
@@ -288,10 +305,15 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     // callee/array_get/union_box helpers when producing values.
                     self.builder.position_at_end(then_bb);
                     let rv = self.lower_expr(&bin.right, function, param_map, locals);
-                    if self.builder.get_insert_block().is_some()
-                        && self.builder.build_unconditional_branch(merge_bb).is_err()
-                    {
-                        return Err(Diagnostic::simple("expression lowering failed"))?;
+                    // Ensure we are positioned at the end of the `then` block before
+                    // emitting the unconditional branch to the merge block. This
+                    // guards against lowering paths that may have switched the
+                    // insertion point while lowering nested expressions.
+                    if self.builder.get_insert_block().is_some() {
+                        let _ = self.builder.position_at_end(then_bb);
+                        if self.builder.build_unconditional_branch(merge_bb).is_err() {
+                            return Err(Diagnostic::simple("expression lowering failed"))?;
+                        }
                     }
                     // else: keep left (the left expression's value is the
                     // result of the `&&` expression when it's falsy). We branch
@@ -299,6 +321,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     // phi node to select the correct value.
                     self.builder.position_at_end(else_bb);
                     if self.builder.get_insert_block().is_some() {
+                        let _ = self.builder.position_at_end(else_bb);
                         let _ = self
                             .builder
                             .build_unconditional_branch(merge_bb)
@@ -406,6 +429,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 if let Some(idx) = param_map.get(&name)
                     && let Some(pv) = function.get_nth_param(*idx)
                 {
+                    // Record that this expression originated from a parameter
+                    // so later lowering (e.g., array access) can consult
+                    // `fn_param_types` for more accurate element type info.
+                    self.last_expr_origin_local.borrow_mut().replace(name.clone());
                     return Ok(pv);
                 }
 
@@ -944,14 +971,31 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                 && let Some(print_fn) =
                                                     self.module.get_function("print_str_no_nl")
                                             {
-                                                let _ = self
-                                                    .builder
-                                                    .build_call(
-                                                        print_fn,
-                                                        &[pv.into()],
-                                                        "print_str_no_nl_call",
-                                                    )
-                                                    .ok();
+                                                // snapshot origin to decide ownership: if the argument
+                                                // did not originate from a local (i.e., it's a temporary),
+                                                // materialize into a temp alloca so we can rc_dec it after printing.
+                                                let arg_origin = self.last_expr_origin_local.borrow().clone();
+                                                if arg_origin.is_none() {
+                                                    // create a temp alloca to hold the temporary pointer
+                                                    let tmp_alloca = match self.builder.build_alloca(self.i8ptr_t, "tmp_str_alloc") {
+                                                        Ok(a) => a,
+                                                        Err(_) => return Err(Diagnostic::simple("operation failed"))?,
+                                                    };
+                                                    let _ = self.builder.build_store(tmp_alloca, pv);
+                                                    // load for call
+                                                    let tmp_loaded = match self.builder.build_load(self.i8ptr_t, tmp_alloca, "tmp_loaded") {
+                                                        Ok(v) => v,
+                                                        Err(_) => return Err(Diagnostic::simple("operation failed"))?,
+                                                    };
+                                                    let _ = self.builder.build_call(print_fn, &[tmp_loaded.into()], "print_str_no_nl_call").ok();
+                                                    // rc_dec the temporary
+                                                    if let Some(rc_dec_fn) = self.module.get_function("rc_dec") {
+                                                        let _ = self.builder.build_call(rc_dec_fn, &[tmp_loaded.into()], "rc_dec_tmp").ok();
+                                                    }
+                                                } else {
+                                                    // argument is from a local; print directly
+                                                    let _ = self.builder.build_call(print_fn, &[pv.into()], "print_str_no_nl_call").ok();
+                                                }
                                             }
                                         }
                                         _ => {
@@ -1001,10 +1045,45 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     }
                                 }
 
-                                // Infer argument types from expressions as a fallback
+                                // Infer argument types from expressions as a fallback.
+                                // If the argument is an identifier that refers to a
+                                // local or a parameter of the current function, try
+                                // to use the recorded `OatsType` (from `find_local`
+                                // or `fn_param_types`) which is more accurate than
+                                // expression-only inference for identifiers.
                                 let mut inferred_params: Vec<crate::types::OatsType> = Vec::new();
                                 for a in &call.args {
-                                    let inferred = crate::types::infer_type(None, Some(&a.expr));
+                                    let mut inferred_opt: Option<crate::types::OatsType> = None;
+                                    // If the argument is a plain identifier, try to resolve its type
+                                    if let deno_ast::swc::ast::Expr::Ident(ident) = &*a.expr {
+                                        let arg_name = ident.sym.to_string();
+                                        // First, check lexical locals
+                                        if let Some((_, _, _, _, _, _, oats_type_opt)) =
+                                            self.find_local(locals, &arg_name)
+                                        {
+                                            if let Some(ot) = oats_type_opt {
+                                                inferred_opt = Some(ot.clone());
+                                            }
+                                        }
+                                        // Next, check if it's a parameter of the current function
+                                        if inferred_opt.is_none() {
+                                            if let Some(idx) = param_map.get(&arg_name) {
+                                                let caller_name = function.get_name().to_str().unwrap_or("");
+                                                if let Some(param_types) = self.fn_param_types.borrow().get(caller_name) {
+                                                    let idx_us = *idx as usize;
+                                                    if idx_us < param_types.len() {
+                                                        inferred_opt = Some(param_types[idx_us].clone());
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    let inferred = if let Some(ot) = inferred_opt {
+                                        ot
+                                    } else {
+                                        crate::types::infer_type(None, Some(&a.expr))
+                                    };
                                     inferred_params.push(inferred);
                                 }
 
@@ -1181,26 +1260,101 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 }
 
                                 // Specialize return type using the substitution map and AST
-                                let spec_ret: crate::types::OatsType =
+                                let mut spec_ret: crate::types::OatsType = if let Some(rt) = &nested_fn.return_type {
+                                    let ts_ty = &*rt.type_ann;
+                                    crate::types::map_ts_type_with_subst(ts_ty, &subst)
+                                        .unwrap_or(fsig.ret.clone())
+                                } else {
+                                    fsig.ret.clone()
+                                };
+
+                                // If the specialization still contains unresolved generics
+                                // (for example return type is `T | undefined` and `T` wasn't
+                                // mapped), try an additional inference pass: look for a
+                                // parameter annotated as `T[]` and use the call-site
+                                // inferred argument type (e.g. Array(Number)) to map `T->Number`.
+                                let needs_extra_infer = match &spec_ret {
+                                    crate::types::OatsType::Generic(_) => true,
+                                    crate::types::OatsType::Union(parts) => parts.iter().any(|p| matches!(p, crate::types::OatsType::Generic(_))),
+                                    crate::types::OatsType::Option(inner) => matches!(**inner, crate::types::OatsType::Generic(_)),
+                                    _ => false,
+                                };
+                                if needs_extra_infer {
+                                    // Look through declared_names and nested_fn.params to find an array param that references the generic name
+                                    for (pidx, param) in nested_fn.params.iter().enumerate() {
+                                        if let deno_ast::swc::ast::Pat::Ident(ident) = &param.pat {
+                                            if let Some(type_ann) = &ident.type_ann {
+                                                // If the param AST type mentions a declared type param
+                                                // and that declared name is present in declared_names,
+                                                // and the call-site inferred param is an Array(inner),
+                                                // map the declared name -> inner.
+                                                for decl_name in declared_names.iter() {
+                                                    // Only attempt if not already substituted
+                                                    if subst.contains_key(decl_name) {
+                                                        continue;
+                                                    }
+                                                    // If the parameter annotation contains the declared name,
+                                                    // and the inferred param at this position is Array(inner), use it.
+                                                    if ts_type_contains_name(&*type_ann.type_ann, decl_name) {
+                                                        if pidx < inferred_params.len() {
+                                                            let inferred = inferred_params[pidx].clone();
+                                                            if let crate::types::OatsType::Array(inner_box) = inferred {
+                                                                subst.insert(decl_name.clone(), (*inner_box).clone());
+                                                            } else {
+                                                                // If inferred param isn't an array but the annotation was T[],
+                                                                // fall back to using the inferred param itself.
+                                                                subst.insert(decl_name.clone(), inferred);
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    // Recompute specialized params and return using the updated subst
+                                    spec_params.clear();
+                                    for (idx, param) in nested_fn.params.iter().enumerate() {
+                                        if let deno_ast::swc::ast::Pat::Ident(ident) = &param.pat {
+                                            if let Some(type_ann) = &ident.type_ann {
+                                                let ts_ty = &*type_ann.type_ann;
+                                                if let Some(mapped) = crate::types::map_ts_type_with_subst(ts_ty, &subst) {
+                                                    spec_params.push(mapped);
+                                                    continue;
+                                                }
+                                            }
+                                        }
+                                        if let Some(p) = fsig.params.get(idx) {
+                                            spec_params.push(p.clone());
+                                        } else {
+                                            spec_params.push(crate::types::OatsType::Number);
+                                        }
+                                    }
+                                    // recompute spec_ret
                                     if let Some(rt) = &nested_fn.return_type {
                                         let ts_ty = &*rt.type_ann;
-                                        crate::types::map_ts_type_with_subst(ts_ty, &subst)
-                                            .unwrap_or(fsig.ret.clone())
+                                        spec_ret = crate::types::map_ts_type_with_subst(ts_ty, &subst).unwrap_or(fsig.ret.clone());
                                     } else {
-                                        fsig.ret.clone()
-                                    };
-
-                                // Serialize key for deduplication using declared names and subst
-                                let mut key_parts: Vec<String> = Vec::new();
-                                for name in &declared_names {
-                                    if let Some(v) = subst.get(name) {
-                                        key_parts.push(format!("{}={:?}", name, v));
-                                    } else {
-                                        key_parts.push(format!("{}=_", name));
+                                        spec_ret = fsig.ret.clone();
                                     }
                                 }
-                                let key =
-                                    format!("{}::{} -> {:?}", fname, key_parts.join(","), spec_ret);
+
+                                // Prefer using the call-site inferred argument types when generating
+                                // the specialization key. This ties the specialization to what the
+                                // caller actually passes (for example `Array(Number)` vs `Array(String)`)
+                                // and avoids incorrectly reusing a specialization computed from
+                                // AST-level substitution that may be incomplete.
+                                let inferred_for_key = inferred_params.clone();
+                                let key = format!(
+                                    "{}::<{:?}> -> {:?}",
+                                    fname, inferred_for_key, spec_ret
+                                );
+
+                                // Debug: print both inferred (call-site) and computed spec params
+                                eprintln!(
+                                    "[mono-debug] callsite '{}' inferred={:?} spec_params={:?} key='{}' ret={:?}",
+                                    fname, inferred_for_key, spec_params, key, spec_ret
+                                );
 
                                 // Check if we've already created a specialization
                                 let mut mono_map = self.monomorphized_map.borrow_mut();
@@ -1214,24 +1368,36 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     let h = hasher.finish();
                                     let specialized = format!("{}_mono_{:x}", fname, h);
                                     let prev_block = self.builder.get_insert_block();
-                                    if let Err(diag) = self.gen_function_ir(
+                                    // Attempt to generate the specialized function.
+                                    // Only record the specialization if generation succeeds.
+                                    let gen_result = self.gen_function_ir(
                                         &specialized,
                                         &nested_fn,
                                         &spec_params,
                                         &spec_ret,
                                         None,
-                                    ) {
-                                        crate::diagnostics::emit_diagnostic(
-                                            &diag,
-                                            Some(self.source),
-                                        );
+                                    );
+                                    match gen_result {
+                                        Ok(_) => {
+                                            eprintln!("[mono] created specialization '{}' for key='{}' params={:?} ret={:?}", specialized, key, spec_params, spec_ret);
+                                            if let Some(pb) = prev_block {
+                                                self.builder.position_at_end(pb);
+                                            }
+                                            // Record the param types for the generated function so later lowering
+                                            // can consult `fn_param_types` to resolve nominal info.
+                                            self.fn_param_types.borrow_mut().insert(specialized.clone(), spec_params.clone());
+                                            mono_map.insert(key.clone(), specialized.clone());
+                                            specialized
+                                        }
+                                        Err(diag) => {
+                                            // On failure emit diagnostic and fall back to generic name
+                                            crate::diagnostics::emit_diagnostic(&diag, Some(self.source));
+                                            if let Some(pb) = prev_block {
+                                                self.builder.position_at_end(pb);
+                                            }
+                                            fname.clone()
+                                        }
                                     }
-                                    eprintln!("[mono] created specialization '{}' for key='{}' params={:?} ret={:?}", specialized, key, spec_params, spec_ret);
-                                    if let Some(pb) = prev_block {
-                                        self.builder.position_at_end(pb);
-                                    }
-                                    mono_map.insert(key.clone(), specialized.clone());
-                                    specialized
                                 };
 
                                 // Now lower args and call the specialized function
@@ -2908,6 +3074,13 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 // Ternary expression: test ? cons : alt
                 // Lower test to an i1
                 let test_val = self.lower_expr(&cond.test, function, param_map, locals)?;
+                // Debug: log the kind of the lowered test expression
+                match &test_val {
+                    BasicValueEnum::PointerValue(_) => eprintln!("[debug cond test] kind=pointer"),
+                    BasicValueEnum::FloatValue(_) => eprintln!("[debug cond test] kind=float"),
+                    BasicValueEnum::IntValue(_) => eprintln!("[debug cond test] kind=int"),
+                    _ => eprintln!("[debug cond test] kind=other"),
+                }
                 let cond_i1 = match test_val {
                     BasicValueEnum::IntValue(iv) => iv.as_basic_value_enum(),
                     BasicValueEnum::FloatValue(fv) => {
@@ -3005,30 +3178,267 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 // then
                 self.builder.position_at_end(then_bb);
                 let then_val = self.lower_expr(&cond.cons, function, param_map, locals);
-                if self.builder.get_insert_block().is_some() {
-                    let _ = self
-                        .builder
-                        .build_unconditional_branch(merge_bb)
-                        .map_err(|_| Diagnostic::simple("LLVM builder error"))?;
+                // Debug: record whether then arm lowered and its ABI kind
+                match &then_val {
+                    Ok(v) => {
+                        let ty_str = match v.get_type() {
+                            inkwell::types::BasicTypeEnum::PointerType(_) => "pointer",
+                            inkwell::types::BasicTypeEnum::FloatType(_) => "float",
+                            inkwell::types::BasicTypeEnum::IntType(_) => "int",
+                            _ => "other",
+                        };
+                        eprintln!("[debug cond] then arm lowered: ok, kind={}", ty_str);
+                    }
+                    Err(_) => eprintln!("[debug cond] then arm lowered: err"),
                 }
 
                 // else
                 self.builder.position_at_end(else_bb);
                 let else_val = self.lower_expr(&cond.alt, function, param_map, locals);
-                if self.builder.get_insert_block().is_some() {
-                    let _ = self
-                        .builder
-                        .build_unconditional_branch(merge_bb)
-                        .map_err(|_| Diagnostic::simple("LLVM builder error"))?;
+                // Debug: record whether else arm lowered and its ABI kind
+                match &else_val {
+                    Ok(v) => {
+                        let ty_str = match v.get_type() {
+                            inkwell::types::BasicTypeEnum::PointerType(_) => "pointer",
+                            inkwell::types::BasicTypeEnum::FloatType(_) => "float",
+                            inkwell::types::BasicTypeEnum::IntType(_) => "int",
+                            _ => "other",
+                        };
+                        eprintln!("[debug cond] else arm lowered: ok, kind={}", ty_str);
+                    }
+                    Err(_) => eprintln!("[debug cond] else arm lowered: err"),
                 }
 
-                // merge
+                // Fallback: if else arm failed to lower but is the identifier `undefined`,
+                // treat it as a null pointer so ternaries like `x ? y : undefined` work.
+                let else_val = match else_val {
+                    Ok(v) => Ok(v),
+                    Err(_) => {
+                        if let ast::Expr::Ident(id) = &*cond.alt {
+                            if id.sym.to_string() == "undefined" {
+                                let null_ptr = self.i8ptr_t.const_null();
+                                eprintln!("[debug cond] else arm is `undefined` -> using null pointer fallback");
+                                Ok(null_ptr.as_basic_value_enum())
+                            } else {
+                                Err(Diagnostic::simple("expression lowering failed"))
+                            }
+                        } else {
+                            Err(Diagnostic::simple("expression lowering failed"))
+                        }
+                    }
+                };
+
+                // At this point we have lowered both arms (or substituted fallback).
+                // We will now, if needed, perform boxing inside the predecessor
+                // blocks so that incoming phi values are produced in the correct
+                // blocks. Only after that we emit unconditional branches to merge.
+
+                // Ensure both predecessor blocks branch to the merge block.
+                // Some lowering paths may not have emitted an explicit branch
+                // (they just returned a value), so add unconditional branches
+                // from `then_bb`/`else_bb` to `merge_bb` when missing.
+                if then_bb.get_terminator().is_none() {
+                    self.builder.position_at_end(then_bb);
+                    self.ensure_unconditional_branch(merge_bb);
+                }
+                if else_bb.get_terminator().is_none() {
+                    self.builder.position_at_end(else_bb);
+                    self.ensure_unconditional_branch(merge_bb);
+                }
+                // Now position at merge and build phi nodes
                 self.builder.position_at_end(merge_bb);
-                // If both sides produced values, create a phi via helper
-                if let (Ok(tv), Ok(ev)) = (then_val, else_val)
-                    && let Some(phi) = self.build_phi_merge(then_bb, else_bb, tv, ev)
-                {
-                    return Ok(phi);
+                // If both sides produced values, try to create a phi. Some common
+                // forms mix numeric (f64) with pointer-like (i8*) values where the
+                // pointer arm may be `undefined`/`null`. Handle that case by boxing
+                // numeric arms into a union pointer and building a pointer phi.
+                if let (Ok(tv), Ok(ev)) = (then_val, else_val) {
+                    use inkwell::types::BasicTypeEnum;
+                    let tv_ty = tv.get_type();
+                    let ev_ty = ev.get_type();
+
+                    // Helper to box numeric/int values into an i8* union pointer
+                    let box_to_ptr = |codegen: &crate::codegen::CodeGen<'a>, bv: BasicValueEnum<'a>| -> Result<BasicValueEnum<'a>, Diagnostic> {
+                        match bv {
+                            BasicValueEnum::PointerValue(pv) => Ok(pv.as_basic_value_enum()),
+                            BasicValueEnum::FloatValue(fv) => {
+                                let box_fn = codegen.get_union_box_f64();
+                                let cs = codegen.builder.build_call(box_fn, &[fv.into()], "box_phi");
+                                if let Ok(cs) = cs {
+                                    if let inkwell::Either::Left(bv2) = cs.try_as_basic_value() {
+                                        return Ok(bv2);
+                                    }
+                                }
+                                Err(Diagnostic::simple("boxing failed for phi"))
+                            }
+                            BasicValueEnum::IntValue(iv) => {
+                                // convert to f64 then box
+                                let as_f64 = codegen.builder.build_signed_int_to_float(iv, codegen.f64_t, "i2f_phi").map_err(|_| Diagnostic::simple("int->float cast failed"))?;
+                                let box_fn = codegen.get_union_box_f64();
+                                let cs = codegen.builder.build_call(box_fn, &[as_f64.into()], "box_phi");
+                                if let Ok(cs) = cs {
+                                    if let inkwell::Either::Left(bv2) = cs.try_as_basic_value() {
+                                        return Ok(bv2);
+                                    }
+                                }
+                                Err(Diagnostic::simple("boxing failed for phi"))
+                            }
+                            _ => Err(Diagnostic::simple("unsupported phi arm type")),
+                        }
+                    };
+
+                    // If either side is a pointer and the other is numeric, prefer a
+                    // simple fast-path: if the `then` arm is numeric (f64/int) and the
+                    // `else` arm is pointer-like (commonly `undefined` -> null), box
+                    // the numeric `then` into a union pointer in the `then` block,
+                    // create a null or pointer value in the `else` block, then build
+                    // a pointer phi in the merge block. This handles common JS-style
+                    // ternaries like `arr.length > 0 ? arr[0] : undefined`.
+                    //
+                    // tv = then value, ev = else value
+                    // fast-path condition: then is float/int and else is pointer
+                    if (matches!(tv_ty, BasicTypeEnum::FloatType(_)) || matches!(tv_ty, BasicTypeEnum::IntType(_)))
+                        && matches!(ev_ty, BasicTypeEnum::PointerType(_))
+                    {
+                        // Decide whether the overall desired ABI is numeric (f64) or pointer.
+                        let mut func_ret_is_float = false;
+                        if let Some(rt) = self.current_function_return_type.borrow().clone() {
+                            let llvm_ret = self.map_type_to_llvm(&rt);
+                            func_ret_is_float = matches!(llvm_ret, BasicTypeEnum::FloatType(_));
+                        }
+
+                        if func_ret_is_float {
+                            // The function expects a numeric return (f64). Prefer a numeric phi:
+                            // then arm -> numeric value; else arm (pointer/undefined) -> numeric default (0.0).
+                            // then: ensure numeric value available
+                            self.builder.position_at_end(then_bb);
+                            let then_num = match tv {
+                                BasicValueEnum::FloatValue(fv) => fv,
+                                BasicValueEnum::IntValue(iv) => {
+                                    // convert to f64
+                                    self.builder.build_signed_int_to_float(iv, self.f64_t, "i2f_then").map_err(|_| Diagnostic::simple("int->float cast failed"))?
+                                }
+                                _ => return Err(Diagnostic::simple("unsupported then arm type for numeric phi")),
+                            };
+                            // Ensure then block ends with branch to merge
+                            self.ensure_unconditional_branch(merge_bb);
+
+                            // else: default numeric value for undefined/null
+                            self.builder.position_at_end(else_bb);
+                            let else_num = self.f64_t.const_float(0.0);
+                            // Ensure else block ends with branch to merge
+                            self.ensure_unconditional_branch(merge_bb);
+
+                            // merge: build phi of f64
+                            self.builder.position_at_end(merge_bb);
+                            let phi = self.builder.build_phi(self.f64_t.as_basic_type_enum(), "phi_tmp").map_err(|_| Diagnostic::simple("phi creation failed"))?;
+                            phi.add_incoming(&[(&then_num.as_basic_value_enum(), then_bb), (&else_num.as_basic_value_enum(), else_bb)]);
+                            return Ok(phi.as_basic_value());
+                        } else {
+                            // then: box numeric into i8*
+                            self.builder.position_at_end(then_bb);
+                            let boxed_then = match tv {
+                                BasicValueEnum::FloatValue(fv) => {
+                                    let box_fn = self.get_union_box_f64();
+                                    let cs = self.builder.build_call(box_fn, &[fv.into()], "box_then");
+                                    if let Ok(cs) = cs {
+                                        if let inkwell::Either::Left(bv) = cs.try_as_basic_value() {
+                                            bv
+                                        } else {
+                                            return Err(Diagnostic::simple("boxing failed in then arm"));
+                                        }
+                                    } else {
+                                        return Err(Diagnostic::simple("boxing failed in then arm"));
+                                    }
+                                }
+                                BasicValueEnum::IntValue(iv) => {
+                                    let as_f64 = self.builder.build_signed_int_to_float(iv, self.f64_t, "i2f_then").map_err(|_| Diagnostic::simple("int->float cast failed"))?;
+                                    let box_fn = self.get_union_box_f64();
+                                    let cs = self.builder.build_call(box_fn, &[as_f64.into()], "box_then");
+                                    if let Ok(cs) = cs {
+                                        if let inkwell::Either::Left(bv) = cs.try_as_basic_value() {
+                                            bv
+                                        } else {
+                                            return Err(Diagnostic::simple("boxing failed in then arm"));
+                                        }
+                                    } else {
+                                        return Err(Diagnostic::simple("boxing failed in then arm"));
+                                    }
+                                }
+                                _ => return Err(Diagnostic::simple("unsupported then arm type for boxing")),
+                            };
+                            // branch to merge
+                            self.ensure_unconditional_branch(merge_bb);
+
+                            // else: ensure it branches to merge and obtain pointer value
+                            self.builder.position_at_end(else_bb);
+                            let else_ptr = match ev {
+                                BasicValueEnum::PointerValue(p) => p.as_basic_value_enum(),
+                                _ => return Err(Diagnostic::simple("expected pointer in else arm")),
+                            };
+                            self.ensure_unconditional_branch(merge_bb);
+
+                            // merge: build phi of i8*
+                            self.builder.position_at_end(merge_bb);
+                            let ptr_ty = self.i8ptr_t.as_basic_type_enum();
+                            let phi_node = self.builder.build_phi(ptr_ty, "phi_tmp").map_err(|_| Diagnostic::simple("phi creation failed"))?;
+                            phi_node.add_incoming(&[(&boxed_then, then_bb), (&else_ptr, else_bb)]);
+                            return Ok(phi_node.as_basic_value());
+                        }
+                    }
+
+                    // Otherwise, perform general boxing in predecessors (below)...
+                    if matches!(tv_ty, BasicTypeEnum::PointerType(_)) && !matches!(ev_ty, BasicTypeEnum::PointerType(_))
+                        || matches!(ev_ty, BasicTypeEnum::PointerType(_)) && !matches!(tv_ty, BasicTypeEnum::PointerType(_))
+                    {
+                        let ptr_ty = self.i8ptr_t.as_basic_type_enum();
+
+                        // Prepare placeholders for incoming values produced in preds
+                        let then_incoming: Result<BasicValueEnum<'a>, Diagnostic>;
+                        let else_incoming: Result<BasicValueEnum<'a>, Diagnostic>;
+
+                        if !matches!(tv_ty, BasicTypeEnum::PointerType(_)) && matches!(ev_ty, BasicTypeEnum::PointerType(_)) {
+                            // then needs boxing
+                            self.builder.position_at_end(then_bb);
+                            let boxed_then = box_to_ptr(self, tv).map_err(|_| Diagnostic::simple("phi boxing failed"))?;
+                            // ensure then block branches to merge
+                            self.ensure_unconditional_branch(merge_bb);
+                            then_incoming = Ok(boxed_then);
+
+                            // else block: keep as pointer value
+                            self.builder.position_at_end(else_bb);
+                            let else_ptr = match ev {
+                                BasicValueEnum::PointerValue(p) => p.as_basic_value_enum(),
+                                _ => return Err(Diagnostic::simple("expected pointer in else arm")),
+                            };
+                            self.ensure_unconditional_branch(merge_bb);
+                            else_incoming = Ok(else_ptr);
+                        } else {
+                            // else needs boxing
+                            self.builder.position_at_end(then_bb);
+                            let then_ptr = match tv {
+                                BasicValueEnum::PointerValue(p) => p.as_basic_value_enum(),
+                                _ => return Err(Diagnostic::simple("expected pointer in then arm")),
+                            };
+                            self.ensure_unconditional_branch(merge_bb);
+                            then_incoming = Ok(then_ptr);
+
+                            self.builder.position_at_end(else_bb);
+                            let boxed_else = box_to_ptr(self, ev).map_err(|_| Diagnostic::simple("phi boxing failed"))?;
+                            self.ensure_unconditional_branch(merge_bb);
+                            else_incoming = Ok(boxed_else);
+                        }
+
+                        // merge: create phi from incoming values (builder at merge_bb)
+                        self.builder.position_at_end(merge_bb);
+                        let phi_node = self.builder.build_phi(ptr_ty, "phi_tmp").map_err(|_| Diagnostic::simple("phi creation failed"))?;
+                        phi_node.add_incoming(&[(&then_incoming.unwrap(), then_bb), (&else_incoming.unwrap(), else_bb)]);
+                        return Ok(phi_node.as_basic_value());
+                    }
+
+                    // Otherwise try the general helper
+                    if let Some(phi) = self.build_phi_merge(then_bb, else_bb, tv, ev) {
+                        return Ok(phi);
+                    }
                 }
 
                 Err(Diagnostic::simple_with_span(
@@ -3186,9 +3596,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
                 // compute data pointer: arr_ptr points at header start; data starts after header+len
                 let header_bytes = (std::mem::size_of::<u64>() + std::mem::size_of::<u64>()) as u64;
-                // GEP arr_ptr (i8*) by header_bytes to get data start
+
+                // Compute a pointer to the array data region (i8*) located after the header+length
                 let offset_const = self.i32_t.const_int(header_bytes, false);
-                let data_i8_res = unsafe {
+                let data_ptr_i8_res = unsafe {
                     self.builder.build_gep(
                         self.context.i8_type(),
                         arr_ptr,
@@ -3196,14 +3607,28 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         "arr_data_i8",
                     )
                 };
-                let data_ptr_i8 = if let Ok(p) = data_i8_res {
+                let data_ptr_i8 = if let Ok(p) = data_ptr_i8_res {
                     p
                 } else {
                     return Err(Diagnostic::simple_with_span(
                         "expression lowering failed",
                         arr.span.lo.0 as usize,
-                    ))?;
+                    ));
                 };
+
+                // Create a temporary alloca holding the array pointer. We must
+                // pass a pointer-to-pointer (i8**) to `array_set_ptr` so the
+                // runtime can update the array pointer if it reallocates. After
+                // element initialization we will load the (possibly updated)
+                // pointer and return it.
+                let arr_ptr_tmp = match self
+                    .builder
+                    .build_alloca(self.i8ptr_t, "arr_ptr_tmp")
+                {
+                    Ok(a) => a,
+                    Err(_) => return Err(Diagnostic::simple("alloca failed")),
+                };
+                let _ = self.builder.build_store(arr_ptr_tmp, arr_ptr);
                 let array_set_ptr_fn = self.get_array_set_ptr();
 
                 if all_numbers {
@@ -3247,6 +3672,35 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     // pointer array: elements stored as machine pointers; element byte offset = i * ptr_size
                     let ptr_size = 8u64;
                     for (i, v) in lowered_elems.into_iter().enumerate() {
+                        // Load current array pointer (it may have changed due to reallocation)
+                        let cur_arr_bv = self
+                            .builder
+                            .build_load(self.i8ptr_t, arr_ptr_tmp, "cur_arr")
+                            .map_err(|_| Diagnostic::simple("failed to load arr ptr"))?;
+                        let cur_arr = match cur_arr_bv {
+                            BasicValueEnum::PointerValue(p) => p,
+                            _ => return Err(Diagnostic::simple("failed to load arr ptr")),
+                        };
+
+                        // Compute data start from current array pointer
+                        let offset_const = self.i32_t.const_int(header_bytes, false);
+                        let data_i8_res = unsafe {
+                            self.builder.build_gep(
+                                self.context.i8_type(),
+                                cur_arr,
+                                &[offset_const],
+                                "arr_data_i8_loop",
+                            )
+                        };
+                        let data_ptr_i8 = if let Ok(p) = data_i8_res {
+                            p
+                        } else {
+                            return Err(Diagnostic::simple_with_span(
+                                "expression lowering failed",
+                                arr.span.lo.0 as usize,
+                            ))?;
+                        };
+
                         let byte_off = (i as u64) * ptr_size;
                         let off_const = self.i32_t.const_int(byte_off, false);
                         let elem_i8_res = unsafe {
@@ -3276,11 +3730,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         };
                         match v {
                             BasicValueEnum::PointerValue(pv) => {
-                                // call runtime array_set_ptr(arr_ptr, idx, pv)
+                                // call runtime array_set_ptr(arr_ptr_tmp, idx, pv)
+                                // pass the address-of (alloca) so runtime can update it
                                 let idx_const = self.i64_t.const_int(i as u64, false);
                                 match self.builder.build_call(
                                     array_set_ptr_fn,
-                                    &[arr_ptr.into(), idx_const.into(), pv.into()],
+                                    &[arr_ptr_tmp.into(), idx_const.into(), pv.into()],
                                     "array_set_ptr_call",
                                 ) {
                                     Ok(_cs) => (),
@@ -3309,12 +3764,18 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 let idx_const = self.i64_t.const_int(i as u64, false);
                                 match self.builder.build_call(
                                     array_set_ptr_fn,
-                                    &[arr_ptr.into(), idx_const.into(), boxed_ptr.into()],
+                                    &[arr_ptr_tmp.into(), idx_const.into(), boxed_ptr.into()],
                                     "array_set_ptr_call",
                                 ) {
                                     Ok(_cs) => (),
                                     Err(_) => return Err(Diagnostic::simple("operation failed")),
                                 };
+                                // The runtime increments the stored pointer. We must
+                                // release our temporary ownership returned by
+                                // `union_box_f64` to avoid leaking one refcount.
+                                if let Some(rc_dec_fn) = self.module.get_function("rc_dec") {
+                                    let _ = self.builder.build_call(rc_dec_fn, &[boxed_ptr.into()], "rc_dec_boxed_tmp").ok();
+                                }
                             }
                             _ => {
                                 return Err(Diagnostic::simple_with_span(
@@ -3624,28 +4085,68 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 }
                             };
 
-                            // If index is numeric, try typed runtime helper array_get_f64 first
+                            // If index is numeric, decide whether we should call
+                            // `array_get_f64` (for arrays of numbers) or fall back
+                            // to `array_get_ptr` (for arrays of pointers). We attempt
+                            // to use available type information from locals or
+                            // function parameter annotations to make the decision.
                             if matches!(
                                 idx_val,
                                 BasicValueEnum::IntValue(_) | BasicValueEnum::FloatValue(_)
                             ) {
-                                let array_get = self.get_array_get_f64();
-                                let cs = match self.builder.build_call(
-                                    array_get,
-                                    &[arr_ptr.into(), idx_i64.into()],
-                                    "array_get_f64_call",
-                                ) {
-                                    Ok(cs) => cs,
-                                    Err(_) => {
-                                        return Err(Diagnostic::simple_with_span(
-                                            "operation failed",
-                                            member.span.lo.0 as usize,
-                                        ));
+                                // Try to determine the array's element type from available metadata.
+                                let mut prefer_f64 = false;
+                                // If the array expression was an identifier, check locals/params
+                                if let deno_ast::swc::ast::Expr::Member(_) = &*member.obj {
+                                    // Member access; we can't easily infer here. Fall through to ptr case.
+                                } else if let deno_ast::swc::ast::Expr::Ident(ident) = &*member.obj {
+                                    let arr_name = ident.sym.to_string();
+                                    // Check lexical locals first
+                                    if let Some((_p, _ty, _init, _is_const, _is_weak, _nominal, oats_type_opt)) = self.find_local(locals, &arr_name) {
+                                        if let Some(ot) = oats_type_opt {
+                                            if let crate::types::OatsType::Array(inner) = ot {
+                                                if matches!(*inner, crate::types::OatsType::Number) {
+                                                    prefer_f64 = true;
+                                                }
+                                            }
+                                        }
                                     }
-                                };
-                                let either = cs.try_as_basic_value();
-                                if let inkwell::Either::Left(bv) = either {
-                                    return Ok(bv);
+                                    // Check function params if not found in locals
+                                    if !prefer_f64 {
+                                        if let Some(idx_p) = param_map.get(&arr_name) {
+                                            let fname = function.get_name().to_str().unwrap_or("");
+                                            if let Some(param_types) = self.fn_param_types.borrow().get(fname) {
+                                                let pidx = *idx_p as usize;
+                                                if pidx < param_types.len() {
+                                                    if let crate::types::OatsType::Array(inner) = &param_types[pidx] {
+                                                        if matches!(**inner, crate::types::OatsType::Number) {
+                                                            prefer_f64 = true;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                if prefer_f64 {
+                                    let array_get = self.get_array_get_f64();
+                                    let cs = match self.builder.build_call(
+                                        array_get,
+                                        &[arr_ptr.into(), idx_i64.into()],
+                                        "array_get_f64_call",
+                                    ) {
+                                        Ok(cs) => cs,
+                                        Err(_) => {
+                                            return Err(Diagnostic::simple_with_span(
+                                                "operation failed",
+                                                member.span.lo.0 as usize,
+                                            ));
+                                        }
+                                    };
+                                    let either = cs.try_as_basic_value();
+                                    if let inkwell::Either::Left(bv) = either {
+                                        return Ok(bv);
+                                    }
                                 }
                             }
 
@@ -3678,6 +4179,47 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     MemberProp::Ident(prop_ident) => {
                         // dot-member access like obj.prop
                         let field_name = prop_ident.sym.to_string();
+                        // Special-case: `arr.length` for array-like receivers. Load i64 length from array header (+8)
+                        if field_name == "length" {
+                            // Attempt to lower receiver and read length from header for pointer-like values
+                            if let Ok(bv) = self.lower_expr(&member.obj, function, param_map, locals)
+                                && let BasicValueEnum::PointerValue(pv) = bv
+                            {
+                                // length is stored as i64 at offset +8 from base
+                                let offset = self.i64_t.const_int(8, false);
+                                let gep_ptr = match self.i8_ptr_from_offset_i64(pv, offset, "arr_len_i8") {
+                                    Ok(p) => p,
+                                    Err(_) => {
+                                        return Err(Diagnostic::simple_with_span(
+                                            "failed to compute array length pointer",
+                                            member.span.lo.0 as usize,
+                                        ))
+                                    }
+                                };
+
+                                // cast i8* to i64* and load
+                                let len_ptr_ty = self.context.ptr_type(AddressSpace::default());
+                                let len_ptr = match self.builder.build_pointer_cast(gep_ptr, len_ptr_ty, "len_ptr") {
+                                    Ok(p) => p,
+                                    Err(_) => {
+                                        return Err(Diagnostic::simple_with_span(
+                                            "failed to cast length pointer",
+                                            member.span.lo.0 as usize,
+                                        ))
+                                    }
+                                };
+                                let loaded = match self.builder.build_load(self.i64_t, len_ptr, "arr_len_load") {
+                                    Ok(v) => v,
+                                    Err(_) => {
+                                        return Err(Diagnostic::simple_with_span(
+                                            "failed to load array length",
+                                            member.span.lo.0 as usize,
+                                        ))
+                                    }
+                                };
+                                return Ok(loaded.as_basic_value_enum());
+                            }
+                        }
                         if let Ok(BasicValueEnum::PointerValue(obj_ptr)) =
                             self.lower_expr(&member.obj, function, param_map, locals)
                         {
@@ -5519,7 +6061,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         }
                     };
 
+                // Track the running result pointer and whether it is a temporary
+                // (i.e., freshly-allocated and owned by this expression). We
+                // avoid rc_dec'ing values that originate from locals or static
+                // literals.
                 let mut result: Option<PointerValue<'a>> = None;
+                let mut result_is_tmp: bool = false;
 
                 // Template literals have quasis (string parts) and exprs (interpolated expressions)
                 // quasis.len() = exprs.len() + 1 (there's always one more quasi)
@@ -5528,7 +6075,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     let quasi_str = quasi.raw.to_string();
                     let quasi_ptr = create_string_literal(self, &quasi_str)?;
 
-                    // Concatenate with result so far
+                    // Concatenate with result so far. If the current `result`
+                    // is a temporary (previous concat produced a fresh heap
+                    // string or we earlier created a number->string temp), we
+                    // will be responsible for rc_dec'ing it once it's consumed.
                     result = if let Some(prev) = result {
                         let call_site = self
                             .builder
@@ -5546,13 +6096,23 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 .into_pointer_value(),
                         )
                     } else {
+                        // Using the quasi literal as the initial result. Quasi
+                        // literals are static (interned globals) so mark as not tmp.
+                        result_is_tmp = false;
                         Some(quasi_ptr)
                     };
 
                     // If there's a corresponding expression, evaluate it and convert to string
                     if i < tpl.exprs.len() {
-                        let expr_val =
-                            self.lower_expr(&tpl.exprs[i], function, param_map, locals)?;
+                        // Lower the interpolated expression and capture its origin
+                        // We'll also consult `last_expr_origin_local` which other
+                        // paths set when the lowered expr was an identifier/param.
+                        let expr_val = self.lower_expr(&tpl.exprs[i], function, param_map, locals)?;
+                        let mut expr_str_is_num_tmp = false;
+                        // Determine whether the resulting expr_str is a temporary
+                        // heap string that we must rc_dec after use.
+                        // If the last lowered expr was a local name, it's not a tmp.
+                        let last_origin_local = self.last_expr_origin_local.borrow().clone();
 
                         // Convert to string based on type
                         let expr_str = if expr_val.is_float_value() {
@@ -5568,7 +6128,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         tpl.span.lo.0 as usize,
                                     )
                                 })?;
-                            call_site
+                            let tmp_ptr = call_site
                                 .try_as_basic_value()
                                 .left()
                                 .ok_or_else(|| {
@@ -5577,9 +6137,18 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         tpl.span.lo.0 as usize,
                                     )
                                 })?
-                                .into_pointer_value()
+                                .into_pointer_value();
+                            // Number->string returns a fresh heap string; remember
+                            // that so we can rc_dec it. This is always a temporary.
+                            expr_str_is_num_tmp = true;
+                            tmp_ptr
                         } else if expr_val.is_pointer_value() {
                             // Already a string (or object) - use as-is
+                            // If the lowered expr was an identifier/local, it's not a tmp.
+                            if last_origin_local.is_some() {
+                                // Don't treat as tmp
+                                expr_str_is_num_tmp = false;
+                            }
                             expr_val.into_pointer_value()
                         } else if expr_val.is_int_value() {
                             // Boolean: convert to "true" or "false"
@@ -5611,6 +6180,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 tpl.span.lo.0 as usize,
                             )
                         })?;
+                        // We do not currently maintain origin info for the running
+                        // `result` across loop iterations; we'll conservatively rc_dec
+                        // the previous left after concatenation to avoid leaks.
                         let call_site = self
                             .builder
                             .build_call(
@@ -5624,18 +6196,39 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     tpl.span.lo.0 as usize,
                                 )
                             })?;
-                        result = Some(
-                            call_site
-                                .try_as_basic_value()
-                                .left()
-                                .ok_or_else(|| {
-                                    Diagnostic::simple_with_span(
-                                        "concat call returned no value",
-                                        tpl.span.lo.0 as usize,
-                                    )
-                                })?
-                                .into_pointer_value(),
-                        );
+                        let new_res = call_site
+                            .try_as_basic_value()
+                            .left()
+                            .ok_or_else(|| {
+                                Diagnostic::simple_with_span(
+                                    "concat call returned no value",
+                                    tpl.span.lo.0 as usize,
+                                )
+                            })?
+                            .into_pointer_value();
+                        // If the expression string was a temporary (number->string)
+                        // then rc_dec it now that concat consumed it.
+                        let rc_dec_fn = self.get_rc_dec();
+                        if expr_str_is_num_tmp {
+                            let _ = self
+                                .builder
+                                .build_call(rc_dec_fn, &[expr_str.into()], "rc_dec_expr_tmp")
+                                .ok();
+                        }
+
+                        // The concatenation created a new `new_res`. The previous `left`
+                        // value is no longer needed. Only rc_dec it if it was a
+                        // temporary we owned. We track `result_is_tmp` for that.
+                        if result_is_tmp {
+                            let _ = self
+                                .builder
+                                .build_call(rc_dec_fn, &[left.into()], "rc_dec_left_tmp")
+                                .ok();
+                        }
+
+                        // New result is a freshly-allocated string from concat, so mark tmp=true
+                        result = Some(new_res);
+                        result_is_tmp = true;
                     }
                 }
 

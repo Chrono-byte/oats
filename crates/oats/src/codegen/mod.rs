@@ -642,6 +642,18 @@ impl<'a> CodeGen<'a> {
         f
     }
 
+    /// Emit an unconditional branch to `bb` only if the current insertion
+    /// block does not already have a terminator. This guards against
+    /// accidentally emitting duplicate branch instructions when lowering
+    /// constructs that may have emitted branches earlier.
+    pub(crate) fn ensure_unconditional_branch(&self, bb: inkwell::basic_block::BasicBlock<'a>) {
+        if let Some(cur) = self.builder.get_insert_block() {
+            if cur.get_terminator().is_none() {
+                let _ = self.builder.build_unconditional_branch(bb);
+            }
+        }
+    }
+
     fn get_union_unbox_ptr(&self) -> FunctionValue<'a> {
         if let Some(f) = *self.fn_union_unbox_ptr.borrow() {
             return f;
@@ -787,6 +799,8 @@ impl<'a> CodeGen<'a> {
             .unwrap_or_else(|| {
                 // array_set_f64(arr_ptr: i8**, idx: i64, v: f64) -> void
                 // Takes pointer-to-pointer to allow reallocation
+                // Represent i8** as pointer-to (i8*) type
+                // Build i8** by asking the Context for a pointer type in the default address space
                 let ptr_ptr_t = self.context.ptr_type(AddressSpace::default());
                 let fn_type = self.context.void_type().fn_type(
                     &[ptr_ptr_t.into(), self.i64_t.into(), self.f64_t.into()],
@@ -802,6 +816,8 @@ impl<'a> CodeGen<'a> {
             .unwrap_or_else(|| {
                 // array_set_ptr(arr_ptr: i8**, idx: i64, p: i8*) -> void
                 // Takes pointer-to-pointer to allow reallocation
+                // Represent i8** as pointer-to (i8*) type
+                // Build i8** by asking the Context for a pointer type in the default address space
                 let ptr_ptr_t = self.context.ptr_type(AddressSpace::default());
                 let fn_type = self.context.void_type().fn_type(
                     &[ptr_ptr_t.into(), self.i64_t.into(), self.i8ptr_t.into()],

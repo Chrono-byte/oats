@@ -42,17 +42,7 @@ manual memory management.
 sudo dnf install llvm18 llvm18-devel clang18
 ```
 
-**Arch**:
-
-```bash
-sudo pacman -S llvm18 clang18
-```
-
-**Mac**:
-
-```bash
-brew install llvm@18
-```
+<!-- add instructions for other platforms here! -->
 
 ### Compile Your First Program
 

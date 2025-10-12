@@ -6,10 +6,10 @@
 
 > An Ahead-of-Time (AOT) Compiler for TypeScript
 
-Oats is an experimental Ahead-of-Time (AOT) compiler that transforms a strict
-subset of TypeScript into native machine code. Leveraging LLVM, it produces
-fast, standalone executables with deterministic memory management via reference
-counting.
+Oats is an experimental ahead-of-time (AOT) compiler that converts a small,
+well-defined subset of TypeScript into native machine code using LLVM. It
+generates standalone executables and uses reference counting for predictable,
+manual memory management.
 
 ---
 
@@ -75,7 +75,6 @@ sudo dnf install llvm18 llvm18-devel clang18
 
 - **Heap Limits**: Configurable max heap size (default: 1 GB).
 - **Integer Overflow Protection**: Checked arithmetic for allocations.
-- **Fuzz Testing**: Comprehensive infrastructure for robustness.
 
 ---
 

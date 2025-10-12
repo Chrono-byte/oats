@@ -31,13 +31,16 @@ contracts\
 **Audience:** All contributors\
 **Content:**
 
-
 **When to read:** Before making changes to object layout, RC behavior, or core
 codegen.
 
 # Project Documentation
 
-This folder contains the project's concise, contributor-friendly documentation. Long-form historical and technical specifications were intentionally removed from the top-level to keep the docs small and focused. To inspect the original detailed design notes, use the repository's Git history (the files exist in earlier commits).
+This folder contains the project's concise, contributor-friendly documentation.
+Long-form historical and technical specifications were intentionally removed
+from the top-level to keep the docs small and focused. To inspect the original
+detailed design notes, use the repository's Git history (the files exist in
+earlier commits).
 
 Top-level files (concise):
 
@@ -47,7 +50,8 @@ Top-level files (concise):
 - `MEMORY_DESIGN.md` — memory layout, RC rules, and safety guidance (expanded)
 - `ROADMAP.md` — short roadmap and project phases
 
-To view older, long-form specifications that were previously part of this directory, use Git commands such as:
+To view older, long-form specifications that were previously part of this
+directory, use Git commands such as:
 
 ```bash
 # show commit history for a file that used to exist here
@@ -57,7 +61,9 @@ git log -- <path/to/old-doc.md>
 git show <commit_hash>:<path/to/old-doc.md>
 ```
 
-Replace `<path/to/old-doc.md>` with the historical filename (for example, `docs/CCRC.md` or `docs/ASYNC_AWAIT.md`) and use `git log` to find the commit that contains it.
+Replace `<path/to/old-doc.md>` with the historical filename (for example,
+`docs/CCRC.md` or `docs/ASYNC_AWAIT.md`) and use `git log` to find the commit
+that contains it.
 
 **Content:**
 
@@ -231,5 +237,7 @@ See `CONTRIBUTING.md` for full contribution guidelines.
 
 - setup_env.sh: configure LLVM environment: `source ./scripts/setup_env.sh`
 - run_fuzzing.sh: run fuzzing suite: `./scripts/run_fuzzing.sh`
-- run_all_proper_tests.sh: compile all proper_tests examples: `./scripts/run_all_proper_tests.sh`
-- cloc_no_tests.sh: count code lines excluding tests: `./scripts/cloc_no_tests.sh [--extra-args "<args>"]`
+- run_all_proper_tests.sh: compile all proper_tests examples:
+  `./scripts/run_all_proper_tests.sh`
+- cloc_no_tests.sh: count code lines excluding tests:
+  `./scripts/cloc_no_tests.sh [--extra-args "<args>"]`

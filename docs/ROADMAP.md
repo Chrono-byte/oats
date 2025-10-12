@@ -1,5 +1,7 @@
 # Project Roadmap (summary)
 
+**Last Updated:** October 12, 2025
+
 This document tracks short- and mid-term priorities and records recent progress
 so the team and contributors can see what to work on next.
 
@@ -27,7 +29,6 @@ and tests exercised during this session.
 
 ## Short-term priorities (next 2–4 weeks)
 
-1. Complete the rc_dec audit (highest priority)
    - Audit all lowering sites that allocate heap temporaries: template literals,
      string concatenation, `number_to_string`, `union_box_*`,
      `array`/`tuple`/object literal lowering, and `println`/printing helpers.
@@ -36,22 +37,16 @@ and tests exercised during this session.
    - Add focused tests (IR string-contains or insta snapshots) for each pattern
      to prevent regressions.
 
-2. Add/extend IR snapshot tests for critical lowers
-   - Add deterministic IR tests under `crates/oats/tests/codegen/` for:
-     - `generics.oats` (specializations + rc_dec checks)
-     - template-literals and concat lowering
-     - array-literal and `array_set_ptr` ABI
-     - constructor/field-store lowering (ensure pointer-field metadata and
-       rc_inc/rc_dec ordering)
 
-3. Address warnings and run lints
-   - Clean up remaining compiler warnings (unused assignments) found in
+2. Address warnings and run lints
+   - Clean up any remaining compiler warnings (unused assignments) found in
      `stmt.rs` and other files.
    - Run `cargo clippy --workspace` and fix critical lints.
 
-4. Run fuzzing and integration smoke tests
-   - Run the short fuzzing script and the `run_all_proper_tests.sh` script to
-     catch edge-cases and regressions across examples.
+3. Run fuzzing and integration smoke tests
+   - Run `./scripts/run_fuzzing.sh` for fuzz targets and
+     `./scripts/run_all_proper_tests.sh` to compile all proper_tests examples and
+     catch regressions.
 
 ## Mid-term priorities (1–3 months)
 

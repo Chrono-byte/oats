@@ -600,7 +600,7 @@ fn main() -> Result<()> {
                                 .get(&class_name)
                                 .cloned()
                                 .unwrap_or_default();
-                            if let Err(d) = codegen.gen_constructor_ir(&class_name, ctor, &fields) {
+                            if let Err(d) = codegen.gen_constructor_ir(&class_name, ctor, &fields, None) {
                                 oats::diagnostics::emit_diagnostic(
                                     &d,
                                     Some(parsed_module.source.as_str()),

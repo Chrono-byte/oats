@@ -290,6 +290,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
         let entry = self.context.append_basic_block(function, "entry");
         self.builder.position_at_end(entry);
 
+    // Run conservative, intra-procedural escape analysis for this function
+    // and store the result on the CodeGen so lowering sites can consult it.
+    let escape_info = self.analyze_fn(func_decl);
+    self.current_escape_info.borrow_mut().replace(escape_info);
+
         // If this is an `async` function, emit a synchronous implementation
         // function `<name>_async_impl` that returns the inner promise type, and
         // make the exported function a thin wrapper that calls the impl and
@@ -1190,6 +1195,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
             self.async_await_counter.set(0);
             self.async_param_count.set(0);
 
+            // Clear escape info for this function before returning
+            let _ = self.current_escape_info.borrow_mut().take();
             return Ok(function);
         }
 
@@ -1236,7 +1243,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
         // print a message to help diagnose cases where returns weren't lowered.
         if let Some(_) = &func_decl.body {
             if !emitted_terminator {
-                eprintln!("[debug gen_function_ir] function '{}' had a body but no terminator emitted", func_name);
+                eprintln!(
+                    "[debug gen_function_ir] function '{}' had a body but no terminator emitted",
+                    func_name
+                );
             }
         }
 
@@ -1281,7 +1291,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
             }
         }
 
-        Ok(function)
+    // Clear escape info for this function now that lowering is complete
+    let _ = self.current_escape_info.borrow_mut().take();
+    Ok(function)
     }
 
     /// Generate a complete constructor function for a class.
@@ -1315,9 +1327,16 @@ impl<'a> crate::codegen::CodeGen<'a> {
         class_name: &str,
         ctor: &deno_ast::swc::ast::Constructor,
         fields: &[(String, crate::types::OatsType)],
+        decorators: Option<Vec<String>>,
     ) -> Result<(), crate::diagnostics::Diagnostic> {
         use crate::types::OatsType;
 
+        // We'll emit an implementation function and a thin wrapper so that
+        // decorators can be applied by replacing/indirecting the wrapper at
+        // runtime. The impl name holds the original emitted body; the
+        // exported `fname` will be the wrapper that calls decorators and
+        // forwards to the final constructor pointer.
+        let impl_fname = format!("{}_ctor_impl", class_name);
         let fname = format!("{}_ctor", class_name);
         let init_name = format!("{}_init", class_name);
 
@@ -1412,8 +1431,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
         let init_fn_ty = self.i8ptr_t.fn_type(&init_param_types, false);
         let init_f = self.module.add_function(&init_name, init_fn_ty, None);
 
+        // Create the implementation function (contains the actual allocation
+        // + init logic). The public `fname` wrapper will be created below.
         let ctor_fn_ty = self.i8ptr_t.fn_type(&llvm_param_types, false);
-        let f = self.module.add_function(&fname, ctor_fn_ty, None);
+        let impl_f = self.module.add_function(&impl_fname, ctor_fn_ty, None);
 
         // Emit init function body first
         let init_entry = self.context.append_basic_block(init_f, "entry");
@@ -1827,8 +1848,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
         };
         let _ = self.builder.build_return(Some(&this_loaded));
 
-        // Now emit ctor function: allocate object then call init
-        let ctor_entry = self.context.append_basic_block(f, "entry");
+        // Now emit impl ctor function: allocate object then call init
+        let ctor_entry = self.context.append_basic_block(impl_f, "entry");
         self.builder.position_at_end(ctor_entry);
         // allocate object
         let malloc_fn = self.get_malloc();
@@ -1857,7 +1878,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         let mut init_args: Vec<inkwell::values::BasicMetadataValueEnum> = Vec::new();
         init_args.push(malloc_ret2.as_basic_value_enum().into());
         for i in 0..llvm_param_types.len() {
-            if let Some(p) = f.get_nth_param(i as u32) {
+            if let Some(p) = impl_f.get_nth_param(i as u32) {
                 init_args.push(p.into());
             } else {
                 // pad with null
@@ -1872,6 +1893,77 @@ impl<'a> crate::codegen::CodeGen<'a> {
         let _ = self
             .builder
             .build_return(Some(&malloc_ret2.as_basic_value_enum()));
+
+        // Build the public wrapper `fname` which will apply decorators (if any)
+        // and then indirect-call the final constructor pointer. The wrapper
+        // has the same signature as the impl function.
+        let wrapper_f = self.module.add_function(&fname, ctor_fn_ty, None);
+        let wrapper_entry = self.context.append_basic_block(wrapper_f, "entry");
+        self.builder.position_at_end(wrapper_entry);
+
+        // Build a pointer to the impl function as i8*
+        let impl_ptr = impl_f.as_global_value().as_pointer_value();
+        let mut current_ctor_ptr = impl_ptr;
+
+        // Decorators are applied in reverse order (TS semantics): the last
+        // decorator in source order is applied first when composing.
+        if let Some(decos) = decorators {
+            for dec_name in decos.into_iter().rev() {
+                // Ensure decorator function exists (declare if missing)
+                let deco_fn = if let Some(f) = self.module.get_function(&dec_name) {
+                    f
+                } else {
+                    // Decorator signature: i8* (i8*) -> i8* ; accept and return ctor ptrs
+                    let ty = self.i8ptr_t.fn_type(&[self.i8ptr_t.into()], false);
+                    self.module.add_function(&dec_name, ty, None)
+                };
+
+                // Call decorator with current_ctor_ptr (cast to i8*)
+                let call_site =
+                    self.builder
+                        .build_call(deco_fn, &[current_ctor_ptr.into()], "apply_decorator");
+                if let Ok(cs) = call_site
+                    && let inkwell::Either::Left(bv) = cs.try_as_basic_value()
+                {
+                    current_ctor_ptr = bv.into_pointer_value();
+                }
+            }
+        }
+
+        // Now perform an indirect call to the final constructor pointer.
+        // Build a function type matching ctor_fn_ty and perform the call.
+        // Collect wrapper parameters and forward them.
+        let mut args: Vec<inkwell::values::BasicMetadataValueEnum> = Vec::new();
+        for i in 0..llvm_param_types.len() {
+            if let Some(p) = wrapper_f.get_nth_param(i as u32) {
+                args.push(p.into());
+            }
+        }
+        // Call the final constructor pointer (indirect call) and return its result.
+        // Both direct calls and indirect calls produce a CallSiteValue we can inspect.
+        let call_res = self.builder.build_indirect_call(
+            ctor_fn_ty,
+            current_ctor_ptr,
+            &args,
+            "call_decorated_ctor",
+        );
+
+        // Extract the CallSiteValue if the builder succeeded, then attempt to
+        // get the returned basic value (ctor returns an i8*). Return null on
+        // any failure to be conservative.
+        if let Ok(cs) = call_res {
+            if let inkwell::Either::Left(bv) = cs.try_as_basic_value() {
+                let ret_val = bv;
+                let _ = self.builder.build_return(Some(&ret_val));
+            } else {
+                let null_ptr = self.i8ptr_t.const_null().as_basic_value_enum();
+                let _ = self.builder.build_return(Some(&null_ptr));
+            }
+        } else {
+            let null_ptr = self.i8ptr_t.const_null().as_basic_value_enum();
+            let _ = self.builder.build_return(Some(&null_ptr));
+        }
+
         Ok(())
     }
 }

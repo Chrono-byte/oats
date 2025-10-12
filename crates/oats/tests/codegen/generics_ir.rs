@@ -1,8 +1,12 @@
-use oats::tests::common::gen_ir_for_source;
+use super::common;
+use common::gen_ir_for_source;
+use std::path::PathBuf;
 
 #[test]
 fn generics_emits_specializations_and_rc_dec() {
-    let src = std::fs::read_to_string("examples/proper_tests/generics.oats").expect("read example");
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").join("..");
+    let example_path = repo_root.join("examples").join("proper_tests").join("generics.oats");
+    let src = std::fs::read_to_string(&example_path).expect("read example");
     let ir = gen_ir_for_source(&src).expect("generate IR");
 
     // Expect two distinct specializations for getFirstElement (number and string)

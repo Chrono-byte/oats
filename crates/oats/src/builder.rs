@@ -536,7 +536,7 @@ pub fn run_from_args(args: &[String]) -> Result<()> {
                             .class_fields
                             .borrow_mut()
                             .insert(class_name.clone(), fields.clone());
-                        if let Err(d) = codegen.gen_constructor_ir(&class_name, ctor, &fields) {
+                        if let Err(d) = codegen.gen_constructor_ir(&class_name, ctor, &fields, None) {
                             diagnostics::emit_diagnostic(&d, Some(parsed_mod.source.as_str()));
                             return Err(anyhow::anyhow!(d.message));
                         }
@@ -681,7 +681,7 @@ pub fn run_from_args(args: &[String]) -> Result<()> {
                             .class_fields
                             .borrow_mut()
                             .insert(class_name.clone(), fields.clone());
-                        if let Err(d) = codegen.gen_constructor_ir(&class_name, ctor, &fields) {
+                        if let Err(d) = codegen.gen_constructor_ir(&class_name, ctor, &fields, None) {
                             diagnostics::emit_diagnostic(&d, Some(parsed_mod.source.as_str()));
                             return Err(anyhow::anyhow!(d.message));
                         }

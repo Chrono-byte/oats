@@ -21,6 +21,8 @@ mod const_object_ir;
 mod constructor_params;
 #[path = "codegen/diagnostics_and_forof.rs"]
 mod diagnostics_and_forof;
+#[path = "codegen/escape_analysis.rs"]
+mod escape_analysis;
 #[path = "codegen/field_write.rs"]
 mod field_write;
 #[path = "codegen/for_loop_and_if.rs"]
@@ -33,3 +35,7 @@ mod promise_type;
 // mod unary_operators;
 // #[path = "codegen/weak_helper_direct.rs"]
 // mod weak_helper_direct;
+#[path = "codegen/generics_ir.rs"]
+mod generics_ir;
+#[path = "codegen/regress_cycle_reclaim.rs"]
+mod regress_cycle_reclaim;

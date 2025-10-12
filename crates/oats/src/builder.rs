@@ -578,7 +578,8 @@ pub fn run_from_args(args: &[String]) -> Result<()> {
                             .class_fields
                             .borrow_mut()
                             .insert(class_name.clone(), fields.clone());
-                        if let Err(d) = codegen.gen_constructor_ir(&class_name, ctor, &fields, None) {
+                        if let Err(d) = codegen.gen_constructor_ir(&class_name, ctor, &fields, None)
+                        {
                             diagnostics::emit_diagnostic(&d, Some(parsed_mod.source.as_str()));
                             return Err(anyhow::anyhow!(d.message));
                         }
@@ -723,7 +724,8 @@ pub fn run_from_args(args: &[String]) -> Result<()> {
                             .class_fields
                             .borrow_mut()
                             .insert(class_name.clone(), fields.clone());
-                        if let Err(d) = codegen.gen_constructor_ir(&class_name, ctor, &fields, None) {
+                        if let Err(d) = codegen.gen_constructor_ir(&class_name, ctor, &fields, None)
+                        {
                             diagnostics::emit_diagnostic(&d, Some(parsed_mod.source.as_str()));
                             return Err(anyhow::anyhow!(d.message));
                         }
@@ -756,26 +758,25 @@ pub fn run_from_args(args: &[String]) -> Result<()> {
         for item in parsed.program_ref().body() {
             if let deno_ast::ModuleItemRef::Stmt(stmt) = item
                 && let ast::Stmt::Decl(ast::Decl::Var(vd)) = stmt
-                    && matches!(vd.kind, ast::VarDeclKind::Const) {
-                        for decl in &vd.decls {
-                            if let ast::Pat::Ident(binding) = &decl.name {
-                                if let Some(init) = &decl.init {
-                                    let name = binding.id.sym.to_string();
-                                    let span_start = vd.span.lo.0 as usize;
-                                    top_level_consts.push((name, init.clone(), span_start));
-                                } else {
-                                    return diagnostics::report_error_and_bail(
-                                        Some(&src_path),
-                                        Some(&source),
-                                        "top-level `const` must have an initializer",
-                                        Some(
-                                            "Rust-like `const` requires compile-time initializer.",
-                                        ),
-                                    );
-                                }
-                            }
+                && matches!(vd.kind, ast::VarDeclKind::Const)
+            {
+                for decl in &vd.decls {
+                    if let ast::Pat::Ident(binding) = &decl.name {
+                        if let Some(init) = &decl.init {
+                            let name = binding.id.sym.to_string();
+                            let span_start = vd.span.lo.0 as usize;
+                            top_level_consts.push((name, init.clone(), span_start));
+                        } else {
+                            return diagnostics::report_error_and_bail(
+                                Some(&src_path),
+                                Some(&source),
+                                "top-level `const` must have an initializer",
+                                Some("Rust-like `const` requires compile-time initializer."),
+                            );
                         }
                     }
+                }
+            }
         }
 
         if !top_level_consts.is_empty() {
@@ -800,9 +801,10 @@ pub fn run_from_args(args: &[String]) -> Result<()> {
                     Expr::Object(obj) => {
                         for prop in &obj.props {
                             if let PropOrSpread::Prop(pb) = prop
-                                && let Prop::KeyValue(kv) = &**pb {
-                                    collect_idents(&kv.value, out);
-                                }
+                                && let Prop::KeyValue(kv) = &**pb
+                            {
+                                collect_idents(&kv.value, out);
+                            }
                         }
                     }
                     Expr::Unary(u) => collect_idents(&u.arg, out),

@@ -424,14 +424,12 @@ pub fn map_ts_type_with_subst(
                         }
                         other = Some(t);
                     }
-                    if seen_nullish
-                        && let Some(o) = other {
-                            if let Some(mapped) = map_ts_type_with_subst(o, subst) {
-                                return Some(OatsType::Option(Box::new(mapped)));
-                            }
-                            return None;
+                    if seen_nullish && let Some(o) = other {
+                        if let Some(mapped) = map_ts_type_with_subst(o, subst) {
+                            return Some(OatsType::Option(Box::new(mapped)));
                         }
-
+                        return None;
+                    }
                 }
 
                 // General union: map each part with substitution
@@ -660,13 +658,28 @@ pub fn apply_inferred_subst(ty: &OatsType, inferred: &[OatsType]) -> OatsType {
         },
         OatsType::Array(inner) => OatsType::Array(Box::new(apply_inferred_subst(inner, inferred))),
         OatsType::Union(parts) => {
-            let new_parts = parts.iter().map(|p| apply_inferred_subst(p, inferred)).collect();
+            let new_parts = parts
+                .iter()
+                .map(|p| apply_inferred_subst(p, inferred))
+                .collect();
             OatsType::Union(new_parts)
         }
-        OatsType::Tuple(elems) => OatsType::Tuple(elems.iter().map(|e| apply_inferred_subst(e, inferred)).collect()),
+        OatsType::Tuple(elems) => OatsType::Tuple(
+            elems
+                .iter()
+                .map(|e| apply_inferred_subst(e, inferred))
+                .collect(),
+        ),
         OatsType::Weak(inner) => OatsType::Weak(Box::new(apply_inferred_subst(inner, inferred))),
-        OatsType::Promise(inner) => OatsType::Promise(Box::new(apply_inferred_subst(inner, inferred))),
-        OatsType::StructLiteral(fields) => OatsType::StructLiteral(fields.iter().map(|(n, t)| (n.clone(), apply_inferred_subst(t, inferred))).collect()),
+        OatsType::Promise(inner) => {
+            OatsType::Promise(Box::new(apply_inferred_subst(inner, inferred)))
+        }
+        OatsType::StructLiteral(fields) => OatsType::StructLiteral(
+            fields
+                .iter()
+                .map(|(n, t)| (n.clone(), apply_inferred_subst(t, inferred)))
+                .collect(),
+        ),
         other => other.clone(),
     }
 }

@@ -271,22 +271,21 @@ impl<'a> super::CodeGen<'a> {
                         self.builder
                             .build_pointer_cast(gep_ptr, len_ptr_ty, "len_ptr_cast")
                         && let Ok(loaded) = self.builder.build_load(self.i64_t, len_ptr, "len_load")
+                    {
+                        let len_iv = loaded.into_int_value();
+                        let zero64 = self.i64_t.const_int(0, false);
+                        if let Ok(len_nonzero) = self.builder.build_int_compare(
+                            inkwell::IntPredicate::NE,
+                            len_iv,
+                            zero64,
+                            "len_nonzero",
+                        ) && let Ok(cond) =
+                            self.builder
+                                .build_and(is_not_null, len_nonzero, "ptr_truth")
                         {
-                            let len_iv = loaded.into_int_value();
-                            let zero64 = self.i64_t.const_int(0, false);
-                            if let Ok(len_nonzero) = self.builder.build_int_compare(
-                                inkwell::IntPredicate::NE,
-                                len_iv,
-                                zero64,
-                                "len_nonzero",
-                            )
-                                && let Ok(cond) =
-                                    self.builder
-                                        .build_and(is_not_null, len_nonzero, "ptr_truth")
-                                {
-                                    return Some(cond);
-                                }
+                            return Some(cond);
                         }
+                    }
                 }
                 // Fallback: treat non-null pointer as truthy
                 Some(is_not_null)
@@ -328,9 +327,10 @@ impl<'a> super::CodeGen<'a> {
                     BasicValueEnum::FloatValue(fv) => {
                         let box_fn = self.get_union_box_f64();
                         if let Ok(cs) = self.builder.build_call(box_fn, &[fv.into()], "box_for_phi")
-                            && let inkwell::Either::Left(bv2) = cs.try_as_basic_value() {
-                                return Some(bv2);
-                            }
+                            && let inkwell::Either::Left(bv2) = cs.try_as_basic_value()
+                        {
+                            return Some(bv2);
+                        }
                         None
                     }
                     BasicValueEnum::IntValue(iv) => {
@@ -344,9 +344,10 @@ impl<'a> super::CodeGen<'a> {
                         };
                         let box_fn = self.get_union_box_f64();
                         if let Ok(cs) = self.builder.build_call(box_fn, &[fv.into()], "box_for_phi")
-                            && let inkwell::Either::Left(bv2) = cs.try_as_basic_value() {
-                                return Some(bv2);
-                            }
+                            && let inkwell::Either::Left(bv2) = cs.try_as_basic_value()
+                        {
+                            return Some(bv2);
+                        }
                         None
                     }
                     _ => None,

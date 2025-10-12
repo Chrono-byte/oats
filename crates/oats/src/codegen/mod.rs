@@ -337,11 +337,9 @@ impl<'a> CodeGen<'a> {
                         self.const_interns.borrow_mut().insert(key.clone(), pv);
                         Ok(pv)
                     }
-                    _ => {
-                        Err(crate::diagnostics::Diagnostic::simple(
-                            "unsupported const array element type",
-                        ))
-                    }
+                    _ => Err(crate::diagnostics::Diagnostic::simple(
+                        "unsupported const array element type",
+                    )),
                 }
             }
             ConstValue::Object(map) => {
@@ -662,9 +660,10 @@ impl<'a> CodeGen<'a> {
     /// constructs that may have emitted branches earlier.
     pub(crate) fn ensure_unconditional_branch(&self, bb: inkwell::basic_block::BasicBlock<'a>) {
         if let Some(cur) = self.builder.get_insert_block()
-            && cur.get_terminator().is_none() {
-                let _ = self.builder.build_unconditional_branch(bb);
-            }
+            && cur.get_terminator().is_none()
+        {
+            let _ = self.builder.build_unconditional_branch(bb);
+        }
     }
 
     fn get_union_unbox_ptr(&self) -> FunctionValue<'a> {

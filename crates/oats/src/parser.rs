@@ -512,7 +512,10 @@ pub fn parse_oats_module(source_code: &str, file_path: Option<&str>) -> Result<P
     for item in parsed.program_ref().body() {
         if let deno_ast::ModuleItemRef::Stmt(stmt) = item {
             collect_var_decl_spans(stmt, &mut var_spans);
-        } else if let deno_ast::ModuleItemRef::ModuleDecl(deno_ast::swc::ast::ModuleDecl::ExportDecl(decl)) = item {
+        } else if let deno_ast::ModuleItemRef::ModuleDecl(
+            deno_ast::swc::ast::ModuleDecl::ExportDecl(decl),
+        ) = item
+        {
             // export decls may contain VarDecls
             if let ast::Decl::Var(v) = &decl.decl {
                 var_spans.push(v.span);

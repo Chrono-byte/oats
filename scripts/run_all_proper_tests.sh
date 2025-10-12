@@ -41,7 +41,7 @@ fi
 # --- Compilation ---
 failures=()
 
-# Determine which compiler binary to use. Prefer 'toasty' if available.
+# Determine which compiler binary to use (always use 'toasty')
 compiler_bin="toasty"
 
 for file in "${files[@]}"; do

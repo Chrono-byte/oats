@@ -226,3 +226,10 @@ See `CONTRIBUTING.md` for full contribution guidelines.
 **Found an error?** Submit a PR or open an issue!
 
 **Want to help?** Documentation contributions are always welcome!
+
+## Useful Scripts
+
+- setup_env.sh: configure LLVM environment: `source ./scripts/setup_env.sh`
+- run_fuzzing.sh: run fuzzing suite: `./scripts/run_fuzzing.sh`
+- run_all_proper_tests.sh: compile all proper_tests examples: `./scripts/run_all_proper_tests.sh`
+- cloc_no_tests.sh: count code lines excluding tests: `./scripts/cloc_no_tests.sh [--extra-args "<args>"]`

@@ -71,7 +71,7 @@ git clone https://github.com/Chrono-byte/oats.git
 cd oats
 
 # Setup LLVM environment (required before building)
-source ./scripts/setup_env.sh  # or setup_env.zsh for zsh
+source ./scripts/setup_env.sh
 
 # Build the project
 cargo build --workspace
@@ -87,7 +87,7 @@ cargo run -p oats --bin toasty -- examples/hello.oats
 
 ### First-Time Build Tips
 
-- **LLVM errors:** Ensure `LLVM_SYS_180_PREFIX` points to your LLVM 18
+- **LLVM errors:** Ensure `LLVM_SYS_181_PREFIX` points to your LLVM 18
   installation
 - **Link errors:** You may need to install `clang-18` and `lld-18`
 - **Slow builds:** Use `cargo build -j4` to limit parallelism if
@@ -111,7 +111,7 @@ oats/
 │   │   │   │   ├── stmt.rs     # Statement lowering
 │   │   │   │   └── emit.rs     # Top-level emission
 │   │   │   └── bin/
-│   │   │       └── aot_run.rs  # CLI driver (toasty includes this impl)
+│   │   │       └── toasty.rs  # CLI driver
 │   │   └── tests/              # Compiler tests
 │   └── runtime/       # C-callable runtime library
 │       ├── src/lib.rs          # RC, allocators, builtins
@@ -239,9 +239,9 @@ let call_site = match self.builder.build_call(fn_val, args, "name") {
 
 ### Testing Strategy
 
-**Unit Tests:** Helper error cases and boundary conditions **Integration
-Tests:** Run aot_run on malformed examples, assert diagnostic output **CI
-Steps:** Verify `cargo build --all`, `cargo test --all`, diagnostic smoke tests
+**Unit Tests:** Helper error cases and boundary conditions 
+**Integration Tests:** Run `toasty` on malformed examples, assert diagnostic output
+**CI Steps:** Verify `cargo build --all`, `cargo test --all`, diagnostic smoke tests
 
 ### Timeline Estimate
 
@@ -406,10 +406,10 @@ suite easier to maintain.
     INSTA_UPDATE=auto cargo test -p oats --test codegen_snapshot
     ```
 
-- End-to-end testing: `crates/oats/tests/end_to_end.rs` runs the `aot_run`
-  runner to compile `examples/add.oats` into a temporary directory, runs the
-  produced binary, and asserts the numeric output. This test builds `runtime`
-  and `aot_run` as needed, and may take a few seconds on first run.
++ End-to-end testing: `crates/oats/tests/end_to_end.rs` runs the `toasty`
++ runner to compile `examples/add.oats` into a temporary directory, runs the
++ produced binary, and asserts the numeric output. This test builds `runtime`
++ and `toasty` as needed, and may take a few seconds on first run.
 
 ---
 

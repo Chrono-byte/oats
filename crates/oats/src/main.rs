@@ -353,6 +353,7 @@ fn main() -> Result<()> {
         async_local_slot_count: std::cell::Cell::new(0),
         async_poll_locals: std::cell::RefCell::new(None),
         source: &parsed_mod.source,
+        mut_var_decls: parsed_mod.mut_var_decls.clone(),
         current_function_return_type: std::cell::RefCell::new(None),
         last_expr_is_boxed_union: std::cell::Cell::new(false),
         global_function_signatures: std::cell::RefCell::new(std::collections::HashMap::new()),

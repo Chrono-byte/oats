@@ -45,7 +45,7 @@ jobs:
         run: |
           # Build an example using the oats AOT driver to produce native artifact(s)
           OATS_OUT_DIR=./aot_out
-          cargo run -p oats --bin aot_run -- examples/cycle_reclaim.oats || true
+          cargo run -p oats --bin toasty -- examples/cycle_reclaim.oats || cargo run -p oats --bin aot_run -- examples/cycle_reclaim.oats || true
 
       - name: Upload built examples/artifacts
         uses: actions/upload-artifact@v4

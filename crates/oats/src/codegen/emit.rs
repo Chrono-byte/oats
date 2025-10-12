@@ -1028,19 +1028,19 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         _ => {
                                             let slot_ptr_val = loaded_slot.into_pointer_value();
                                             let casted = match self.builder.build_pointer_cast(
-                            slot_ptr_val,
-                            alloca_ptr.get_type(),
-                            "cast_resume",
-                        ) {
-                            Ok(c) => c,
-                            Err(_) => {
-                                return Err(
-                                    crate::diagnostics::Diagnostic::simple(
-                                        "pointer cast failed when resuming locals",
-                                    ),
-                                );
-                            }
-                        };
+                                                slot_ptr_val,
+                                                alloca_ptr.get_type(),
+                                                "cast_resume",
+                                            ) {
+                                                Ok(c) => c,
+                                                Err(_) => {
+                                                    return Err(
+                                                        crate::diagnostics::Diagnostic::simple(
+                                                            "pointer cast failed when resuming locals",
+                                                        ),
+                                                    );
+                                                }
+                                            };
                                             let _ = self.builder.build_store(
                                                 alloca_ptr,
                                                 casted.as_basic_value_enum(),
@@ -1433,7 +1433,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
         }
 
         eprintln!("[DEBUG] gen_constructor_ir: fields = {:?}", fields);
-        eprintln!("[DEBUG] gen_constructor_ir: param_names = {:?}", param_names);
+        eprintln!(
+            "[DEBUG] gen_constructor_ir: param_names = {:?}",
+            param_names
+        );
         println!("Combined fields: {:?}", combined_fields);
 
         // Layout: [ header (8) | metadata ptr (8) | field0 (8) | field1 (8) | ... ]
@@ -1651,11 +1654,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     OatsType::Weak(_) => self.get_rc_weak_inc(),
                                     _ => self.get_rc_inc(),
                                 };
-                                let _ = self.builder.build_call(
-                                    rc_fn,
-                                    &[boxed_ptr.into()],
-                                    "rc_field",
-                                );
+                                let _ =
+                                    self.builder
+                                        .build_call(rc_fn, &[boxed_ptr.into()], "rc_field");
                             }
                         } else {
                             // other param ABI not expected for unions

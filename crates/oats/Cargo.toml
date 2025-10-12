@@ -3,7 +3,7 @@ name = "oats"
 version = "0.1.0"
 edition = "2024"
 license = "zlib-acknowledgement"
-description = "Oats AOT TypeScript compiler"
+description = "Oats compiler"
 repository = "https://github.com/Chrono-byte/oats"
 
 [dependencies]
@@ -12,6 +12,7 @@ inkwell = { version = "0.6.0", features = ["llvm18-1", "llvm18-1-prefer-dynamic"
 anyhow = "1.0"
 url = "2.4"
 swc_ecma_lexer = "23.0.2"
+clap = { version = "4.4", features = ["derive"] }
 
 
 [dev-dependencies]

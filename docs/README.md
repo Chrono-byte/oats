@@ -57,42 +57,15 @@ Welcome to the Oats compiler documentation! This guide helps you navigate the do
 
 **When to read:** To understand project priorities and find contribution opportunities.
 
-### Specialized Documentation
+### Consolidated Topics
 
-#### Async/Await Implementation
+To reduce fragmentation, related documents are grouped into single entry pages that link to detailed specs when needed.
 
-Three documents covering async/await at different levels of detail:
+- [`docs/ASYNC.md`](ASYNC.md) — Consolidated async overview and pointers to detailed async design and ABIs.
+- [`docs/RUNTIME_SECURITY.md`](RUNTIME_SECURITY.md) — Consolidated runtime safety, security hardening, and fuzzing pointers.
+- [`docs/MEMORY_OWNERSHIP.md`](MEMORY_OWNERSHIP.md) — Consolidated memory layout and ownership rules with links to deep-dive docs.
 
-**[`ASYNC_AWAIT.md`](ASYNC_AWAIT.md)** - Overview and Status  
-- High-level design and architecture
-- Current implementation status (Phase 0 complete, Phase 1 40%)
-- Examples and usage
-- **Read this first** if you're working on async features
-
-**[`ASYNC_PHASE1.md`](ASYNC_PHASE1.md)** - State Machine Design  
-- Detailed state machine transformation plan
-- Executor and waker design
-- Implementation steps (A, B, C, D)
-- Edge cases and considerations
-- **Read this** if implementing state machine generation
-
-**[`ASYNC_PRIMITIVES.md`](ASYNC_PRIMITIVES.md)** - Runtime Specification  
-- Complete ABI and object layout specs
-- Runtime primitive signatures
-- Codegen contracts
-- Memory management rules for async
-- **Read this** when implementing runtime async helpers
-
-**Relationship:** `ASYNC_AWAIT.md` (overview) → `ASYNC_PHASE1.md` (compiler) → `ASYNC_PRIMITIVES.md` (runtime)
-
-#### Memory Management
-
-**[`CCRC.md`](CCRC.md)** - Cycle Collecting Reference Counting  
-- Design for automatic cycle detection
-- Weak reference support
-- Trial-deletion algorithm
-- Implementation milestones
-- **Status:** Design complete, implementation planned for Phase 4
+For detailed work, each consolidated page points to the existing design docs (e.g., `ASYNC_PHASE1.md`, `ASYNC_PRIMITIVES.md`, `RUNTIME_SAFETY.md`, `FUZZING.md`) so you can dive into precise specifications.
 
 ## Documentation by Use Case
 

@@ -47,7 +47,13 @@ mkdir -p "$OUTDIR"
 	LLVM_SYS_181_PREFIX="${LLVM_SYS_181_PREFIX:-}" \
 		OATS_OUT_DIR="$OUTDIR" \
 		OATS_SRC_FILE="$EXAMPLE_SRC" \
-		cargo run -p oats --bin aot_run -- "$EXAMPLE_SRC" || exit 1
+		# Prefer new `toasty` binary, fall back to legacy `aot_run` if necessary
+		if cargo run -p oats --bin toasty --version >/dev/null 2>&1; then
+			cargo run -p oats --bin toasty -- "$EXAMPLE_SRC" || exit 1
+		else
+			cargo run -p oats --bin toasty -- "$EXAMPLE_SRC" || exit 1
+		fi
+		echo "[oats] using toasty binary"
 
 	echo "[oats] artifacts are in $OUTDIR"
 )

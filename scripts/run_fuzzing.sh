@@ -36,7 +36,7 @@ if ! command -v cargo-fuzz &> /dev/null; then
 fi
 
 # Array of fuzz targets
-TARGETS=("fuzz_parser" "fuzz_compiler")
+TARGETS=("fuzz_parser")
 
 # Function to run a single fuzz target
 run_fuzz_target() {

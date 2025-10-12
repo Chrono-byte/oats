@@ -75,6 +75,32 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         if let deno_ast::swc::ast::Pat::Ident(ident) = &decl.name {
                             let name = ident.id.sym.to_string();
 
+                            // Language Spec v2: `let` is immutable by default. Support
+                            // `let mut` by consulting the parser-computed set of
+                            // var declarations that contained a `mut` token. This
+                            // avoids scanning the source text at lowering time and
+                            // is resilient to `mut` inside strings/comments.
+                            let is_mut_decl =
+                                if matches!(var_decl.kind, deno_ast::swc::ast::VarDeclKind::Let) {
+                                    let start = var_decl.span.lo.0 as usize;
+                                    let end = var_decl.span.hi.0 as usize;
+                                    // Check parser-computed set first, then fall back to the
+                                    // original source-scan heuristic if necessary. This helps
+                                    // cover edge-cases where spans or byte offsets differ.
+                                    if self.mut_var_decls.contains(&start) {
+                                        true
+                                    } else if end > start && end <= self.source.len() {
+                                        let slice = &self.source[start..end];
+                                        slice.contains("mut ")
+                                            || slice.contains("mut\t")
+                                            || slice.contains("mut\n")
+                                    } else {
+                                        false
+                                    }
+                                } else {
+                                    false
+                                };
+
                             // Determine if the identifier has an explicit type annotation
                             // (do this regardless of whether there's an initializer so we
                             // know whether the local should be treated as Weak<T> even
@@ -193,10 +219,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             ptr: alloca,
                                             ty: allocated_ty,
                                             initialized: false,
+                                            // const declarations are immutable. For `let`, default
+                                            // to immutable unless `let mut` was used.
                                             is_const: matches!(
                                                 var_decl.kind,
                                                 deno_ast::swc::ast::VarDeclKind::Const
-                                            ),
+                                            ) || !is_mut_decl,
                                             is_weak: declared_is_weak,
                                             nominal: declared_nominal.clone(),
                                             oats_type: declared_union.clone(),
@@ -813,7 +841,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                 ptr: alloca,
                                                 ty: allocated_ty,
                                                 initialized: true,
-                                                is_const: false,
+                                                // If this was a `let` without `mut`, treat as const/immutable
+                                                is_const: matches!(
+                                                    var_decl.kind,
+                                                    deno_ast::swc::ast::VarDeclKind::Const
+                                                ) || !is_mut_decl,
                                                 is_weak: declared_is_weak,
                                                 nominal: declared_nominal.clone(),
                                                 oats_type: declared_union.clone(),
@@ -852,7 +884,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         ptr: alloca,
                                         ty,
                                         initialized: false,
-                                        is_const: false,
+                                        is_const: matches!(
+                                            var_decl.kind,
+                                            deno_ast::swc::ast::VarDeclKind::Const
+                                        ) || !is_mut_decl,
                                         is_weak: declared_is_weak,
                                         nominal: declared_nominal.clone(),
                                         oats_type: declared_union.clone(),

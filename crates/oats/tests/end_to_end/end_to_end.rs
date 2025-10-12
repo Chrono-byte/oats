@@ -14,11 +14,19 @@ fn test_add_example_end_to_end() -> Result<()> {
         .status()?;
     assert!(status.success(), "building runtime crate failed");
 
-    // Build the aot_run binary so we can invoke it directly
+    // Build the CLI binary (prefer `toasty`, keep `aot_run` for compatibility)
     let status = Command::new("cargo")
-        .args(["build", "-p", "oats", "--bin", "aot_run"])
-        .status()?;
-    assert!(status.success(), "building aot_run failed");
+        .args(["build", "-p", "oats", "--bin", "toasty"])
+        .status();
+    if let Ok(s) = status {
+        assert!(s.success(), "building toasty failed");
+    } else {
+        // Fallback to building legacy binary
+        let status = Command::new("cargo")
+            .args(["build", "-p", "oats", "--bin", "aot_run"])
+            .status()?;
+        assert!(status.success(), "building aot_run failed");
+    }
 
     // Resolve workspace root from this crate's manifest dir and locate target/debug/aot_run there
     let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -28,14 +36,21 @@ fn test_add_example_end_to_end() -> Result<()> {
         .and_then(|p| p.parent())
         .expect("failed to find workspace root");
     let example = workspace_root.join("examples").join("add.oats");
+    let toasty_bin = workspace_root.join("target").join("debug").join("toasty");
     let aot_bin = workspace_root.join("target").join("debug").join("aot_run");
+    let bin_path = if toasty_bin.exists() {
+        toasty_bin
+    } else {
+        aot_bin
+    };
+
     assert!(
-        aot_bin.exists(),
-        "aot_run binary not found at {}",
-        aot_bin.display()
+        bin_path.exists(),
+        "toasty/aot_run binary not found at {}",
+        bin_path.display()
     );
 
-    let mut cmd = Command::new(aot_bin);
+    let mut cmd = Command::new(bin_path);
     cmd.arg(example)
         .env("OATS_OUT_DIR", out_dir)
         .current_dir(workspace_root);

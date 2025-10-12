@@ -1,6 +1,44 @@
+# Development Guide
+
+This is the concise development guide for contributors. It replaces the older,
+more fragmented development docs and points to deeper references when needed.
+
+## Setup
+
+- Install Rust (rustup) and LLVM 18
+- Source the environment helper: `source ./scripts/setup_env.sh`
+- Build: `cargo build --workspace`
+- Tests: `cargo test --workspace`
+
+## Coding Standards
+
+- All codegen functions should return `Result<T, Diagnostic>` and avoid panics
+  in library code.
+- Prefer explicit error propagation with `Diagnostic::simple`.
+
+## Common Tasks
+
+- Adding a runtime helper: implement in `crates/runtime/src/lib.rs` and declare
+  in `crates/oats/src/codegen/mod.rs`.
+- Adding codegen tests: use `crates/oats/tests/` helpers and insta snapshots
+  where applicable.
+
+## Quality Gates
+
+- Build: `cargo build --workspace` (must pass)
+- Tests: `cargo test --workspace` (must pass)
+- Lint: `cargo clippy --workspace` (fix warnings where possible)
+
+For deeper architecture, memory, and async details see `ARCHITECTURE.md`,
+`MEMORY_DESIGN.md`, and `ASYNC_FULL.md` (archived fuller specs available in
+`docs/archive/`).
+```
+
 # Oats — Development Guide
 
-This document provides practical, actionable guidance for contributors working on the Oats compiler. It covers development workflows, coding standards, testing strategies, and common patterns.
+This document provides practical, actionable guidance for contributors working
+on the Oats compiler. It covers development workflows, coding standards, testing
+strategies, and common patterns.
 
 ## Table of Contents
 
@@ -17,11 +55,13 @@ This document provides practical, actionable guidance for contributors working o
 ### Prerequisites
 
 **Required:**
+
 - Rust toolchain (1.70+): Install via [rustup](https://rustup.rs/)
 - LLVM 18: Development headers and libraries
 - Basic understanding of compilers and LLVM IR
 
 **Optional:**
+
 - `llvm-config` for debugging
 - `valgrind` for memory leak detection
 - `perf` for performance profiling
@@ -43,15 +83,18 @@ cargo build --workspace
 cargo test --workspace
 
 # Try an example
-cargo run -p oats --bin aot_run -- examples/hello.oats
+cargo run -p oats --bin toasty -- examples/hello.oats
+# Legacy: cargo run -p oats --bin toasty -- examples/hello.oats
 ./aot_out/hello
 ```
 
 ### First-Time Build Tips
 
-- **LLVM errors:** Ensure `LLVM_SYS_180_PREFIX` points to your LLVM 18 installation
+- **LLVM errors:** Ensure `LLVM_SYS_180_PREFIX` points to your LLVM 18
+  installation
 - **Link errors:** You may need to install `clang-18` and `lld-18`
-- **Slow builds:** Use `cargo build -j4` to limit parallelism if memory-constrained
+- **Slow builds:** Use `cargo build -j4` to limit parallelism if
+  memory-constrained
 
 ## Architecture Quick Reference
 
@@ -71,7 +114,7 @@ oats/
 │   │   │   │   ├── stmt.rs     # Statement lowering
 │   │   │   │   └── emit.rs     # Top-level emission
 │   │   │   └── bin/
-│   │   │       └── aot_run.rs  # CLI driver
+│   │   │       └── aot_run.rs  # CLI driver (toasty includes this impl)
 │   │   └── tests/              # Compiler tests
 │   └── runtime/       # C-callable runtime library
 │       ├── src/lib.rs          # RC, allocators, builtins
@@ -99,17 +142,21 @@ Native Executable
 ### Key Abstractions
 
 **`OatsType` (types.rs):**
+
 - Represents all type information
-- Variants: Number, Boolean, String, Array, NominalStruct, Union, Weak, Promise, etc.
+- Variants: Number, Boolean, String, Array, NominalStruct, Union, Weak, Promise,
+  etc.
 - Used for type checking and LLVM type mapping
 
 **`CodeGen` (codegen/mod.rs):**
+
 - Main IR generation context
 - Holds LLVM context, module, builder
 - Caches runtime function declarations
 - Thread-local state for current function compilation
 
 **`Diagnostic` (diagnostics.rs):**
+
 - Rustc-style error reporting
 - Includes span information for source location
 - Used throughout for error propagation
@@ -136,12 +183,14 @@ pub fn lower_expr(...) -> BasicValueEnum<'a> {
 ```
 
 **Pattern for LLVM operations:**
+
 ```rust
 let call_site = self.builder.build_call(fn_val, &args, "name")
     .map_err(|_| Diagnostic::simple("Failed to build call"))?;
 ```
 
 **Diagnostic creation:**
+
 ```rust
 // Simple message
 Diagnostic::simple("Type mismatch")
@@ -158,17 +207,20 @@ Diagnostic {
 ```
 
 ### Memory Management Contracts
-**Batch 6 (cleanup):** Remove remaining `.expect()`/`.unwrap()` calls
-**Batch 7 (tests & CI):** Add tests for diagnostic output
+
+**Batch 6 (cleanup):** Remove remaining `.expect()`/`.unwrap()` calls **Batch 7
+(tests & CI):** Add tests for diagnostic output
 
 ### Conversion Patterns
 
 #### Caller Converted to Return Result:
+
 ```rust
 let val = self.lower_expr_result(expr, function, param_map, locals)?;
 ```
 
 #### Caller That Must Remain Option (emit & fallback):
+
 ```rust
 match self.lower_expr_result(expr, function, param_map, locals) {
     Ok(v) => { /* use v */ }
@@ -180,6 +232,7 @@ match self.lower_expr_result(expr, function, param_map, locals) {
 ```
 
 #### Replace `.expect("build_call failed")`:
+
 ```rust
 let call_site = match self.builder.build_call(fn_val, args, "name") {
     Ok(cs) => cs,
@@ -189,14 +242,14 @@ let call_site = match self.builder.build_call(fn_val, args, "name") {
 
 ### Testing Strategy
 
-**Unit Tests:** Helper error cases and boundary conditions
-**Integration Tests:** Run aot_run on malformed examples, assert diagnostic output
-**CI Steps:** Verify `cargo build --all`, `cargo test --all`, diagnostic smoke tests
+**Unit Tests:** Helper error cases and boundary conditions **Integration
+Tests:** Run aot_run on malformed examples, assert diagnostic output **CI
+Steps:** Verify `cargo build --all`, `cargo test --all`, diagnostic smoke tests
 
 ### Timeline Estimate
 
 - **Prep/adapters:** ~0.5 day
-- **Batches 1-3:** ~1-2 days  
+- **Batches 1-3:** ~1-2 days
 - **Helpers & propagation:** ~2-3 days
 - **Tests + CI:** ~0.5-1 day
 - **Total:** ~4-7 days
@@ -207,7 +260,8 @@ let call_site = match self.builder.build_call(fn_val, args, "name") {
 
 ### Problem Description
 
-TypeScript allows shorthand syntax where constructor parameters with accessibility modifiers automatically create and initialize class fields:
+TypeScript allows shorthand syntax where constructor parameters with
+accessibility modifiers automatically create and initialize class fields:
 
 ```typescript
 export class Person {
@@ -222,17 +276,21 @@ export class Person {
 
 ### Previous Issue
 
-The compiler was correctly collecting parameter properties as fields, but constructor codegen was NOT initializing them - it only stored parameters into local variables without writing to object field memory.
+The compiler was correctly collecting parameter properties as fields, but
+constructor codegen was NOT initializing them - it only stored parameters into
+local variables without writing to object field memory.
 
 **Symptoms:**
+
 - Class constructed successfully
-- Methods could access `this` pointer  
+- Methods could access `this` pointer
 - But field values were uninitialized (garbage or zero)
 - Example: `person.printName()` would print nothing or crash
 
 ### Solution Implementation
 
-Added auto-assignment logic in `gen_constructor_ir()` after parameter locals are created:
+Added auto-assignment logic in `gen_constructor_ir()` after parameter locals are
+created:
 
 ```rust
 // Auto-assign constructor parameters to matching fields
@@ -271,7 +329,8 @@ Offset 0:  i64 header (RC=1, flags)
 Offset 8:  ptr name (field 0)
 ```
 
-Constructor receives `name` parameter, stores it at offset 8, and increments its RC.
+Constructor receives `name` parameter, stores it at offset 8, and increments its
+RC.
 
 ### Testing
 
@@ -281,8 +340,8 @@ Constructor receives `name` parameter, stores it at offset 8, and increments its
 
 ### Files Modified
 
-- `crates/oats/src/codegen/mod.rs` - Added field initialization in `gen_constructor_ir()`
-- `.github/copilot-instructions.md` - Documented heap object system and constructor behavior
+- `crates/oats/src/codegen/mod.rs` - Added field initialization in
+  `gen_constructor_ir()`
 
 ---
 
@@ -291,34 +350,33 @@ Constructor receives `name` parameter, stores it at offset 8, and increments its
 ### Recommended Implementation Order
 
 **Week 1 - Quick Wins:**
+
 1. Consolidate type mapping (15 min)
-2. Formalize TODO tracking (30 min)  
+2. Formalize TODO tracking (30 min)
 3. Add labeled break/continue (2 hours)
 
-**Week 2 - Robustness:**
-4. Eliminate panics - helpers.rs (1 hour)
-5. Eliminate panics - expr.rs (1 hour)
-6. Eliminate panics - mod.rs (2 hours)
+**Week 2 - Robustness:** 4. Eliminate panics - helpers.rs (1 hour) 5. Eliminate
+panics - expr.rs (1 hour) 6. Eliminate panics - mod.rs (2 hours)
 
-**Week 3 - Verification:**  
-7. Run full test suite
-8. Add regression tests for error handling
-9. Update documentation
+**Week 3 - Verification:**\
+7. Run full test suite 8. Add regression tests for error handling 9. Update
+documentation
 
 **Total Estimated Time:** 7-8 hours
 
 ### Risk Mitigation
 
 **Small Patches:** Keep changes focused (1-3 files), build after each commit
-**Revert Strategy:** If patch causes large compile churn, revert and split smaller
-**Test Coverage:** Verify existing tests still pass after each change
+**Revert Strategy:** If patch causes large compile churn, revert and split
+smaller **Test Coverage:** Verify existing tests still pass after each change
 **Documentation:** Update docs and examples for any user-facing changes
 
 ### Success Metrics
 
 After completing improvement plan:
+
 - ✅ Zero `.unwrap()` calls in codegen paths
-- ✅ Zero duplicate functions  
+- ✅ Zero duplicate functions
 - ✅ Zero TODO comments (all tracked in issues)
 - ✅ Full loop control flow support
 - ✅ Better error messages for users
@@ -328,27 +386,35 @@ After completing improvement plan:
 
 ## Test Suite Improvements
 
-I consolidated the test setup and added stronger integration tests to make the suite easier to maintain.
+I consolidated the test setup and added stronger integration tests to make the
+suite easier to maintain.
 
-- Shared utilities: `crates/oats/tests/common/mod.rs` now provides `gen_ir_for_source(src: &str) -> anyhow::Result<String>` which centralizes parser + CodeGen setup used by many tests.
+- Shared utilities: `crates/oats/tests/common/mod.rs` now provides
+  `gen_ir_for_source(src: &str) -> anyhow::Result<String>` which centralizes
+  parser + CodeGen setup used by many tests.
 
-- Snapshot testing: `insta` was added as a dev-dependency and a snapshot test was added at `crates/oats/tests/codegen_snapshot.rs`. Snapshots are stored in `crates/oats/tests/snapshots/`.
+- Snapshot testing: `insta` was added as a dev-dependency and a snapshot test
+  was added at `crates/oats/tests/codegen_snapshot.rs`. Snapshots are stored in
+  `crates/oats/tests/snapshots/`.
 
-    - To create/update snapshots interactively:
+  - To create/update snapshots interactively:
 
-        ```bash
-        cargo insta test
-        ```
+    ```bash
+    cargo insta test
+    ```
 
-    - To auto-accept snapshots (useful in CI or initial run):
+  - To auto-accept snapshots (useful in CI or initial run):
 
-        ```bash
-        INSTA_UPDATE=auto cargo test -p oats --test codegen_snapshot
-        ```
+    ```bash
+    INSTA_UPDATE=auto cargo test -p oats --test codegen_snapshot
+    ```
 
-- End-to-end testing: `crates/oats/tests/end_to_end.rs` runs the `aot_run` runner to compile `examples/add.oats` into a temporary directory, runs the produced binary, and asserts the numeric output. This test builds `runtime` and `aot_run` as needed, and may take a few seconds on first run.
+- End-to-end testing: `crates/oats/tests/end_to_end.rs` runs the `aot_run`
+  runner to compile `examples/add.oats` into a temporary directory, runs the
+  produced binary, and asserts the numeric output. This test builds `runtime`
+  and `aot_run` as needed, and may take a few seconds on first run.
 
 ---
 
-**Last Updated:** October 10, 2025  
+**Last Updated:** October 11, 2025\
 **For PR guidelines, see:** `CONTRIBUTING.md` at repository root

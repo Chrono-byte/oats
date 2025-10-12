@@ -1,14 +1,14 @@
-    export function fibonacci(n: number): number {
-        if (n <= 1) {
-            return n;
-        }
-        return fibonacci(n - 1) + fibonacci(n - 2);
+export function fibonacci(n: number): number {
+    if (n <= 1) {
+        return n;
     }
+    return fibonacci(n - 1) + fibonacci(n - 2);
+}
 
-    export function main(): number {
-        for (let i = 1; i <= 20; i = i + 1) {
-            let fib_i = fibonacci(i);
-            print_f64(fib_i);
-        }
-        return 0;
+export function main(): number {
+    for (let mut i = 1; i <= 20; i = i + 1) {
+        let fib_i = fibonacci(i);
+        print_f64(fib_i);
     }
+    return 0;
+}

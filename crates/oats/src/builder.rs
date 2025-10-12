@@ -4,17 +4,23 @@ use std::io::Write;
 use std::path::Path;
 use std::process::Command;
 
-use oats::codegen::CodeGen;
-use oats::diagnostics;
-use oats::parser;
-use oats::types::{SymbolTable, check_function_strictness};
+use std::cell::Cell;
+use std::cell::RefCell;
+use std::collections::HashMap;
+
+use crate::codegen::CodeGen;
+use crate::diagnostics;
+use crate::parser;
+use crate::types::{SymbolTable, check_function_strictness};
 
 use inkwell::context::Context;
 use inkwell::targets::TargetMachine;
 
-fn main() -> Result<()> {
+/// Run the AOT build using the provided argv-style args slice.
+/// The function expects the same semantics as the old CLI: first arg is the
+/// source path (or OATS_SRC_FILE env var is used).
+pub fn run_from_args(args: &[String]) -> Result<()> {
     // Read source from first CLI arg or from OATS_SRC_FILE env var.
-    let args: Vec<String> = std::env::args().collect();
     let src_path = if args.len() > 1 {
         args[1].clone()
     } else if let Ok(p) = std::env::var("OATS_SRC_FILE") {
@@ -165,7 +171,7 @@ fn main() -> Result<()> {
     }
 
     // Helper: infer a simple OatsType from an expression (literals and simple arrays)
-    // NOTE: This function is now consolidated in oats::types::infer_type_from_expr
+    // NOTE: This function is now consolidated in crate::types::infer_type_from_expr
 
     // Walk top-level items and examine function bodies / declarations.
     for item in parsed.program_ref().body() {
@@ -299,26 +305,27 @@ fn main() -> Result<()> {
         fn_rc_weak_dec: std::cell::RefCell::new(None),
         fn_rc_weak_upgrade: std::cell::RefCell::new(None),
         fn_union_get_discriminant: std::cell::RefCell::new(None),
-        class_fields: std::cell::RefCell::new(std::collections::HashMap::new()),
-        fn_param_types: std::cell::RefCell::new(std::collections::HashMap::new()),
-        loop_context_stack: std::cell::RefCell::new(Vec::new()),
-        current_class_parent: std::cell::RefCell::new(None),
-        closure_local_rettype: std::cell::RefCell::new(std::collections::HashMap::new()),
-        last_expr_origin_local: std::cell::RefCell::new(None),
-        async_await_counter: std::cell::Cell::new(0),
-        async_await_live_sets: std::cell::RefCell::new(None),
-        async_cont_blocks: std::cell::RefCell::new(None),
-        async_local_name_to_slot: std::cell::RefCell::new(None),
-        async_param_count: std::cell::Cell::new(0),
-        async_local_slot_count: std::cell::Cell::new(0),
-        async_poll_function: std::cell::RefCell::new(None),
-        async_resume_blocks: std::cell::RefCell::new(None),
-        async_poll_locals: std::cell::RefCell::new(None),
+        class_fields: RefCell::new(HashMap::new()),
+        fn_param_types: RefCell::new(HashMap::new()),
+        loop_context_stack: RefCell::new(Vec::new()),
+        current_class_parent: RefCell::new(None),
+        closure_local_rettype: RefCell::new(HashMap::new()),
+        last_expr_origin_local: RefCell::new(None),
+        async_await_live_sets: RefCell::new(None),
+        async_local_name_to_slot: RefCell::new(None),
+        async_resume_blocks: RefCell::new(None),
+        async_cont_blocks: RefCell::new(None),
+        async_poll_function: RefCell::new(None),
+        async_await_counter: Cell::new(0),
+        async_param_count: Cell::new(0),
+        async_local_slot_count: Cell::new(0),
+        async_poll_locals: RefCell::new(None),
         source: &parsed_mod.source,
-        current_function_return_type: std::cell::RefCell::new(None),
-        last_expr_is_boxed_union: std::cell::Cell::new(false),
-        global_function_signatures: std::cell::RefCell::new(std::collections::HashMap::new()),
-        symbol_table: std::cell::RefCell::new(SymbolTable::new()),
+        mut_var_decls: parsed_mod.mut_var_decls.clone(),
+        current_function_return_type: RefCell::new(None),
+        last_expr_is_boxed_union: Cell::new(false),
+        global_function_signatures: RefCell::new(HashMap::new()),
+        symbol_table: RefCell::new(symbols),
     };
 
     // Note: class field metadata is computed per-class when emitting
@@ -365,14 +372,14 @@ fn main() -> Result<()> {
                         {
                             // Prepend `this` as the first param (nominal struct pointer)
                             let mut params = Vec::new();
-                            params.push(oats::types::OatsType::NominalStruct(class_name.clone()));
+                            params.push(crate::types::OatsType::NominalStruct(class_name.clone()));
                             params.extend(sig.params.into_iter());
                             let ret = sig.ret;
                             let fname = format!("{}_{}", class_name, mname);
                             codegen
                                 .gen_function_ir(&fname, &m.function, &params, &ret, Some("this"))
                                 .map_err(|d| {
-                                    oats::diagnostics::emit_diagnostic(&d, Some(source.as_str()));
+                                    diagnostics::emit_diagnostic(&d, Some(source.as_str()));
                                     anyhow::anyhow!(d.message)
                                 })?;
                         } else {
@@ -382,8 +389,9 @@ fn main() -> Result<()> {
                                 check_function_strictness(&m.function, &mut method_symbols)
                             {
                                 let mut params = Vec::new();
-                                params
-                                    .push(oats::types::OatsType::NominalStruct(class_name.clone()));
+                                params.push(crate::types::OatsType::NominalStruct(
+                                    class_name.clone(),
+                                ));
                                 params.extend(sig2.params.into_iter());
                                 let fname = format!("{}_{}", class_name, mname);
                                 codegen
@@ -391,11 +399,11 @@ fn main() -> Result<()> {
                                         &fname,
                                         &m.function,
                                         &params,
-                                        &oats::types::OatsType::Void,
+                                        &crate::types::OatsType::Void,
                                         Some("this"),
                                     )
                                     .map_err(|d| {
-                                        oats::diagnostics::emit_diagnostic(
+                                        crate::diagnostics::emit_diagnostic(
                                             &d,
                                             Some(source.as_str()),
                                         );
@@ -407,7 +415,7 @@ fn main() -> Result<()> {
                     ClassMember::Constructor(ctor) => {
                         // Compute fields for this class from explicit props, constructor
                         // param properties, and `this.x = ...` assignments inside the ctor.
-                        let mut fields: Vec<(String, oats::types::OatsType)> = Vec::new();
+                        let mut fields: Vec<(String, crate::types::OatsType)> = Vec::new();
                         use deno_ast::swc::ast::{
                             ClassMember, Expr, MemberProp, ParamOrTsParamProp, Stmt,
                             TsParamPropParam,
@@ -423,14 +431,14 @@ fn main() -> Result<()> {
                                     // to an OatsType; otherwise default to Number.
                                     let ftype = if let Some(type_ann) = &prop.type_ann {
                                         if let Some(mt) =
-                                            oats::types::map_ts_type(&type_ann.type_ann)
+                                            crate::types::map_ts_type(&type_ann.type_ann)
                                         {
                                             mt
                                         } else {
-                                            oats::types::OatsType::Number
+                                            crate::types::OatsType::Number
                                         }
                                     } else {
-                                        oats::types::OatsType::Number
+                                        crate::types::OatsType::Number
                                     };
                                     fields.push((fname, ftype));
                                 }
@@ -443,7 +451,7 @@ fn main() -> Result<()> {
                             {
                                 let fname = binding_ident.id.sym.to_string();
                                 if fields.iter().all(|(n, _)| n != &fname) {
-                                    let ty = oats::types::infer_type(
+                                    let ty = crate::types::infer_type(
                                         binding_ident.type_ann.as_ref().map(|ann| &*ann.type_ann),
                                         None,
                                     );
@@ -468,10 +476,10 @@ fn main() -> Result<()> {
                                     // constructor parameter identifier, prefer its declared
                                     // type annotation when available.
                                     let mut inferred =
-                                        oats::types::infer_type(None, Some(&assign.right));
+                                        crate::types::infer_type(None, Some(&assign.right));
                                     // If RHS is an identifier, try to look up a matching
                                     // constructor parameter and use its annotation.
-                                    if let oats::types::OatsType::Number = inferred
+                                    if let crate::types::OatsType::Number = inferred
                                         && let Expr::Ident(rhs_ident) = &*assign.right
                                     {
                                         for p in &ctor.params {
@@ -485,7 +493,7 @@ fn main() -> Result<()> {
                                                     ) = &param.pat
                                                         && bind_ident.id.sym == rhs_ident.sym
                                                         && let Some(type_ann) = &bind_ident.type_ann
-                                                        && let Some(mt) = oats::types::map_ts_type(
+                                                        && let Some(mt) = crate::types::map_ts_type(
                                                             &type_ann.type_ann,
                                                         )
                                                     {
@@ -499,7 +507,7 @@ fn main() -> Result<()> {
                                                         && binding_ident.id.sym == rhs_ident.sym
                                                         && let Some(type_ann) =
                                                             &binding_ident.type_ann
-                                                        && let Some(mt) = oats::types::map_ts_type(
+                                                        && let Some(mt) = crate::types::map_ts_type(
                                                             &type_ann.type_ann,
                                                         )
                                                     {
@@ -561,14 +569,14 @@ fn main() -> Result<()> {
                         if let Ok(sig) = check_function_strictness(&m.function, &mut method_symbols)
                         {
                             let mut params = Vec::new();
-                            params.push(oats::types::OatsType::NominalStruct(class_name.clone()));
+                            params.push(crate::types::OatsType::NominalStruct(class_name.clone()));
                             params.extend(sig.params.into_iter());
                             let ret = sig.ret;
                             let fname = format!("{}_{}", class_name, mname);
                             codegen
                                 .gen_function_ir(&fname, &m.function, &params, &ret, Some("this"))
                                 .map_err(|d| {
-                                    oats::diagnostics::emit_diagnostic(&d, Some(source.as_str()));
+                                    crate::diagnostics::emit_diagnostic(&d, Some(source.as_str()));
                                     anyhow::anyhow!(d.message)
                                 })?;
                         } else {
@@ -577,8 +585,9 @@ fn main() -> Result<()> {
                                 check_function_strictness(&m.function, &mut method_symbols)
                             {
                                 let mut params = Vec::new();
-                                params
-                                    .push(oats::types::OatsType::NominalStruct(class_name.clone()));
+                                params.push(crate::types::OatsType::NominalStruct(
+                                    class_name.clone(),
+                                ));
                                 params.extend(sig2.params.into_iter());
                                 let fname = format!("{}_{}", class_name, mname);
                                 codegen
@@ -586,11 +595,11 @@ fn main() -> Result<()> {
                                         &fname,
                                         &m.function,
                                         &params,
-                                        &oats::types::OatsType::Void,
+                                        &crate::types::OatsType::Void,
                                         Some("this"),
                                     )
                                     .map_err(|d| {
-                                        oats::diagnostics::emit_diagnostic(
+                                        crate::diagnostics::emit_diagnostic(
                                             &d,
                                             Some(source.as_str()),
                                         );
@@ -601,7 +610,7 @@ fn main() -> Result<()> {
                     }
                     ClassMember::Constructor(ctor) => {
                         // Compute fields for non-exported class similarly to exported case
-                        let mut fields: Vec<(String, oats::types::OatsType)> = Vec::new();
+                        let mut fields: Vec<(String, crate::types::OatsType)> = Vec::new();
                         use deno_ast::swc::ast::{
                             ClassMember, Expr, MemberProp, ParamOrTsParamProp, Stmt,
                             TsParamPropParam,
@@ -614,14 +623,14 @@ fn main() -> Result<()> {
                                 if fields.iter().all(|(n, _)| n != &fname) {
                                     let ftype = if let Some(type_ann) = &prop.type_ann {
                                         if let Some(mt) =
-                                            oats::types::map_ts_type(&type_ann.type_ann)
+                                            crate::types::map_ts_type(&type_ann.type_ann)
                                         {
                                             mt
                                         } else {
-                                            oats::types::OatsType::Number
+                                            crate::types::OatsType::Number
                                         }
                                     } else {
-                                        oats::types::OatsType::Number
+                                        crate::types::OatsType::Number
                                     };
                                     fields.push((fname, ftype));
                                 }
@@ -633,7 +642,7 @@ fn main() -> Result<()> {
                             {
                                 let fname = binding_ident.id.sym.to_string();
                                 if fields.iter().all(|(n, _)| n != &fname) {
-                                    let ty = oats::types::infer_type(
+                                    let ty = crate::types::infer_type(
                                         binding_ident.type_ann.as_ref().map(|ann| &*ann.type_ann),
                                         None,
                                     );
@@ -654,7 +663,7 @@ fn main() -> Result<()> {
                                 {
                                     let name = ident.sym.to_string();
                                     let inferred =
-                                        oats::types::infer_type(None, Some(&assign.right));
+                                        crate::types::infer_type(None, Some(&assign.right));
                                     if fields.iter().all(|(n, _)| n != &name) {
                                         fields.push((name, inferred));
                                     }
@@ -696,7 +705,7 @@ fn main() -> Result<()> {
                 codegen
                     .gen_function_ir(&fname, &inner_func, &fsig.params, &fsig.ret, None)
                     .map_err(|d| {
-                        oats::diagnostics::emit_diagnostic(&d, Some(source.as_str()));
+                        crate::diagnostics::emit_diagnostic(&d, Some(source.as_str()));
                         anyhow::anyhow!("{}", d.message)
                     })?;
             }
@@ -715,7 +724,7 @@ fn main() -> Result<()> {
                 codegen
                     .gen_function_ir(&fname, &inner_func, &fsig.params, &fsig.ret, None)
                     .map_err(|d| {
-                        oats::diagnostics::emit_diagnostic(&d, Some(source.as_str()));
+                        crate::diagnostics::emit_diagnostic(&d, Some(source.as_str()));
                         anyhow::anyhow!("{}", d.message)
                     })?;
             }
@@ -783,7 +792,7 @@ fn main() -> Result<()> {
         codegen
             .gen_function_ir(fname, &func, &fsig.params, &fsig.ret, None)
             .map_err(|d| {
-                oats::diagnostics::emit_diagnostic(&d, Some(source.as_str()));
+                crate::diagnostics::emit_diagnostic(&d, Some(source.as_str()));
                 anyhow::anyhow!("{}", d.message)
             })?;
     }
@@ -801,7 +810,7 @@ fn main() -> Result<()> {
             None,
         )
         .map_err(|d| {
-            oats::diagnostics::emit_diagnostic(&d, Some(source.as_str()));
+            crate::diagnostics::emit_diagnostic(&d, Some(source.as_str()));
             anyhow::anyhow!("{}", d.message)
         })?;
 
@@ -823,7 +832,7 @@ fn main() -> Result<()> {
     let out_ll = format!("{}/{}.ll", out_dir, src_filename);
     let out_exe = format!("{}/{}", out_dir, src_filename);
     let out_obj = format!("{}/{}.o", out_dir, src_filename);
-    
+
     // Ensure output directory exists so File::create doesn't fail with ENOENT.
     if let Err(e) = std::fs::create_dir_all(&out_dir) {
         anyhow::bail!("failed to create output directory {}: {}", out_dir, e);

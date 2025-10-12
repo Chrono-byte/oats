@@ -18,11 +18,11 @@ export function main(): void {
     println(`Bitwise NOT: ${~d}`);
 
     // Test 5: Increment
-    let e = 1;
+    let mut e = 1;
     println(`Increment: ${++e}`);
 
     // Test 6: Decrement
-    let f = 10;
+    let mut f = 10;
     println(`Decrement: ${--f}`);
 
     println("Unary Operators Tests Completed");

@@ -2,7 +2,7 @@ function greet(name: string): string {
     return `Hello, ${name}!`;
 }
 
-const multiply = (a: number, b: number): number => a * b;
+let multiply = (a: number, b: number): number => a * b;
 
 export function main(): void {
     println(greet("World"));

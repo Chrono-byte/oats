@@ -241,7 +241,7 @@ impl<'a> CodeGen<'a> {
                 let _indices = &[zero, two, zero];
                 let pv = gv.as_pointer_value();
                 self.const_interns.borrow_mut().insert(key.clone(), pv);
-                return Ok(pv);
+                Ok(pv)
             }
             ConstValue::Array(elems) => {
                 // Only support numeric arrays and string arrays for now. We'll emit
@@ -292,7 +292,7 @@ impl<'a> CodeGen<'a> {
                         let _indices = &[zero, two, zero];
                         let pv = gv.as_pointer_value();
                         self.const_interns.borrow_mut().insert(key.clone(), pv);
-                        return Ok(pv);
+                        Ok(pv)
                     }
                     ConstValue::Str(_) => {
                         // For string arrays, allocate an array of i8* pointers with each element pointing to a const string global.
@@ -335,12 +335,12 @@ impl<'a> CodeGen<'a> {
                         let _indices = &[zero, two, zero];
                         let pv = gv.as_pointer_value();
                         self.const_interns.borrow_mut().insert(key.clone(), pv);
-                        return Ok(pv);
+                        Ok(pv)
                     }
                     _ => {
-                        return Err(crate::diagnostics::Diagnostic::simple(
+                        Err(crate::diagnostics::Diagnostic::simple(
                             "unsupported const array element type",
-                        ));
+                        ))
                     }
                 }
             }
@@ -467,7 +467,7 @@ impl<'a> CodeGen<'a> {
                 self.const_interns.borrow_mut().insert(key.clone(), pv);
 
                 // Return the global's base pointer as a PointerValue
-                return Ok(pv);
+                Ok(pv)
             }
 
             _ => Err(crate::diagnostics::Diagnostic::simple(
@@ -661,11 +661,10 @@ impl<'a> CodeGen<'a> {
     /// accidentally emitting duplicate branch instructions when lowering
     /// constructs that may have emitted branches earlier.
     pub(crate) fn ensure_unconditional_branch(&self, bb: inkwell::basic_block::BasicBlock<'a>) {
-        if let Some(cur) = self.builder.get_insert_block() {
-            if cur.get_terminator().is_none() {
+        if let Some(cur) = self.builder.get_insert_block()
+            && cur.get_terminator().is_none() {
                 let _ = self.builder.build_unconditional_branch(bb);
             }
-        }
     }
 
     fn get_union_unbox_ptr(&self) -> FunctionValue<'a> {

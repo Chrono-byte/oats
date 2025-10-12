@@ -41,7 +41,7 @@ pub fn eval_const_expr(
             )),
         },
         Expr::Unary(UnaryExpr { op, arg, .. }) => {
-            let inner = eval_const_expr(&*arg, span_start, const_items)?;
+            let inner = eval_const_expr(arg, span_start, const_items)?;
             match op {
                 UnaryOp::Minus => {
                     if let Some(n) = inner.as_f64() {
@@ -72,8 +72,8 @@ pub fn eval_const_expr(
         Expr::Bin(BinExpr {
             op, left, right, ..
         }) => {
-            let l = eval_const_expr(&*left, span_start, const_items)?;
-            let r = eval_const_expr(&*right, span_start, const_items)?;
+            let l = eval_const_expr(left, span_start, const_items)?;
+            let r = eval_const_expr(right, span_start, const_items)?;
             use BinaryOp::*;
             match op {
                 Add | Sub | Mul | Div => {
@@ -145,10 +145,10 @@ pub fn eval_const_expr(
             if let Some(v) = const_items.get(&name) {
                 return Ok(v.clone());
             }
-            return Err(Diagnostic::simple_with_span(
+            Err(Diagnostic::simple_with_span(
                 "unknown const identifier in const initializer",
                 span_start,
-            ));
+            ))
         }
         Expr::Array(arr) => {
             let mut out: Vec<ConstValue> = Vec::new();

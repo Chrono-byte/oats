@@ -754,9 +754,9 @@ pub fn run_from_args(args: &[String]) -> Result<()> {
         // We store the initializer as a boxed Expr to match AST ownership.
         let mut top_level_consts: Vec<(String, Box<ast::Expr>, usize)> = Vec::new();
         for item in parsed.program_ref().body() {
-            if let deno_ast::ModuleItemRef::Stmt(stmt) = item {
-                if let ast::Stmt::Decl(ast::Decl::Var(vd)) = stmt {
-                    if matches!(vd.kind, ast::VarDeclKind::Const) {
+            if let deno_ast::ModuleItemRef::Stmt(stmt) = item
+                && let ast::Stmt::Decl(ast::Decl::Var(vd)) = stmt
+                    && matches!(vd.kind, ast::VarDeclKind::Const) {
                         for decl in &vd.decls {
                             if let ast::Pat::Ident(binding) = &decl.name {
                                 if let Some(init) = &decl.init {
@@ -776,8 +776,6 @@ pub fn run_from_args(args: &[String]) -> Result<()> {
                             }
                         }
                     }
-                }
-            }
         }
 
         if !top_level_consts.is_empty() {
@@ -801,11 +799,10 @@ pub fn run_from_args(args: &[String]) -> Result<()> {
                     }
                     Expr::Object(obj) => {
                         for prop in &obj.props {
-                            if let PropOrSpread::Prop(pb) = prop {
-                                if let Prop::KeyValue(kv) = &**pb {
+                            if let PropOrSpread::Prop(pb) = prop
+                                && let Prop::KeyValue(kv) = &**pb {
                                     collect_idents(&kv.value, out);
                                 }
-                            }
                         }
                     }
                     Expr::Unary(u) => collect_idents(&u.arg, out),
@@ -853,7 +850,7 @@ pub fn run_from_args(args: &[String]) -> Result<()> {
 
             for (i, (_n, init, _)) in top_level_consts.iter().enumerate() {
                 let mut ids = HashSet::new();
-                collect_idents(&*init, &mut ids);
+                collect_idents(init, &mut ids);
                 for id in ids {
                     if let Some(&j) = name_to_idx.get(&id) {
                         // edge j -> i (j must be evaluated before i)
@@ -897,9 +894,9 @@ pub fn run_from_args(args: &[String]) -> Result<()> {
                 let (name, init_expr, span_start) = &top_level_consts[idx];
                 // Evaluate with the current const_items map
                 match crate::codegen::const_eval::eval_const_expr(
-                    &*init_expr,
+                    init_expr,
                     *span_start,
-                    &*codegen.const_items.borrow(),
+                    &codegen.const_items.borrow(),
                 ) {
                     Ok(cv) => {
                         // Insert into const_items

@@ -145,7 +145,7 @@ impl Collector {
             while let Some(base) = q.pop_front() {
                 let header_ptr = base as *const std::sync::atomic::AtomicU64;
                 let header_val = (*header_ptr).load(Ordering::Relaxed);
-                let type_tag = (header_val >> crate::HEADER_TYPE_TAG_SHIFT) as u64;
+                let type_tag = (header_val >> crate::HEADER_TYPE_TAG_SHIFT);
 
                 if type_tag == 0 {
                     // array-like / tuple
@@ -180,7 +180,7 @@ impl Collector {
                     // union-like
                     let discrim_ptr = (base as *mut u8).add(16) as *const u64;
                     if crate::is_plausible_addr(discrim_ptr as usize) {
-                        let discrim = *discrim_ptr as u64;
+                        let discrim = *discrim_ptr;
                         if discrim == 1 {
                             let payload_ptr =
                                 (base as *mut u8).add(24) as *const *mut std::ffi::c_void;
@@ -256,7 +256,7 @@ impl Collector {
                 let rc = (h & crate::HEADER_RC_MASK) as i64;
                 simulated.insert(o, rc);
 
-                let type_tag = (h >> crate::HEADER_TYPE_TAG_SHIFT) as u64;
+                let type_tag = (h >> crate::HEADER_TYPE_TAG_SHIFT);
                 if type_tag == 0 {
                     let len_ptr = (o as *mut u8).add(8) as *const u64;
                     if !crate::is_plausible_addr(len_ptr as usize) {
@@ -290,7 +290,7 @@ impl Collector {
                     // union-like
                     let discrim_ptr = (o as *mut u8).add(16) as *const u64;
                     if crate::is_plausible_addr(discrim_ptr as usize) {
-                        let discrim = *discrim_ptr as u64;
+                        let discrim = *discrim_ptr;
                         if discrim == 1 {
                             let payload_ptr =
                                 (o as *mut u8).add(24) as *const *mut std::ffi::c_void;

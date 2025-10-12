@@ -55,26 +55,16 @@ Oats is an ahead-of-time (AOT) compiler that transforms TypeScript code to nativ
 
 **Please do NOT report security vulnerabilities through public GitHub issues.**
 
-### For Critical Vulnerabilities
+Report privately through the GitHub Security Advisory workflow:
 
-If you discover a critical vulnerability (e.g., arbitrary code execution, memory corruption, privilege escalation):
-
-1. **Email**: [TBD - Add security contact email]
-2. **Subject**: Include "[SECURITY]" in the subject line
-3. **Details**: Provide:
-   - Description of the vulnerability
-   - Steps to reproduce
-   - Proof-of-concept code (if available)
-   - Affected versions/commits
-   - Potential impact assessment
-
-### For Non-Critical Issues
-
-For lower-severity issues (e.g., resource exhaustion, DoS, information disclosure):
-
-1. Open a GitHub issue with the `security` label
-2. Provide the same details as above
-3. We'll triage within 7 days
+1. Visit <https://github.com/Chrono-byte/oats/security/advisories/new>
+2. Provide the following details:
+    - Description of the vulnerability and impact
+    - Steps to reproduce (including source snippets if possible)
+    - Proof-of-concept code or crash input (if available)
+    - Affected commits or release tags
+    - Suggested mitigations, if any
+3. The maintainers will acknowledge receipt and coordinate a fix prior to disclosure.
 
 ### Response Timeline
 
@@ -128,24 +118,21 @@ Limits are enforced atomically before every allocation in `runtime_malloc()`.
 Comprehensive fuzz testing infrastructure using cargo-fuzz:
 
 ```bash
-# Run fuzzing (default: 60 seconds)
+# Run parser fuzzing (default: 60 seconds)
 ./scripts/run_fuzzing.sh
 
 # Run for 24 hours
 FUZZ_TIME=86400 ./scripts/run_fuzzing.sh
 ```
 
-**Targets:**
-- `fuzz_parser`: Tests parser with arbitrary UTF-8 input
-- `fuzz_compiler`: Tests full compilation pipeline
-
-**Results:** Already discovered and fixed 2 DoS vulnerabilities (see `docs/FUZZING_RESULTS.md`)
+**Target:**
+- `fuzz_parser`: Exercises the parser with arbitrary UTF-8 input
 
 #### 4. Safety Documentation
 Comprehensive safety documentation for all `unsafe` code:
-- `docs/RUNTIME_SAFETY.md`: Safety contracts for every unsafe function
-- `docs/ARCHITECTURE.md`: Memory layouts and invariants
-- Inline `SAFETY:` comments explaining why unsafe code is safe
+- `docs/MEMORY_DESIGN.md`: Memory layouts, RC invariants, and safety guidance
+- `docs/ARCHITECTURE.md`: Runtime object contracts and codegen expectations
+- Inline `SAFETY:` comments explaining why each `unsafe` block is sound
 
 ### Planned (Phase 2)
 
@@ -184,24 +171,21 @@ Enable with `OATS_DEBUG_ALLOC=1`:
 
 ## Security Audit History
 
-| Date | Type | Auditor | Findings | Status |
-|------|------|---------|----------|--------|
-| 2025-10-10 | External Review | Anonymous | 2 critical, 4 high | Fixed |
-| TBD | Formal Audit | TBD | Pending | Planned |
+No external security audits have been completed yet. A formal review is planned
+as part of the stabilization roadmap.
 
 ## Acknowledgments
 
-We thank the following people for responsibly disclosing security issues:
-- Anonymous reviewer (October 2025): Comprehensive security review leading to Phase 1 hardening
+We will acknowledge researchers who responsibly disclose vulnerabilities once
+reports are received.
 
 ## References
 
-- [RUNTIME_SAFETY.md](docs/RUNTIME_SAFETY.md) - Comprehensive safety documentation
+- [MEMORY_DESIGN.md](docs/MEMORY_DESIGN.md) - Memory layout and RC rules
 - [FUZZING.md](docs/FUZZING.md) - Fuzzing guide and best practices
-- [SECURITY_HARDENING.md](docs/SECURITY_HARDENING.md) - Security improvement summary
-- [ARCHITECTURE.md](docs/ARCHITECTURE.md) - Memory layouts and contracts
+- [ARCHITECTURE.md](docs/ARCHITECTURE.md) - Compiler contracts and runtime ABI
 
 ---
 
-**Last Updated:** October 10, 2025  
+**Last Updated:** October 12, 2025  
 **Next Review:** January 2026

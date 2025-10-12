@@ -137,6 +137,7 @@ cargo insta review
 
 # Test examples
 ./scripts/run_all_proper_tests.sh
+./scripts/cloc_no_tests.sh [--extra-args "<args>"]
 ```
 
 ### 4. Update Documentation

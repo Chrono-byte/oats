@@ -62,8 +62,8 @@ Notes:
 ## Cycle collection (high level)
 
 - The planned collector uses a trial-deletion algorithm as a safety net for
-  cycles created by strong references.
--- Use weak/unowned references to break cycles when appropriate.
+  cycles created by strong references. -- Use weak/unowned references to break
+  cycles when appropriate.
 
 ## Thread safety & atomicity
 

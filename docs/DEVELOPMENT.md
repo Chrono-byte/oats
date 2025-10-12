@@ -29,8 +29,7 @@ more fragmented development docs and points to deeper references when needed.
 - Tests: `cargo test --workspace` (must pass)
 - Lint: `cargo clippy --workspace` (fix warnings where possible)
 
-```
-
+````
 # Oats — Development Guide
 
 This document provides practical, actionable guidance for contributors working
@@ -83,7 +82,7 @@ cargo test --workspace
 cargo run -p oats --bin toasty -- examples/hello.oats
 # Legacy: cargo run -p oats --bin toasty -- examples/hello.oats
 ./aot_out/hello
-```
+````
 
 ### First-Time Build Tips
 
@@ -239,9 +238,9 @@ let call_site = match self.builder.build_call(fn_val, args, "name") {
 
 ### Testing Strategy
 
-**Unit Tests:** Helper error cases and boundary conditions 
-**Integration Tests:** Run `toasty` on malformed examples, assert diagnostic output
-**CI Steps:** Verify `cargo build --all`, `cargo test --all`, diagnostic smoke tests
+**Unit Tests:** Helper error cases and boundary conditions **Integration
+Tests:** Run `toasty` on malformed examples, assert diagnostic output **CI
+Steps:** Verify `cargo build --all`, `cargo test --all`, diagnostic smoke tests
 
 ### Timeline Estimate
 
@@ -406,10 +405,10 @@ suite easier to maintain.
     INSTA_UPDATE=auto cargo test -p oats --test codegen_snapshot
     ```
 
-+ End-to-end testing: `crates/oats/tests/end_to_end.rs` runs the `toasty`
-+ runner to compile `examples/add.oats` into a temporary directory, runs the
-+ produced binary, and asserts the numeric output. This test builds `runtime`
-+ and `toasty` as needed, and may take a few seconds on first run.
+* End-to-end testing: `crates/oats/tests/end_to_end.rs` runs the `toasty`
+* runner to compile `examples/add.oats` into a temporary directory, runs the
+* produced binary, and asserts the numeric output. This test builds `runtime`
+* and `toasty` as needed, and may take a few seconds on first run.
 
 ---
 

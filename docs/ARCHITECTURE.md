@@ -3,11 +3,14 @@
 This concise architecture reference captures the essential runtime object model
 and codegen contracts contributors must follow.
 
-## Heap Object Layout
+## Object Layout (canonical)
 
-- Offset 0: 64-bit header (strong refcount + flags)
-- Offset 8: meta-slot (pointer to field metadata)
-- Offset 16+: fields or data
+- Offset 0: 64-bit header (atomic) — strong reference count (bits 0..31) and flags
+- Bit 32 in header: STATIC bit (1 = immortal literal; RC ops are no-ops)
+- Bits 33..48: weak reference count (u16)
+- Bits 49..63: type tag / flags (reserved)
+- Offset 8: meta-slot (pointer to field metadata / vtable)
+- Offset 16+: fields or element data
 
 Notes:
 

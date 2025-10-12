@@ -28,6 +28,8 @@ use std::collections::HashMap;
 use inkwell::context::Context;
 use inkwell::targets::TargetMachine;
 
+pub mod deno_adapter;
+
 /// Generates LLVM IR from Oats source code for testing purposes.
 ///
 /// This function provides a convenient way to compile Oats source code to

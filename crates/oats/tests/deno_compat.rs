@@ -22,7 +22,7 @@ fn deno_fixtures_parse_cleanly() {
     let mut parsed_files = Vec::new();
 
     for fixture in allowlist {
-    let fixture_root = root.join(&fixture);
+        let fixture_root = root.join(&fixture);
         assert!(
             fixture_root.exists(),
             "allow-listed fixture does not exist: {}",
@@ -106,6 +106,5 @@ fn is_source_file(path: &Path) -> bool {
 }
 
 fn deno_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../third_party/deno_tests")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../third_party/deno_tests")
 }

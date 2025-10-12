@@ -1123,19 +1123,50 @@ pub fn run_from_args(args: &[String]) -> Result<()> {
     // -O3: Aggressive optimizations (inlining, loop opts, vectorization)
     // -march=native: Use all available CPU instructions for this machine
     // -ffast-math: Enable aggressive floating-point optimizations (safe for most code)
-    let mut clang_cmd = Command::new("clang");
-    clang_cmd
-        .arg("-O3") // Aggressive optimizations (was -O2)
-        .arg("-march=native") // Use native CPU features
-        .arg("-ffast-math") // Fast floating-point math
-        .arg("-c")
-        .arg(&out_ll)
-        .arg("-o")
-        .arg(&out_obj);
+    // Build clang command with sensible fallbacks. Some CI images install
+    // a versioned binary like `clang-18` but don't provide an unversioned
+    // `clang` symlink. Try a small set of common names before failing.
+    let clang_candidates = ["clang", "clang-18", "clang-17"];
+    let mut clang_run_err: Option<std::io::Error> = None;
+    let mut compiled_ok = false;
+    for &candidate in &clang_candidates {
+        let mut cmd = Command::new(candidate);
+        cmd.arg("-O3") // Aggressive optimizations (was -O2)
+            .arg("-march=native") // Use native CPU features
+            .arg("-ffast-math") // Fast floating-point math
+            .arg("-c")
+            .arg(&out_ll)
+            .arg("-o")
+            .arg(&out_obj);
 
-    let status = clang_cmd.status()?;
-    if !status.success() {
-        anyhow::bail!("clang failed to compile IR to object");
+        match cmd.status() {
+            Ok(status) => {
+                if status.success() {
+                    compiled_ok = true;
+                    break;
+                } else {
+                    // Found the binary but it failed; report that
+                    anyhow::bail!("{} failed to compile IR to object", candidate);
+                }
+            }
+            Err(e) => {
+                // Save the error from the last attempt and try the next candidate
+                clang_run_err = Some(e);
+            }
+        }
+    }
+    if !compiled_ok {
+        if let Some(e) = clang_run_err {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                anyhow::bail!(
+                    "`clang` not found in PATH and no fallback was available; install clang or add a symlink (e.g. `apt install clang-18 && ln -s /usr/bin/clang-18 /usr/bin/clang`)"
+                );
+            } else {
+                return Err(e.into());
+            }
+        } else {
+            anyhow::bail!("failed to run clang to compile IR to object");
+        }
     }
 
     // Locate or produce rt_main object. Prefer an existing top-level `rt_main.o` so
@@ -1149,17 +1180,31 @@ pub fn run_from_args(args: &[String]) -> Result<()> {
         String::from("rt_main.o")
     } else if Path::new("crates/runtime/rt_main/src/main.rs").exists() {
         let rt_main_obj = format!("{}/rt_main.o", out_dir);
-        let status = Command::new("rustc")
+        // Compile rt_main with rustc; check for missing rustc binary explicitly
+        let mut rustc_cmd = Command::new("rustc");
+        rustc_cmd
             .arg("--crate-type")
             .arg("bin")
             .arg("--emit=obj")
             .arg("crates/runtime/rt_main/src/main.rs")
             .arg("-O")
             .arg("-o")
-            .arg(&rt_main_obj)
-            .status()?;
-        if !status.success() {
-            anyhow::bail!("rustc failed to compile rt_main to object");
+            .arg(&rt_main_obj);
+        match rustc_cmd.status() {
+            Ok(status) => {
+                if !status.success() {
+                    anyhow::bail!("rustc failed to compile rt_main to object");
+                }
+            }
+            Err(e) => {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    anyhow::bail!(
+                        "`rustc` not found in PATH; please install Rust toolchain or ensure `rustc` is available"
+                    );
+                } else {
+                    return Err(e.into());
+                }
+            }
         }
         rt_main_obj
     } else {
@@ -1170,18 +1215,45 @@ pub fn run_from_args(args: &[String]) -> Result<()> {
     // Link final binary with clang. If we emitted the host `main` in the
     // module then `rt_main_obj` will be empty and we skip adding it to the
     // link line.
-    let mut link_cmd = Command::new("clang");
-    link_cmd
-        .arg("-O3") // Link-time optimizations (was -O2)
-        .arg("-flto"); // Enable Link-Time Optimization for cross-module inlining
+    // Link final binary with clang. Try the same fallback list as above to
+    // handle CI images with only versioned clang binaries installed.
+    let clang_candidates = ["clang", "clang-18", "clang-17"];
+    let mut link_run_err: Option<std::io::Error> = None;
+    let mut linked_ok = false;
+    for &candidate in &clang_candidates {
+        let mut cmd = Command::new(candidate);
+        cmd.arg("-O3").arg("-flto");
+        if !rt_main_obj.is_empty() {
+            cmd.arg(&rt_main_obj);
+        }
+        cmd.arg(&out_obj).arg(&rust_lib).arg("-o").arg(&out_exe);
 
-    if !rt_main_obj.is_empty() {
-        link_cmd.arg(&rt_main_obj);
+        match cmd.status() {
+            Ok(status) => {
+                if status.success() {
+                    linked_ok = true;
+                    break;
+                } else {
+                    anyhow::bail!("{} failed to link final binary", candidate);
+                }
+            }
+            Err(e) => {
+                link_run_err = Some(e);
+            }
+        }
     }
-    link_cmd.arg(&out_obj).arg(rust_lib).arg("-o").arg(&out_exe);
-    let status = link_cmd.status()?;
-    if !status.success() {
-        anyhow::bail!("clang failed to link final binary");
+    if !linked_ok {
+        if let Some(e) = link_run_err {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                anyhow::bail!(
+                    "`clang` not found in PATH and no fallback was available; install clang or add a symlink (e.g. `apt install clang-18 && ln -s /usr/bin/clang-18 /usr/bin/clang`)"
+                );
+            } else {
+                return Err(e.into());
+            }
+        } else {
+            anyhow::bail!("failed to run clang to link final binary");
+        }
     }
 
     Ok(())

@@ -14,6 +14,11 @@ stages:
   before_script:
     - apt-get update
     - DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends build-essential curl ca-certificates llvm-18 llvm-18-dev clang-18 libclang-18-dev pkg-config
+    - |
+      # Ensure an unversioned `clang` binary exists. Some images only install clang-18.
+      if [ ! -x /usr/bin/clang ] && [ -x /usr/bin/clang-18 ]; then
+        ln -s /usr/bin/clang-18 /usr/bin/clang
+      fi
     - curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal --default-toolchain stable
     - . "$CARGO_HOME/env"
     - rustup component add clippy || true

@@ -145,7 +145,7 @@ impl Collector {
             while let Some(base) = q.pop_front() {
                 let header_ptr = base as *const std::sync::atomic::AtomicU64;
                 let header_val = (*header_ptr).load(Ordering::Relaxed);
-                let type_tag = (header_val >> crate::HEADER_TYPE_TAG_SHIFT);
+                let type_tag = header_val >> crate::HEADER_TYPE_TAG_SHIFT;
 
                 if type_tag == 0 {
                     // array-like / tuple
@@ -162,7 +162,7 @@ impl Collector {
                                 if !crate::is_plausible_addr(elem_ptr as usize) {
                                     continue;
                                 }
-                                let p = *elem_ptr as *mut std::ffi::c_void;
+                                let p = *elem_ptr;
                                 if p.is_null() {
                                     continue;
                                 }
@@ -185,7 +185,7 @@ impl Collector {
                             let payload_ptr =
                                 (base as *mut u8).add(24) as *const *mut std::ffi::c_void;
                             if crate::is_plausible_addr(payload_ptr as usize) {
-                                let p = *payload_ptr as *mut std::ffi::c_void;
+                                let p = *payload_ptr;
                                 if !p.is_null() {
                                     let pbase = crate::get_object_base(p) as usize;
                                     if pbase != 0 && seen.insert(pbase) {
@@ -225,7 +225,7 @@ impl Collector {
                     if !crate::is_plausible_addr(field_addr as usize) {
                         continue;
                     }
-                    let p = *field_addr as *mut std::ffi::c_void;
+                    let p = *field_addr;
                     if p.is_null() {
                         continue;
                     }
@@ -256,7 +256,7 @@ impl Collector {
                 let rc = (h & crate::HEADER_RC_MASK) as i64;
                 simulated.insert(o, rc);
 
-                let type_tag = (h >> crate::HEADER_TYPE_TAG_SHIFT);
+                let type_tag = h >> crate::HEADER_TYPE_TAG_SHIFT;
                 if type_tag == 0 {
                     let len_ptr = (o as *mut u8).add(8) as *const u64;
                     if !crate::is_plausible_addr(len_ptr as usize) {
@@ -273,7 +273,7 @@ impl Collector {
                             if !crate::is_plausible_addr(elem_ptr as usize) {
                                 continue;
                             }
-                            let p = *elem_ptr as *mut std::ffi::c_void;
+                            let p = *elem_ptr;
                             if p.is_null() {
                                 continue;
                             }
@@ -295,7 +295,7 @@ impl Collector {
                             let payload_ptr =
                                 (o as *mut u8).add(24) as *const *mut std::ffi::c_void;
                             if crate::is_plausible_addr(payload_ptr as usize) {
-                                let p = *payload_ptr as *mut std::ffi::c_void;
+                                let p = *payload_ptr;
                                 if !p.is_null() {
                                     let pbase = crate::get_object_base(p) as usize;
                                     if pbase != 0 && seen.contains(&pbase) {
@@ -336,7 +336,7 @@ impl Collector {
                         if !crate::is_plausible_addr(field_addr as usize) {
                             continue;
                         }
-                        let p = *field_addr as *mut std::ffi::c_void;
+                        let p = *field_addr;
                         if p.is_null() {
                             continue;
                         }

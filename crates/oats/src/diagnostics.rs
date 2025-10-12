@@ -325,6 +325,7 @@ static DIAGNOSTICS_ENABLED: AtomicBool = AtomicBool::new(true);
 ///
 /// # Usage
 /// ```rust
+/// use oats::diagnostics;
 /// let _guard = diagnostics::suppress();
 /// // Diagnostics are now silenced within this scope
 /// // Guard automatically restores previous state on drop

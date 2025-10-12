@@ -342,14 +342,14 @@ impl EscapeAnalyzer {
     /// Analyzes an expression where all contained variables are considered escaping.
     fn analyze_expr_as_escaping(&mut self, expr: &ast::Expr) {
         let mut vars = HashSet::new();
-        self.collect_vars_from_expr(expr, &mut vars);
+        Self::collect_vars_from_expr(expr, &mut vars);
         for var in vars {
             self.info.mark_escaping(var);
         }
     }
 
     /// Recursively collects all variable names from an expression.
-    fn collect_vars_from_expr(&self, expr: &ast::Expr, vars: &mut HashSet<String>) {
+    fn collect_vars_from_expr(expr: &ast::Expr, vars: &mut HashSet<String>) {
         use deno_ast::swc::ast::*;
         match expr {
             Expr::Ident(ident) => {
@@ -357,35 +357,35 @@ impl EscapeAnalyzer {
             }
             Expr::Call(call) => {
                 if let Callee::Expr(callee_expr) = &call.callee {
-                    self.collect_vars_from_expr(callee_expr, vars);
+                    Self::collect_vars_from_expr(callee_expr, vars);
                 }
                 for arg in &call.args {
-                    self.collect_vars_from_expr(&arg.expr, vars);
+                    Self::collect_vars_from_expr(&arg.expr, vars);
                 }
             }
             Expr::Member(member) => {
-                self.collect_vars_from_expr(&member.obj, vars);
+                Self::collect_vars_from_expr(&member.obj, vars);
                 if let MemberProp::Computed(comp) = &member.prop {
-                    self.collect_vars_from_expr(&comp.expr, vars);
+                    Self::collect_vars_from_expr(&comp.expr, vars);
                 }
             }
             Expr::Bin(bin) => {
-                self.collect_vars_from_expr(&bin.left, vars);
-                self.collect_vars_from_expr(&bin.right, vars);
+                Self::collect_vars_from_expr(&bin.left, vars);
+                Self::collect_vars_from_expr(&bin.right, vars);
             }
-            Expr::Unary(unary) => self.collect_vars_from_expr(&unary.arg, vars),
+            Expr::Unary(unary) => Self::collect_vars_from_expr(&unary.arg, vars),
             Expr::Cond(cond) => {
-                self.collect_vars_from_expr(&cond.test, vars);
-                self.collect_vars_from_expr(&cond.cons, vars);
-                self.collect_vars_from_expr(&cond.alt, vars);
+                Self::collect_vars_from_expr(&cond.test, vars);
+                Self::collect_vars_from_expr(&cond.cons, vars);
+                Self::collect_vars_from_expr(&cond.alt, vars);
             }
             Expr::Array(arr) => {
                 for elem in arr.elems.iter().flatten() {
-                    self.collect_vars_from_expr(&elem.expr, vars);
+                    Self::collect_vars_from_expr(&elem.expr, vars);
                 }
             }
-            Expr::Assign(assign) => self.collect_vars_from_expr(&assign.right, vars),
-            Expr::Paren(paren) => self.collect_vars_from_expr(&paren.expr, vars),
+            Expr::Assign(assign) => Self::collect_vars_from_expr(&assign.right, vars),
+            Expr::Paren(paren) => Self::collect_vars_from_expr(&paren.expr, vars),
             _ => {}
         }
     }

@@ -75,8 +75,16 @@ helper functions to manage counts.
 - **Local Variable Tracking**: The `LocalEntry` tuple is used extensively in
   codegen to track variables for proper RC management:
   ```rust
-  // (LLVM ptr, LLVM type, is_mutable, is_param, is_weak, nominal_type_name)
-  type LocalEntry<'a> = (PointerValue<'a>, BasicTypeEnum<'a>, bool, bool, bool, Option<String>);
+  // (LLVM ptr, LLVM type, is_initialized, is_const, is_weak, nominal_type_name, oats_type)
+  type LocalEntry<'a> = (
+      PointerValue<'a>,               // alloca ptr
+      BasicTypeEnum<'a>,              // LLVM type  
+      bool,                           // is_initialized
+      bool,                           // is_const
+      bool,                           // is_weak
+      Option<String>,                 // nominal type name
+      Option<crate::types::OatsType>, // OatsType for unions
+  );
   ```
 
 ---
@@ -144,6 +152,47 @@ pub fn lower_expr(...) -> Result<BasicValueEnum<'a>, Diagnostic> {
   - **Requirement**: Always provide a clear explanation for any snapshot changes
     in your pull request.
 
+- **Running Example Tests**: Use the script to test all examples:
+
+  ```bash
+  ./scripts/run_all_proper_tests.sh
+  ```
+
+- **Fuzzing**: The project includes fuzzing for parser robustness:
+
+  ```bash
+  ./scripts/run_fuzzing.sh
+  ```
+
+- **Runtime Diagnostics**: Enable logging for debugging memory management:
+
+  ```bash
+  export OATS_RUNTIME_LOG=1      # General runtime logging
+  export OATS_COLLECTOR_LOG=1    # Cycle collector logging
+  ```
+
+---
+
+### \#\# Testing Structure
+
+The project uses multiple testing approaches that reflect different compiler phases:
+
+- **Unit Tests**: Individual module tests for parsing, type checking, and codegen helpers
+- **Integration Tests**: Full compilation pipeline tests in `crates/oats/tests/`
+  - `parsing/`: AST parsing validation  
+  - `codegen/`: LLVM IR generation with snapshot testing
+  - `end_to_end/`: Complete `.oats` → executable compilation
+- **Example Tests**: Real programs in `examples/` compiled by `run_all_proper_tests.sh`
+- **Snapshot Tests**: LLVM IR output validated with `insta` crate
+- **Fuzzing**: Parser robustness testing in `fuzz/` directory
+
+**Oats Program Structure**: All `.oats` files must export a `main()` function:
+```typescript
+export function main(): void {
+    println("Hello from Oats!");
+}
+```
+
 ---
 
 ### \#\# Adding a Runtime Function
@@ -155,7 +204,7 @@ Adding a new C-callable function to the runtime for the compiler to use is a
    function to the runtime library.
 
    ```rust
-   #[no_mangle]
+   #[unsafe(no_mangle)]
    pub extern "C" fn my_new_runtime_helper(arg: i64) -> i64 {
        // ... implementation ...
    }

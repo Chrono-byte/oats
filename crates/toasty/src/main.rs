@@ -1,4 +1,5 @@
 use anyhow::Result;
+use atty::Stream as AtStream;
 use clap::{Parser, Subcommand};
 use colored::Colorize;
 
@@ -151,14 +152,14 @@ fn main() -> Result<()> {
             quiet,
             color,
         } => {
-            // color handling
-            if let Some(c) = color.clone() {
-                match c.as_str() {
-                    "always" => colored::control::set_override(true),
-                    "never" => colored::control::set_override(false),
-                    _ => {}
-                }
-            }
+            // color handling: support always/never/auto (auto=enable when stderr is a TTY)
+            let enable_color = match color.as_deref() {
+                Some("always") => true,
+                Some("never") => false,
+                Some("auto") | None => atty::is(AtStream::Stderr),
+                _ => atty::is(AtStream::Stderr),
+            };
+            colored::control::set_override(enable_color);
             if release {
                 if !quiet {
                     eprintln!("{}", "Building in release mode...".green());
@@ -223,14 +224,14 @@ fn main() -> Result<()> {
             quiet,
             color,
         } => {
-            // honor color/quiet
-            if let Some(c) = color.clone() {
-                match c.as_str() {
-                    "always" => colored::control::set_override(true),
-                    "never" => colored::control::set_override(false),
-                    _ => {}
-                }
-            }
+            // honor color/quiet: same auto behavior as Build
+            let enable_color = match color.as_deref() {
+                Some("always") => true,
+                Some("never") => false,
+                Some("auto") | None => atty::is(AtStream::Stderr),
+                _ => atty::is(AtStream::Stderr),
+            };
+            colored::control::set_override(enable_color);
             let src_clone = src.clone();
             // For run, set src if provided then call build and execute produced binary
             if let Some(s) = src {

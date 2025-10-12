@@ -15,15 +15,15 @@ manual memory management.
 
 ## ✨ Features
 
-- **TypeScript Subset**: Numbers, booleans, strings, arrays, classes, and
-   unions lowered through `OatsType`.
+- **TypeScript Subset**: Numbers, booleans, strings, arrays, classes, and unions
+  lowered through `OatsType`.
 - **Generics & Unions**: Call-site monomorphization with boxed union support.
 - **Async (preview)**: Async functions lower into poll-state machines with
-   resume blocks.
+  resume blocks.
 - **Memory Management**: Deterministic ARC with weak references and cycle
-   collector scaffolding.
+  collector scaffolding.
 - **LLVM Integration**: Emits LLVM 18 IR and links against the Oats runtime to
-   produce native executables.
+  produce native executables.
 
 ---
 
@@ -40,6 +40,12 @@ manual memory management.
 
 ```bash
 sudo dnf install llvm18 llvm18-devel clang18
+```
+
+**Arch**:
+
+```bash
+sudo pacman -S llvm18 clang18
 ```
 
 **Mac**:
@@ -71,11 +77,11 @@ brew install llvm@18
 ## 🔒 Platform Safeguards
 
 - **Checked Allocation Sizes**: Runtime helpers use guarded arithmetic for all
-   heap sizing.
+  heap sizing.
 - **Resource Limits**: Configure `OATS_MAX_HEAP_BYTES` and
-   `OATS_MAX_ALLOC_BYTES` to cap total and per-allocation usage.
+  `OATS_MAX_ALLOC_BYTES` to cap total and per-allocation usage.
 - **Fuzzing Infrastructure**: `cargo +nightly fuzz run fuzz_parser` hardens the
-   parser against malformed input.
+  parser against malformed input.
 
 ---
 

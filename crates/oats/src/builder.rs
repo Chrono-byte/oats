@@ -13,8 +13,11 @@ use crate::diagnostics;
 use crate::parser;
 use crate::types::{SymbolTable, check_function_strictness};
 
+use inkwell::OptimizationLevel;
 use inkwell::context::Context;
-use inkwell::targets::TargetMachine;
+use inkwell::targets::{
+    CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine,
+};
 
 /// Executes the complete AOT compilation pipeline from source to executable.
 ///
@@ -1119,61 +1122,91 @@ pub fn run_from_args(args: &[String]) -> Result<()> {
             anyhow::anyhow!("runtime staticlib not found; please build the runtime crate")
         })?;
 
-    // Compile IR to object file using clang with aggressive optimizations
-    // -O3: Aggressive optimizations (inlining, loop opts, vectorization)
-    // -march=native: Use all available CPU instructions for this machine
-    // -ffast-math: Enable aggressive floating-point optimizations (safe for most code)
-    // Build clang command with sensible fallbacks. Some CI images install
-    // a versioned binary like `clang-18` but don't provide an unversioned
-    // `clang` symlink. Try a small set of common names before failing.
-    let clang_candidates = ["clang", "clang-18", "clang-17"];
-    let mut clang_run_err: Option<std::io::Error> = None;
-    let mut compiled_ok = false;
-    for &candidate in &clang_candidates {
-        let mut cmd = Command::new(candidate);
-        cmd.arg("-O3") // Aggressive optimizations (was -O2)
-            .arg("-march=native") // Use native CPU features
-            .arg("-ffast-math") // Fast floating-point math
-            .arg("-c")
-            .arg(&out_ll)
-            .arg("-o")
-            .arg(&out_obj);
+    // Compile IR to object file using LLVM's in-process TargetMachine. This
+    // avoids shelling out to clang for the IR -> object step and is more
+    // robust when used programmatically.
 
-        match cmd.status() {
-            Ok(status) => {
-                if status.success() {
-                    compiled_ok = true;
-                    break;
-                } else {
-                    // Found the binary but it failed; report that
-                    anyhow::bail!("{} failed to compile IR to object", candidate);
-                }
+    // Use the host default target triple (TargetTriple type) for LLVM
+    Target::initialize_all(&InitializationConfig::default());
+    let target_triple_struct = TargetMachine::get_default_triple();
+    let target_triple = target_triple_struct.to_string();
+    let target = Target::from_triple(&target_triple_struct).map_err(|_| {
+        anyhow::anyhow!(
+            "failed to find a matching LLVM target for triple {}",
+            target_triple
+        )
+    })?;
+
+    // Read overrides (optional) for CPU/features
+    let env_cpu = std::env::var("OATS_TARGET_CPU").ok();
+    let env_features = std::env::var("OATS_TARGET_FEATURES").ok();
+    let cpu_candidates = if let Some(c) = env_cpu.clone() {
+        vec![c, "".to_string()]
+    } else {
+        // Prefer a generic CPU (empty) before trying 'native' which can be
+        // misinterpreted for some LLVM targets (causing subtarget errors).
+        vec!["".to_string(), "native".to_string()]
+    };
+    let opt_level = OptimizationLevel::Aggressive;
+    let features = env_features.unwrap_or_default();
+
+    // Try to create a target machine from candidates
+    let mut tm_opt = None;
+    for cpu in cpu_candidates {
+        match target.create_target_machine(
+            &target_triple_struct,
+            &cpu,
+            &features,
+            opt_level,
+            RelocMode::Default,
+            CodeModel::Default,
+        ) {
+            Some(tm) => {
+                // optionally test by writing a small object or call tm.write_to_file on the actual module and handle errors
+                tm_opt = Some((tm, cpu));
+                break;
             }
-            Err(e) => {
-                // Save the error from the last attempt and try the next candidate
-                clang_run_err = Some(e);
+            None => {
+                eprintln!(
+                    "warning: TargetMachine creation failed for cpu='{}', trying fallback",
+                    cpu
+                );
             }
         }
     }
-    if !compiled_ok {
-        if let Some(e) = clang_run_err {
-            if e.kind() == std::io::ErrorKind::NotFound {
-                anyhow::bail!(
-                    "`clang` not found in PATH and no fallback was available; install clang or add a symlink (e.g. `apt install clang-18 && ln -s /usr/bin/clang-18 /usr/bin/clang`)"
-                );
-            } else {
-                return Err(e.into());
-            }
-        } else {
-            anyhow::bail!("failed to run clang to compile IR to object");
-        }
+    let (tm, used_cpu) = tm_opt
+        .ok_or_else(|| anyhow::anyhow!("failed to create TargetMachine with any cpu candidate"))?;
+    if used_cpu != "" {
+        eprintln!("using target CPU: {}", used_cpu);
+    } else {
+        eprintln!("using generic/default CPU for triple {}", target_triple);
+    }
+
+    // Emit object file directly from the in-memory module.
+    let out_obj_path = std::path::Path::new(&out_obj);
+    tm.write_to_file(&codegen.module, FileType::Object, out_obj_path)
+        .map_err(|e| {
+            anyhow::anyhow!(
+                "TargetMachine failed to emit object file {}: {:?}",
+                out_obj,
+                e
+            )
+        })?;
+
+    // If requested, only emit the object and skip the final host linking step.
+    if std::env::var("OATS_EMIT_OBJECT_ONLY").is_ok() {
+        eprintln!(
+            "OATS_EMIT_OBJECT_ONLY set; emitted {} and skipping link",
+            out_obj
+        );
+        return Ok(());
     }
 
     // Locate or produce rt_main object. Prefer an existing top-level `rt_main.o` so
     // the repo can ship a prebuilt small host object. Otherwise try to compile
     // `runtime/rt_main/src/main.rs` if it exists.
     let rt_main_obj = if emitted_host_main {
-        // host main emitted into the module; no external rt_main.o required
+        // host main emitted into the module; no external rt_main.o requi
         String::new()
     } else if Path::new("rt_main.o").exists() {
         // Use the repo-provided object file

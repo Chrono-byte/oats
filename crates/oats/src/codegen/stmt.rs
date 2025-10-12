@@ -160,6 +160,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         }
                                     }
                                 }
+                                // Infer a local OatsType from the initializer expression
+                                // so we can record it on the local entry. This helps
+                                // call-site monomorphization to see concrete types for
+                                // locals (e.g., `Array(String)`) when no explicit
+                                // annotation was provided.
+                                let init_inferred = crate::types::infer_type(None, Some(&*init));
                                 // If the initializer is an object literal and the
                                 // declared local carries a nominal struct name
                                 // (for example `const user: User = { ... }`),
@@ -249,7 +255,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             ) || !is_mut_decl,
                                             is_weak: declared_is_weak,
                                             nominal: declared_nominal.clone(),
-                                            oats_type: declared_union.clone(),
+                                            oats_type: declared_mapped.clone().or(Some(init_inferred.clone())),
                                         },
                                     );
                                 }
@@ -393,6 +399,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                                         let _ = self.builder.build_store(field_ptr, boxed_bv);
                                                                         let rc_inc = self.get_rc_inc();
                                                                         let _ = self.builder.build_call(rc_inc, &[boxed_ptr.into()], "rc_inc_field");
+                                                                        // release temporary ownership of boxed_ptr (runtime/store did inc)
+                                                                        if let Some(rc_dec_fn) = self.module.get_function("rc_dec") {
+                                                                            let _ = self.builder.build_call(rc_dec_fn, &[boxed_ptr.into()], "rc_dec_boxed_tmp").ok();
+                                                                        }
                                                                     }
                                                                 } else if ev.get_type().is_pointer_type() {
                                                                     let box_fn = self.get_union_box_ptr();
@@ -403,6 +413,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                                         let _ = self.builder.build_store(field_ptr, boxed_bv);
                                                                         let rc_inc = self.get_rc_inc();
                                                                         let _ = self.builder.build_call(rc_inc, &[boxed_ptr.into()], "rc_inc_field");
+                                                                            if let Some(rc_dec_fn) = self.module.get_function("rc_dec") {
+                                                                                let _ = self.builder.build_call(rc_dec_fn, &[boxed_ptr.into()], "rc_dec_boxed_tmp").ok();
+                                                                            }
                                                                     }
                                                                 } else {
                                                                     return Err(crate::diagnostics::Diagnostic::simple("unsupported tuple union element type at init"));
@@ -792,16 +805,15 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             allocated_ty = self.f64_t.as_basic_type_enum();
                                             if val.get_type().is_int_type() {
                                                 // coerce int to float
-                                                if let BasicValueEnum::IntValue(iv) = val
+                                                    if let BasicValueEnum::IntValue(iv) = val
                                                     && let Ok(fv_val) =
                                                         self.builder.build_signed_int_to_float(
                                                             iv, self.f64_t, "i2f",
                                                         )
                                                 {
-                                                    val =
-                                                        inkwell::values::BasicValueEnum::FloatValue(
-                                                            fv_val,
-                                                        );
+                                                    val = inkwell::values::BasicValueEnum::FloatValue(
+                                                        fv_val,
+                                                    );
                                                 }
                                             }
                                         }
@@ -838,26 +850,16 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             }
                                         }
                                     };
-                                    // store lowered (possibly boxed) value
+                                    // Always store the initializer into the slot and
+                                    // perform RC increment for pointer-like values.
                                     let _ = self.builder.build_store(alloca, val);
-                                    // If this slot is a pointer-like ABI slot then we
-                                    // must increment the reference count for the
-                                    // stored value. The runtime's `rc_inc` helper
-                                    // resolves string-data vs object-base pointers and
-                                    // performs an atomic increment on the low-32-bit
-                                    // RC field. This keeps local ownership
-                                    // semantics consistent for pointers.
-                                    if let inkwell::types::BasicTypeEnum::PointerType(_) =
-                                        allocated_ty
-                                        && let BasicValueEnum::PointerValue(pv) = val
-                                    {
-                                        let rc_inc = self.get_rc_inc();
-                                        let _ = self.builder.build_call(
-                                            rc_inc,
-                                            &[pv.into()],
-                                            "rc_inc_local",
-                                        );
+                                    if val.get_type().is_pointer_type() {
+                                        if let BasicValueEnum::PointerValue(pv) = val {
+                                            let rc_inc = self.get_rc_inc();
+                                            let _ = self.builder.build_call(rc_inc, &[pv.into()], "rc_inc_local");
+                                        }
                                     }
+
                                     // If we reused an existing local, mark it initialized.
                                     if maybe_existing.is_some() {
                                         self.set_local_initialized(_locals_stack, &name, true);
@@ -877,7 +879,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                 ) || !is_mut_decl,
                                                 is_weak: declared_is_weak,
                                                 nominal: declared_nominal.clone(),
-                                                oats_type: declared_union.clone(),
+                                                oats_type: declared_mapped.clone().or(Some(init_inferred.clone())),
                                             },
                                         );
                                     }
@@ -1221,96 +1223,101 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 // run before the caller resumes. This models deterministic
                 // destruction and matches the runtime's RC expectations.
                 if let Some(arg) = &ret.arg {
-                    if let Ok(mut val) = self.lower_expr(arg, _function, _param_map, _locals_stack)
-                    {
-                        // Check if function returns a union type and box if necessary
-                        if let Some(return_type) =
-                            self.current_function_return_type.borrow().clone()
-                            && matches!(return_type, crate::types::OatsType::Union(_))
-                        {
-                            // Box the value as a union
-                            use inkwell::values::BasicValueEnum;
-                            val = match val {
-                                BasicValueEnum::FloatValue(fv) => {
-                                    let box_fn = self.get_union_box_f64();
+                    match self.lower_expr(arg, _function, _param_map, _locals_stack) {
+                        Ok(mut val) => {
+                            // Check if function returns a union type and box if necessary
+                            if let Some(return_type) =
+                                self.current_function_return_type.borrow().clone()
+                                && matches!(return_type, crate::types::OatsType::Union(_))
+                            {
+                                // Box the value as a union
+                                use inkwell::values::BasicValueEnum;
+                                val = match val {
+                                    BasicValueEnum::FloatValue(fv) => {
+                                        let box_fn = self.get_union_box_f64();
 
-                                    self.builder
-                                        .build_call(box_fn, &[fv.into()], "union_box")
-                                        .map_err(|_| {
-                                            crate::diagnostics::Diagnostic::simple(
-                                                "Failed to box f64 as union in return",
-                                            )
-                                        })?
-                                        .try_as_basic_value()
-                                        .left()
-                                        .ok_or_else(|| {
-                                            crate::diagnostics::Diagnostic::simple(
-                                                "union_box_f64 did not return value",
-                                            )
-                                        })?
-                                }
-                                BasicValueEnum::PointerValue(pv) => {
-                                    let box_fn = self.get_union_box_ptr();
+                                        self.builder
+                                            .build_call(box_fn, &[fv.into()], "union_box")
+                                            .map_err(|_| {
+                                                crate::diagnostics::Diagnostic::simple(
+                                                    "Failed to box f64 as union in return",
+                                                )
+                                            })?
+                                            .try_as_basic_value()
+                                            .left()
+                                            .ok_or_else(|| {
+                                                crate::diagnostics::Diagnostic::simple(
+                                                    "union_box_f64 did not return value",
+                                                )
+                                            })?
+                                    }
+                                    BasicValueEnum::PointerValue(pv) => {
+                                        let box_fn = self.get_union_box_ptr();
 
-                                    self.builder
-                                        .build_call(box_fn, &[pv.into()], "union_box")
-                                        .map_err(|_| {
-                                            crate::diagnostics::Diagnostic::simple(
-                                                "Failed to box ptr as union in return",
-                                            )
-                                        })?
-                                        .try_as_basic_value()
-                                        .left()
-                                        .ok_or_else(|| {
-                                            crate::diagnostics::Diagnostic::simple(
-                                                "union_box_ptr did not return value",
-                                            )
-                                        })?
-                                }
-                                BasicValueEnum::IntValue(iv)
-                                    if iv.get_type().get_bit_width() == 1 =>
-                                {
-                                    // Boolean -> convert to f64 and box
-                                    let as_f64 = self
-                                        .builder
-                                        .build_unsigned_int_to_float(iv, self.f64_t, "bool_to_f64")
-                                        .map_err(|_| {
-                                            crate::diagnostics::Diagnostic::simple(
-                                                "Failed to convert bool to f64 in union return",
-                                            )
-                                        })?;
-                                    let box_fn = self.get_union_box_f64();
+                                        self.builder
+                                            .build_call(box_fn, &[pv.into()], "union_box")
+                                            .map_err(|_| {
+                                                crate::diagnostics::Diagnostic::simple(
+                                                    "Failed to box ptr as union in return",
+                                                )
+                                            })?
+                                            .try_as_basic_value()
+                                            .left()
+                                            .ok_or_else(|| {
+                                                crate::diagnostics::Diagnostic::simple(
+                                                    "union_box_ptr did not return value",
+                                                )
+                                            })?
+                                    }
+                                    BasicValueEnum::IntValue(iv)
+                                        if iv.get_type().get_bit_width() == 1 =>
+                                    {
+                                        // Boolean -> convert to f64 and box
+                                        let as_f64 = self
+                                            .builder
+                                            .build_unsigned_int_to_float(iv, self.f64_t, "bool_to_f64")
+                                            .map_err(|_| {
+                                                crate::diagnostics::Diagnostic::simple(
+                                                    "Failed to convert bool to f64 in union return",
+                                                )
+                                            })?;
+                                        let box_fn = self.get_union_box_f64();
 
-                                    self.builder
-                                        .build_call(box_fn, &[as_f64.into()], "union_box")
-                                        .map_err(|_| {
-                                            crate::diagnostics::Diagnostic::simple(
-                                                "Failed to box bool as union in return",
-                                            )
-                                        })?
-                                        .try_as_basic_value()
-                                        .left()
-                                        .ok_or_else(|| {
-                                            crate::diagnostics::Diagnostic::simple(
-                                                "union_box_f64 did not return value",
-                                            )
-                                        })?
-                                }
-                                _ => val, // Already boxed or unsupported type
-                            };
+                                        self.builder
+                                            .build_call(box_fn, &[as_f64.into()], "union_box")
+                                            .map_err(|_| {
+                                                crate::diagnostics::Diagnostic::simple(
+                                                    "Failed to box bool as union in return",
+                                                )
+                                            })?
+                                            .try_as_basic_value()
+                                            .left()
+                                            .ok_or_else(|| {
+                                                crate::diagnostics::Diagnostic::simple(
+                                                    "union_box_f64 did not return value",
+                                                )
+                                            })?
+                                    }
+                                    _ => val, // Already boxed or unsupported type
+                                };
+                            }
+                            // emit rc decs for locals
+                            self.emit_rc_dec_for_locals(_locals_stack);
+                            // build return with the lowered value
+                            let _ = self.builder.build_return(Some(&val));
+                            return Ok(true);
                         }
-                        // emit rc decs for locals
-                        self.emit_rc_dec_for_locals(_locals_stack);
-                        // build return with the lowered value
-                        let _ = self.builder.build_return(Some(&val));
-                        return Ok(true);
+                        Err(diag) => {
+                            // Emit diagnostic so we know why the return expression failed to lower
+                            crate::diagnostics::emit_diagnostic(&diag, Some(self.source));
+                            return Ok(false);
+                        }
                     }
                 } else {
                     self.emit_rc_dec_for_locals(_locals_stack);
                     let _ = self.builder.build_return(None);
                     return Ok(true);
                 }
-                Ok(false)
             }
             deno_ast::swc::ast::Stmt::Break(_break_stmt) => {
                 // Break statement: jump to the loop's break (exit) block.

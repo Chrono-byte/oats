@@ -351,7 +351,52 @@ pub fn map_ts_type_with_subst(
             }
             None
         }
-        ast::TsType::TsUnionOrIntersectionType(_) => map_ts_type(ty),
+        ast::TsType::TsUnionOrIntersectionType(ut) => {
+            // Handle union types like `T | undefined` by applying substitution
+            // to each arm. This mirrors `map_ts_type` but uses the provided
+            // `subst` map so named type parameters are replaced.
+            if let ast::TsUnionOrIntersectionType::TsUnionType(un) = ut {
+                // Special-case `T | null` or `T | undefined` -> Option<T>
+                if un.types.len() == 2 {
+                    let mut seen_nullish = false;
+                    let mut other: Option<&ast::TsType> = None;
+                    for tbox in &un.types {
+                        let t = &**tbox;
+                        if let ast::TsType::TsKeywordType(k) = t {
+                            use deno_ast::swc::ast::TsKeywordTypeKind;
+                            if matches!(k.kind, TsKeywordTypeKind::TsNullKeyword)
+                                || matches!(k.kind, TsKeywordTypeKind::TsUndefinedKeyword)
+                            {
+                                seen_nullish = true;
+                                continue;
+                            }
+                        }
+                        other = Some(t);
+                    }
+                    if seen_nullish {
+                        if let Some(o) = other {
+                            if let Some(mapped) = map_ts_type_with_subst(o, subst) {
+                                return Some(OatsType::Option(Box::new(mapped)));
+                            }
+                            return None;
+                        }
+                    }
+
+                }
+
+                // General union: map each part with substitution
+                let mut parts = Vec::new();
+                for t in &un.types {
+                    if let Some(mapped) = map_ts_type_with_subst(&*t, subst) {
+                        parts.push(mapped);
+                    } else {
+                        return None;
+                    }
+                }
+                return Some(OatsType::Union(parts));
+            }
+            None
+        }
         ast::TsType::TsArrayType(arr) => map_ts_type_with_subst(&arr.elem_type, subst)
             .map(|elem| OatsType::Array(Box::new(elem))),
         ast::TsType::TsTupleType(tuple) => {

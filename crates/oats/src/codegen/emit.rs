@@ -1232,6 +1232,14 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 self.lower_stmts(&body.stmts, function, &param_map, &mut locals_stack)?;
         }
 
+        // Debug: if the function had a body but no terminator was emitted,
+        // print a message to help diagnose cases where returns weren't lowered.
+        if let Some(_) = &func_decl.body {
+            if !emitted_terminator {
+                eprintln!("[debug gen_function_ir] function '{}' had a body but no terminator emitted", func_name);
+            }
+        }
+
         // 5. Add an implicit `return void` if the function hasn't already returned.
         if !emitted_terminator
             && self

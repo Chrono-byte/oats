@@ -59,8 +59,36 @@ impl<'a> super::CodeGen<'a> {
             | OatsType::Array(_)
             | OatsType::Tuple(_)
             | OatsType::Promise(_)
-            | OatsType::Weak(_)
-            | OatsType::Option(_) => self.i8ptr_t.as_basic_type_enum(),
+            | OatsType::Weak(_) => self.i8ptr_t.as_basic_type_enum(),
+            OatsType::Option(inner) => {
+                // If the inner type is numeric (or a union of numeric-only arms),
+                // represent Option<number> using the numeric ABI (f64). This lets
+                // Option<number> be lowered efficiently and enables correct
+                // monomorphization for generics like T | undefined where T=number.
+                match &**inner {
+                    OatsType::Number => self.f64_t.as_basic_type_enum(),
+                    OatsType::Union(parts) => {
+                        let any_ptr = parts.iter().any(|p| {
+                            matches!(
+                                p,
+                                OatsType::String
+                                    | OatsType::NominalStruct(_)
+                                    | OatsType::StructLiteral(_)
+                                    | OatsType::Array(_)
+                                    | OatsType::Promise(_)
+                                    | OatsType::Weak(_)
+                                    | OatsType::Option(_)
+                            )
+                        });
+                        if any_ptr {
+                            self.i8ptr_t.as_basic_type_enum()
+                        } else {
+                            self.f64_t.as_basic_type_enum()
+                        }
+                    }
+                    _ => self.i8ptr_t.as_basic_type_enum(),
+                }
+            }
             OatsType::Union(parts) => {
                 // If any part is pointer-like, treat as pointer; otherwise number.
                 let any_ptr = parts.iter().any(|p| {
@@ -227,33 +255,43 @@ impl<'a> super::CodeGen<'a> {
                 Some(cond)
             }
             BasicValueEnum::PointerValue(pv) => {
+                // Prefer to read the length field stored at offset +8 from object base.
+                // This covers arrays (len stored at +8) and strings (len at +8),
+                // and yields a sensible truthiness for other objects (meta ptr non-null -> truthy).
                 let is_null = self.builder.build_is_null(pv, "is_null").ok()?;
                 let is_not_null = self.builder.build_not(is_null, "not_null").ok()?;
-                if let Some(strlen_fn) = self.module.get_function("strlen") {
-                    let cs = self
-                        .builder
-                        .build_call(strlen_fn, &[pv.into()], "strlen_call")
-                        .ok()?;
-                    let either = cs.try_as_basic_value();
-                    if let inkwell::Either::Left(bv) = either {
-                        let len = bv.into_int_value();
-                        let zero64 = self.i64_t.const_int(0, false);
-                        let len_nonzero = self
-                            .builder
-                            .build_int_compare(
+
+                // Compute pointer to i64 length at offset +8
+                let offset = self.i64_t.const_int(8, false);
+                let gep_res = self.i8_ptr_from_offset_i64(pv, offset, "len_i8ptr").ok();
+                if let Some(gep_ptr) = gep_res {
+                    // cast i8* -> i64*
+                    let len_ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+                    if let Ok(len_ptr) =
+                        self.builder
+                            .build_pointer_cast(gep_ptr, len_ptr_ty, "len_ptr_cast")
+                    {
+                        if let Ok(loaded) = self.builder.build_load(self.i64_t, len_ptr, "len_load")
+                        {
+                            let len_iv = loaded.into_int_value();
+                            let zero64 = self.i64_t.const_int(0, false);
+                            if let Ok(len_nonzero) = self.builder.build_int_compare(
                                 inkwell::IntPredicate::NE,
-                                len,
+                                len_iv,
                                 zero64,
                                 "len_nonzero",
-                            )
-                            .ok()?;
-                        let cond = self
-                            .builder
-                            .build_and(is_not_null, len_nonzero, "ptr_truth")
-                            .ok()?;
-                        return Some(cond);
+                            ) {
+                                if let Ok(cond) =
+                                    self.builder
+                                        .build_and(is_not_null, len_nonzero, "ptr_truth")
+                                {
+                                    return Some(cond);
+                                }
+                            }
+                        }
                     }
                 }
+                // Fallback: treat non-null pointer as truthy
                 Some(is_not_null)
             }
             _ => None,
@@ -280,6 +318,57 @@ impl<'a> super::CodeGen<'a> {
         // Coerce pair to a common type: prefer float if either is float, else int if either is int/bool, else pointer if both pointer
         let tv_ty = tv.get_type();
         let ev_ty = ev.get_type();
+
+        // If either is a pointer, prefer a pointer phi and box numeric arms as needed.
+        if let (inkwell::types::BasicTypeEnum::PointerType(_), _)
+        | (_, inkwell::types::BasicTypeEnum::PointerType(_)) = (tv_ty, ev_ty)
+        {
+            let ty = self.i8ptr_t.as_basic_type_enum();
+            // helper to ensure a BasicValueEnum is a pointer value; box floats/ints into i8* via union_box_f64
+            let ensure_ptr = |bv: BasicValueEnum<'a>| -> Option<BasicValueEnum<'a>> {
+                match bv {
+                    BasicValueEnum::PointerValue(p) => Some(p.as_basic_value_enum()),
+                    BasicValueEnum::FloatValue(fv) => {
+                        let box_fn = self.get_union_box_f64();
+                        if let Ok(cs) = self.builder.build_call(box_fn, &[fv.into()], "box_for_phi")
+                        {
+                            if let inkwell::Either::Left(bv2) = cs.try_as_basic_value() {
+                                return Some(bv2);
+                            }
+                        }
+                        None
+                    }
+                    BasicValueEnum::IntValue(iv) => {
+                        // convert bool/int to f64 then box
+                        let fv = match self
+                            .builder
+                            .build_signed_int_to_float(iv, self.f64_t, "i2f_box")
+                        {
+                            Ok(v) => v,
+                            Err(_) => return None,
+                        };
+                        let box_fn = self.get_union_box_f64();
+                        if let Ok(cs) = self.builder.build_call(box_fn, &[fv.into()], "box_for_phi")
+                        {
+                            if let inkwell::Either::Left(bv2) = cs.try_as_basic_value() {
+                                return Some(bv2);
+                            }
+                        }
+                        None
+                    }
+                    _ => None,
+                }
+            };
+
+            let tvp = ensure_ptr(tv)?;
+            let evp = ensure_ptr(ev)?;
+            let phi_node = match self.builder.build_phi(ty, "phi_tmp") {
+                Ok(p) => p,
+                Err(_) => return None,
+            };
+            phi_node.add_incoming(&[(&tvp, then_bb), (&evp, else_bb)]);
+            return Some(phi_node.as_basic_value());
+        }
 
         // If either is float, coerce both to float
         if let inkwell::types::BasicTypeEnum::FloatType(_) = tv_ty

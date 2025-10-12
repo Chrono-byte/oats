@@ -1,0 +1,35 @@
+image: ubuntu:24.04
+
+variables:
+  CARGO_TERM_COLOR: always
+  RUSTUP_HOME: /tmp/rustup
+  CARGO_HOME: /tmp/cargo
+  PATH: /tmp/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+stages:
+  - verify
+
+.workspace-template: &workspace-template
+  stage: verify
+  before_script:
+    - apt-get update
+    - DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends build-essential curl ca-certificates llvm-18 llvm-18-dev clang-18 libclang-18-dev pkg-config
+    - curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal --default-toolchain stable
+    - . "$CARGO_HOME/env"
+    - rustup component add clippy || true
+    - export LLVM_CONFIG=/usr/bin/llvm-config-18
+    - export LLVM_DIR=/usr/lib/llvm-18
+
+workspace-ci:
+  <<: *workspace-template
+  script:
+    - cargo build --workspace --all-targets --verbose
+    - cargo test --workspace --verbose
+    - cargo clippy --all-targets -- -D warnings
+    - mkdir -p aot_out
+    - OATS_OUT_DIR=./aot_out cargo run -p oats --bin toasty -- examples/cycle_reclaim.oats || true
+  artifacts:
+    when: always
+    expire_in: 1 week
+    paths:
+      - aot_out/

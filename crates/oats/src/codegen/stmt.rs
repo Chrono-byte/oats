@@ -144,9 +144,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     // Borrow const_items immutably for evaluation and drop
                                     let const_map = self.const_items.borrow();
                                     match crate::codegen::const_eval::eval_const_expr(
-                                        init,
-                                        span_start,
-                                        &const_map,
+                                        init, span_start, &const_map,
                                     ) {
                                         Ok(cv) => {
                                             drop(const_map);
@@ -255,7 +253,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             ) || !is_mut_decl,
                                             is_weak: declared_is_weak,
                                             nominal: declared_nominal.clone(),
-                                            oats_type: declared_mapped.clone().or(Some(init_inferred.clone())),
+                                            oats_type: declared_mapped
+                                                .clone()
+                                                .or(Some(init_inferred.clone())),
                                         },
                                     );
                                 }
@@ -807,15 +807,16 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             allocated_ty = self.f64_t.as_basic_type_enum();
                                             if val.get_type().is_int_type() {
                                                 // coerce int to float
-                                                    if let BasicValueEnum::IntValue(iv) = val
+                                                if let BasicValueEnum::IntValue(iv) = val
                                                     && let Ok(fv_val) =
                                                         self.builder.build_signed_int_to_float(
                                                             iv, self.f64_t, "i2f",
                                                         )
                                                 {
-                                                    val = inkwell::values::BasicValueEnum::FloatValue(
-                                                        fv_val,
-                                                    );
+                                                    val =
+                                                        inkwell::values::BasicValueEnum::FloatValue(
+                                                            fv_val,
+                                                        );
                                                 }
                                             }
                                         }
@@ -857,10 +858,15 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     let _ = self.builder.build_store(alloca, val);
                                     if val.get_type().is_pointer_type()
                                         && let BasicValueEnum::PointerValue(pv) = val
-                                            && !self.should_elide_rc_for_local(&name) {
-                                                let rc_inc = self.get_rc_inc();
-                                                let _ = self.builder.build_call(rc_inc, &[pv.into()], "rc_inc_local");
-                                            }
+                                        && !self.should_elide_rc_for_local(&name)
+                                    {
+                                        let rc_inc = self.get_rc_inc();
+                                        let _ = self.builder.build_call(
+                                            rc_inc,
+                                            &[pv.into()],
+                                            "rc_inc_local",
+                                        );
+                                    }
 
                                     // If we reused an existing local, mark it initialized.
                                     if maybe_existing.is_some() {
@@ -881,7 +887,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                 ) || !is_mut_decl,
                                                 is_weak: declared_is_weak,
                                                 nominal: declared_nominal.clone(),
-                                                oats_type: declared_mapped.clone().or(Some(init_inferred.clone())),
+                                                oats_type: declared_mapped
+                                                    .clone()
+                                                    .or(Some(init_inferred.clone())),
                                             },
                                         );
                                     }
@@ -1193,9 +1201,16 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         // Non-ident decorators are currently unsupported in the MVP.
                                     }
                                 }
-                                if let Err(diag) =
-                                    self.gen_constructor_ir(&class_name, ctor, &fields, if deco_names.is_empty() { None } else { Some(deco_names) })
-                                {
+                                if let Err(diag) = self.gen_constructor_ir(
+                                    &class_name,
+                                    ctor,
+                                    &fields,
+                                    if deco_names.is_empty() {
+                                        None
+                                    } else {
+                                        Some(deco_names)
+                                    },
+                                ) {
                                     crate::diagnostics::emit_diagnostic(&diag, Some(self.source));
                                 }
                                 if let Some(pb) = prev_block {
@@ -1287,7 +1302,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         // Boolean -> convert to f64 and box
                                         let as_f64 = self
                                             .builder
-                                            .build_unsigned_int_to_float(iv, self.f64_t, "bool_to_f64")
+                                            .build_unsigned_int_to_float(
+                                                iv,
+                                                self.f64_t,
+                                                "bool_to_f64",
+                                            )
                                             .map_err(|_| {
                                                 crate::diagnostics::Diagnostic::simple(
                                                     "Failed to convert bool to f64 in union return",

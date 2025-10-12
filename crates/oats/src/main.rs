@@ -134,7 +134,7 @@ fn main() -> Result<()> {
         }
         let src = std::fs::read_to_string(&path)?;
         let parsed = parser::parse_oats_module(&src, Some(&path))?;
-        
+
         // Discover and enqueue relative imports from this module
         for item_ref in parsed.parsed.program_ref().body() {
             if let deno_ast::ModuleItemRef::ModuleDecl(module_decl) = item_ref
@@ -173,7 +173,7 @@ fn main() -> Result<()> {
         String,
         std::collections::HashMap<String, OatsType>,
     > = std::collections::HashMap::new();
-    
+
     // Maintain field information for type aliases that resolve to object literal types,
     // enabling their registration as nominal structs for proper code generation.
     let mut alias_fields: std::collections::HashMap<String, Vec<(String, OatsType)>> =
@@ -643,7 +643,9 @@ fn main() -> Result<()> {
                                 .get(&class_name)
                                 .cloned()
                                 .unwrap_or_default();
-                            if let Err(d) = codegen.gen_constructor_ir(&class_name, ctor, &fields, None) {
+                            if let Err(d) =
+                                codegen.gen_constructor_ir(&class_name, ctor, &fields, None)
+                            {
                                 oats::diagnostics::emit_diagnostic(
                                     &d,
                                     Some(parsed_module.source.as_str()),

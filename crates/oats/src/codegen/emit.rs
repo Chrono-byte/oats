@@ -290,10 +290,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
         let entry = self.context.append_basic_block(function, "entry");
         self.builder.position_at_end(entry);
 
-    // Run conservative, intra-procedural escape analysis for this function
-    // and store the result on the CodeGen so lowering sites can consult it.
-    let escape_info = self.analyze_fn(func_decl);
-    self.current_escape_info.borrow_mut().replace(escape_info);
+        // Run conservative, intra-procedural escape analysis for this function
+        // and store the result on the CodeGen so lowering sites can consult it.
+        let escape_info = self.analyze_fn(func_decl);
+        self.current_escape_info.borrow_mut().replace(escape_info);
 
         // If this is an `async` function, emit a synchronous implementation
         // function `<name>_async_impl` that returns the inner promise type, and
@@ -1241,13 +1241,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
         // Debug: if the function had a body but no terminator was emitted,
         // print a message to help diagnose cases where returns weren't lowered.
-        if func_decl.body.is_some()
-            && !emitted_terminator {
-                eprintln!(
-                    "[debug gen_function_ir] function '{}' had a body but no terminator emitted",
-                    func_name
-                );
-            }
+        if func_decl.body.is_some() && !emitted_terminator {
+            eprintln!(
+                "[debug gen_function_ir] function '{}' had a body but no terminator emitted",
+                func_name
+            );
+        }
 
         // 5. Add an implicit `return void` if the function hasn't already returned.
         if !emitted_terminator
@@ -1290,9 +1289,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
             }
         }
 
-    // Clear escape info for this function now that lowering is complete
-    let _ = self.current_escape_info.borrow_mut().take();
-    Ok(function)
+        // Clear escape info for this function now that lowering is complete
+        let _ = self.current_escape_info.borrow_mut().take();
+        Ok(function)
     }
 
     /// Generate a complete constructor function for a class.

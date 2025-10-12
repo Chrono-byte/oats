@@ -9,13 +9,13 @@ fn test_interfaces_types_example_end_to_end() -> Result<()> {
 
     // Build runtime crate
     let status = Command::new("cargo")
-        .args(["build", "-p", "runtime", "--release"])  
+        .args(["build", "-p", "runtime", "--release"])
         .status()?;
     assert!(status.success(), "building runtime crate failed");
 
     // Build the `toasty` CLI binary
     let status = Command::new("cargo")
-        .args(["build", "-p", "oats", "--bin", "toasty"])  
+        .args(["build", "-p", "oats", "--bin", "toasty"])
         .status()?;
     assert!(status.success(), "building toasty failed");
 

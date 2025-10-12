@@ -12,12 +12,12 @@ export function main(): void {
         y: number;
     };
 
-    const user: User = {
+    let user: User = {
         id: 1,
         name: "Bob",
     };
 
-    const location: Point = {
+    let location: Point = {
         x: 10,
         y: 20,
     };

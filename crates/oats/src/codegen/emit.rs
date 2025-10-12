@@ -25,7 +25,7 @@ use std::collections::HashMap;
 // a tuple containing:
 // - PointerValue: the alloca or pointer to the variable's storage.
 // - BasicTypeEnum: the LLVM type of the variable.
-// - bool: is this variable mutable (declared with `let` vs `const`)
+// - bool: is this variable mutable (declared with `let`; `let` is immutable by default, use `let mut` for mutation)
 // - bool: is this variable a function parameter
 // - bool: is this variable declared as Weak<T> (for reference counting)
 // - Option<String>: if the variable is of a NominalStruct type, the name of
@@ -1156,17 +1156,16 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     // Fix up phi nodes in cont_bb: add incoming edge from this resume block
                     // The phi node expects the awaited value - provide the re-polled result
                     let first_inst = cont_bb.get_first_instruction();
-                    if let Some(inst) = first_inst {
-                        if inst.get_opcode() == inkwell::values::InstructionOpcode::Phi {
-                            // The first instruction is a phi - add resumed_value as incoming from resume
-                            // We need to get the phi value from the instruction
-                            // Try using unsafe cast via LLVM context
-                            unsafe {
-                                use inkwell::values::AsValueRef;
-                                let phi_value = inkwell::values::PhiValue::new(inst.as_value_ref());
-                                phi_value
-                                    .add_incoming(&[(&resumed_value.as_basic_value_enum(), *rb)]);
-                            }
+                    if let Some(inst) = first_inst
+                        && inst.get_opcode() == inkwell::values::InstructionOpcode::Phi
+                    {
+                        // The first instruction is a phi - add resumed_value as incoming from resume
+                        // We need to get the phi value from the instruction
+                        // Try using unsafe cast via LLVM context
+                        unsafe {
+                            use inkwell::values::AsValueRef;
+                            let phi_value = inkwell::values::PhiValue::new(inst.as_value_ref());
+                            phi_value.add_incoming(&[(&resumed_value.as_basic_value_enum(), *rb)]);
                         }
                     }
                 }

@@ -15,6 +15,8 @@ mod class_lowering;
 mod closure_weak_capture;
 #[path = "codegen/codegen_snapshot.rs"]
 mod codegen_snapshot;
+#[path = "codegen/const_object_ir.rs"]
+mod const_object_ir;
 #[path = "codegen/constructor_params.rs"]
 mod constructor_params;
 #[path = "codegen/diagnostics_and_forof.rs"]

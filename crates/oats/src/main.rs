@@ -337,6 +337,10 @@ fn main() -> Result<()> {
         fn_rc_weak_dec: std::cell::RefCell::new(None),
         fn_rc_weak_upgrade: std::cell::RefCell::new(None),
         fn_union_get_discriminant: std::cell::RefCell::new(None),
+        const_items: std::cell::RefCell::new(std::collections::HashMap::new()),
+        const_globals: std::cell::RefCell::new(std::collections::HashMap::new()),
+        const_interns: std::cell::RefCell::new(std::collections::HashMap::new()),
+        current_escape_info: std::cell::RefCell::new(None),
         current_class_parent: std::cell::RefCell::new(None),
         class_fields: std::cell::RefCell::new(std::collections::HashMap::new()),
         fn_param_types: std::cell::RefCell::new(std::collections::HashMap::new()),
@@ -358,6 +362,8 @@ fn main() -> Result<()> {
         last_expr_is_boxed_union: std::cell::Cell::new(false),
         global_function_signatures: std::cell::RefCell::new(std::collections::HashMap::new()),
         symbol_table: std::cell::RefCell::new(symbols),
+        nested_generic_fns: std::cell::RefCell::new(HashMap::new()),
+        monomorphized_map: std::cell::RefCell::new(HashMap::new()),
     };
 
     // Merge collected alias_fields from earlier passes into codegen.class_fields so
@@ -532,7 +538,7 @@ fn main() -> Result<()> {
                             // stored inside `codegen` (symbols was moved into codegen earlier).
                             if let Ok(sig) = {
                                 let mut symbols_ref = codegen.symbol_table.borrow_mut();
-                                check_function_strictness(&m.function, &mut *symbols_ref)
+                                check_function_strictness(&m.function, &mut symbols_ref)
                             } {
                                 // Prepend `this` as the first param (nominal struct pointer)
                                 let mut params = Vec::new();
@@ -560,7 +566,7 @@ fn main() -> Result<()> {
                                 // If strict check failed (e.g., missing return annotation), try to emit with Void return
                                 if let Ok(sig2) = {
                                     let mut symbols_ref = codegen.symbol_table.borrow_mut();
-                                    check_function_strictness(&m.function, &mut *symbols_ref)
+                                    check_function_strictness(&m.function, &mut symbols_ref)
                                 } {
                                     let mut params = Vec::new();
                                     params.push(oats::types::OatsType::NominalStruct(

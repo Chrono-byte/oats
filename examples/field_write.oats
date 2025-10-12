@@ -15,7 +15,7 @@ export class Counter {
 }
 
 export function main(): void {
-    const counter = new Counter();
+    let counter = new Counter();
     counter.increment();
-    console.log(counter.getCount());
+    println(counter.getCount());
 }

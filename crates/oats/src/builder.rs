@@ -33,7 +33,7 @@ pub fn run_from_args(args: &[String]) -> Result<()> {
 
     let source = std::fs::read_to_string(&src_path)?;
 
-    // Note: Arrow functions declared at top-level as `const foo = (...) => ...`
+    // Note: Arrow functions declared at top-level as `let foo = (...) => ...`
     // are now handled directly in codegen without text-level rewriting.
     // This eliminates redundant parsing and improves compilation performance.
 
@@ -55,18 +55,19 @@ pub fn run_from_args(args: &[String]) -> Result<()> {
 
         for item in parsed.program_ref().body() {
             match item {
-                // Non-exported: const foo = () => {}
+                // Non-exported: const/let foo = () => {}
                 deno_ast::ModuleItemRef::Stmt(stmt) => {
-                    if let ast::Stmt::Decl(ast::Decl::Var(vdecl)) = stmt {
-                        if vdecl.decls.len() == 1 && !matches!(vdecl.kind, ast::VarDeclKind::Var) {
-                            let decl = &vdecl.decls[0];
-                            if let ast::Pat::Ident(binding_ident) = &decl.name
-                                && let Some(init_expr) = &decl.init
-                                && let ast::Expr::Arrow(arrow) = &**init_expr
-                            {
-                                let name = binding_ident.id.sym.to_string();
-                                arrows.push((name, (*arrow).clone(), false));
-                            }
+                    if let ast::Stmt::Decl(ast::Decl::Var(vdecl)) = stmt
+                        && vdecl.decls.len() == 1
+                        && !matches!(vdecl.kind, ast::VarDeclKind::Var)
+                    {
+                        let decl = &vdecl.decls[0];
+                        if let ast::Pat::Ident(binding_ident) = &decl.name
+                            && let Some(init_expr) = &decl.init
+                            && let ast::Expr::Arrow(arrow) = &**init_expr
+                        {
+                            let name = binding_ident.id.sym.to_string();
+                            arrows.push((name, (*arrow).clone(), false));
                         }
                     }
                 }
@@ -74,16 +75,16 @@ pub fn run_from_args(args: &[String]) -> Result<()> {
                 deno_ast::ModuleItemRef::ModuleDecl(module_decl) => {
                     if let ast::ModuleDecl::ExportDecl(decl) = module_decl
                         && let ast::Decl::Var(vdecl) = &decl.decl
+                        && vdecl.decls.len() == 1
+                        && !matches!(vdecl.kind, ast::VarDeclKind::Var)
                     {
-                        if vdecl.decls.len() == 1 && !matches!(vdecl.kind, ast::VarDeclKind::Var) {
-                            let declarator = &vdecl.decls[0];
-                            if let ast::Pat::Ident(binding_ident) = &declarator.name
-                                && let Some(init_expr) = &declarator.init
-                                && let ast::Expr::Arrow(arrow) = &**init_expr
-                            {
-                                let name = binding_ident.id.sym.to_string();
-                                arrows.push((name, (*arrow).clone(), true));
-                            }
+                        let declarator = &vdecl.decls[0];
+                        if let ast::Pat::Ident(binding_ident) = &declarator.name
+                            && let Some(init_expr) = &declarator.init
+                            && let ast::Expr::Arrow(arrow) = &**init_expr
+                        {
+                            let name = binding_ident.id.sym.to_string();
+                            arrows.push((name, (*arrow).clone(), true));
                         }
                     }
                 }
@@ -92,7 +93,7 @@ pub fn run_from_args(args: &[String]) -> Result<()> {
         arrows
     }
 
-    let arrow_functions = extract_arrow_functions(&parsed);
+    let arrow_functions = extract_arrow_functions(parsed);
 
     // Scan AST and reject any use of `var` declarations. We purposely do
     // this early so users get a clear error rather than surprising
@@ -216,7 +217,7 @@ pub fn run_from_args(args: &[String]) -> Result<()> {
                     Some(&source),
                     "`var` declarations are not supported. Use `let` or `const` instead.",
                     Some(
-                        "`var` has function-scoped semantics which we intentionally disallow; prefer `let` or `const",
+                        "`var` has function-scoped semantics which we intentionally disallow; prefer `let` or `const`.",
                     ),
                 );
             }
@@ -230,7 +231,7 @@ pub fn run_from_args(args: &[String]) -> Result<()> {
                             Some(&source),
                             "`var` declarations are not supported. Use `let` or `const` instead.",
                             Some(
-                                "`var` has function-scoped semantics which we intentionally disallow; prefer `let` or `const.",
+                                "`var` has function-scoped semantics which we intentionally disallow; prefer `let` or `const`.",
                             ),
                         );
                     }
@@ -321,6 +322,12 @@ pub fn run_from_args(args: &[String]) -> Result<()> {
         async_local_slot_count: Cell::new(0),
         async_poll_locals: RefCell::new(None),
         source: &parsed_mod.source,
+        const_items: std::cell::RefCell::new(std::collections::HashMap::new()),
+        const_globals: std::cell::RefCell::new(std::collections::HashMap::new()),
+        const_interns: std::cell::RefCell::new(std::collections::HashMap::new()),
+        current_escape_info: RefCell::new(None),
+        nested_generic_fns: RefCell::new(HashMap::new()),
+        monomorphized_map: RefCell::new(HashMap::new()),
         mut_var_decls: parsed_mod.mut_var_decls.clone(),
         current_function_return_type: RefCell::new(None),
         last_expr_is_boxed_union: Cell::new(false),
@@ -690,6 +697,206 @@ pub fn run_from_args(args: &[String]) -> Result<()> {
     // Emit top-level helper functions (non-exported) found in the module so
     // calls to them can be lowered. Skip exported `main` which we handle
     // separately.
+    // Before emitting functions, evaluate and emit top-level `const`
+    // declarations. This pass collects all top-level consts, builds a
+    // dependency graph between them, topologically sorts the graph, and
+    // then evaluates each const in order using the codegen const evaluator.
+    // Emitted heap-style consts (strings/arrays/objects) are added as LLVM
+    // globals via `CodeGen::emit_const_global` and cached in
+    // `codegen.const_globals` so expression lowering can reuse them.
+    {
+        use deno_ast::swc::ast;
+        use std::collections::{HashMap, HashSet, VecDeque};
+
+        // Collect top-level const declarations: name -> (init_expr, span_start)
+        // We store the initializer as a boxed Expr to match AST ownership.
+        let mut top_level_consts: Vec<(String, Box<ast::Expr>, usize)> = Vec::new();
+        for item in parsed.program_ref().body() {
+            if let deno_ast::ModuleItemRef::Stmt(stmt) = item {
+                if let ast::Stmt::Decl(ast::Decl::Var(vd)) = stmt {
+                    if matches!(vd.kind, ast::VarDeclKind::Const) {
+                        for decl in &vd.decls {
+                            if let ast::Pat::Ident(binding) = &decl.name {
+                                if let Some(init) = &decl.init {
+                                    let name = binding.id.sym.to_string();
+                                    let span_start = vd.span.lo.0 as usize;
+                                    top_level_consts.push((name, init.clone(), span_start));
+                                } else {
+                                    return diagnostics::report_error_and_bail(
+                                        Some(&src_path),
+                                        Some(&source),
+                                        "top-level `const` must have an initializer",
+                                        Some(
+                                            "Rust-like `const` requires compile-time initializer.",
+                                        ),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if !top_level_consts.is_empty() {
+            // Build a name -> index map
+            let mut name_to_idx: HashMap<String, usize> = HashMap::new();
+            for (i, (n, _, _)) in top_level_consts.iter().enumerate() {
+                name_to_idx.insert(n.clone(), i);
+            }
+
+            // Helper: collect identifier names referenced by an expression
+            fn collect_idents(e: &ast::Expr, out: &mut HashSet<String>) {
+                use deno_ast::swc::ast::*;
+                match e {
+                    Expr::Ident(id) => {
+                        out.insert(id.sym.to_string());
+                    }
+                    Expr::Array(arr) => {
+                        for el in arr.elems.iter().flatten() {
+                            collect_idents(&el.expr, out);
+                        }
+                    }
+                    Expr::Object(obj) => {
+                        for prop in &obj.props {
+                            if let PropOrSpread::Prop(pb) = prop {
+                                if let Prop::KeyValue(kv) = &**pb {
+                                    collect_idents(&kv.value, out);
+                                }
+                            }
+                        }
+                    }
+                    Expr::Unary(u) => collect_idents(&u.arg, out),
+                    Expr::Bin(b) => {
+                        collect_idents(&b.left, out);
+                        collect_idents(&b.right, out);
+                    }
+                    Expr::Call(c) => {
+                        if let Callee::Expr(ec) = &c.callee {
+                            collect_idents(ec, out);
+                        }
+                        for a in &c.args {
+                            collect_idents(&a.expr, out);
+                        }
+                    }
+                    Expr::Member(m) => {
+                        collect_idents(&m.obj, out);
+                        if let MemberProp::Computed(cmp) = &m.prop {
+                            collect_idents(&cmp.expr, out);
+                        }
+                    }
+                    Expr::New(n) => {
+                        collect_idents(&n.callee, out);
+                        if let Some(args) = &n.args {
+                            for a in args {
+                                collect_idents(&a.expr, out);
+                            }
+                        }
+                    }
+                    Expr::Paren(p) => collect_idents(&p.expr, out),
+                    Expr::Cond(c) => {
+                        collect_idents(&c.test, out);
+                        collect_idents(&c.cons, out);
+                        collect_idents(&c.alt, out);
+                    }
+                    Expr::Tpl(_) | Expr::Lit(_) => {}
+                    _ => {}
+                }
+            }
+
+            // Build adjacency and indegree maps only for dependencies that are
+            // other top-level const names (ignore other idents).
+            let mut adj: Vec<Vec<usize>> = vec![Vec::new(); top_level_consts.len()];
+            let mut indeg: Vec<usize> = vec![0; top_level_consts.len()];
+
+            for (i, (_n, init, _)) in top_level_consts.iter().enumerate() {
+                let mut ids = HashSet::new();
+                collect_idents(&*init, &mut ids);
+                for id in ids {
+                    if let Some(&j) = name_to_idx.get(&id) {
+                        // edge j -> i (j must be evaluated before i)
+                        adj[j].push(i);
+                        indeg[i] += 1;
+                    }
+                }
+            }
+
+            // Kahn's algorithm
+            let mut q: VecDeque<usize> = VecDeque::new();
+            for (i, &d) in indeg.iter().enumerate() {
+                if d == 0 {
+                    q.push_back(i);
+                }
+            }
+            let mut order: Vec<usize> = Vec::new();
+            while let Some(u) = q.pop_front() {
+                order.push(u);
+                for &v in &adj[u] {
+                    indeg[v] -= 1;
+                    if indeg[v] == 0 {
+                        q.push_back(v);
+                    }
+                }
+            }
+            if order.len() != top_level_consts.len() {
+                // Cycle detected
+                return diagnostics::report_error_and_bail(
+                    Some(&src_path),
+                    Some(&source),
+                    "cyclic dependency among top-level const declarations",
+                    Some(
+                        "Top-level `const` declarations form a cycle; Rust-style `const` requires acyclic compile-time dependencies.",
+                    ),
+                );
+            }
+
+            // Evaluate consts in topo order and emit globals where needed
+            for idx in order {
+                let (name, init_expr, span_start) = &top_level_consts[idx];
+                // Evaluate with the current const_items map
+                match crate::codegen::const_eval::eval_const_expr(
+                    &*init_expr,
+                    *span_start,
+                    &*codegen.const_items.borrow(),
+                ) {
+                    Ok(cv) => {
+                        // Insert into const_items
+                        codegen
+                            .const_items
+                            .borrow_mut()
+                            .insert(name.clone(), cv.clone());
+                        // If heap-shaped (string/array/object) emit a const global
+                        match cv {
+                            crate::codegen::const_eval::ConstValue::Str(_)
+                            | crate::codegen::const_eval::ConstValue::Array(_)
+                            | crate::codegen::const_eval::ConstValue::Object(_) => {
+                                // Emit a global named `const.<name>` and cache pointer under the bare name
+                                let gname = format!("const.{}", name);
+                                match codegen.emit_const_global(&gname, &cv) {
+                                    Ok(ptr) => {
+                                        codegen
+                                            .const_globals
+                                            .borrow_mut()
+                                            .insert(name.clone(), ptr);
+                                    }
+                                    Err(d) => {
+                                        diagnostics::emit_diagnostic(&d, Some(source.as_str()));
+                                        return Err(anyhow::anyhow!(d.message));
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    Err(d) => {
+                        diagnostics::emit_diagnostic(&d, Some(source.as_str()));
+                        return Err(anyhow::anyhow!(d.message));
+                    }
+                }
+            }
+        }
+    }
+
     for item in parsed.program_ref().body() {
         use deno_ast::swc::ast;
         // non-exported function declarations: `function foo() {}`

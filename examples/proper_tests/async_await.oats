@@ -8,7 +8,7 @@ export function main(): void {
 
     async function runAsyncCode(): Promise<void> {
         println("Starting...");
-        const message = await delayedMessage(0);
+        let message = await delayedMessage(0);
         println(message);
         println("Finished!");
     }

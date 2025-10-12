@@ -77,6 +77,10 @@ export function main(x: number | string): string {
         fn_rc_weak_dec: std::cell::RefCell::new(None),
         fn_rc_weak_upgrade: std::cell::RefCell::new(None),
         fn_union_get_discriminant: std::cell::RefCell::new(None),
+    const_items: std::cell::RefCell::new(std::collections::HashMap::new()),
+    const_globals: std::cell::RefCell::new(std::collections::HashMap::new()),
+    const_interns: std::cell::RefCell::new(std::collections::HashMap::new()),
+    current_escape_info: std::cell::RefCell::new(None),
         class_fields: std::cell::RefCell::new(std::collections::HashMap::new()),
         closure_local_rettype: std::cell::RefCell::new(std::collections::HashMap::new()),
         last_expr_origin_local: std::cell::RefCell::new(None),
@@ -87,6 +91,8 @@ export function main(x: number | string): string {
         current_function_return_type: std::cell::RefCell::new(None),
         last_expr_is_boxed_union: std::cell::Cell::new(false),
         loop_context_stack: std::cell::RefCell::new(Vec::new()),
+        nested_generic_fns: std::cell::RefCell::new(std::collections::HashMap::new()),
+        monomorphized_map: std::cell::RefCell::new(std::collections::HashMap::new()),
     };
 
     codegen

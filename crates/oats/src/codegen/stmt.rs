@@ -138,6 +138,28 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             // allocate the ABI slot accordingly and box numeric
                             // payloads into union objects.
                             if let Some(init) = &decl.init {
+                                // If this is a `const` declaration, attempt compile-time evaluation
+                                if matches!(var_decl.kind, deno_ast::swc::ast::VarDeclKind::Const) {
+                                    let span_start = var_decl.span.lo.0 as usize;
+                                    // Borrow const_items immutably for evaluation and drop
+                                    let const_map = self.const_items.borrow();
+                                    match crate::codegen::const_eval::eval_const_expr(
+                                        &*init,
+                                        span_start,
+                                        &*const_map,
+                                    ) {
+                                        Ok(cv) => {
+                                            drop(const_map);
+                                            // Insert into compile-time const map keyed by name
+                                            self.const_items.borrow_mut().insert(name.clone(), cv);
+                                            // For consts we do not lower the initializer further; the
+                                            // lowered uses will be replaced by LLVM constants later.
+                                        }
+                                        Err(diag) => {
+                                            return Err(diag);
+                                        }
+                                    }
+                                }
                                 // If the initializer is an object literal and the
                                 // declared local carries a nominal struct name
                                 // (for example `const user: User = { ... }`),
@@ -544,17 +566,24 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                                 if let ast::PropOrSpread::Prop(
                                                                     nested_prop_box,
                                                                 ) = nested_prop
-                                                                {
-                                                                    if let ast::Prop::KeyValue(
+                                                                    && let ast::Prop::KeyValue(
                                                                         nested_kv,
                                                                     ) = &**nested_prop_box
-                                                                    {
-                                                                        if let ast::PropName::Ident(nested_id) = &nested_kv.key {
-                                                                            let nested_field_name = nested_id.sym.to_string();
-                                                                            let nested_field_ty = crate::types::infer_type(None, Some(&nested_kv.value));
-                                                                            nested_fields.push((nested_field_name, nested_field_ty));
-                                                                        }
-                                                                    }
+                                                                    && let ast::PropName::Ident(
+                                                                        nested_id,
+                                                                    ) = &nested_kv.key
+                                                                {
+                                                                    let nested_field_name =
+                                                                        nested_id.sym.to_string();
+                                                                    let nested_field_ty =
+                                                                        crate::types::infer_type(
+                                                                            None,
+                                                                            Some(&nested_kv.value),
+                                                                        );
+                                                                    nested_fields.push((
+                                                                        nested_field_name,
+                                                                        nested_field_ty,
+                                                                    ));
                                                                 }
                                                             }
 
@@ -904,54 +933,68 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 // that reference the identifier can resolve via
                 // `module.get_function(name)` during expression lowering.
                 if let deno_ast::swc::ast::Decl::Fn(fdecl) = d {
-                    // Synthesize parameter types from annotations when available;
-                    // otherwise default to Number. For nested functions we don't
-                    // require full strict checking here — emit a best-effort
-                    // function so callsites can resolve the symbol.
-                    use deno_ast::swc::ast;
+                    // For nested functions, require/check parameter and return
+                    // annotations using the same strictness check used by the
+                    // top-level builder. If strictness checking fails (missing
+                    // or invalid annotations) we emit a diagnostic and skip
+                    // emitting the nested function rather than silently
+                    // defaulting its return type to `Void` which produces
+                    // incorrect codegen (see getFirstElement lowering bug).
                     let fname = fdecl.ident.sym.to_string();
-                    let mut param_types_vec: Vec<crate::types::OatsType> = Vec::new();
-                    for param in &fdecl.function.params {
-                        if let ast::Pat::Ident(ident) = &param.pat
-                            && let Some(type_ann) = &ident.type_ann
-                            && let Some(mapped) = crate::types::map_ts_type(&type_ann.type_ann)
-                        {
-                            param_types_vec.push(mapped);
-                            continue;
-                        }
-                        // Fallback param type
-                        param_types_vec.push(crate::types::OatsType::Number);
-                    }
+                    // call the strictness checker which validates annotations
+                    // and returns a concrete FunctionSig (params + return)
+                    let mut symbols = crate::types::SymbolTable::new();
+                    match crate::types::check_function_strictness(&fdecl.function, &mut symbols) {
+                        Ok(fsig) => {
+                            // If this nested function is generic (has type params)
+                            // register it for monomorphization instead of emitting
+                            // a single generic instance now. We'll create
+                            // specialized versions at call-sites when concrete
+                            // type arguments are inferred.
+                            if fdecl.function.type_params.is_some() {
+                                self.nested_generic_fns.borrow_mut().insert(
+                                    fname.clone(),
+                                    ((*fdecl.function).clone(), fsig.clone()),
+                                );
+                            } else {
+                                let param_types_vec = fsig.params.clone();
+                                let ret_type = fsig.ret.clone();
 
-                    let ret_type = if let Some(rt) = &fdecl.function.return_type {
-                        if let Some(mapped) = crate::types::map_ts_type(&rt.type_ann) {
-                            mapped
-                        } else {
-                            crate::types::OatsType::Void
+                                // Preserve current insertion block so we can restore it after
+                                // emitting the nested function. gen_function_ir mutates the
+                                // builder position (it emits into the new function), which
+                                // would otherwise leave us positioned inside the nested
+                                // function and cause later code to be emitted into it.
+                                let prev_block = self.builder.get_insert_block();
+                                if let Err(diag) = self.gen_function_ir(
+                                    &fname,
+                                    &fdecl.function,
+                                    &param_types_vec,
+                                    &ret_type,
+                                    None,
+                                ) {
+                                    crate::diagnostics::emit_diagnostic(&diag, Some(self.source));
+                                }
+                                if let Some(pb) = prev_block {
+                                    // Restore to the previous block so lowering resumes
+                                    // at the correct location.
+                                    self.builder.position_at_end(pb);
+                                }
+                            }
                         }
-                    } else {
-                        crate::types::OatsType::Void
-                    };
-
-                    // Preserve current insertion block so we can restore it after
-                    // emitting the nested function. gen_function_ir mutates the
-                    // builder position (it emits into the new function), which
-                    // would otherwise leave us positioned inside the nested
-                    // function and cause later code to be emitted into it.
-                    let prev_block = self.builder.get_insert_block();
-                    if let Err(diag) = self.gen_function_ir(
-                        &fname,
-                        &fdecl.function,
-                        &param_types_vec,
-                        &ret_type,
-                        None,
-                    ) {
-                        crate::diagnostics::emit_diagnostic(&diag, Some(self.source));
-                    }
-                    if let Some(pb) = prev_block {
-                        // Restore to the previous block so lowering resumes
-                        // at the correct location.
-                        self.builder.position_at_end(pb);
+                        Err(e) => {
+                            // Emit a diagnostic so the user knows to add annotations
+                            // rather than silently generating an incorrect void
+                            // returning function.
+                            let msg = format!(
+                                "skipping nested function '{}' due to missing/invalid type annotations: {}",
+                                fname, e
+                            );
+                            crate::diagnostics::emit_diagnostic(
+                                &crate::diagnostics::Diagnostic::simple(&msg),
+                                Some(self.source),
+                            );
+                        }
                     }
                 }
                 // Handle nested class declarations inside functions/blocks.
@@ -1183,86 +1226,78 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         // Check if function returns a union type and box if necessary
                         if let Some(return_type) =
                             self.current_function_return_type.borrow().clone()
+                            && matches!(return_type, crate::types::OatsType::Union(_))
                         {
-                            if matches!(return_type, crate::types::OatsType::Union(_)) {
-                                // Box the value as a union
-                                use inkwell::values::BasicValueEnum;
-                                val = match val {
-                                    BasicValueEnum::FloatValue(fv) => {
-                                        let box_fn = self.get_union_box_f64();
-                                        let boxed = self
-                                            .builder
-                                            .build_call(box_fn, &[fv.into()], "union_box")
-                                            .map_err(|_| {
-                                                crate::diagnostics::Diagnostic::simple(
-                                                    "Failed to box f64 as union in return",
-                                                )
-                                            })?
-                                            .try_as_basic_value()
-                                            .left()
-                                            .ok_or_else(|| {
-                                                crate::diagnostics::Diagnostic::simple(
-                                                    "union_box_f64 did not return value",
-                                                )
-                                            })?;
-                                        boxed
-                                    }
-                                    BasicValueEnum::PointerValue(pv) => {
-                                        let box_fn = self.get_union_box_ptr();
-                                        let boxed = self
-                                            .builder
-                                            .build_call(box_fn, &[pv.into()], "union_box")
-                                            .map_err(|_| {
-                                                crate::diagnostics::Diagnostic::simple(
-                                                    "Failed to box ptr as union in return",
-                                                )
-                                            })?
-                                            .try_as_basic_value()
-                                            .left()
-                                            .ok_or_else(|| {
-                                                crate::diagnostics::Diagnostic::simple(
-                                                    "union_box_ptr did not return value",
-                                                )
-                                            })?;
-                                        boxed
-                                    }
-                                    BasicValueEnum::IntValue(iv)
-                                        if iv.get_type().get_bit_width() == 1 =>
-                                    {
-                                        // Boolean -> convert to f64 and box
-                                        let as_f64 = self
-                                            .builder
-                                            .build_unsigned_int_to_float(
-                                                iv,
-                                                self.f64_t,
-                                                "bool_to_f64",
+                            // Box the value as a union
+                            use inkwell::values::BasicValueEnum;
+                            val = match val {
+                                BasicValueEnum::FloatValue(fv) => {
+                                    let box_fn = self.get_union_box_f64();
+
+                                    self.builder
+                                        .build_call(box_fn, &[fv.into()], "union_box")
+                                        .map_err(|_| {
+                                            crate::diagnostics::Diagnostic::simple(
+                                                "Failed to box f64 as union in return",
                                             )
-                                            .map_err(|_| {
-                                                crate::diagnostics::Diagnostic::simple(
-                                                    "Failed to convert bool to f64 in union return",
-                                                )
-                                            })?;
-                                        let box_fn = self.get_union_box_f64();
-                                        let boxed = self
-                                            .builder
-                                            .build_call(box_fn, &[as_f64.into()], "union_box")
-                                            .map_err(|_| {
-                                                crate::diagnostics::Diagnostic::simple(
-                                                    "Failed to box bool as union in return",
-                                                )
-                                            })?
-                                            .try_as_basic_value()
-                                            .left()
-                                            .ok_or_else(|| {
-                                                crate::diagnostics::Diagnostic::simple(
-                                                    "union_box_f64 did not return value",
-                                                )
-                                            })?;
-                                        boxed
-                                    }
-                                    _ => val, // Already boxed or unsupported type
-                                };
-                            }
+                                        })?
+                                        .try_as_basic_value()
+                                        .left()
+                                        .ok_or_else(|| {
+                                            crate::diagnostics::Diagnostic::simple(
+                                                "union_box_f64 did not return value",
+                                            )
+                                        })?
+                                }
+                                BasicValueEnum::PointerValue(pv) => {
+                                    let box_fn = self.get_union_box_ptr();
+
+                                    self.builder
+                                        .build_call(box_fn, &[pv.into()], "union_box")
+                                        .map_err(|_| {
+                                            crate::diagnostics::Diagnostic::simple(
+                                                "Failed to box ptr as union in return",
+                                            )
+                                        })?
+                                        .try_as_basic_value()
+                                        .left()
+                                        .ok_or_else(|| {
+                                            crate::diagnostics::Diagnostic::simple(
+                                                "union_box_ptr did not return value",
+                                            )
+                                        })?
+                                }
+                                BasicValueEnum::IntValue(iv)
+                                    if iv.get_type().get_bit_width() == 1 =>
+                                {
+                                    // Boolean -> convert to f64 and box
+                                    let as_f64 = self
+                                        .builder
+                                        .build_unsigned_int_to_float(iv, self.f64_t, "bool_to_f64")
+                                        .map_err(|_| {
+                                            crate::diagnostics::Diagnostic::simple(
+                                                "Failed to convert bool to f64 in union return",
+                                            )
+                                        })?;
+                                    let box_fn = self.get_union_box_f64();
+
+                                    self.builder
+                                        .build_call(box_fn, &[as_f64.into()], "union_box")
+                                        .map_err(|_| {
+                                            crate::diagnostics::Diagnostic::simple(
+                                                "Failed to box bool as union in return",
+                                            )
+                                        })?
+                                        .try_as_basic_value()
+                                        .left()
+                                        .ok_or_else(|| {
+                                            crate::diagnostics::Diagnostic::simple(
+                                                "union_box_f64 did not return value",
+                                            )
+                                        })?
+                                }
+                                _ => val, // Already boxed or unsupported type
+                            };
                         }
                         // emit rc decs for locals
                         self.emit_rc_dec_for_locals(_locals_stack);

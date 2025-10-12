@@ -281,7 +281,7 @@ pub fn create_codegen<'a>(
     let parsed_mod_ref = modules.get(module_name).expect("parsed module missing");
 
     CodeGen {
-        context: &context,
+        context,
         module,
         builder,
         next_str_id: std::cell::Cell::new(0),

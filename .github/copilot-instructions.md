@@ -1,209 +1,200 @@
-# Oats — AI Agent Guide
+### **Oats Compiler — AI Contributor Guide**
 
-Oats is an experimental AOT compiler transforming TypeScript → native code via LLVM. This guide helps AI agents immediately contribute to the codebase with critical patterns, workflows, and conventions.
+This guide provides the critical patterns, conventions, and architectural
+details required to contribute to the **Oats** compiler codebase. Your primary
+goal is to write safe, efficient, and idiomatic Rust code that adheres to these
+principles.
 
-## Project Architecture
+---
 
-**Rust workspace:** `crates/oats` (compiler) + `crates/runtime` (C-callable runtime library).
+### \#\# Project Architecture
 
-**Compilation Pipeline:**
-1. **Parse** → `deno_ast` parses TypeScript to AST (`parser.rs`)
-2. **Type Check** → Map TS types to `OatsType` enum (`types.rs`)
-3. **Codegen** → Lower AST to LLVM IR (`codegen/*.rs` using `inkwell`)
-4. **Link** → Link object file with runtime to produce executable
+Oats is an experimental Ahead-of-Time (AOT) compiler that transforms a subset of
+TypeScript into native code using LLVM.
 
-**Key Modules:**
-- `crates/oats/src/parser.rs` - Enforces semicolons, rejects `var` keyword, enforces source size limits
-- `crates/oats/src/types.rs` - Type system (`OatsType` enum: Number, String, Array, Union, Weak, NominalStruct, etc.)
-- `crates/oats/src/codegen/mod.rs` - `CodeGen` struct with LLVM context, caches runtime function declarations
-- `crates/oats/src/codegen/emit.rs` - Top-level function/constructor lowering
-- `crates/oats/src/codegen/expr.rs` - Expression lowering via `lower_expr()`
-- `crates/oats/src/codegen/stmt.rs` - Statement lowering via `lower_stmt()`
-- `crates/oats/src/diagnostics.rs` - Rustc-style error reporting with `Diagnostic` struct
-- `crates/runtime/src/lib.rs` - RC helpers, allocators, string/array ops (with resource limits)
+- **Workspace Crates**:
 
-## Critical: Heap Object Memory Layout
+  - `crates/oats`: The core compiler logic (parsing, type checking, codegen).
+  - `crates/runtime`: The C-callable runtime library that the compiled code
+    links against (provides memory management, string/array operations, etc.).
 
-**ALL heap objects have unified 64-bit header at offset 0:**
-- Bits 0-31: Strong refcount (atomic u32)
-- Bit 32: Static flag (1=immortal, don't touch RC)
-- Bits 33-48: Weak refcount (u16)
-- Bits 49-63: Type tag/flags
+- **Compilation Pipeline**:
 
-**Object Layouts (byte offsets):**
-```
-Static string:    [header+static][i64 len][data+NUL]  → codegen returns ptr to data (offset 16)
-Heap string:      [header RC=1][i64 len][data+NUL]    → runtime returns ptr to data (offset 16)
-Array:            [header][i64 len][elements...]      → returns base ptr (offset 0)
-Class/Object:     [header][i64 meta_ptr][fields...]   → returns base ptr (offset 0)
-                  ↑ offset 0  ↑ offset 8 (reserved!)  ↑ fields start at offset 16
-```
+  1. **Parsing**: `deno_ast` parses TypeScript source into an Abstract Syntax
+     Tree (AST). (`parser.rs`)
+  2. **Type Checking**: The AST is traversed to map TypeScript types to the
+     internal `OatsType` representation. (`types.rs`)
+  3. **Code Generation**: The typed AST is lowered into LLVM IR using the
+     `inkwell` crate. (`codegen/*.rs`)
+  4. **Linking**: The final object file is linked with the Oats runtime library
+     to produce a standalone executable.
 
-**CRITICAL:** Offset +8 is the **meta-slot** (field map pointer). Never overwrite with fields. Fields start at offset 16.
+---
 
-**Pointer Rules:**
-- Runtime RC helpers accept: base pointers (offset 0) OR string data pointers (offset 16)
-- Runtime uses `get_object_base(p)` to canonicalize both types
-- Always call `rc_inc` when storing pointers, `rc_dec` when releasing
-- Static literals have static bit set → RC ops become no-ops
+### \#\# CRITICAL: Heap Object Memory Layout
 
-## Error Handling Pattern
+**This is the most important contract in the compiler.** All heap-allocated
+objects in Oats share a unified 64-bit header for reference counting and type
+information. Mismanaging this structure will lead to memory corruption.
 
-**All codegen functions return `Result<T, Diagnostic>` - NO `.unwrap()` or `.expect()`:**
+- **Unified 64-bit Header**: Located at offset `0` for **all** heap objects.
+
+  - **Bits 0-31 (u32)**: Strong reference count (atomic).
+  - **Bit 32 (bool)**: Static flag. If `1`, the object is immortal (e.g., a
+    string literal) and RC operations are no-ops.
+  - **Bits 33-48 (u16)**: Weak reference count.
+  - **Bits 49-63**: Reserved for type tags and flags.
+
+- **Object Layouts (Byte Offsets)**:
+
+  - **String**: `[header][i64 length][char data ... NUL]`
+    - Codegen functions work with a pointer to the **data** (offset `+16`).
+  - **Array**: `[header][i64 length][element data ...]`
+    - Codegen functions work with a **base pointer** (offset `+0`).
+  - **Class/Object**: `[header][i64 meta_ptr][field data ...]`
+    - Codegen functions work with a **base pointer** (offset `+0`).
+    - The field at offset `+8` is the **meta-slot**, reserved for internal use.
+      **User fields always start at offset `+16`.**
+
+---
+
+### \#\# Reference Counting (RC) Protocol
+
+Manual reference counting is used for all heap objects. The runtime provides
+helper functions to manage counts.
+
+- **When to Increment**: Call `rc_inc` **before** storing a pointer into a local
+  variable, struct field, or array element.
+- **When to Decrement**: Call `rc_dec` on the **old value** before overwriting a
+  pointer. Also, call `rc_dec` on all locals before exiting a scope (e.g.,
+  before a `return`, `break`, or `continue`).
+- **Cleanup**: Use `emit_rc_dec_for_locals(&locals_stack)` to automatically
+  clean up variables before exiting a block.
+- **Weak Pointers**: For `Weak<T>` types, use the dedicated `rc_weak_inc`,
+  `rc_weak_dec`, and `rc_weak_upgrade` functions.
+- **Local Variable Tracking**: The `LocalEntry` tuple is used extensively in
+  codegen to track variables for proper RC management:
+  ```rust
+  // (LLVM ptr, LLVM type, is_mutable, is_param, is_weak, nominal_type_name)
+  type LocalEntry<'a> = (PointerValue<'a>, BasicTypeEnum<'a>, bool, bool, bool, Option<String>);
+  ```
+
+---
+
+### \#\# Error Handling: The `Diagnostic` Pattern
+
+**This pattern is non-negotiable.** The compiler must never panic. All functions
+involved in parsing, type checking, or codegen must return a `Result` to
+gracefully handle errors and report them to the user.
+
+- **Signature**: All fallible functions must return `Result<T, Diagnostic>`.
+- **NO `unwrap()` / `expect()`**: These methods are forbidden within the
+  `crates/oats/src` directory.
+- **Propagation**: Use the `?` operator to propagate errors up the call stack.
+- **Creation**: Create new errors using `Diagnostic::simple("Error message")` or
+  `Diagnostic::simple_with_span("Error message", byte_span)`.
+
+**Correct Implementation:**
+
 ```rust
-// CORRECT:
+// Propagate an error from a nested call
 pub fn lower_expr(...) -> Result<BasicValueEnum<'a>, Diagnostic> {
-    let val = some_operation().map_err(|_| 
-        Diagnostic::simple("Operation failed"))?;
-    Ok(val)
-}
-
-// Use Diagnostic::simple(msg) or Diagnostic::simple_with_span(msg, byte_offset)
-// Propagate with `?` operator
-```
-
-## Development Workflows
-
-**Setup LLVM 18 environment (REQUIRED before building):**
-```bash
-source ./scripts/setup_env.sh
-```
-
-**Build & test:**
-```bash
-cargo build --workspace
-cargo test --workspace
-cargo clippy --workspace
-```
-
-**Compile & run an .oats file:**
-```bash
-cargo run -p oats --bin toasty -- examples/hello.oats
-./hello
-```
-
-**Run all proper_tests examples:**
-```bash
-./scripts/run_all_proper_tests.sh
-```
-
-**Fuzz testing (security testing):**
-```bash
-# Quick 60-second test
-./scripts/run_fuzzing.sh
-
-# Continuous fuzzing (24 hours)
-FUZZ_TIME=86400 ./scripts/run_fuzzing.sh
-```
-
-**Snapshot testing (uses `insta`):**
-- Tests in `crates/oats/tests/codegen/` use `insta::assert_snapshot!(ir)`
-- Review snapshots: `cargo insta review`
-- Accept changes: `cargo insta accept`
-- Always explain snapshot changes in PR
-
-**Common test utilities:**
-- `crates/oats/tests/common/mod.rs::gen_ir_for_source()` - Generate IR from source string
-- Use `let _guard = oats::diagnostics::suppress();` to silence stderr in tests
-
-## Adding Runtime Functions
-
-**Two-step process (BOTH required):**
-
-1. **Add to `crates/runtime/src/lib.rs`:**
-```rust
-pub extern "C" fn my_new_helper(arg: *const c_void) -> i64 {
-    // implementation
+    let value = some_fallible_operation()?; // CORRECT: Propagate with `?`
+    Ok(value)
 }
 ```
 
-2. **Declare in `crates/oats/src/codegen/mod.rs` in `CodeGen` struct:**
-```rust
-pub struct CodeGen<'a> {
-    // ...
-    pub fn_my_new_helper: RefCell<Option<FunctionValue<'a>>>,
-}
+---
 
-impl<'a> CodeGen<'a> {
-    fn get_my_new_helper(&self) -> FunctionValue<'a> {
-        if let Some(f) = *self.fn_my_new_helper.borrow() {
-            return f;
-        }
-        let fn_type = self.i64_t.fn_type(&[self.i8ptr_t.into()], false);
-        let f = self.module.add_function("my_new_helper", fn_type, None);
-        *self.fn_my_new_helper.borrow_mut() = Some(f);
-        f
-    }
-}
-```
+### \#\# Development Workflows
 
-## Reference Counting Rules
+- **Setup (Run Once per Session)**: You must source the environment script to
+  configure LLVM paths.
 
-**When to call RC ops:**
-- **Storing pointer in field/local:** Call `rc_inc` first
-- **Overwriting pointer:** Call `rc_dec` on old value before overwrite
-- **Function return:** Call `rc_dec` on locals before returning
-- **Loop break/continue:** Call `rc_dec` on loop-scoped locals before jumping
-- **Weak pointers:** Use `rc_weak_inc`/`rc_weak_dec`/`rc_weak_upgrade` instead
+  ```bash
+  source ./scripts/setup_env.sh
+  ```
 
-**LocalEntry tuple structure (used throughout codegen):**
-```rust
-type LocalEntry<'a> = (
-    PointerValue<'a>,   // alloca ptr
-    BasicTypeEnum<'a>,  // LLVM type
-    bool,               // is_mutable (let vs const)
-    bool,               // is_param
-    bool,               // is_weak (Weak<T>)
-    Option<String>,     // nominal type name (for classes)
-);
-```
+- **Build and Test**:
 
-## Module System
+  ```bash
+  # Build the entire workspace
+  cargo build --workspace
 
-**Entry point:** `crates/oats/src/main.rs` handles transitive module loading
-- Resolves relative imports (`./foo`, `../bar`) with extensions `.ts`, `.oats`
-- Tries `index.ts`/`index.oats` for directories
-- Canonicalizes paths to avoid duplicates/cycles
-- Stores in `HashMap<String, ParsedModule>`
+  # Run all unit and integration tests
+  cargo test --workspace
+  ```
 
-## Testing Checklist
+- **Compile and Run a File**: Use the `toasty` binary to compile an `.oats`
+  file.
 
-Before committing changes:
-- [ ] `cargo test --workspace` passes
-- [ ] No new `.unwrap()`/`.expect()` in `crates/oats/src/` (use `Result<_, Diagnostic>`)
-- [ ] If touching object layout or RC: add runtime test in `crates/runtime/tests/`
-- [ ] If IR changes: update insta snapshots with explanation
-- [ ] If adding runtime function: declared in both runtime AND CodeGen struct
-- [ ] Run `cargo clippy` and fix warnings
+  ```bash
+  # Compile the example file
+  cargo run -p oats --bin toasty -- examples/hello.oats
 
-## Runtime Diagnostics
+  # Run the compiled native executable
+  ./hello
+  ```
 
-```bash
-# Enable runtime logging
-export OATS_RUNTIME_LOG=1
-export OATS_COLLECTOR_LOG=1  # for cycle collector logs
-```
+- **Snapshot Testing**: The compiler's IR output is verified with `insta`.
 
-## Common Patterns
+  - LLVM IR snapshots are stored in `crates/oats/tests/codegen/snapshots/`.
+  - To review changes: `cargo insta review`
+  - To accept changes: `cargo insta accept`
+  - **Requirement**: Always provide a clear explanation for any snapshot changes
+    in your pull request.
 
-**Type mapping:**
-```rust
-// OatsType → LLVM type via CodeGen::map_type_to_llvm()
-Number → f64
-Boolean → i1 or i8 (context dependent)
-String → i8* (pointer to data at offset 16)
-Array(T) → i8* (pointer to base at offset 0)
-NominalStruct(name) → i8* (pointer to base at offset 0)
-Union → f64 (numeric-only) or i8* (mixed/pointer)
-```
+---
 
-**Codegen structure:**
-- `lower_stmts()` returns `bool` (has terminator)
-- `lower_expr()` returns `Result<BasicValueEnum, Diagnostic>`
-- `emit_rc_dec_for_locals(&locals_stack)` cleans up before return/break/continue
+### \#\# Adding a Runtime Function
 
-## Resources
+Adding a new C-callable function to the runtime for the compiler to use is a
+**two-step process**. Both are required.
 
-- **Architecture:** `docs/ARCHITECTURE.md` - Object layouts, contracts
-- **Roadmap:** `docs/ROADMAP.md` - Phases, work items
-- **Development:** `docs/DEVELOPMENT.md` - Contributing guidelines
+1. **Implement in Runtime (`crates/runtime/src/lib.rs`)**: Add the `extern "C"`
+   function to the runtime library.
+
+   ```rust
+   #[no_mangle]
+   pub extern "C" fn my_new_runtime_helper(arg: i64) -> i64 {
+       // ... implementation ...
+   }
+   ```
+
+2. **Declare in Compiler (`crates/oats/src/codegen/mod.rs`)**: Declare the
+   function signature in the `CodeGen` struct so the compiler knows how to call
+   it.
+
+   ```rust
+   // In the CodeGen struct definition
+   pub struct CodeGen<'a> {
+       // ...
+       pub fn_my_new_helper: RefCell<Option<FunctionValue<'a>>>,
+   }
+
+   // In the CodeGen impl block
+   impl<'a> CodeGen<'a> {
+       fn get_my_new_helper(&self) -> FunctionValue<'a> {
+           // Standard lazy-initialization pattern
+           if let Some(f) = *self.fn_my_new_helper.borrow() { return f; }
+           let fn_type = self.i64_t.fn_type(&[self.i64_t.into()], false);
+           let f = self.module.add_function("my_new_runtime_helper", fn_type, None);
+           *self.fn_my_new_helper.borrow_mut() = Some(f);
+           f
+       }
+   }
+   ```
+
+---
+
+### \#\# Pre-Commit Checklist
+
+1. [ ] Does `cargo test --workspace` pass cleanly?
+2. [ ] Does `cargo clippy --workspace` pass cleanly?
+3. [ ] Have you added a new test case for your feature or bug fix?
+4. [ ] If you changed LLVM IR output, have you run `cargo insta accept` and
+       explained the changes?
+5. [ ] Have you removed **all** instances of `.unwrap()` or `.expect()` from the
+       compiler crate?
+6. [ ] If you added a runtime function, did you complete **both** steps
+       (implementation and declaration)?

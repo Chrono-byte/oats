@@ -27,5 +27,3 @@ Notes:
 1. Static strings must have header static bit set.
 2. Heap allocations should use runtime helpers and initialize header with RC=1.
 3. Emit `rc_inc`/`rc_dec` according to storage semantics.
-
-For full design history and edge cases see `docs/archive/ARCHITECTURE.md`.

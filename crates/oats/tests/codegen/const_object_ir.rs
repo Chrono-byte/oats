@@ -48,16 +48,14 @@ export function main(): number {
 
     let mut top_level_consts: Vec<(String, Box<ast::Expr>, usize)> = Vec::new();
     for item in parsed.program_ref().body() {
-        if let deno_ast::ModuleItemRef::Stmt(stmt) = item {
-            if let ast::Stmt::Decl(ast::Decl::Var(vd)) = stmt {
-                if matches!(vd.kind, ast::VarDeclKind::Const) {
-                    for decl in &vd.decls {
-                        if let ast::Pat::Ident(binding) = &decl.name {
-                            if let Some(init) = &decl.init {
-                                let name = binding.id.sym.to_string();
-                                let span_start = vd.span.lo.0 as usize;
-                                top_level_consts.push((name, init.clone(), span_start));
-                            }
+        if let deno_ast::ModuleItemRef::Stmt(ast::Stmt::Decl(ast::Decl::Var(vd))) = item {
+            if matches!(vd.kind, ast::VarDeclKind::Const) {
+                for decl in &vd.decls {
+                    if let ast::Pat::Ident(binding) = &decl.name {
+                        if let Some(init) = &decl.init {
+                            let name = binding.id.sym.to_string();
+                            let span_start = vd.span.lo.0 as usize;
+                            top_level_consts.push((name, init.clone(), span_start));
                         }
                     }
                 }
@@ -84,10 +82,8 @@ export function main(): number {
                 }
                 Expr::Object(obj) => {
                     for prop in &obj.props {
-                        if let PropOrSpread::Prop(pb) = prop {
-                            if let Prop::KeyValue(kv) = &**pb {
-                                collect_idents(&kv.value, out);
-                            }
+                        if let PropOrSpread::Prop(Prop::KeyValue(kv)) = prop {
+                            collect_idents(&kv.value, out);
                         }
                     }
                 }
@@ -134,7 +130,7 @@ export function main(): number {
 
         for (i, (_n, init, _)) in top_level_consts.iter().enumerate() {
             let mut ids = HashSet::new();
-            collect_idents(&*init, &mut ids);
+            collect_idents(init, &mut ids);
             for id in ids {
                 if let Some(&j) = name_to_idx.get(&id) {
                     adj[j].push(i);
@@ -166,7 +162,7 @@ export function main(): number {
             // Borrow const_items immutably for evaluation and drop when done to avoid
             // conflicting RefCell borrows when we later mutably insert the result.
             let const_map = codegen.const_items.borrow();
-            match oats::codegen::const_eval::eval_const_expr(&*init_expr, *span_start, &*const_map)
+            match oats::codegen::const_eval::eval_const_expr(init_expr, *span_start, &const_map)
             {
                 Ok(cv) => {
                     drop(const_map);

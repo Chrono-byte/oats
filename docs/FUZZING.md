@@ -1,10 +1,13 @@
 # Fuzzing Guide for Oats
 
-This document describes the fuzzing infrastructure for the Oats compiler and how to use it to discover bugs and crashes.
+This document describes the fuzzing infrastructure for the Oats compiler and how
+to use it to discover bugs and crashes.
 
 ## Overview
 
-Oats uses `cargo-fuzz` (libFuzzer) to automatically generate test inputs and discover:
+Oats uses `cargo-fuzz` (libFuzzer) to automatically generate test inputs and
+discover:
+
 - Parser crashes or panics
 - Compiler crashes or infinite loops
 - Undefined behavior in unsafe code
@@ -44,15 +47,18 @@ cargo fuzz build fuzz_parser
 **Target:** Parser (`oats::parser::parse_oats_module`)
 
 **What it tests:**
+
 - Parsing arbitrary TypeScript/Oats source code
 - Handling malformed syntax
 - Unicode handling
 - Edge cases in AST construction
 
 **Seed corpus:** `fuzz/corpus/fuzz_parser/`
+
 - Contains valid `.oats` files from `examples/`
 
 **Run:**
+
 ```bash
 cargo +nightly fuzz run fuzz_parser
 ```
@@ -64,15 +70,18 @@ cargo +nightly fuzz run fuzz_parser
 **Target:** Full compilation pipeline (parse → type check → codegen)
 
 **What it tests:**
+
 - End-to-end compilation of arbitrary source code
 - Type checking edge cases
 - LLVM IR generation
 - Codegen for complex constructs
 
 **Seed corpus:** `fuzz/corpus/fuzz_compiler/`
+
 - Contains valid programs from `examples/proper_tests/`
 
 **Run:**
+
 ```bash
 cargo +nightly fuzz run fuzz_compiler
 ```
@@ -124,6 +133,7 @@ rust-lldb target/x86_64-unknown-linux-gnu/release/fuzz_parser
 ### Crash Artifacts
 
 Crashes are saved to `fuzz/artifacts/{target}/`:
+
 - `crash-*` - Input that caused a crash
 - `leak-*` - Input that caused a memory leak
 - `timeout-*` - Input that caused a timeout
@@ -187,19 +197,19 @@ bench = false
 ## Best Practices
 
 ### DO:
-✅ Run fuzzing for at least 24 hours before release
-✅ Minimize crash inputs before filing bug reports
-✅ Add fixed crashes to regression test suite
-✅ Keep seed corpus up-to-date with new examples
-✅ Use `_guard = oats::diagnostics::suppress()` to silence stderr
-✅ Check coverage to find untested code paths
+
+✅ Run fuzzing for at least 24 hours before release ✅ Minimize crash inputs
+before filing bug reports ✅ Add fixed crashes to regression test suite ✅ Keep
+seed corpus up-to-date with new examples ✅ Use
+`_guard = oats::diagnostics::suppress()` to silence stderr ✅ Check coverage to
+find untested code paths
 
 ### DON'T:
-❌ Panic or crash in fuzz targets (defeats the purpose)
-❌ Perform I/O operations (slow, non-deterministic)
-❌ Use global mutable state (causes flaky failures)
-❌ Ignore timeouts (might indicate infinite loops)
-❌ Fuzz in debug mode (too slow, use release)
+
+❌ Panic or crash in fuzz targets (defeats the purpose) ❌ Perform I/O
+operations (slow, non-deterministic) ❌ Use global mutable state (causes flaky
+failures) ❌ Ignore timeouts (might indicate infinite loops) ❌ Fuzz in debug
+mode (too slow, use release)
 
 ## Continuous Integration
 

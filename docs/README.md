@@ -2,17 +2,20 @@
 
 **Last Updated:** October 10, 2025
 
-Welcome to the Oats compiler documentation! This guide helps you navigate the documentation and find what you need.
+Welcome to the Oats compiler documentation! This guide helps you navigate the
+documentation and find what you need.
 
 ## Quick Start
 
 **New to Oats?** Start here:
+
 1. Read the main `README.md` in the repository root
 2. Follow setup instructions in `DEVELOPMENT.md`
 3. Try running examples from `examples/`
 4. Read `ARCHITECTURE.md` for system overview
 
 **Want to contribute?** Read:
+
 1. `CONTRIBUTING.md` (in repository root) - Contribution guidelines
 2. `DEVELOPMENT.md` - Development workflows and standards
 3. `ROADMAP.md` - Current priorities and future plans
@@ -22,20 +25,42 @@ Welcome to the Oats compiler documentation! This guide helps you navigate the do
 ### Core Documentation
 
 #### [`ARCHITECTURE.md`](ARCHITECTURE.md) ⭐ START HERE for technical understanding
-**Purpose:** Authoritative reference for runtime memory model and compiler contracts  
-**Audience:** All contributors  
-**Content:**
-- Heap object layout (header, meta-slot, data)
-- Reference counting rules and contracts
-- Pointer types and canonicalization
-- Codegen requirements and checklist
 
-**When to read:** Before making changes to object layout, RC behavior, or core codegen.
-
-#### [`DEVELOPMENT.md`](DEVELOPMENT.md) ⭐ START HERE for contributing
-**Purpose:** Practical development guide  
-**Audience:** Contributors at all levels  
+**Purpose:** Authoritative reference for runtime memory model and compiler
+contracts\
+**Audience:** All contributors\
 **Content:**
+
+
+**When to read:** Before making changes to object layout, RC behavior, or core
+codegen.
+
+# Project Documentation
+
+This folder contains the project's concise, contributor-friendly documentation. Long-form historical and technical specifications were intentionally removed from the top-level to keep the docs small and focused. To inspect the original detailed design notes, use the repository's Git history (the files exist in earlier commits).
+
+Top-level files (concise):
+
+- `DEVELOPMENT.md` — contributor and workflow guide for new contributors
+- `ARCHITECTURE.md` — high-level architecture and compilation pipeline
+- `LANGUAGE_DESIGN.md` — language-level decisions and type system overview
+- `MEMORY_DESIGN.md` — memory layout, RC rules, and safety guidance (expanded)
+- `ROADMAP.md` — short roadmap and project phases
+
+To view older, long-form specifications that were previously part of this directory, use Git commands such as:
+
+```bash
+# show commit history for a file that used to exist here
+git log -- <path/to/old-doc.md>
+
+# view a previous version of a file at a commit
+git show <commit_hash>:<path/to/old-doc.md>
+```
+
+Replace `<path/to/old-doc.md>` with the historical filename (for example, `docs/CCRC.md` or `docs/ASYNC_AWAIT.md`) and use `git log` to find the commit that contains it.
+
+**Content:**
+
 - Environment setup
 - Coding standards and error handling patterns
 - Testing strategies (unit, snapshot, integration)
@@ -46,26 +71,35 @@ Welcome to the Oats compiler documentation! This guide helps you navigate the do
 **When to read:** Before starting any development work.
 
 #### [`ROADMAP.md`](ROADMAP.md) ⭐ START HERE for project direction
-**Purpose:** Project roadmap and current priorities  
-**Audience:** Contributors, users, project planners  
+
+**Purpose:** Project roadmap and current priorities\
+**Audience:** Contributors, users, project planners\
 **Content:**
+
 - Current implementation status (what's done, what's not)
 - Development phases (Stability, Async, Language Features, Cycles)
 - Timeline estimates
 - Current work items (pick one to implement!)
 - Decision log
 
-**When to read:** To understand project priorities and find contribution opportunities.
+**When to read:** To understand project priorities and find contribution
+opportunities.
 
 ### Consolidated Topics
 
-To reduce fragmentation, related documents are grouped into single entry pages that link to detailed specs when needed.
+To reduce fragmentation, related documents are grouped into single entry pages
+that link to detailed specs when needed.
 
-- [`docs/ASYNC.md`](ASYNC.md) — Consolidated async overview and pointers to detailed async design and ABIs.
-- [`docs/RUNTIME_SECURITY.md`](RUNTIME_SECURITY.md) — Consolidated runtime safety, security hardening, and fuzzing pointers.
-- [`docs/MEMORY_OWNERSHIP.md`](MEMORY_OWNERSHIP.md) — Consolidated memory layout and ownership rules with links to deep-dive docs.
+- [`docs/ASYNC.md`](ASYNC.md) — Consolidated async overview and pointers to
+  detailed async design and ABIs.
+- [`docs/RUNTIME_SECURITY.md`](RUNTIME_SECURITY.md) — Consolidated runtime
+  safety, security hardening, and fuzzing pointers.
+- [`docs/MEMORY_OWNERSHIP.md`](MEMORY_OWNERSHIP.md) — Consolidated memory layout
+  and ownership rules with links to deep-dive docs.
 
-For detailed work, each consolidated page points to the existing design docs (e.g., `ASYNC_PHASE1.md`, `ASYNC_PRIMITIVES.md`, `RUNTIME_SAFETY.md`, `FUZZING.md`) so you can dive into precise specifications.
+For detailed work, each consolidated page points to the existing design docs
+(e.g., `ASYNC_PHASE1.md`, `ASYNC_PRIMITIVES.md`, `RUNTIME_SAFETY.md`,
+`FUZZING.md`) so you can dive into precise specifications.
 
 ## Documentation by Use Case
 
@@ -114,6 +148,7 @@ For detailed work, each consolidated page points to the existing design docs (e.
 ### Keeping Docs Current
 
 **When to update docs:**
+
 - Adding or changing features → Update ROADMAP.md, relevant design docs
 - Changing object layout or RC rules → Update ARCHITECTURE.md
 - Adding runtime functions or ABIs → Update relevant design docs
@@ -121,6 +156,7 @@ For detailed work, each consolidated page points to the existing design docs (e.
 - Discovering incorrect documentation → Fix immediately
 
 **How to update:**
+
 - Make doc changes in the same PR as code changes
 - Explain doc changes in PR description
 - Keep docs concise and authoritative
@@ -129,6 +165,7 @@ For detailed work, each consolidated page points to the existing design docs (e.
 ### Doc Review Checklist
 
 Before merging changes:
+
 - [ ] All affected docs updated
 - [ ] No contradictions between docs
 - [ ] Examples still work
@@ -138,6 +175,7 @@ Before merging changes:
 ## Document Status Legend
 
 **Status Tags:**
+
 - ✅ **Current and Accurate** - Reflects current implementation
 - ⏳ **Design Document** - Specification for future implementation
 - 🚧 **Work in Progress** - Being actively updated
@@ -147,12 +185,14 @@ Before merging changes:
 ## Getting Help with Documentation
 
 **Documentation issues:**
+
 - **Typos/errors:** Submit a PR with fix
 - **Unclear sections:** Open an issue asking for clarification
 - **Missing information:** Open an issue or PR adding it
 - **Outdated content:** Open an issue flagging what's wrong
 
 **Questions about what to read:**
+
 - Ask in GitHub Discussions
 - Check this guide for use cases
 - Look at "When to read" sections above
@@ -160,6 +200,7 @@ Before merging changes:
 ## Contributing to Documentation
 
 **Good documentation contributions:**
+
 - Fixing typos and grammar
 - Adding examples and code samples
 - Improving clarity and organization
@@ -168,6 +209,7 @@ Before merging changes:
 - Writing tutorials and how-to guides
 
 **Documentation style:**
+
 - Use clear, concise language
 - Provide examples where helpful
 - Use consistent Markdown formatting
@@ -176,21 +218,6 @@ Before merging changes:
 - Keep line length reasonable (80-100 chars)
 
 See `CONTRIBUTING.md` for full contribution guidelines.
-
----
-
-## Summary Matrix
-
-| Document | Purpose | Audience | When to Read | Status |
-|----------|---------|----------|--------------|--------|
-| ARCHITECTURE.md | Memory model & contracts | All contributors | Before core changes | ✅ Current |
-| DEVELOPMENT.md | Development guide | All contributors | Before contributing | ✅ Current |
-| ROADMAP.md | Project direction | Everyone | For project overview | ✅ Current |
-| ASYNC_AWAIT.md | Async overview | Async contributors | Before async work | ✅ Current |
-| ASYNC_PHASE1.md | State machine detail | Compiler devs | Implementing async | ⏳ Design |
-| ASYNC_PRIMITIVES.md | Runtime ABI spec | Runtime devs | Implementing runtime | ⏳ Design |
-| CCRC.md | Cycle collection | Memory mgmt devs | Implementing cycles | ⏳ Design |
-| README_DOCS.md | This guide | Everyone | First time | ✅ Current |
 
 ---
 

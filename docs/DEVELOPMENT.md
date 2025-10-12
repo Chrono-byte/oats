@@ -29,9 +29,6 @@ more fragmented development docs and points to deeper references when needed.
 - Tests: `cargo test --workspace` (must pass)
 - Lint: `cargo clippy --workspace` (fix warnings where possible)
 
-For deeper architecture, memory, and async details see `ARCHITECTURE.md`,
-`MEMORY_DESIGN.md`, and `ASYNC_FULL.md` (archived fuller specs available in
-`docs/archive/`).
 ```
 
 # Oats — Development Guide

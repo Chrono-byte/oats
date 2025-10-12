@@ -25,7 +25,12 @@ oats_build() {
 
 oats_run_aot() {
   echo "[oats] running AOT runner (builds runtime if necessary)"
-  cargo run --bin aot_run
+  # Prefer the new `toasty` binary, fall back to legacy `aot_run` if not present
+  if cargo run --bin toasty --version >/dev/null 2>&1; then
+    cargo run --bin toasty
+  else
+    cargo run --bin aot_run
+  fi
 }
 
 oats_clean() {

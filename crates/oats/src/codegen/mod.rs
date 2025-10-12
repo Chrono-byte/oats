@@ -21,11 +21,11 @@ use inkwell::builder::Builder;
 use inkwell::context::Context;
 use inkwell::module::Module;
 use inkwell::types::{BasicType, BasicTypeEnum};
+use inkwell::values::BasicValueEnum;
 use inkwell::values::FunctionValue;
 use inkwell::values::PointerValue;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
-use inkwell::values::BasicValueEnum;
 
 pub mod emit;
 pub mod expr;
@@ -123,6 +123,10 @@ pub struct CodeGen<'a> {
     // the poll's allocas and restore values into them.
     pub async_poll_locals: RefCell<Option<LocalsStackLocal<'a>>>,
     pub source: &'a str,
+    // Byte indices (span.lo) of VarDecl AST nodes that include a `mut`
+    // token. Populated by the parser and referenced here so codegen
+    // can decide mutability without scanning the source text.
+    pub mut_var_decls: std::collections::HashSet<usize>,
     // Track the current function's return type so return statements can box
     // values when the function returns a union type.
     pub current_function_return_type: RefCell<Option<crate::types::OatsType>>,
@@ -837,6 +841,10 @@ impl<'a> CodeGen<'a> {
         _args: &[deno_ast::swc::ast::ExprOrSpread],
     ) -> Result<BasicValueEnum<'a>, crate::diagnostics::Diagnostic> {
         // Logic to specialize the generic type
-        Ok(self.context.ptr_type(AddressSpace::default()).const_null().into())
+        Ok(self
+            .context
+            .ptr_type(AddressSpace::default())
+            .const_null()
+            .into())
     }
 }

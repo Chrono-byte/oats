@@ -205,7 +205,12 @@ pub fn gen_ir_for_source(src: &str) -> Result<String> {
 
 // Ensure `builder` is directly passed to `CodeGen`
 // Updated `create_codegen` to wrap `SymbolTable` in `RefCell` internally
-pub fn create_codegen<'a>(context: &'a Context, module_name: &str, mut symbols: SymbolTable, source: &'a str) -> CodeGen<'a> {
+pub fn create_codegen<'a>(
+    context: &'a Context,
+    module_name: &str,
+    mut symbols: SymbolTable,
+    source: &'a str,
+) -> CodeGen<'a> {
     let module = context.create_module(module_name);
     let builder = context.create_builder();
 
@@ -240,6 +245,8 @@ pub fn create_codegen<'a>(context: &'a Context, module_name: &str, mut symbols: 
     println!("Creating CodeGen for module: {}", module_name);
     println!("Source length: {}", source.len());
     println!("Builder initialized: {:?}", builder);
+
+    let parsed_mod_ref = modules.get(module_name).expect("parsed module missing");
 
     CodeGen {
         context: &context,
@@ -286,6 +293,7 @@ pub fn create_codegen<'a>(context: &'a Context, module_name: &str, mut symbols: 
         async_local_slot_count: Cell::new(0),
         async_poll_locals: RefCell::new(None),
         source,
+        mut_var_decls: parsed_mod_ref.mut_var_decls.clone(),
         current_function_return_type: RefCell::new(None),
         last_expr_is_boxed_union: Cell::new(false),
         global_function_signatures: RefCell::new(HashMap::new()),

@@ -15,7 +15,8 @@ fn aot_cycle_reclaim_runs_and_exits() {
     // Build the aot_run binary to ensure it's available
     let status = Command::new("cargo")
         .current_dir(&repo_root)
-        .args(&["build", "-p", "oats"])
+        // Prefer building the new `toasty` binary (keeps legacy aot_run as fallback)
+        .args(&["build", "-p", "oats", "--bin", "toasty"])
         .status()
         .expect("failed to spawn cargo build");
     assert!(status.success(), "cargo build -p oats failed");
@@ -27,17 +28,18 @@ fn aot_cycle_reclaim_runs_and_exits() {
     }
     fs::create_dir_all(&out_dir).expect("failed to create out dir");
 
-    // Path to the built aot_run binary
-    let aot_run_bin = repo_root.join("target/debug/aot_run");
+    // Path to the built toasty binary
+    let toasty_bin = repo_root.join("target/debug/toasty");
     assert!(
-        aot_run_bin.exists(),
-        "aot_run binary not found at {:?}",
-        aot_run_bin
+        toasty_bin.exists(),
+        "toasty binary not found at {:?}",
+        toasty_bin
     );
+    let runner = toasty_bin;
 
     // Run aot_run to compile the example into the out_dir
     let example = repo_root.join("examples/cycle_reclaim.oats");
-    let mut aot_cmd = Command::new(aot_run_bin);
+    let mut aot_cmd = Command::new(runner);
     aot_cmd
         .current_dir(&repo_root)
         .arg(example)

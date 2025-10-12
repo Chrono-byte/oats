@@ -78,7 +78,7 @@ cargo clippy --workspace
 
 **Compile & run an .oats file:**
 ```bash
-cargo run -p oats --bin aot_run -- examples/hello.oats
+cargo run -p oats --bin toasty -- examples/hello.oats
 ./hello
 ```
 

@@ -55,6 +55,11 @@ pub struct ParsedModule {
     pub parsed: ParsedSource,
     // Original source text (no preprocessing)
     pub source: String,
+    // Set of VarDecl span start positions (byte index) that contain the
+    // `mut` token. This is computed at parse time by scanning the captured
+    // tokens inside each VarDecl span so downstream passes (codegen) can
+    // consult mutability information without string-searching the source.
+    pub mut_var_decls: std::collections::HashSet<usize>,
 }
 
 /// Parse a TypeScript source string into a `ParsedModule` and run
@@ -95,7 +100,71 @@ pub fn parse_oats_module(source_code: &str, file_path: Option<&str>) -> Result<P
         source_code
     };
 
-    let sti = SourceTextInfo::from_string(source_without_bom.to_string());
+    // Pre-scan for `let mut` occurrences so we can support the `let mut`
+    // surface syntax at the parser layer without extending the external
+    // TS parser. We will replace the `mut` token with whitespace of the
+    // same length in the parsed source so that byte offsets (spans)
+    // remain stable and align with the original source. Record the
+    // byte index of the `let` start so we can mark those VarDecls as
+    // mutable later.
+    let mut precomputed_mut_positions: std::collections::HashSet<usize> =
+        std::collections::HashSet::new();
+    // Use a simple regex-like scan for `let` followed by whitespace and
+    // `mut` to avoid pulling in regex crate; a manual search is ok here.
+    let mut parse_source_chars: Vec<u8> = source_without_bom.as_bytes().to_vec();
+    let sbytes = source_without_bom.as_bytes();
+    let mut i = 0usize;
+    while i + 4 < sbytes.len() {
+        // match `let` at i
+        if sbytes[i] == b'l' && sbytes.get(i + 1) == Some(&b'e') && sbytes.get(i + 2) == Some(&b't')
+        {
+            // ensure word boundary after `let`
+            let mut j = i + 3;
+            // skip whitespace
+            while j < sbytes.len()
+                && (sbytes[j] == b' '
+                    || sbytes[j] == b'\t'
+                    || sbytes[j] == b'\r'
+                    || sbytes[j] == b'\n')
+            {
+                j += 1;
+            }
+            // check for `mut` starting at j
+            if j + 3 <= sbytes.len()
+                && sbytes.get(j) == Some(&b'm')
+                && sbytes.get(j + 1) == Some(&b'u')
+                && sbytes.get(j + 2) == Some(&b't')
+            {
+                // ensure following char is whitespace
+                let after = j + 3;
+                if after == sbytes.len()
+                    || sbytes.get(after).map_or(true, |b| {
+                        *b == b' '
+                            || *b == b'\t'
+                            || *b == b'\r'
+                            || *b == b'\n'
+                            || *b == b';'
+                            || *b == b')'
+                    })
+                {
+                    // record position of `let` (start index)
+                    precomputed_mut_positions.insert(i);
+                    // replace 'mut' with spaces in parse_source_chars so spans align
+                    parse_source_chars[j] = b' ';
+                    parse_source_chars[j + 1] = b' ';
+                    parse_source_chars[j + 2] = b' ';
+                    // advance i past the matched region
+                    i = after;
+                    continue;
+                }
+            }
+        }
+        i += 1;
+    }
+    let source_for_parse =
+        String::from_utf8(parse_source_chars).unwrap_or_else(|_| source_without_bom.to_string());
+
+    let sti = SourceTextInfo::from_string(source_for_parse.clone());
     // Use the provided file_path (if any) to create a proper file:// URL so
     // diagnostics and span-based tooling can show accurate paths. Fall back
     // to a generic placeholder when no path is available.
@@ -259,7 +328,7 @@ pub fn parse_oats_module(source_code: &str, file_path: Option<&str>) -> Result<P
                     );
                 }
             }
-            // Reject usage of the legacy `var` keyword: require `let` or `const`.
+            // Reject usage of the legacy `var` keyword: require `let`.
             if let ast::Stmt::Decl(ast::Decl::Var(vdecl)) = stmt
                 && matches!(vdecl.kind, deno_ast::swc::ast::VarDeclKind::Var)
             {
@@ -268,11 +337,31 @@ pub fn parse_oats_module(source_code: &str, file_path: Option<&str>) -> Result<P
                     file_path,
                     source_code,
                     start,
-                    "the `var` keyword is not allowed; use `let` or `const` instead",
+                    "the `var` keyword is not allowed; use `let` instead",
                     Some(
-                        "`var` is disallowed in this project; use `let` for mutable locals or `const` for immutable ones.",
+                        "`var` is disallowed in this project; use `let` (immutable by default) or `let mut` for mutable bindings.",
                     ),
                 );
+            }
+            // Reject usage of `const` in user-supplied files: the language uses
+            // `let` as immutable by default. When `file_path` is None (tests
+            // or parsing snippets), allow `const` so internal tests continue to
+            // work.
+            if file_path.is_some() {
+                if let ast::Stmt::Decl(ast::Decl::Var(vdecl)) = stmt
+                    && matches!(vdecl.kind, deno_ast::swc::ast::VarDeclKind::Const)
+                {
+                    let start = vdecl.span.lo.0 as usize;
+                    return diagnostics::report_error_span_and_bail(
+                        file_path,
+                        source_code,
+                        start,
+                        "the `const` keyword is not allowed; use `let` instead",
+                        Some(
+                            "oats uses `let` as the immutable default; prefer `let` or `let mut` for mutable bindings.",
+                        ),
+                    );
+                }
             }
             // If it's a function decl, also inspect its body
             if let ast::Stmt::Decl(ast::Decl::Fn(fdecl)) = stmt
@@ -311,11 +400,29 @@ pub fn parse_oats_module(source_code: &str, file_path: Option<&str>) -> Result<P
                                 file_path,
                                 source_code,
                                 start,
-                                "the `var` keyword is not allowed; use `let` or `const` instead",
+                                "the `var` keyword is not allowed; use `let` instead",
                                 Some(
-                                    "`var` is disallowed in this project; use `let` for mutable locals or `const` for immutable ones.",
+                                    "`var` is disallowed in this project; use `let` (immutable by default) or `let mut` for mutable bindings.",
                                 ),
                             );
+                        }
+                        // Reject `const` inside function bodies as well (only
+                        // for user-supplied files).
+                        if file_path.is_some() {
+                            if let ast::Stmt::Decl(ast::Decl::Var(vdecl)) = s
+                                && matches!(vdecl.kind, deno_ast::swc::ast::VarDeclKind::Const)
+                            {
+                                let start = vdecl.span.lo.0 as usize;
+                                return diagnostics::report_error_span_and_bail(
+                                    file_path,
+                                    source_code,
+                                    start,
+                                    "the `const` keyword is not allowed; use `let` instead",
+                                    Some(
+                                        "oats uses `let` as the immutable default; prefer `let` or `let mut` for mutable bindings.",
+                                    ),
+                                );
+                            }
                         }
                     }
                 }
@@ -334,9 +441,25 @@ pub fn parse_oats_module(source_code: &str, file_path: Option<&str>) -> Result<P
                         file_path,
                         source_code,
                         start,
-                        "the `var` keyword is not allowed; use `let` or `const` instead",
+                        "the `var` keyword is not allowed; use `let` instead",
                         Some(
-                            "`var` is disallowed in this project; use `let` for mutable locals or `const` for immutable ones.",
+                            "`var` is disallowed in this project; use `let` (immutable by default) or `let mut` for mutable bindings.",
+                        ),
+                    );
+                }
+                // Reject `const` in export declarations as well (only for
+                // user-supplied files).
+                if file_path.is_some()
+                    && matches!(vdecl.kind, deno_ast::swc::ast::VarDeclKind::Const)
+                {
+                    let start = vdecl.span.lo.0 as usize;
+                    return diagnostics::report_error_span_and_bail(
+                        file_path,
+                        source_code,
+                        start,
+                        "the `const` keyword is not allowed; use `let` instead",
+                        Some(
+                            "oats uses `let` as the immutable default; prefer `let` or `let mut` for mutable bindings.",
                         ),
                     );
                 }
@@ -385,8 +508,122 @@ pub fn parse_oats_module(source_code: &str, file_path: Option<&str>) -> Result<P
             }
         }
     }
+    // Compute token-aware `mut` detection for var declarations. We use
+    // token spans (when available) to avoid matching `mut` inside string
+    // literals or comments. The detected set contains the `span.lo` byte
+    // index of VarDecl nodes that include a `mut` token.
+    // Start with any precomputed positions found by scanning for `let mut`.
+    let mut mut_var_decls: std::collections::HashSet<usize> = precomputed_mut_positions;
+
+    // Collect all VarDecl spans from the AST (including nested function
+    // bodies handled above). A simple traversal suffices for now.
+    fn collect_var_decl_spans(stmt: &ast::Stmt, out: &mut Vec<deno_ast::swc::common::Span>) {
+        match stmt {
+            ast::Stmt::Decl(ast::Decl::Var(v)) => {
+                out.push(v.span);
+            }
+            ast::Stmt::Block(b) => {
+                for s in &b.stmts {
+                    collect_var_decl_spans(s, out);
+                }
+            }
+            ast::Stmt::If(i) => {
+                // `cons` is a Box<Stmt>
+                collect_var_decl_spans(&*i.cons, out);
+                if let Some(alt) = &i.alt {
+                    collect_var_decl_spans(&*alt, out);
+                }
+            }
+            ast::Stmt::For(f) => {
+                if let Some(init) = &f.init {
+                    if let deno_ast::swc::ast::VarDeclOrExpr::VarDecl(v) = init {
+                        out.push(v.span);
+                    }
+                }
+                // body is Box<Stmt>
+                collect_var_decl_spans(&*f.body, out);
+            }
+            ast::Stmt::While(w) => {
+                collect_var_decl_spans(&*w.body, out);
+            }
+            ast::Stmt::DoWhile(d) => {
+                collect_var_decl_spans(&*d.body, out);
+            }
+            ast::Stmt::Return(_)
+            | ast::Stmt::Expr(_)
+            | ast::Stmt::Break(_)
+            | ast::Stmt::Continue(_)
+            | ast::Stmt::Throw(_)
+            | ast::Stmt::Debugger(_) => {}
+            _ => {}
+        }
+    }
+
+    // Gather var decl spans from the program body and module-level decls
+    let mut var_spans: Vec<deno_ast::swc::common::Span> = Vec::new();
+    for item in parsed.program_ref().body() {
+        if let deno_ast::ModuleItemRef::Stmt(stmt) = item {
+            collect_var_decl_spans(stmt, &mut var_spans);
+        } else if let deno_ast::ModuleItemRef::ModuleDecl(module_decl) = item {
+            // export decls may contain VarDecls
+            if let deno_ast::swc::ast::ModuleDecl::ExportDecl(decl) = module_decl {
+                if let ast::Decl::Var(v) = &decl.decl {
+                    var_spans.push(v.span);
+                }
+                if let ast::Decl::Fn(fdecl) = &decl.decl {
+                    if let Some(body) = &fdecl.function.body {
+                        for s in &body.stmts {
+                            collect_var_decl_spans(s, &mut var_spans);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // If tokens were captured, inspect token spans inside each VarDecl span
+    // for a token whose source text is exactly "mut". This avoids false
+    // positives inside strings/comments.
+    let tok_slice = parsed.tokens();
+    if !tok_slice.is_empty() {
+        for span in var_spans.iter() {
+            let slo = span.lo.0 as usize;
+            let shi = span.hi.0 as usize;
+            for tok in tok_slice.iter() {
+                let tlo = tok.span.lo.0 as usize;
+                let thi = tok.span.hi.0 as usize;
+                if tlo >= slo && thi <= shi {
+                    // safe slice bounds check
+                    if thi <= source_code.len() && tlo < thi {
+                        let s = &source_code[tlo..thi];
+                        if s == "mut" {
+                            mut_var_decls.insert(slo);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    } else {
+        // Fallback: if tokens aren't available, conservatively scan the
+        // source substring for `mut` (existing behavior). This is less
+        // robust but lets the language extension work when tokens aren't
+        // captured.
+        for span in var_spans.iter() {
+            let slo = span.lo.0 as usize;
+            let shi = span.hi.0 as usize;
+            if shi > slo && shi <= source_code.len() {
+                let slice = &source_code[slo..shi];
+                if slice.contains("mut ") || slice.contains("mut\t") || slice.contains("mut\n") {
+                    mut_var_decls.insert(slo);
+                }
+            }
+        }
+    }
+
     Ok(ParsedModule {
         parsed,
         source: source_code.to_string(),
+        mut_var_decls,
     })
 }

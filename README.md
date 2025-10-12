@@ -34,7 +34,7 @@ language features:
 ### Prerequisites
 
 - **Rust Toolchain**: Install Rust via [rustup](https://rustup.rs/)
-- **LLVM 18**: Oats requires LLVM version 18
+- **LLVM 18**: Oats is tested with LLVM 18; install development headers and `clang-18`/`llvm-18` packages for your platform
 
 ### Installing LLVM 18
 
@@ -70,17 +70,17 @@ sudo dnf install llvm18 llvm18-devel clang18
 
 3. **Compile and Run:**
 
-   Use the `aot_run` binary to compile your program into a native executable.
+  Use the `toasty` binary to compile your program into a native executable.
    This single command handles everything: compiling your Oats code, building
    the runtime, and linking the final binary.
 
-   ```bash
-   # This will create an executable at ./aot_out/hello
-   cargo run -p oats --bin aot_run -- ./hello.oats
+  ```bash
+  # This will create an executable at ./aot_out/hello (preferred):
+  cargo run -p oats --bin toasty -- ./hello.oats
 
-   # Run your compiled program!
-   ./aot_out/hello
-   ```
+  # Run your compiled program:
+  ./hello
+  ```
 
    You should see `Hello from Oats! 🌾` printed to your console.
 

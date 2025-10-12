@@ -46,7 +46,7 @@ cargo build --workspace
 cargo test --workspace
 
 # Try running an example
-cargo run -p oats --bin aot_run -- examples/add.oats
+cargo run -p oats --bin toasty -- examples/add.oats
 ./aot_out/add
 ```
 
@@ -374,48 +374,3 @@ INSTA_UPDATE=auto cargo test -p oats
 // ❌ Bad - States the obvious
 // Create a pointer to i8
 ```
-
-## Getting Help
-
-### Resources
-
-- **Documentation:** Start with `docs/ARCHITECTURE.md` and `docs/DEVELOPMENT.md`
-- **Examples:** Look at `examples/` for working code
-- **Tests:** See `crates/oats/tests/` for testing patterns
-- **Issues:** Search existing issues for similar problems
-
-### Asking Questions
-
-**Good question:**
-> I'm trying to add support for XYZ feature. I've read the architecture docs
-> and understand the basic pipeline. I'm not sure where to handle this in the
-> codegen - should it be in expr.rs or stmt.rs? Here's what I've tried so far...
-
-**Better to avoid:**
-> How do I add a feature? (too vague)
-> Why doesn't this work? (no context provided)
-
-### Where to Ask
-
-- **GitHub Issues** - Bug reports, feature requests
-- **GitHub Discussions** - Questions, ideas, general discussion
-- **Pull Request Comments** - Specific questions about your PR
-- **Code Comments** - Questions about specific code sections
-
-## Recognition
-
-Contributors are recognized in:
-- Git commit history
-- CONTRIBUTORS.md file (for significant contributions)
-- Release notes (for features/fixes in releases)
-- Project README (for major contributors)
-
-## License
-
-By contributing to Oats, you agree that your contributions will be licensed under the same license as the project (see LICENSE file).
-
----
-
-Thank you for contributing to Oats! 🌾
-
-**Questions?** Open an issue or start a discussion on GitHub.

@@ -242,9 +242,7 @@ pub fn create_codegen<'a>(
         }
     }
 
-    println!("Creating CodeGen for module: {}", module_name);
-    println!("Source length: {}", source.len());
-    println!("Builder initialized: {:?}", builder);
+    // Suppress noisy debug printing in tests.
 
     let parsed_mod_ref = modules.get(module_name).expect("parsed module missing");
 
@@ -275,6 +273,10 @@ pub fn create_codegen<'a>(
         fn_union_unbox_ptr: std::cell::RefCell::new(None),
         fn_rc_weak_inc: std::cell::RefCell::new(None),
         fn_rc_weak_dec: std::cell::RefCell::new(None),
+        const_items: std::cell::RefCell::new(std::collections::HashMap::new()),
+        const_globals: std::cell::RefCell::new(std::collections::HashMap::new()),
+        const_interns: std::cell::RefCell::new(std::collections::HashMap::new()),
+        current_escape_info: std::cell::RefCell::new(None),
         fn_rc_weak_upgrade: std::cell::RefCell::new(None),
         fn_union_get_discriminant: std::cell::RefCell::new(None),
         class_fields: RefCell::new(HashMap::new()),
@@ -298,5 +300,7 @@ pub fn create_codegen<'a>(
         last_expr_is_boxed_union: Cell::new(false),
         global_function_signatures: RefCell::new(HashMap::new()),
         symbol_table: RefCell::new(symbols),
+        nested_generic_fns: RefCell::new(HashMap::new()),
+        monomorphized_map: RefCell::new(HashMap::new()),
     }
 }

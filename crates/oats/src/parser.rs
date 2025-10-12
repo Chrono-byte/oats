@@ -16,7 +16,6 @@
 //!
 //! - **Runtime Recursion Depth**: Maximum recursion depth during execution (32 levels)
 //!   - Enforced in the runtime (`crates/runtime/src/lib.rs::MAX_RECURSION_DEPTH`)
-//!   - Prevents stack overflow from deeply recursive functions
 //!   - Not configurable (hard limit)
 //!
 //! These limits provide defense-in-depth against malicious or malformed input.
@@ -138,7 +137,7 @@ pub fn parse_oats_module(source_code: &str, file_path: Option<&str>) -> Result<P
                 // ensure following char is whitespace
                 let after = j + 3;
                 if after == sbytes.len()
-                    || sbytes.get(after).map_or(true, |b| {
+                    || sbytes.get(after).is_none_or(|b| {
                         *b == b' '
                             || *b == b'\t'
                             || *b == b'\r'
@@ -343,26 +342,7 @@ pub fn parse_oats_module(source_code: &str, file_path: Option<&str>) -> Result<P
                     ),
                 );
             }
-            // Reject usage of `const` in user-supplied files: the language uses
-            // `let` as immutable by default. When `file_path` is None (tests
-            // or parsing snippets), allow `const` so internal tests continue to
-            // work.
-            if file_path.is_some() {
-                if let ast::Stmt::Decl(ast::Decl::Var(vdecl)) = stmt
-                    && matches!(vdecl.kind, deno_ast::swc::ast::VarDeclKind::Const)
-                {
-                    let start = vdecl.span.lo.0 as usize;
-                    return diagnostics::report_error_span_and_bail(
-                        file_path,
-                        source_code,
-                        start,
-                        "the `const` keyword is not allowed; use `let` instead",
-                        Some(
-                            "oats uses `let` as the immutable default; prefer `let` or `let mut` for mutable bindings.",
-                        ),
-                    );
-                }
-            }
+            // (no-op) `const` and `let` are both accepted; `var` is rejected.
             // If it's a function decl, also inspect its body
             if let ast::Stmt::Decl(ast::Decl::Fn(fdecl)) = stmt
                 && let Some(body) = &fdecl.function.body
@@ -406,24 +386,7 @@ pub fn parse_oats_module(source_code: &str, file_path: Option<&str>) -> Result<P
                                 ),
                             );
                         }
-                        // Reject `const` inside function bodies as well (only
-                        // for user-supplied files).
-                        if file_path.is_some() {
-                            if let ast::Stmt::Decl(ast::Decl::Var(vdecl)) = s
-                                && matches!(vdecl.kind, deno_ast::swc::ast::VarDeclKind::Const)
-                            {
-                                let start = vdecl.span.lo.0 as usize;
-                                return diagnostics::report_error_span_and_bail(
-                                    file_path,
-                                    source_code,
-                                    start,
-                                    "the `const` keyword is not allowed; use `let` instead",
-                                    Some(
-                                        "oats uses `let` as the immutable default; prefer `let` or `let mut` for mutable bindings.",
-                                    ),
-                                );
-                            }
-                        }
+                        // (no-op) `const` and `let` are both accepted in function bodies.
                     }
                 }
             }
@@ -447,22 +410,7 @@ pub fn parse_oats_module(source_code: &str, file_path: Option<&str>) -> Result<P
                         ),
                     );
                 }
-                // Reject `const` in export declarations as well (only for
-                // user-supplied files).
-                if file_path.is_some()
-                    && matches!(vdecl.kind, deno_ast::swc::ast::VarDeclKind::Const)
-                {
-                    let start = vdecl.span.lo.0 as usize;
-                    return diagnostics::report_error_span_and_bail(
-                        file_path,
-                        source_code,
-                        start,
-                        "the `const` keyword is not allowed; use `let` instead",
-                        Some(
-                            "oats uses `let` as the immutable default; prefer `let` or `let mut` for mutable bindings.",
-                        ),
-                    );
-                }
+                // (no-op) export declarations can be `let` or `const`; only `var` is rejected.
                 if !has_trailing_semicolon(&vdecl.span, source_code, &parsed) {
                     let start = vdecl.span.lo.0 as usize;
                     return diagnostics::report_error_span_and_bail(
@@ -529,25 +477,25 @@ pub fn parse_oats_module(source_code: &str, file_path: Option<&str>) -> Result<P
             }
             ast::Stmt::If(i) => {
                 // `cons` is a Box<Stmt>
-                collect_var_decl_spans(&*i.cons, out);
+                collect_var_decl_spans(&i.cons, out);
                 if let Some(alt) = &i.alt {
-                    collect_var_decl_spans(&*alt, out);
+                    collect_var_decl_spans(alt, out);
                 }
             }
             ast::Stmt::For(f) => {
-                if let Some(init) = &f.init {
-                    if let deno_ast::swc::ast::VarDeclOrExpr::VarDecl(v) = init {
-                        out.push(v.span);
-                    }
+                if let Some(init) = &f.init
+                    && let deno_ast::swc::ast::VarDeclOrExpr::VarDecl(v) = init
+                {
+                    out.push(v.span);
                 }
                 // body is Box<Stmt>
-                collect_var_decl_spans(&*f.body, out);
+                collect_var_decl_spans(&f.body, out);
             }
             ast::Stmt::While(w) => {
-                collect_var_decl_spans(&*w.body, out);
+                collect_var_decl_spans(&w.body, out);
             }
             ast::Stmt::DoWhile(d) => {
-                collect_var_decl_spans(&*d.body, out);
+                collect_var_decl_spans(&d.body, out);
             }
             ast::Stmt::Return(_)
             | ast::Stmt::Expr(_)
@@ -570,11 +518,11 @@ pub fn parse_oats_module(source_code: &str, file_path: Option<&str>) -> Result<P
                 if let ast::Decl::Var(v) = &decl.decl {
                     var_spans.push(v.span);
                 }
-                if let ast::Decl::Fn(fdecl) = &decl.decl {
-                    if let Some(body) = &fdecl.function.body {
-                        for s in &body.stmts {
-                            collect_var_decl_spans(s, &mut var_spans);
-                        }
+                if let ast::Decl::Fn(fdecl) = &decl.decl
+                    && let Some(body) = &fdecl.function.body
+                {
+                    for s in &body.stmts {
+                        collect_var_decl_spans(s, &mut var_spans);
                     }
                 }
             }

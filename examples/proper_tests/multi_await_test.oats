@@ -7,13 +7,13 @@ export function main(): void {
     async function testMultipleAwaits(): Promise<void> {
         println("Starting multi-await test...");
         
-        const first = await getMessage("First message");
+        let first = await getMessage("First message");
         println(first);
         
-        const second = await getMessage("Second message");
+        let second = await getMessage("Second message");
         println(second);
         
-        const third = await getMessage("Third message");
+        let third = await getMessage("Third message");
         println(third);
         
         println("All awaits completed!");

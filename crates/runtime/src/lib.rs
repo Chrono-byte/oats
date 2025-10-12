@@ -30,9 +30,6 @@ use std::process;
 use std::ptr;
 use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
-use std::thread;
-use std::time::Duration;
-
 // Header flag constants
 // New header layout reserves 16 bits for a weak reference count in bits 33-48.
 const HEADER_STATIC_BIT: u64 = 1u64 << 32;
@@ -43,6 +40,9 @@ const HEADER_WEAK_SHIFT: u64 = 33;
 const HEADER_WEAK_MASK: u64 = 0xffffu64 << HEADER_WEAK_SHIFT; // bits 33-48
 // Type tag bits start at bit 49 (to avoid colliding with weak count)
 const HEADER_TYPE_TAG_SHIFT: u64 = 49;
+// Claim bit embedded in the header to avoid a global claimed-set.
+// We reserve the top-most bit (bit 63) for the collector claim flag.
+const HEADER_CLAIM_BIT: u64 = 1u64 << 63;
 // Flags mask includes everything above the low 32-bit refcount
 const HEADER_FLAGS_MASK: u64 = 0xffffffff00000000u64;
 // Metadata magic used by codegen: ASCII 'OATS' (0x4F415453)
@@ -68,7 +68,7 @@ thread_local! {
 ///
 /// The value of 32 provides reasonable depth for most use cases while preventing
 /// stack exhaustion on typical systems (default stack size ~8MB).
-const MAX_RECURSION_DEPTH: usize = 32;
+const MAX_RECURSION_DEPTH: usize = 128;
 
 // Create a header value for a heap-allocated object with initial refcount
 #[inline]
@@ -89,17 +89,9 @@ fn header_with_weak(h: u64, weak: u64) -> u64 {
     cleared | ((weak & 0xffffu64) << HEADER_WEAK_SHIFT)
 }
 
-// --- Cycle collector scaffold (root list) ---
-// This provides a simple, thread-safe root list used by the future
-// cycle-collector. For Milestone 1 we implement a background thread
-// that periodically drains the root list and logs activity. The full
-// trial-deletion algorithm will be implemented later.
-
-struct Collector {
-    // store raw pointers as usize to satisfy Send/Sync requirements for static storage
-    queue: Mutex<Vec<usize>>,
-    cv: Condvar,
-}
+// Collector implementation lives in a separate module.
+mod collector;
+use crate::collector::Collector;
 
 static COLLECTOR: OnceLock<Arc<Collector>> = OnceLock::new();
 
@@ -209,10 +201,7 @@ fn init_runtime_log() {
 fn init_collector() -> Arc<Collector> {
     COLLECTOR
         .get_or_init(|| {
-            let collector = Arc::new(Collector {
-                queue: Mutex::new(Vec::new()),
-                cv: Condvar::new(),
-            });
+            let collector = Collector::new();
 
             // Configure collector logging from environment (disabled by default).
             if std::env::var("OATS_COLLECTOR_LOG")
@@ -222,13 +211,47 @@ fn init_collector() -> Arc<Collector> {
                 COLLECTOR_LOG.store(true, Ordering::Relaxed);
             }
 
-            // Spawn background thread to process root candidates.
-            let c = collector.clone();
-            thread::spawn(move || collector_thread(c));
+            collector.start();
 
             collector
         })
         .clone()
+}
+
+/// Extract the runtime type tag from a full header value while masking out
+/// the embedded claim bit. This ensures other helpers can test type tags
+/// reliably even when the collector has temporarily set the claim bit.
+#[inline]
+pub fn header_type_tag(h: u64) -> u64 {
+    let raw = h >> HEADER_TYPE_TAG_SHIFT;
+    // Remove the claim bit if present in the shifted range.
+    let claim_shifted = HEADER_CLAIM_BIT >> HEADER_TYPE_TAG_SHIFT;
+    raw & !claim_shifted
+}
+
+// FFI: collector control helpers -------------------------------------------------
+
+/// Initialize the background collector (idempotent).
+#[unsafe(no_mangle)]
+pub extern "C" fn collector_init() {
+    let _ = init_collector();
+}
+
+/// Shutdown the background collector worker. This stops the background thread
+/// but does not reclaim the OnceLock-held instance. Idempotent.
+#[unsafe(no_mangle)]
+pub extern "C" fn collector_shutdown() {
+    let c = init_collector();
+    c.stop();
+}
+
+/// Force a synchronous collection pass: drain queued roots and process them
+/// synchronously on the calling thread. This is useful for tests.
+#[unsafe(no_mangle)]
+pub extern "C" fn collector_collect_now() {
+    let c = init_collector();
+    let roots = c.drain_now();
+    crate::collector::Collector::process_roots(&roots);
 }
 
 // --- Safety helpers for collector traversal ---
@@ -318,365 +341,14 @@ unsafe fn validate_meta_block(meta: *mut u64, max_len: usize) -> bool {
 // (validate_meta_block unit tests were moved into the consolidated
 // tests module at the end of this file to avoid duplicate `mod tests`.)
 
-fn collector_thread(col: Arc<Collector>) {
-    loop {
-        // Wait for work or timeout
-        let mut guard = col.queue.lock().unwrap();
-        while guard.is_empty() {
-            let (g, timeout_res) = col.cv.wait_timeout(guard, Duration::from_secs(1)).unwrap();
-            guard = g;
-            if timeout_res.timed_out() && guard.is_empty() {
-                // timed out with no work; loop around and wait again
-                continue;
-            }
-        }
-
-        // Drain the queue into a local vector to minimize lock hold time
-        let mut drained_usize: Vec<usize> = Vec::new();
-        std::mem::swap(&mut drained_usize, &mut *guard);
-        // cast back to pointers for local use
-        let drained: Vec<*mut c_void> = drained_usize
-            .into_iter()
-            .map(|u| u as *mut c_void)
-            .collect();
-        drop(guard);
-
-        // Inspect each candidate non-destructively: resolve base, read header and log counts.
-        for obj_ptr in drained.iter() {
-            if obj_ptr.is_null() {
-                continue;
-            }
-            unsafe {
-                // Resolve base pointer (handles string data pointers)
-                let base = get_object_base(*obj_ptr);
-                if base.is_null() {
-                    if COLLECTOR_LOG.load(Ordering::Relaxed) {
-                        let _ = io::stderr()
-                            .write_all(b"[oats runtime] collector: invalid object pointer\n");
-                    }
-                    continue;
-                }
-
-                let header = base as *const AtomicU64;
-                // Load header atomically (relaxed for inspection)
-                let h = (*header).load(Ordering::Relaxed);
-                let strong = h & HEADER_RC_MASK;
-                let is_static = (h & HEADER_STATIC_BIT) != 0;
-                let weak = header_get_weak_bits(h);
-                let type_tag = (h >> HEADER_TYPE_TAG_SHIFT) as u32;
-
-                if COLLECTOR_LOG.load(Ordering::Relaxed) {
-                    let _ = io::stderr().write_all(
-                        format!(
-                            "[oats runtime] collector: obj={:p} base={:p} strong={} weak={} static={} type_tag={}\n",
-                            *obj_ptr, base, strong, weak, is_static, type_tag
-                        )
-                        .as_bytes(),
-                    );
-                }
-            }
-        }
-
-        // Implement a simple trial-deletion collector:
-        // For each candidate, perform a non-destructive simulation of
-        // decrementing reference counts across the reachable subgraph.
-        // Any objects whose simulated count reaches zero are considered
-        // collectible; we then attempt to claim (CAS strong->0) and
-        // destruct/free them.
-        // Note: This is a conservative, best-effort implementation for
-        // the prototype collector.
-        // Build simulation maps for all drained candidates
-        use std::collections::{HashMap, VecDeque};
-
-        // Helper: read strong count and type_tag for an object
-        //
-        // Safety contract:
-        // - `obj` must be a pointer to a runtime heap object base (i.e., points
-        //   at the start of the header). If `obj` is a string-data pointer
-        //   (offset +16), callers must resolve the base before calling.
-        // - The function performs an atomic load of the header; callers should
-        //   expect that concurrently freed memory may produce stale or
-        //   surprising results. Use this for conservative inspection only.
-        unsafe fn read_header_info(obj: *mut c_void) -> Option<(u64, u32)> {
-            if obj.is_null() {
-                return None;
-            }
-            // Raw pointer deref and atomic loads are unsafe operations; wrap
-            // them in an explicit unsafe block to make the operation site
-            // obvious for reviewers. Caller responsibility: ensure `obj` is a
-            // valid heap object base (not a dangling pointer).
-            unsafe {
-                let header = obj as *mut AtomicU64;
-                let h = (*header).load(Ordering::Acquire);
-                let strong = h & HEADER_RC_MASK;
-                let type_tag = (h >> HEADER_TYPE_TAG_SHIFT) as u32;
-                Some((strong, type_tag))
-            }
-        }
-
-        // Helper: gather neighbors (outgoing pointers) for an object
-        //
-        // Safety contract:
-        // - `obj` must be a pointer to a runtime heap object base and not
-        //   already freed. The function performs raw pointer arithmetic and
-        //   reads offsets described by metadata blobs. Callers must ensure the
-        //   object was allocated by this runtime and follows the expected
-        //   layout. `validate_meta_block` is used prior to dereferencing
-        //   metadata pointers but is conservative and not a correctness proof.
-        // - The returned vector contains raw pointers (possibly string-data or
-        //   object bases). Callers must treat them as untrusted and null-check
-        //   before use.
-        unsafe fn gather_neighbors(obj: *mut c_void) -> Vec<*mut c_void> {
-            let mut res: Vec<*mut c_void> = Vec::new();
-            if obj.is_null() {
-                return res;
-            }
-            // All raw pointer arithmetic and derefs are explicitly wrapped in
-            // unsafe blocks to make the intent clear and satisfy the compiler.
-            unsafe {
-                let header = obj as *mut AtomicU64;
-                let h = (*header).load(Ordering::Relaxed);
-                let type_tag = (h >> HEADER_TYPE_TAG_SHIFT) as u32;
-
-                if type_tag == 1 {
-                    // union object layout: [header][dtor_ptr][discrim][payload]
-                    // Offsets are fixed for union layout. We read the discriminator
-                    // conservatively and only attempt to read payload when it
-                    // indicates a pointer payload.
-                    let discrim_ptr = (obj as *mut u8).add(16) as *const u64;
-                    let discrim = *discrim_ptr;
-                    if discrim == 1 {
-                        // pointer payload at +24
-                        let payload_ptr_ptr = (obj as *mut u8).add(24) as *mut *mut c_void;
-                        let payload = *payload_ptr_ptr;
-                        if !payload.is_null() {
-                            res.push(payload);
-                        }
-                    }
-                    return res;
-                }
-
-                if type_tag == 2 {
-                    // class metadata pointer stored at +8: points to { u64 magic, u64 len, [len x u64 offsets] }
-                    let meta_ptr_ptr = (obj as *mut u8).add(8) as *mut *mut u64;
-                    let meta = *meta_ptr_ptr;
-                    if meta.is_null() {
-                        if COLLECTOR_LOG.load(Ordering::Relaxed) {
-                            let _ = io::stderr()
-                                .write_all(b"[oats runtime] collector: meta pointer null\n");
-                        }
-                        return res;
-                    }
-                    // Validate metadata block conservatively before deref
-                    if !validate_meta_block(meta, 256) {
-                        if COLLECTOR_LOG.load(Ordering::Relaxed) {
-                            let _ = io::stderr().write_all(
-                                format!("[oats runtime] collector: invalid meta at {:p}\n", meta)
-                                    .as_bytes(),
-                            );
-                        }
-                        return res;
-                    }
-                    // meta[0] = magic, meta[1] = len, offsets start at meta[2]
-                    let meta_i32_ptr = meta.add(1) as *const i32;
-                    let len = *meta as u32 as usize & 0xffffffffusize; // len encoded in low 32 bits of meta0
-                    if COLLECTOR_LOG.load(Ordering::Relaxed) {
-                        let _ = io::stderr().write_all(
-                            format!("[oats runtime] collector: meta at {:p} len={}\n", meta, len)
-                                .as_bytes(),
-                        );
-                    }
-                    for i in 0..len {
-                        let off_i32 = *meta_i32_ptr.add(i);
-                        let off = off_i32 as isize as usize;
-                        if COLLECTOR_LOG.load(Ordering::Relaxed) {
-                            let _ = io::stderr().write_all(
-                                format!(
-                                    "[oats runtime] collector: field offset {} -> {}\n",
-                                    i, off
-                                )
-                                .as_bytes(),
-                            );
-                        }
-                        let field_addr = (obj as *mut u8).add(off) as *mut *mut c_void;
-                        let p = *field_addr;
-                        if !p.is_null() {
-                            res.push(p);
-                        }
-                    }
-                    return res;
-                }
-            }
-
-            // Fallback: no neighbors known for other types
-            res
-        }
-
-        // Simulation and collection per drained candidate
-        for root in drained.iter() {
-            let root_ptr = *root;
-            if root_ptr.is_null() {
-                continue;
-            }
-
-            // Simulation map: pointer usize -> simulated strong count
-            let mut sim: HashMap<usize, u64> = HashMap::new();
-            let mut stack: VecDeque<*mut c_void> = VecDeque::new();
-
-            // Seed with root: read real strong count
-            if let Some((strong, _tag)) = unsafe { read_header_info(root_ptr) } {
-                if strong == 0 {
-                    continue;
-                }
-                sim.insert(root_ptr as usize, strong);
-                // trial-decrement root by one
-                let newr = strong.saturating_sub(1);
-                sim.insert(root_ptr as usize, newr);
-                if newr == 0 {
-                    stack.push_back(root_ptr);
-                }
-            } else {
-                continue;
-            }
-
-            // Propagate trial-decrements
-            while let Some(obj) = stack.pop_front() {
-                // For each outgoing neighbor, ensure it has an entry in sim and decrement
-                let neighbors = unsafe { gather_neighbors(obj) };
-                for nbr in neighbors.into_iter() {
-                    let key = nbr as usize;
-                    let cur = if let Some(v) = sim.get(&key) {
-                        *v
-                    } else {
-                        // read real header count
-                        if let Some((s, _)) = unsafe { read_header_info(nbr) } {
-                            sim.insert(key, s);
-                            s
-                        } else {
-                            continue;
-                        }
-                    };
-                    let newc = cur.saturating_sub(1);
-                    // update
-                    sim.insert(key, newc);
-                    if newc == 0 {
-                        // schedule neighbor for further traversal
-                        stack.push_back(nbr);
-                    }
-                }
-            }
-
-            // Determine collectible objects: those with simulated count == 0
-            let collectible: Vec<*mut c_void> = sim
-                .iter()
-                .filter_map(|(k, v)| {
-                    if *v == 0 {
-                        Some(*k as *mut c_void)
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-
-            if collectible.is_empty() {
-                continue;
-            }
-
-            // Sweep: attempt to claim and destroy each collectible object
-            for obj in collectible.into_iter() {
-                if obj.is_null() {
-                    continue;
-                }
-                // Perform unsafe operations inside a dedicated block
-                unsafe {
-                    let header_ptr = obj as *mut AtomicU64;
-                    // Try to atomically set strong count to 0 (claiming object)
-                    loop {
-                        let old_header = (*header_ptr).load(Ordering::Acquire);
-                        let strong = old_header & HEADER_RC_MASK;
-                        if strong == 0 {
-                            // already zero (someone else claimed/collected)
-                            break;
-                        }
-                        let new_header = old_header & HEADER_FLAGS_MASK;
-                        match (*header_ptr).compare_exchange_weak(
-                            old_header,
-                            new_header,
-                            Ordering::AcqRel,
-                            Ordering::Relaxed,
-                        ) {
-                            Ok(_) => {
-                                // We claimed the object. Run destructor-like cleanup.
-                                let type_tag = (old_header >> HEADER_TYPE_TAG_SHIFT) as u32;
-                                if type_tag == 1 {
-                                    // union: read dtor ptr and call it if present
-                                    let dtor_ptr_ptr = (obj as *mut u8)
-                                        .add(std::mem::size_of::<u64>())
-                                        as *mut *mut c_void;
-                                    let dtor_raw = *dtor_ptr_ptr;
-                                    if !dtor_raw.is_null() {
-                                        let dtor: extern "C" fn(*mut c_void) =
-                                            std::mem::transmute(dtor_raw);
-                                        dtor(obj);
-                                    }
-                                } else if type_tag == 2 {
-                                    // class: iterate pointer fields and rc_dec them
-                                    let meta_ptr_ptr = (obj as *mut u8).add(8) as *mut *mut u64;
-                                    let meta = *meta_ptr_ptr;
-                                    if meta.is_null() {
-                                        // no metadata; nothing we can do safely
-                                    } else if validate_meta_block(meta, 256) {
-                                        let meta_i32_ptr = meta.add(1) as *const i32;
-                                        let len = *meta as u32 as usize & 0xffffffffusize;
-                                        for i in 0..len {
-                                            let off_i32 = *meta_i32_ptr.add(i);
-                                            let off = off_i32 as isize as usize;
-                                            let field_addr =
-                                                (obj as *mut u8).add(off) as *mut *mut c_void;
-                                            let p = *field_addr;
-                                            if !p.is_null() {
-                                                // drop owned reference
-                                                rc_dec(p);
-                                            }
-                                        }
-                                    } else {
-                                        // metadata invalid; skip to avoid UB
-                                    }
-                                }
-
-                                // After destructor effects, decrement weak count on control block
-                                rc_weak_dec(obj);
-                                break;
-                            }
-                            Err(_) => {
-                                // Retry or bail if header changed to non-zero
-                                let cur = (*header_ptr).load(Ordering::Acquire);
-                                let cur_strong = cur & HEADER_RC_MASK;
-                                if cur_strong != 0 {
-                                    // lost claim; abort destroying this object
-                                    break;
-                                } else {
-                                    // retry
-                                    continue;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
+// The trial-deletion collector implementation was moved into `collector.rs`.
 
 fn add_root_candidate(p: *mut c_void) {
     if p.is_null() {
         return;
     }
     let col = init_collector();
-    let mut guard = col.queue.lock().unwrap();
-    guard.push(p as usize);
-    // Wake the collector to process candidates in a timely manner.
-    col.cv.notify_one();
+    col.push_root(p as usize);
 }
 
 // Test helper: allocate a tiny control block and enqueue it for collector inspection.
@@ -891,7 +563,7 @@ pub unsafe extern "C" fn rc_dec_str(data: *mut c_char) {
 /// # Safety
 /// Caller must not exceed the allocated size when writing to the returned pointer.
 #[unsafe(no_mangle)]
-pub extern "C" fn runtime_malloc(size: size_t) -> *mut c_void {
+pub fn runtime_malloc(size: size_t) -> *mut c_void {
     // Allocate size + 8 bytes of bookkeeping. Return pointer to the
     // usable area (bookkeeping precedes returned pointer). The bookkeeping
     // stores the total allocation size as a u64 so deallocation can find the
@@ -943,7 +615,7 @@ pub extern "C" fn runtime_malloc(size: size_t) -> *mut c_void {
 /// allocator) and not already freed. Freeing invalid or non-owned pointers is
 /// undefined behavior.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn runtime_free(p: *mut c_void) {
+pub unsafe fn runtime_free(p: *mut c_void) {
     unsafe {
         if p.is_null() {
             return;
@@ -973,7 +645,7 @@ pub unsafe extern "C" fn runtime_free(p: *mut c_void) {
 /// `s` must be a valid pointer to a nul-terminated C string. Passing an
 /// invalid pointer or non-nul-terminated memory is undefined behavior.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn runtime_strlen(s: *const c_char) -> size_t {
+pub unsafe fn runtime_strlen(s: *const c_char) -> size_t {
     if s.is_null() {
         return 0;
     }
@@ -991,7 +663,7 @@ pub unsafe extern "C" fn runtime_strlen(s: *const c_char) -> size_t {
 /// # Safety
 /// `s` must point to a valid nul-terminated C string.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn str_dup(s: *const c_char) -> *mut c_char {
+pub unsafe fn str_dup(s: *const c_char) -> *mut c_char {
     unsafe {
         if s.is_null() {
             return ptr::null_mut();
@@ -1019,7 +691,7 @@ pub unsafe extern "C" fn str_dup(s: *const c_char) -> *mut c_char {
 /// # Security
 /// Uses checked arithmetic to prevent integer overflow when computing total length.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn str_concat(a: *const c_char, b: *const c_char) -> *mut c_char {
+pub unsafe fn str_concat(a: *const c_char, b: *const c_char) -> *mut c_char {
     unsafe {
         if a.is_null() || b.is_null() {
             return ptr::null_mut();
@@ -2286,6 +1958,10 @@ pub unsafe extern "C" fn rc_weak_dec(p: *mut c_void) {
                     if strong == 0 && weak_after == 0 {
                         // As an extra barrier, ensure destructor effects are visible
                         std::sync::atomic::fence(Ordering::Acquire);
+                        // Clear any claim bit before freeing to avoid other threads
+                        // attempting to access the header after we free it.
+                        let header_atomic = obj_ptr as *mut AtomicU64;
+                        let _ = (*header_atomic).fetch_and(!HEADER_CLAIM_BIT, Ordering::AcqRel);
                         runtime_free(obj_ptr);
                     }
                     break;
@@ -2349,7 +2025,7 @@ pub unsafe extern "C" fn rc_weak_upgrade(p: *mut c_void) -> *mut c_void {
 /// Reads the discriminant at offset +16 and if the payload is a pointer
 /// (discriminant == 1) calls `rc_dec` on the stored pointer to release
 /// the nested object reference.
-extern "C" fn union_dtor(obj_ptr: *mut c_void) {
+fn union_dtor(obj_ptr: *mut c_void) {
     if obj_ptr.is_null() {
         return;
     }
@@ -2788,7 +2464,7 @@ mod tests {
 
     static CALLED: AtomicBool = AtomicBool::new(false);
 
-    extern "C" fn my_dtor(p: *mut c_void) {
+    fn my_dtor(p: *mut c_void) {
         let _ = p;
         CALLED.store(true, Ordering::SeqCst);
     }

@@ -31,7 +31,7 @@ fn parser_reports_missing_semicolon_with_hint() -> Result<()> {
 fn for_of_lowering_uses_array_helpers() -> Result<()> {
     let src = r#"
 export function main(): number {
-  let s = 0;
+  let mut s = 0;
   for (let v of [1,2,3]) {
     s = s + v;
   }

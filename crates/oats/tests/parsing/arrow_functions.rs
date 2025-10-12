@@ -4,7 +4,7 @@ use anyhow::Result;
 #[test]
 fn parse_simple_arrow_function() -> Result<()> {
     let src = r#"
-        const add = (x: number, y: number): number => x + y;
+        let add = (x: number, y: number): number => x + y;
         
         export function main(): number {
             let result = add(2, 3);
@@ -50,7 +50,7 @@ fn parse_simple_arrow_function() -> Result<()> {
 #[test]
 fn parse_arrow_with_block_body() -> Result<()> {
     let src = r#"
-        const compute = (x: number): number => {
+        let compute = (x: number): number => {
             let doubled = x * 2;
             return doubled + 1;
         };

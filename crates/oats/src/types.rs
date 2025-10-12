@@ -110,21 +110,25 @@ pub fn map_ts_type(ty: &ast::TsType) -> Option<OatsType> {
             ast::TsKeywordTypeKind::TsNumberKeyword => Some(OatsType::Number),
             ast::TsKeywordTypeKind::TsVoidKeyword => Some(OatsType::Void),
             ast::TsKeywordTypeKind::TsBooleanKeyword => Some(OatsType::Boolean),
+            // `undefined` behaves similarly to `void` at the ABI level; we
+            // represent it as `Void` here but special-case unions like
+            // `T | undefined` to map to `Option<T>` below.
+            ast::TsKeywordTypeKind::TsUndefinedKeyword => Some(OatsType::Void),
             ast::TsKeywordTypeKind::TsStringKeyword => Some(OatsType::String),
             _ => None,
         },
         ast::TsType::TsTypeRef(type_ref) => {
             if let Some(ident) = type_ref.type_name.as_ident() {
                 // Check for generic classes or functions
-                if ident.sym.as_ref() == "Generic" {
-                    if let Some(type_params) = &type_ref.type_params {
-                        let mapped_params: Vec<_> = type_params
-                            .params
-                            .iter()
-                            .filter_map(|param| map_ts_type(param))
-                            .collect();
-                        return Some(OatsType::Generic(mapped_params));
-                    }
+                if ident.sym.as_ref() == "Generic"
+                    && let Some(type_params) = &type_ref.type_params
+                {
+                    let mapped_params: Vec<_> = type_params
+                        .params
+                        .iter()
+                        .filter_map(|param| map_ts_type(param))
+                        .collect();
+                    return Some(OatsType::Generic(mapped_params));
                 }
                 // Check if this is a Promise<T> type
                 if ident.sym.as_ref() == "Promise" {
@@ -138,7 +142,13 @@ pub fn map_ts_type(ty: &ast::TsType) -> Option<OatsType> {
                     // Promise without type parameter defaults to Promise<void>
                     return Some(OatsType::Promise(Box::new(OatsType::Void)));
                 }
-                // Otherwise, it's a nominal type like Foo -> map to NominalStruct("Foo")
+                // Otherwise, it's a nominal type like Foo -> map to NominalStruct("Foo").
+                // If the identifier is a bare type parameter (e.g. `T`) with no
+                // type arguments we don't have a concrete mapping at this phase.
+                // Return a placeholder `Generic` value so union/optional return
+                // annotations like `T | undefined` can be accepted by the
+                // strictness checker. Generic specialization happens later in
+                // the pipeline.
                 // Support generic Array<T> written as Array<T>
                 if ident.sym.as_ref() == "Array" {
                     if let Some(type_params) = &type_ref.type_params
@@ -169,7 +179,14 @@ pub fn map_ts_type(ty: &ast::TsType) -> Option<OatsType> {
                     }
                     return None;
                 }
-                return Some(OatsType::NominalStruct(ident.sym.to_string()));
+                // If there are no explicit type parameters, assume a nominal
+                // struct; otherwise, treat unknown bare idents as a placeholder
+                // Generic so nested generic signatures can be represented.
+                if type_ref.type_params.is_none() {
+                    return Some(OatsType::NominalStruct(ident.sym.to_string()));
+                }
+                // Bare generic type parameter (e.g. `T`) -> placeholder
+                return Some(OatsType::Generic(vec![]));
             }
             None
         }
@@ -179,22 +196,25 @@ pub fn map_ts_type(ty: &ast::TsType) -> Option<OatsType> {
             if let ast::TsUnionOrIntersectionType::TsUnionType(un) = ut {
                 // Special-case common pattern: `T | null` -> Option<T>
                 if un.types.len() == 2 {
-                    // Try to detect `null` in one of the union arms and map the other
-                    // arm to an OatsType; if successful, return Option<that_type>.
-                    let mut seen_null = false;
+                    // Try to detect `null` or `undefined` in one of the union
+                    // arms and map the other arm to an OatsType; if
+                    // successful, return Option<that_type>.
+                    let mut seen_nullish = false;
                     let mut other: Option<&ast::TsType> = None;
                     for tbox in &un.types {
                         let t = &**tbox;
                         if let ast::TsType::TsKeywordType(k) = t {
                             use deno_ast::swc::ast::TsKeywordTypeKind;
-                            if matches!(k.kind, TsKeywordTypeKind::TsNullKeyword) {
-                                seen_null = true;
+                            if matches!(k.kind, TsKeywordTypeKind::TsNullKeyword)
+                                || matches!(k.kind, TsKeywordTypeKind::TsUndefinedKeyword)
+                            {
+                                seen_nullish = true;
                                 continue;
                             }
                         }
                         other = Some(t);
                     }
-                    if seen_null
+                    if seen_nullish
                         && let Some(o) = other
                         && let Some(mapped) = map_ts_type(o)
                     {
@@ -253,6 +273,114 @@ pub fn map_ts_type(ty: &ast::TsType) -> Option<OatsType> {
                         continue;
                     }
                     // default when type can't be mapped
+                    fields.push((fname, OatsType::Number));
+                }
+            }
+            Some(OatsType::StructLiteral(fields))
+        }
+        _ => None,
+    }
+}
+
+/// Map a TypeScript AST type to an OatsType while applying a substitution
+/// map for type-parameters. The `subst` map maps type-parameter identifier
+/// names (e.g. "T") to concrete `OatsType` values. When a TsTypeRef refers
+/// to a name present in `subst` it will be replaced with the mapped type.
+pub fn map_ts_type_with_subst(
+    ty: &ast::TsType,
+    subst: &std::collections::HashMap<String, OatsType>,
+) -> Option<OatsType> {
+    use deno_ast::swc::ast;
+    match ty {
+        ast::TsType::TsKeywordType(_) => map_ts_type(ty),
+        ast::TsType::TsTypeRef(type_ref) => {
+            if let Some(ident) = type_ref.type_name.as_ident() {
+                let name = ident.sym.to_string();
+                // If this ident is a substituted type-parameter, return it
+                if let Some(mapped) = subst.get(&name) {
+                    return Some(mapped.clone());
+                }
+                // Otherwise fall back to existing map rules for known generics
+                // and nominal types. If there are type arguments, map them
+                // recursively using the same substitution map.
+                if ident.sym.as_ref() == "Promise" {
+                    if let Some(type_params) = &type_ref.type_params
+                        && let Some(first_param) = type_params.params.first()
+                    {
+                        return map_ts_type_with_subst(first_param, subst)
+                            .map(|inner| OatsType::Promise(Box::new(inner)));
+                    }
+                    return Some(OatsType::Promise(Box::new(OatsType::Void)));
+                }
+                if ident.sym.as_ref() == "Array" {
+                    if let Some(type_params) = &type_ref.type_params
+                        && let Some(first_param) = type_params.params.first()
+                    {
+                        return map_ts_type_with_subst(first_param, subst)
+                            .map(|inner| OatsType::Array(Box::new(inner)));
+                    }
+                    return Some(OatsType::Array(Box::new(OatsType::Number)));
+                }
+                if ident.sym.as_ref() == "Weak" {
+                    if let Some(type_params) = &type_ref.type_params
+                        && let Some(first_param) = type_params.params.first()
+                    {
+                        return map_ts_type_with_subst(first_param, subst)
+                            .map(|inner| OatsType::Weak(Box::new(inner)));
+                    }
+                    return None;
+                }
+                if ident.sym.as_ref() == "Option" {
+                    if let Some(type_params) = &type_ref.type_params
+                        && let Some(first_param) = type_params.params.first()
+                    {
+                        return map_ts_type_with_subst(first_param, subst)
+                            .map(|inner| OatsType::Option(Box::new(inner)));
+                    }
+                    return None;
+                }
+
+                // If there are no explicit type parameters, assume a nominal
+                // struct; if there are type parameters but the ident isn't a
+                // special generic we fallback to a placeholder Generic so
+                // downstream phases can represent nested generics.
+                if type_ref.type_params.is_none() {
+                    return Some(OatsType::NominalStruct(name));
+                }
+                return Some(OatsType::Generic(vec![]));
+            }
+            None
+        }
+        ast::TsType::TsUnionOrIntersectionType(_) => map_ts_type(ty),
+        ast::TsType::TsArrayType(arr) => map_ts_type_with_subst(&arr.elem_type, subst)
+            .map(|elem| OatsType::Array(Box::new(elem))),
+        ast::TsType::TsTupleType(tuple) => {
+            let mut elems: Vec<OatsType> = Vec::new();
+            for elem in &tuple.elem_types {
+                if let Some(mapped) = map_ts_type_with_subst(&elem.ty, subst) {
+                    elems.push(mapped);
+                } else {
+                    return None;
+                }
+            }
+            if elems.is_empty() {
+                return None;
+            }
+            Some(OatsType::Tuple(elems))
+        }
+        ast::TsType::TsTypeLit(typelit) => {
+            let mut fields: Vec<(String, OatsType)> = Vec::new();
+            for member in &typelit.members {
+                if let ast::TsTypeElement::TsPropertySignature(prop) = member
+                    && let ast::Expr::Ident(id) = &*prop.key
+                {
+                    let fname = id.sym.to_string();
+                    if let Some(type_ann) = &prop.type_ann
+                        && let Some(mapped) = map_ts_type_with_subst(&type_ann.type_ann, subst)
+                    {
+                        fields.push((fname, mapped));
+                        continue;
+                    }
                     fields.push((fname, OatsType::Number));
                 }
             }
@@ -361,6 +489,43 @@ pub fn infer_type(ts_type: Option<&ast::TsType>, expr: Option<&ast::Expr>) -> Oa
 
     // Fallback: default to Number (most common type)
     OatsType::Number
+}
+
+/// Apply a simple inferred substitution to an OatsType: if the type contains
+/// a `Generic` placeholder or Option<Generic> use the first `inferred` type
+/// as a heuristic replacement. This is used as a last-resort to resolve
+/// generics during monomorphization when we couldn't map explicit type
+/// parameters by name.
+pub fn apply_inferred_subst(ty: &OatsType, inferred: &[OatsType]) -> OatsType {
+    match ty {
+        OatsType::Generic(_) => {
+            if !inferred.is_empty() {
+                inferred[0].clone()
+            } else {
+                OatsType::Number
+            }
+        }
+        OatsType::Option(inner) => match &**inner {
+            OatsType::Generic(_) => {
+                if !inferred.is_empty() {
+                    OatsType::Option(Box::new(inferred[0].clone()))
+                } else {
+                    OatsType::Option(Box::new(OatsType::Number))
+                }
+            }
+            other => OatsType::Option(Box::new(apply_inferred_subst(other, inferred))),
+        },
+        OatsType::Array(inner) => OatsType::Array(Box::new(apply_inferred_subst(inner, inferred))),
+        OatsType::Union(parts) => {
+            let new_parts = parts.iter().map(|p| apply_inferred_subst(p, inferred)).collect();
+            OatsType::Union(new_parts)
+        }
+        OatsType::Tuple(elems) => OatsType::Tuple(elems.iter().map(|e| apply_inferred_subst(e, inferred)).collect()),
+        OatsType::Weak(inner) => OatsType::Weak(Box::new(apply_inferred_subst(inner, inferred))),
+        OatsType::Promise(inner) => OatsType::Promise(Box::new(apply_inferred_subst(inner, inferred))),
+        OatsType::StructLiteral(fields) => OatsType::StructLiteral(fields.iter().map(|(n, t)| (n.clone(), apply_inferred_subst(t, inferred))).collect()),
+        other => other.clone(),
+    }
 }
 
 impl OatsType {

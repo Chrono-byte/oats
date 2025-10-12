@@ -18,7 +18,7 @@ export function main(): void {
         }
     }
 
-    const buddy = new Dog("Buddy");
+    let buddy = new Dog("Buddy");
     buddy.bark();
     buddy.move(10);
 

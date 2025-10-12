@@ -394,7 +394,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             // Identifier lookup and TDZ handling
             //
             // Identifiers can refer to function parameters (which are
-            // passed in via `param_map`) or to locals created by `let`/`const`.
+            // passed in via `param_map`) or to locals created by `let` bindings.
             // For locals we track an `initialized` flag and trap (emit
             // unreachable) for Temporal Dead Zone reads. We also record the
             // origin local name for the last-lowered expression which helps
@@ -407,6 +407,82 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     && let Some(pv) = function.get_nth_param(*idx)
                 {
                     return Ok(pv);
+                }
+
+                // Next, check if the identifier is a compile-time const we evaluated earlier.
+                if let Some(cv) = self.const_items.borrow().get(&name) {
+                    match cv {
+                        crate::codegen::const_eval::ConstValue::Number(n) => {
+                            let fv = self.f64_t.const_float(*n);
+                            return Ok(fv.as_basic_value_enum());
+                        }
+                        crate::codegen::const_eval::ConstValue::Bool(b) => {
+                            let iv = self.bool_t.const_int(if *b { 1 } else { 0 }, false);
+                            return Ok(iv.as_basic_value_enum());
+                        }
+                        crate::codegen::const_eval::ConstValue::Str(s) => {
+                            // Intern the string literal and return its pointer
+                            if let Some(ptr_val) = self.string_literals.borrow().get(s) {
+                                return Ok(ptr_val.as_basic_value_enum());
+                            }
+
+                            // Create the same global struct as the literal-lowering code
+                            let bytes = s.as_bytes();
+                            let str_len = bytes.len();
+                            let header_ty = self.i64_t;
+                            let len_ty = self.i64_t;
+                            let data_ty = self.context.i8_type().array_type((str_len + 1) as u32);
+                            let struct_ty = self.context.struct_type(
+                                &[header_ty.into(), len_ty.into(), data_ty.into()],
+                                false,
+                            );
+
+                            let id = self.next_str_id.get();
+                            let name = format!("strlit.{}", id);
+                            self.next_str_id.set(id.wrapping_add(1));
+                            let gv = self.module.add_global(struct_ty, None, &name);
+
+                            let static_header = self.i64_t.const_int(1u64 << 32, false);
+                            let length_val = self.i64_t.const_int(str_len as u64, false);
+                            let data_val = self.context.const_string(bytes, true);
+                            let initializer = self.context.const_struct(
+                                &[static_header.into(), length_val.into(), data_val.into()],
+                                false,
+                            );
+                            gv.set_initializer(&initializer);
+
+                            let zero = self.i32_t.const_int(0, false);
+                            let two = self.i32_t.const_int(2, false);
+                            let indices = &[zero, two, zero];
+                            let gep = unsafe {
+                                self.builder.build_gep(
+                                    struct_ty,
+                                    gv.as_pointer_value(),
+                                    indices,
+                                    "strptr",
+                                )
+                            };
+                            if let Ok(ptr) = gep {
+                                self.string_literals.borrow_mut().insert(s.clone(), ptr);
+                                return Ok(ptr.as_basic_value_enum());
+                            }
+                            return Err(Diagnostic::simple_with_span(
+                                "failed to lower const string literal",
+                                id as usize,
+                            ));
+                        }
+                        crate::codegen::const_eval::ConstValue::Array(_)
+                        | crate::codegen::const_eval::ConstValue::Object(_) => {
+                            // If we emitted a global for this const, return its pointer
+                            if let Some(gptr) = self.const_globals.borrow().get(&name) {
+                                return Ok(gptr.as_basic_value_enum());
+                            }
+                            return Err(Diagnostic::simple_with_span(
+                                "const global not emitted",
+                                id.span.lo.0 as usize,
+                            ));
+                        }
+                    }
                 }
 
                 // If not a parameter, then it must be a local variable (`let` or `const`).
@@ -540,12 +616,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         let arg_name = ident.sym.to_string();
                                         if let Some((_, _, _, _, _, _, oats_type)) =
                                             self.find_local(locals, &arg_name)
-                                        {
-                                            if let Some(crate::types::OatsType::Union(_)) =
+                                            && let Some(crate::types::OatsType::Union(_)) =
                                                 oats_type
-                                            {
-                                                is_union = true;
-                                            }
+                                        {
+                                            is_union = true;
                                         }
                                     }
 
@@ -897,6 +971,291 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 }
                                 let zero = self.f64_t.const_float(0.0);
                                 return Ok(zero.as_basic_value_enum());
+                            }
+
+                            // Monomorphize nested generic functions on demand.
+                            if let Some((nested_fn, fsig)) =
+                                self.nested_generic_fns.borrow().get(&fname).cloned()
+                            {
+                                use deno_ast::swc::ast;
+                                // Build a substitution map from declared type-parameter
+                                // identifiers to concrete OatsTypes. Extract declared
+                                // type param names from the nested function AST if present.
+                                let mut declared_names: Vec<String> = Vec::new();
+                                if let Some(type_params) = &nested_fn.type_params {
+                                    for tp in &type_params.params {
+                                        let name = &tp.name;
+                                        declared_names.push(name.sym.to_string());
+                                    }
+                                }
+
+                                // First try to map explicit type arguments at the call-site
+                                // (e.g., f::<Targs>(...)). SWC represents this as `call.type_args`.
+                                let mut explicit_targs: Vec<crate::types::OatsType> = Vec::new();
+                                if let Some(type_args) = &call.type_args {
+                                    for targ in &type_args.params {
+                                        // targ is Box<ast::TsType>
+                                        if let Some(mapped) = crate::types::map_ts_type(&*targ) {
+                                            explicit_targs.push(mapped);
+                                        }
+                                    }
+                                }
+
+                                // Infer argument types from expressions as a fallback
+                                let mut inferred_params: Vec<crate::types::OatsType> = Vec::new();
+                                for a in &call.args {
+                                    let inferred = crate::types::infer_type(None, Some(&a.expr));
+                                    inferred_params.push(inferred);
+                                }
+
+                                // Build substitution map keyed by declared type param names.
+                                // Use explicit type args first (by position). Otherwise
+                                // attempt name-based inference: find a function parameter
+                                // whose annotated TS type references the type-parameter
+                                // name and map it to the call-site inferred arg type.
+                                let mut subst: std::collections::HashMap<
+                                    String,
+                                    crate::types::OatsType,
+                                > = std::collections::HashMap::new();
+
+                                // Helper: recursively check whether a TsType contains a
+                                // reference to a given type-parameter identifier.
+                                fn ts_type_contains_name(
+                                    ty: &deno_ast::swc::ast::TsType,
+                                    name: &str,
+                                ) -> bool {
+                                    use deno_ast::swc::ast;
+                                    match ty {
+                                        ast::TsType::TsTypeRef(type_ref) => {
+                                            if let Some(ident) = type_ref.type_name.as_ident() {
+                                                if ident.sym.as_ref() == name {
+                                                    return true;
+                                                }
+                                            }
+                                            if let Some(tp) = &type_ref.type_params {
+                                                for param in &tp.params {
+                                                    if ts_type_contains_name(&*param, name) {
+                                                        return true;
+                                                    }
+                                                }
+                                            }
+                                            false
+                                        }
+                                        ast::TsType::TsArrayType(arr) => {
+                                            ts_type_contains_name(&arr.elem_type, name)
+                                        }
+                                        ast::TsType::TsUnionOrIntersectionType(u) => {
+                                            if let ast::TsUnionOrIntersectionType::TsUnionType(un) =
+                                                u
+                                            {
+                                                for t in &un.types {
+                                                    if ts_type_contains_name(&*t, name) {
+                                                        return true;
+                                                    }
+                                                }
+                                            }
+                                            false
+                                        }
+                                        ast::TsType::TsTupleType(tuple) => {
+                                            for e in &tuple.elem_types {
+                                                if ts_type_contains_name(&e.ty, name) {
+                                                    return true;
+                                                }
+                                            }
+                                            false
+                                        }
+                                        ast::TsType::TsTypeLit(typelit) => {
+                                            use deno_ast::swc::ast;
+                                            for member in &typelit.members {
+                                                if let ast::TsTypeElement::TsPropertySignature(
+                                                    prop,
+                                                ) = member
+                                                {
+                                                    if let Some(type_ann) = &prop.type_ann {
+                                                        if ts_type_contains_name(
+                                                            &type_ann.type_ann,
+                                                            name,
+                                                        ) {
+                                                            return true;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            false
+                                        }
+                                        _ => false,
+                                    }
+                                }
+
+                                for (i, name) in declared_names.iter().enumerate() {
+                                    // explicit type args override everything
+                                    if i < explicit_targs.len() {
+                                        subst.insert(name.clone(), explicit_targs[i].clone());
+                                        continue;
+                                    }
+
+                                    // Try name-based mapping: find a parameter that references this type param
+                                    let mut found = false;
+                                    for (pidx, param) in nested_fn.params.iter().enumerate() {
+                                        if let ast::Pat::Ident(ident) = &param.pat {
+                                            if let Some(type_ann) = &ident.type_ann {
+                                                let ts_ty = &*type_ann.type_ann;
+                                                if ts_type_contains_name(ts_ty, name) {
+                                                    // use inferred type for this parameter position if available
+                                                    if pidx < inferred_params.len() {
+                                                        // Try to derive a more accurate mapping when the
+                                                        // parameter annotation is an array-like type.
+                                                        // For example, for `param: T[]` and an inferred
+                                                        // arg of `Array(Number)` we want to map `T -> Number`
+                                                        // instead of `T -> Array(Number)`.
+                                                        let inferred = inferred_params[pidx].clone();
+                                                        let mapped = match ts_ty {
+                                                            deno_ast::swc::ast::TsType::TsArrayType(_) => {
+                                                                // If the call-site arg is an Array(inner), unwrap it
+                                                                if let crate::types::OatsType::Array(inner) = &inferred {
+                                                                    // inner is &Box<OatsType>; clone the inner value
+                                                                    (**inner).clone()
+                                                                } else {
+                                                                    inferred.clone()
+                                                                }
+                                                            }
+                                                            deno_ast::swc::ast::TsType::TsTypeRef(type_ref) => {
+                                                                // Handle Array<T> written as a generic type ref
+                                                                if let Some(ident) = type_ref.type_name.as_ident()
+                                                                    && ident.sym.as_ref() == "Array"
+                                                                {
+                                                                    if let crate::types::OatsType::Array(inner) = &inferred {
+                                                                        (**inner).clone()
+                                                                    } else {
+                                                                        inferred.clone()
+                                                                    }
+                                                                } else {
+                                                                    inferred.clone()
+                                                                }
+                                                            }
+                                                            _ => inferred.clone(),
+                                                        };
+                                                        subst.insert(name.clone(), mapped);
+                                                        found = true;
+                                                        break;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    if found {
+                                        continue;
+                                    }
+
+                                    // Fallback: map by declared order to inferred arg if present
+                                    if i < inferred_params.len() {
+                                        subst.insert(name.clone(), inferred_params[i].clone());
+                                    }
+                                }
+
+                                // Use the substitution map to produce specialized param types
+                                let mut spec_params: Vec<crate::types::OatsType> = Vec::new();
+                                // Walk the original AST param list to re-map types that may
+                                // reference named type parameters. The fsig.params is a
+                                // convenience but may contain Generic placeholders without
+                                // the original AST link; instead we inspect nested_fn.params
+                                // to preserve mapping accuracy when types are named.
+                                for (idx, param) in nested_fn.params.iter().enumerate() {
+                                    if let ast::Pat::Ident(ident) = &param.pat {
+                                        if let Some(type_ann) = &ident.type_ann {
+                                            let ts_ty = &*type_ann.type_ann;
+                                            if let Some(mapped) =
+                                                crate::types::map_ts_type_with_subst(ts_ty, &subst)
+                                            {
+                                                spec_params.push(mapped);
+                                                continue;
+                                            }
+                                        }
+                                    }
+                                    // Fallback: use fsig.params if AST mapping fails
+                                    if let Some(p) = fsig.params.get(idx) {
+                                        spec_params.push(p.clone());
+                                    } else {
+                                        spec_params.push(crate::types::OatsType::Number);
+                                    }
+                                }
+
+                                // Specialize return type using the substitution map and AST
+                                let spec_ret: crate::types::OatsType =
+                                    if let Some(rt) = &nested_fn.return_type {
+                                        let ts_ty = &*rt.type_ann;
+                                        crate::types::map_ts_type_with_subst(ts_ty, &subst)
+                                            .unwrap_or(fsig.ret.clone())
+                                    } else {
+                                        fsig.ret.clone()
+                                    };
+
+                                // Serialize key for deduplication using declared names and subst
+                                let mut key_parts: Vec<String> = Vec::new();
+                                for name in &declared_names {
+                                    if let Some(v) = subst.get(name) {
+                                        key_parts.push(format!("{}={:?}", name, v));
+                                    } else {
+                                        key_parts.push(format!("{}=_", name));
+                                    }
+                                }
+                                let key =
+                                    format!("{}::{} -> {:?}", fname, key_parts.join(","), spec_ret);
+
+                                // Check if we've already created a specialization
+                                let mut mono_map = self.monomorphized_map.borrow_mut();
+                                let target_name = if let Some(name) = mono_map.get(&key) {
+                                    name.clone()
+                                } else {
+                                    use std::collections::hash_map::DefaultHasher;
+                                    use std::hash::{Hash, Hasher};
+                                    let mut hasher = DefaultHasher::new();
+                                    key.hash(&mut hasher);
+                                    let h = hasher.finish();
+                                    let specialized = format!("{}_mono_{:x}", fname, h);
+                                    let prev_block = self.builder.get_insert_block();
+                                    if let Err(diag) = self.gen_function_ir(
+                                        &specialized,
+                                        &nested_fn,
+                                        &spec_params,
+                                        &spec_ret,
+                                        None,
+                                    ) {
+                                        crate::diagnostics::emit_diagnostic(
+                                            &diag,
+                                            Some(self.source),
+                                        );
+                                    }
+                                    eprintln!("[mono] created specialization '{}' for key='{}' params={:?} ret={:?}", specialized, key, spec_params, spec_ret);
+                                    if let Some(pb) = prev_block {
+                                        self.builder.position_at_end(pb);
+                                    }
+                                    mono_map.insert(key.clone(), specialized.clone());
+                                    specialized
+                                };
+
+                                // Now lower args and call the specialized function
+                                let mut call_args: Vec<inkwell::values::BasicMetadataValueEnum> =
+                                    Vec::new();
+                                for a in &call.args {
+                                    let val = match self
+                                        .lower_expr(&a.expr, function, param_map, locals)
+                                    {
+                                        Ok(v) => v,
+                                        Err(d) => return Err(d)?,
+                                    };
+                                    call_args.push(val.into());
+                                }
+                                if let Some(fv) = self.module.get_function(&target_name) {
+                                    let cs = self.builder.build_call(fv, &call_args, "mono_call");
+                                    if let Ok(cs) = cs {
+                                        let either = cs.try_as_basic_value();
+                                        if let inkwell::Either::Left(bv) = either {
+                                            return Ok(bv);
+                                        }
+                                    }
+                                }
+                                // Fall through to normal call lowering if something failed
                             }
 
                             if let Some(fv) = self.module.get_function(&fname) {
@@ -5617,20 +5976,20 @@ impl<'a> crate::codegen::CodeGen<'a> {
         };
 
         // Now look up the field type in the class_fields map
-        if let Some(obj_type_name) = obj_nominal {
-            if let Some(fields) = self.class_fields.borrow().get(&obj_type_name) {
-                // Get the property name from member.prop
-                if let ast::MemberProp::Ident(prop_ident) = &member.prop {
-                    let field_name = prop_ident.sym.to_string();
-                    // Find the field and return its type if it's a NominalStruct
-                    for (fname, ftype) in fields {
-                        if fname == &field_name {
-                            if let crate::types::OatsType::NominalStruct(n) = ftype {
-                                return Some(n.clone());
-                            } else {
-                                // Field exists but is not a nominal struct
-                                return None;
-                            }
+        if let Some(obj_type_name) = obj_nominal
+            && let Some(fields) = self.class_fields.borrow().get(&obj_type_name)
+        {
+            // Get the property name from member.prop
+            if let ast::MemberProp::Ident(prop_ident) = &member.prop {
+                let field_name = prop_ident.sym.to_string();
+                // Find the field and return its type if it's a NominalStruct
+                for (fname, ftype) in fields {
+                    if fname == &field_name {
+                        if let crate::types::OatsType::NominalStruct(n) = ftype {
+                            return Some(n.clone());
+                        } else {
+                            // Field exists but is not a nominal struct
+                            return None;
                         }
                     }
                 }

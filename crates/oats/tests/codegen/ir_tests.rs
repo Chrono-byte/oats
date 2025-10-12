@@ -67,6 +67,10 @@ fn gen_add_function_ir_contains_fadd() -> Result<()> {
         fn_rc_weak_dec: std::cell::RefCell::new(None),
         fn_rc_weak_upgrade: std::cell::RefCell::new(None),
         fn_union_get_discriminant: std::cell::RefCell::new(None),
+        const_items: std::cell::RefCell::new(std::collections::HashMap::new()),
+        const_globals: std::cell::RefCell::new(std::collections::HashMap::new()),
+        const_interns: std::cell::RefCell::new(std::collections::HashMap::new()),
+        current_escape_info: std::cell::RefCell::new(None),
         class_fields: std::cell::RefCell::new(std::collections::HashMap::new()),
         fn_param_types: std::cell::RefCell::new(std::collections::HashMap::new()),
         loop_context_stack: std::cell::RefCell::new(Vec::new()),
@@ -88,6 +92,8 @@ fn gen_add_function_ir_contains_fadd() -> Result<()> {
         last_expr_is_boxed_union: std::cell::Cell::new(false),
         global_function_signatures: std::cell::RefCell::new(std::collections::HashMap::new()),
         symbol_table: std::cell::RefCell::new(symbols),
+        nested_generic_fns: std::cell::RefCell::new(std::collections::HashMap::new()),
+        monomorphized_map: std::cell::RefCell::new(std::collections::HashMap::new()),
     };
 
     codegen

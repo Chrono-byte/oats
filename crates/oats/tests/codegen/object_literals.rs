@@ -3,7 +3,7 @@ use anyhow::Result;
 #[test]
 fn object_literal_basic() -> Result<()> {
     let src = r#"
-        const point = { x: 1, y: 2 };
+        let point = { x: 1, y: 2 };
         export function main(): number {
             let p = point;
             return 0;

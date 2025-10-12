@@ -27,10 +27,14 @@ use inkwell::values::PointerValue;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
+pub mod const_eval;
 pub mod emit;
+pub mod escape;
 pub mod expr;
 pub mod helpers;
 pub mod stmt;
+
+use crate::codegen::const_eval::ConstValue;
 
 // Locals are represented as a tuple (ptr, ty, initialized, is_const) in many
 // helper modules. Use the same alias here so different files agree on the
@@ -138,9 +142,339 @@ pub struct CodeGen<'a> {
         RefCell<HashMap<String, (Vec<crate::types::OatsType>, crate::types::OatsType)>>,
     // Symbol table for type information
     pub symbol_table: RefCell<crate::types::SymbolTable>,
+    // Map for compile-time evaluated const items: name -> ConstValue
+    pub const_items: RefCell<HashMap<String, ConstValue>>,
+    // Emitted LLVM globals for complime-time const heap objects (strings/arrays/objects)
+    pub const_globals: RefCell<HashMap<String, PointerValue<'a>>>,
+    // Interning map for nested/repeated const values: stable key -> emitted global ptr
+    pub const_interns: RefCell<HashMap<String, PointerValue<'a>>>,
+    // Optional escape analysis info for the currently-lowered function.
+    pub current_escape_info: RefCell<Option<crate::codegen::escape::EscapeInfo>>,
+    // Nested generic functions collected during lowering. Keyed by the
+    // declared name. Value is the AST `Function` and its strictness
+    // `FunctionSig` so we can monomorphize per-call-site.
+    pub nested_generic_fns:
+        RefCell<HashMap<String, (deno_ast::swc::ast::Function, crate::types::FunctionSig)>>,
+    // Map of monomorphized specialized function keys -> generated name so
+    // we avoid regenerating the same specialization multiple times.
+    pub monomorphized_map: RefCell<HashMap<String, String>>,
 }
 
 impl<'a> CodeGen<'a> {
+    /// Emit an LLVM global for a ConstValue and return a pointer to its data
+    pub fn emit_const_global(
+        &self,
+        name: &str,
+        val: &crate::codegen::const_eval::ConstValue,
+    ) -> Result<PointerValue<'a>, crate::diagnostics::Diagnostic> {
+        use crate::codegen::const_eval::ConstValue;
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        // Helper: stable string key for a ConstValue suitable for interning.
+        fn const_value_key(v: &ConstValue) -> String {
+            match v {
+                ConstValue::Number(n) => format!("N:{:.17}", n),
+                ConstValue::Bool(b) => format!("B:{}", if *b { 1 } else { 0 }),
+                ConstValue::Str(s) => {
+                    let mut out = String::with_capacity(s.len() * 2 + 2);
+                    out.push_str("S:");
+                    for &b in s.as_bytes() {
+                        out.push_str(&format!("{:02x}", b));
+                    }
+                    out
+                }
+                ConstValue::Array(elems) => {
+                    let mut parts: Vec<String> = Vec::with_capacity(elems.len());
+                    for e in elems {
+                        parts.push(const_value_key(e));
+                    }
+                    format!("A:[{}]", parts.join(","))
+                }
+                ConstValue::Object(map) => {
+                    let mut keys: Vec<&String> = map.keys().collect();
+                    keys.sort();
+                    let mut parts: Vec<String> = Vec::with_capacity(keys.len());
+                    for k in keys {
+                        if let Some(v) = map.get(k) {
+                            parts.push(format!("{}:{}", k, const_value_key(v)));
+                        }
+                    }
+                    format!("O:{{{}}}", parts.join(","))
+                }
+            }
+        }
+
+        // If already interned, return the existing global
+        let key = const_value_key(val);
+        if let Some(ptr) = self.const_interns.borrow().get(&key) {
+            return Ok(*ptr);
+        }
+
+        match val {
+            ConstValue::Str(s) => {
+                // reuse logic: create struct [i64 header, i64 len, [i8 x N]]
+                let bytes = s.as_bytes();
+                let len = bytes.len();
+                let header_t = self.i64_t;
+                let len_t = self.i64_t;
+                let data_t = self.context.i8_type().array_type((len + 1) as u32);
+                let struct_t = self
+                    .context
+                    .struct_type(&[header_t.into(), len_t.into(), data_t.into()], false);
+                // Use a stable interned global name derived from the key hash.
+                let mut hasher = DefaultHasher::new();
+                key.hash(&mut hasher);
+                let h = hasher.finish();
+                let gname = format!("const.intern.{:016x}", h);
+                let gv = self.module.add_global(struct_t, None, &gname);
+                let static_header = self.i64_t.const_int(1u64 << 32, false);
+                let len_val = self.i64_t.const_int(len as u64, false);
+                let data_val = self.context.const_string(bytes, true);
+                let init = self.context.const_struct(
+                    &[static_header.into(), len_val.into(), data_val.into()],
+                    false,
+                );
+                gv.set_initializer(&init);
+                let zero = self.i32_t.const_int(0, false);
+                let two = self.i32_t.const_int(2, false);
+                let _indices = &[zero, two, zero];
+                let pv = gv.as_pointer_value();
+                self.const_interns.borrow_mut().insert(key.clone(), pv);
+                return Ok(pv);
+            }
+            ConstValue::Array(elems) => {
+                // Only support numeric arrays and string arrays for now. We'll emit
+                // a runtime array object: header + i64 len + elements (either f64 or ptrs)
+                if elems.is_empty() {
+                    return Err(crate::diagnostics::Diagnostic::simple(
+                        "empty const arrays not supported yet",
+                    ));
+                }
+                // detect element kind
+                let first = &elems[0];
+                match first {
+                    ConstValue::Number(_) => {
+                        // create data block: header + len + f64 * N
+                        let elem_count = elems.len();
+                        let header_t = self.i64_t;
+                        let len_t = self.i64_t;
+                        let elem_array_t = self.context.f64_type().array_type(elem_count as u32);
+                        let struct_t = self.context.struct_type(
+                            &[header_t.into(), len_t.into(), elem_array_t.into()],
+                            false,
+                        );
+                        let mut hasher = DefaultHasher::new();
+                        key.hash(&mut hasher);
+                        let h = hasher.finish();
+                        let gname = format!("const.intern.{:016x}", h);
+                        let gv = self.module.add_global(struct_t, None, &gname);
+                        let static_header = self.i64_t.const_int(1u64 << 32, false);
+                        let len_val = self.i64_t.const_int(elem_count as u64, false);
+                        let mut float_vals: Vec<inkwell::values::FloatValue> = Vec::new();
+                        for e in elems {
+                            if let ConstValue::Number(n) = e {
+                                float_vals.push(self.context.f64_type().const_float(*n));
+                            } else {
+                                return Err(crate::diagnostics::Diagnostic::simple(
+                                    "mixed array element types in const array",
+                                ));
+                            }
+                        }
+                        let arr = self.context.f64_type().const_array(&float_vals);
+                        let init = self.context.const_struct(
+                            &[static_header.into(), len_val.into(), arr.into()],
+                            false,
+                        );
+                        gv.set_initializer(&init);
+                        let zero = self.i32_t.const_int(0, false);
+                        let two = self.i32_t.const_int(2, false);
+                        let _indices = &[zero, two, zero];
+                        let pv = gv.as_pointer_value();
+                        self.const_interns.borrow_mut().insert(key.clone(), pv);
+                        return Ok(pv);
+                    }
+                    ConstValue::Str(_) => {
+                        // For string arrays, allocate an array of i8* pointers with each element pointing to a const string global.
+                        let elem_count = elems.len();
+                        let ptr_t = self.i8ptr_t;
+                        let array_ty = ptr_t.array_type(elem_count as u32);
+                        // Create a struct type: header + len + pointer-array
+                        let struct_t = self.context.struct_type(
+                            &[self.i64_t.into(), self.i64_t.into(), array_ty.into()],
+                            false,
+                        );
+                        let mut hasher = DefaultHasher::new();
+                        key.hash(&mut hasher);
+                        let h = hasher.finish();
+                        let gname = format!("const.intern.{:016x}", h);
+                        let gv = self.module.add_global(struct_t, None, &gname);
+                        let static_header = self.i64_t.const_int(1u64 << 32, false);
+                        let len_val = self.i64_t.const_int(elem_count as u64, false);
+                        // For each string element, recursively emit a string global and collect its pointer
+                        let mut ptr_vals: Vec<inkwell::values::PointerValue> = Vec::new();
+                        for (i, e) in elems.iter().enumerate() {
+                            if let ConstValue::Str(_) = e {
+                                let child_name = format!("{}_{}_str", name, i);
+                                let child_ptr = self.emit_const_global(&child_name, e)?;
+                                ptr_vals.push(child_ptr);
+                            } else {
+                                return Err(crate::diagnostics::Diagnostic::simple(
+                                    "mixed types in const array",
+                                ));
+                            }
+                        }
+                        let arr_const = self.i8ptr_t.const_array(&ptr_vals);
+                        let init = self.context.const_struct(
+                            &[static_header.into(), len_val.into(), arr_const.into()],
+                            false,
+                        );
+                        gv.set_initializer(&init);
+                        let zero = self.i32_t.const_int(0, false);
+                        let two = self.i32_t.const_int(2, false);
+                        let _indices = &[zero, two, zero];
+                        let pv = gv.as_pointer_value();
+                        self.const_interns.borrow_mut().insert(key.clone(), pv);
+                        return Ok(pv);
+                    }
+                    _ => {
+                        return Err(crate::diagnostics::Diagnostic::simple(
+                            "unsupported const array element type",
+                        ));
+                    }
+                }
+            }
+            ConstValue::Object(map) => {
+                // Emit a nominal object: [i64 header][i64 meta_ptr][fields...]
+                // Fields may be numbers (f64) or pointers (i8*). We emit a
+                // deterministic field order by sorting keys.
+                if map.is_empty() {
+                    return Err(crate::diagnostics::Diagnostic::simple(
+                        "empty const object not supported",
+                    ));
+                }
+
+                let mut keys: Vec<String> = map.keys().cloned().collect();
+                keys.sort();
+
+                // Build field types and initializer values
+                let mut field_types: Vec<inkwell::types::BasicTypeEnum> = Vec::new();
+                let mut field_vals: Vec<inkwell::values::BasicValueEnum> = Vec::new();
+
+                for k in &keys {
+                    let v = map.get(k).unwrap();
+                    match v {
+                        ConstValue::Number(n) => {
+                            field_types.push(self.f64_t.into());
+                            field_vals.push(self.f64_t.const_float(*n).into());
+                        }
+                        ConstValue::Str(_) | ConstValue::Array(_) | ConstValue::Object(_) => {
+                            // Recursively emit child globals for pointer-like fields
+                            let child_name = format!("{}_{}", name, k);
+                            let child_ptr = self.emit_const_global(&child_name, v)?;
+                            field_types.push(self.i8ptr_t.into());
+                            field_vals
+                                .push(inkwell::values::BasicValueEnum::PointerValue(child_ptr));
+                        }
+                        ConstValue::Bool(b) => {
+                            // Represent bools as i1/i8? Use i64 slot sized as f64 for simplicity
+                            // We'll store as i64 0/1 in an i64 slot to keep layout simple.
+                            field_types.push(self.i64_t.into());
+                            let iv = self.i64_t.const_int(if *b { 1 } else { 0 }, false);
+                            field_vals.push(iv.into());
+                        }
+                    }
+                }
+
+                // Build struct type: header + meta_ptr + field types
+                let mut members: Vec<inkwell::types::BasicTypeEnum> = Vec::new();
+                members.push(self.i64_t.into()); // header
+                members.push(self.i8ptr_t.into()); // meta slot (pointer)
+                members.extend(field_types.iter().cloned());
+                let struct_t = self.context.struct_type(&members, false);
+
+                // Compute metadata for pointer fields: offsets (in bytes) from object base
+                // Pointer fields start at offset 16 (header 8 + meta 8), each field is 8 bytes
+                let mut meta_offsets: Vec<i32> = Vec::new();
+                for (idx, k) in keys.iter().enumerate() {
+                    let v = map.get(k).unwrap();
+                    match v {
+                        ConstValue::Str(_) | ConstValue::Array(_) | ConstValue::Object(_) => {
+                            let off = 16 + (idx * 8);
+                            meta_offsets.push(off as i32);
+                        }
+                        _ => {}
+                    }
+                }
+
+                // Emit metadata global if there are pointer fields
+                let meta_ptr_val = if !meta_offsets.is_empty() {
+                    // meta name
+                    let meta_name = format!("{}_meta", name);
+                    // meta struct: [i64 meta0, [i32 offsets[len]]]
+                    let offsets_count = meta_offsets.len();
+                    let offsets_array_t = self.context.i32_type().array_type(offsets_count as u32);
+                    let meta_struct_t = self
+                        .context
+                        .struct_type(&[self.i64_t.into(), offsets_array_t.into()], false);
+                    let meta_gv = self.module.add_global(meta_struct_t, None, &meta_name);
+
+                    // meta0 = (META_MAGIC << 32) | len
+                    let meta_magic: u64 = 0x4F415453u64; // 'OATS'
+                    let meta0_val = self
+                        .i64_t
+                        .const_int((meta_magic << 32) | (offsets_count as u64), false);
+
+                    // Build i32 const array for offsets
+                    let mut off_ints: Vec<inkwell::values::IntValue> = Vec::new();
+                    for &o in &meta_offsets {
+                        off_ints.push(self.context.i32_type().const_int(o as u64, false));
+                    }
+                    let off_array_const = self.context.i32_type().const_array(&off_ints);
+
+                    let meta_init = self
+                        .context
+                        .const_struct(&[meta0_val.into(), off_array_const.into()], false);
+                    meta_gv.set_initializer(&meta_init);
+                    meta_gv.set_constant(true);
+
+                    // Return as a pointer value to store in object meta slot
+                    inkwell::values::BasicValueEnum::PointerValue(meta_gv.as_pointer_value())
+                } else {
+                    // No pointer fields -> null meta
+                    inkwell::values::BasicValueEnum::PointerValue(self.i8ptr_t.const_null())
+                };
+
+                let mut hasher = DefaultHasher::new();
+                key.hash(&mut hasher);
+                let h = hasher.finish();
+                let gname = format!("const.intern.{:016x}", h);
+                let gv = self.module.add_global(struct_t, None, &gname);
+                let static_header = self.i64_t.const_int(1u64 << 32, false);
+
+                // Build initializer array: header, meta_ptr, fields...
+                let mut init_vals: Vec<inkwell::values::BasicValueEnum> = Vec::new();
+                init_vals.push(static_header.into());
+                init_vals.push(meta_ptr_val);
+                for fv in field_vals {
+                    init_vals.push(fv);
+                }
+
+                let init = self.context.const_struct(&init_vals, false);
+                gv.set_initializer(&init);
+                gv.set_constant(true);
+                let pv = gv.as_pointer_value();
+                self.const_interns.borrow_mut().insert(key.clone(), pv);
+
+                // Return the global's base pointer as a PointerValue
+                return Ok(pv);
+            }
+
+            _ => Err(crate::diagnostics::Diagnostic::simple(
+                "unsupported const global kind",
+            )),
+        }
+    }
     // --- Runtime Helper Function Getters ---
 
     fn get_array_alloc(&self) -> FunctionValue<'a> {
@@ -597,7 +931,7 @@ impl<'a> CodeGen<'a> {
             }
         }
 
-        // Initialize an empty locals stack. Allocas for `let` and `const` will be added later.
+        // Initialize an empty locals stack. Allocas for `let` bindings will be added later.
         let locals_stack: LocalsStackLocal<'a> = vec![HashMap::new()];
 
         // We no longer create allocas for parameters. Still, for parameters

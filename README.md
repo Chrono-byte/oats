@@ -15,13 +15,15 @@ manual memory management.
 
 ## ✨ Features
 
-- **TypeScript Subset**: Supports `number`, `boolean`, `string`, `void`, arrays,
-  and classes.
-- **Control Flow**: Includes `if`/`else`, loops, and operators.
-- **Memory Management**: Automatic reference counting for heap-allocated
-  objects.
-- **LLVM Integration**: Generates optimized native code.
-- **Toolchain**: End-to-end compilation into standalone executables.
+- **TypeScript Subset**: Numbers, booleans, strings, arrays, classes, and
+   unions lowered through `OatsType`.
+- **Generics & Unions**: Call-site monomorphization with boxed union support.
+- **Async (preview)**: Async functions lower into poll-state machines with
+   resume blocks.
+- **Memory Management**: Deterministic ARC with weak references and cycle
+   collector scaffolding.
+- **LLVM Integration**: Emits LLVM 18 IR and links against the Oats runtime to
+   produce native executables.
 
 ---
 
@@ -54,26 +56,26 @@ brew install llvm@18
    cd oats
    ```
 
-2. **Write an Oats Program**:
-   ```typescript
-   // hello.oats
-   export function main(): void {
-     println("Hello from Oats! 🌾");
-   }
-   ```
+2. **Oats Example**: Review or edit `examples/add.oats` for your first build.
 
 3. **Compile and Run**:
    ```bash
-   cargo run -p oats --bin toasty -- ./hello.oats
-   ./hello
+   source ./scripts/setup_env.sh
+   cargo build --workspace
+   cargo run -p oats --bin toasty -- examples/add.oats
+   ./aot_out/add
    ```
 
 ---
 
-## 🔒 Security Features
+## 🔒 Platform Safeguards
 
-- **Heap Limits**: Configurable max heap size (default: 1 GB).
-- **Integer Overflow Protection**: Checked arithmetic for allocations.
+- **Checked Allocation Sizes**: Runtime helpers use guarded arithmetic for all
+   heap sizing.
+- **Resource Limits**: Configure `OATS_MAX_HEAP_BYTES` and
+   `OATS_MAX_ALLOC_BYTES` to cap total and per-allocation usage.
+- **Fuzzing Infrastructure**: `cargo +nightly fuzz run fuzz_parser` hardens the
+   parser against malformed input.
 
 ---
 
@@ -81,7 +83,11 @@ brew install llvm@18
 
 - **`crates/oats`**: Core compiler for parsing, type checking, and LLVM IR
   generation.
-- **`crates/runtime`**: Runtime library for memory management and utilities.
+- **`crates/runtime`**: ARC helpers, allocators, logging, and cycle collector.
+- **`docs/`**: Architecture, development, memory, and roadmap references.
+- **`examples/`**: Programs compiled as part of the test suites.
+
+See `docs/README.md` for a guided tour of the documentation set.
 
 ---
 
@@ -100,7 +106,7 @@ Contributions are welcome! Start by exploring the `docs/` directory:
 
 2. **Build and Test**:
    ```bash
-   cargo build
+   cargo build --workspace
    cargo test --workspace
    ```
 

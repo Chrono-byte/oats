@@ -1,6 +1,6 @@
 # Oats Documentation Guide
 
-**Last Updated:** October 10, 2025
+**Last Updated:** October 12, 2025
 
 Welcome to the Oats compiler documentation! This guide helps you navigate the
 documentation and find what you need.
@@ -48,6 +48,8 @@ Top-level files (concise):
 - `ARCHITECTURE.md` — high-level architecture and compilation pipeline
 - `LANGUAGE_DESIGN.md` — language-level decisions and type system overview
 - `MEMORY_DESIGN.md` — memory layout, RC rules, and safety guidance (expanded)
+- `ESCAPE_ANALYSIS.md` — current escape-analysis pass and future work items
+- `FUZZING.md` — parser fuzzing setup and maintenance
 - `ROADMAP.md` — short roadmap and project phases
 
 To view older, long-form specifications that were previously part of this
@@ -91,21 +93,13 @@ that contains it.
 **When to read:** To understand project priorities and find contribution
 opportunities.
 
-### Consolidated Topics
+### Topics at a Glance
 
-To reduce fragmentation, related documents are grouped into single entry pages
-that link to detailed specs when needed.
-
-- [`docs/ASYNC.md`](ASYNC.md) — Consolidated async overview and pointers to
-  detailed async design and ABIs.
-- [`docs/RUNTIME_SECURITY.md`](RUNTIME_SECURITY.md) — Consolidated runtime
-  safety, security hardening, and fuzzing pointers.
-- [`docs/MEMORY_OWNERSHIP.md`](MEMORY_OWNERSHIP.md) — Consolidated memory layout
-  and ownership rules with links to deep-dive docs.
-
-For detailed work, each consolidated page points to the existing design docs
-(e.g., `ASYNC_PHASE1.md`, `ASYNC_PRIMITIVES.md`, `RUNTIME_SAFETY.md`,
-`FUZZING.md`) so you can dive into precise specifications.
+- **Architecture & Memory:** `ARCHITECTURE.md`, `MEMORY_DESIGN.md`
+- **Workflow & Testing:** `DEVELOPMENT.md`, `FUZZING.md`
+- **Language Surface:** `LANGUAGE_DESIGN.md`
+- **Analysis & Optimization:** `ESCAPE_ANALYSIS.md`
+- **Direction:** `ROADMAP.md`
 
 ## Documentation by Use Case
 
@@ -128,10 +122,9 @@ For detailed work, each consolidated page points to the existing design docs
 
 ### "I want to understand async/await"
 
-1. Read `ASYNC_AWAIT.md` - Overview and current status
+1. Review the async lowering notes in `ARCHITECTURE.md`
 2. Look at `examples/proper_tests/async_await.oats` - Working example
-3. Read `ASYNC_PHASE1.md` if diving deeper into state machines
-4. Read `ASYNC_PRIMITIVES.md` for runtime implementation details
+3. Read async sections in `DEVELOPMENT.md` for implementation details
 
 ### "I want to improve performance"
 
@@ -145,7 +138,7 @@ For detailed work, each consolidated page points to the existing design docs
 
 1. Read `DEVELOPMENT.md` - "Adding a New Runtime Function"
 2. Add to `crates/runtime/src/lib.rs` with `#[no_mangle]`
-3. Declare in `crates/oats/src/codegen/mod.rs`
+3. Declare and cache it in `crates/oats/src/codegen/mod.rs` (getter + field)
 4. Add tests in `crates/runtime/tests/`
 5. Document the function purpose and contracts
 

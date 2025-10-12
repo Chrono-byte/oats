@@ -33,16 +33,13 @@ cargo install cargo-fuzz
 ### Build Fuzzing Targets
 
 ```bash
-# Build all fuzz targets
-cargo fuzz build
-
-# Build specific target
+# Build the configured fuzz target
 cargo fuzz build fuzz_parser
 ```
 
 ## Available Fuzz Targets
 
-### 1. `fuzz_parser`
+### `fuzz_parser`
 
 **Target:** Parser (`oats::parser::parse_oats_module`)
 
@@ -62,31 +59,8 @@ cargo fuzz build fuzz_parser
 ```bash
 cargo +nightly fuzz run fuzz_parser
 ```
-
----
-
-### 2. `fuzz_compiler`
-
-**Target:** Full compilation pipeline (parse → type check → codegen)
-
-**What it tests:**
-
-- End-to-end compilation of arbitrary source code
-- Type checking edge cases
-- LLVM IR generation
-- Codegen for complex constructs
-
-**Seed corpus:** `fuzz/corpus/fuzz_compiler/`
-
-- Contains valid programs from `examples/proper_tests/`
-
-**Run:**
-
-```bash
-cargo +nightly fuzz run fuzz_compiler
-```
-
----
+> **Note:** `fuzz/fuzz_targets/fuzz_target_1.rs` is a placeholder. Add a new
+> entry to `Cargo.toml` before using it.
 
 ## Running Fuzzers
 
@@ -95,6 +69,9 @@ cargo +nightly fuzz run fuzz_compiler
 ```bash
 ./scripts/run_fuzzing.sh
 ```
+
+The script currently runs `fuzz_parser` (the only configured target) and
+respects `FUZZ_TIME` / `FUZZ_JOBS` overrides.
 
 ### Continuous Fuzzing (24 hours)
 
@@ -117,7 +94,7 @@ cargo +nightly fuzz run fuzz_parser -- -dict=fuzz/dict/oats.dict
 
 ### Reproduce a Crash
 
-When fuzzing finds a crash, it saves the input to `fuzz/artifacts/{target}/`:
+When fuzzing finds a crash, it saves the input to `fuzz/artifacts/{target}/`.
 
 ```bash
 # Reproduce the crash

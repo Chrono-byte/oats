@@ -52,6 +52,9 @@ cargo run -p oats --bin toasty -- examples/add.oats
 
 If you encounter issues, see `docs/DEVELOPMENT.md` for troubleshooting tips.
 
+Need broader context? Start with `docs/README.md` for a map of the
+architecture, memory, and workflow guides.
+
 ## How to Contribute
 
 ### Types of Contributions
@@ -76,7 +79,7 @@ If you encounter issues, see `docs/DEVELOPMENT.md` for troubleshooting tips.
 
 **Documentation:**
 - Fix typos, improve clarity, add examples
-- Update docs when implementing features
+- Update docs when implementing features (keep `docs/README.md` in sync)
 - Add inline comments for complex logic
 - Create tutorials or guides for common tasks
 

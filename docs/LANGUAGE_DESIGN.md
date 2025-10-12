@@ -37,9 +37,8 @@ Reference Counting) adapted for a deterministic, low-level runtime.
   - Array<T>
   - NominalStruct / Class
   - Union (either numeric-only or pointer)
-  - Weakness and nominal typing retained for runtime semantics
-  - Weak<T>
-  - Weakness and nominal typing retained for runtime semantics
+  - Weak<T> (zeroing weak references)
+  - Nominal typing metadata retained for runtime semantics
   - Optional/nullable values are represented using TypeScript-style unions (for
     example `T | null` / `T | undefined`) and are lowered according to the
     target `OatsType` semantics.

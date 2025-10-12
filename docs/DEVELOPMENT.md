@@ -79,9 +79,8 @@ cargo build --workspace
 cargo test --workspace
 
 # Try an example
-cargo run -p oats --bin toasty -- examples/hello.oats
-# Legacy: cargo run -p oats --bin toasty -- examples/hello.oats
-./aot_out/hello
+cargo run -p oats --bin toasty -- examples/add.oats
+./aot_out/add
 ````
 
 ### First-Time Build Tips

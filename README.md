@@ -90,7 +90,6 @@ brew install llvm@18
 Contributions are welcome! Start by exploring the `docs/` directory:
 
 - **`ROADMAP.md`**: Long-term vision and feature plans.
-- **`IMPROVEMENT_PLAN.md`**: Technical debt and refactoring opportunities.
 
 ### Development Workflow
 

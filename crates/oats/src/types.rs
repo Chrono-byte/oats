@@ -73,12 +73,28 @@ impl Default for SymbolTable {
 }
 
 impl SymbolTable {
+    /// Creates a new symbol table with an initial empty scope.
+    ///
+    /// The symbol table begins with a single scope representing the global
+    /// namespace. Additional scopes can be pushed and popped to handle
+    /// lexical scoping during compilation.
     pub fn new() -> Self {
         Self {
             scopes: vec![HashMap::new()],
         }
     }
 
+    /// Retrieves a symbol from the symbol table using lexical scoping rules.
+    ///
+    /// This function searches through the scope stack from innermost to outermost,
+    /// returning the first matching symbol found. This implements proper lexical
+    /// scoping where inner scopes shadow outer scopes for symbols with the same name.
+    ///
+    /// # Arguments
+    /// * `name` - Symbol name to look up
+    ///
+    /// # Returns
+    /// The `OatsType` for the symbol if found, or `None` if not present
     pub fn get(&self, name: &str) -> Option<&OatsType> {
         for scope in self.scopes.iter().rev() {
             if let Some(ty) = scope.get(name) {
@@ -88,12 +104,29 @@ impl SymbolTable {
         None
     }
 
+    /// Inserts a symbol into the current (innermost) scope.
+    ///
+    /// This function adds a new symbol binding to the most recently created scope.
+    /// If multiple scopes exist, the symbol is added to the innermost scope,
+    /// allowing it to shadow symbols with the same name in outer scopes.
+    ///
+    /// # Arguments
+    /// * `name` - Symbol name to bind
+    /// * `ty` - Type information for the symbol
     pub fn insert(&mut self, name: String, ty: OatsType) {
         if let Some(scope) = self.scopes.last_mut() {
             scope.insert(name, ty);
         }
     }
 
+    /// Returns all symbols from all scopes as a flattened collection.
+    ///
+    /// This function collects symbols from all scopes in the table, which can
+    /// be useful for debugging or analysis purposes. Note that symbols in inner
+    /// scopes that shadow outer symbols will both be included in the result.
+    ///
+    /// # Returns
+    /// A vector of (name, type) pairs for all symbols in the table
     pub fn all_symbols(&self) -> Vec<(String, OatsType)> {
         self.scopes
             .iter()
@@ -102,8 +135,26 @@ impl SymbolTable {
     }
 }
 
-// Map a TypeScript AST type to an OatsType.
-// Returns None if the type is not supported.
+/// Maps a TypeScript AST type annotation to the corresponding Oats type system representation.
+///
+/// This function serves as the primary bridge between TypeScript's type system
+/// and Oats' internal type representation. It handles the conversion of common
+/// TypeScript types, generic parameters, and complex type constructs into the
+/// unified `OatsType` enum used throughout the compiler.
+///
+/// # Arguments
+/// * `ty` - TypeScript AST type node to convert
+///
+/// # Returns
+/// The corresponding `OatsType` if the conversion is supported, or `None` for
+/// unsupported or unrecognized TypeScript type constructs
+///
+/// # Supported Types
+/// - Primitive types: `number`, `string`, `boolean`, `void`, `undefined`
+/// - Generic types and type parameters
+/// - Union types (converted to `OatsType::Union`)
+/// - Array types with element type inference
+/// - Function types with parameter and return type mapping
 pub fn map_ts_type(ty: &ast::TsType) -> Option<OatsType> {
     match ty {
         ast::TsType::TsKeywordType(keyword) => match keyword.kind {
@@ -490,8 +541,24 @@ pub fn check_function_strictness(
     })
 }
 
-// Infer an OatsType from an AST expression (literals, arrays, etc.)
-// Returns None if the expression type cannot be inferred.
+/// Infers an Oats type from AST expression patterns and literal values.
+///
+/// This function provides type inference for expressions where explicit type
+/// annotations are not present. It analyzes literal values, array construction
+/// patterns, and other expression forms to determine the most appropriate type
+/// representation in the Oats type system.
+///
+/// # Arguments
+/// * `expr` - AST expression to analyze for type inference
+///
+/// # Returns
+/// The inferred `OatsType` if successful, or `None` if the expression type
+/// cannot be determined through static analysis
+///
+/// # Inference Strategy
+/// - **Literals**: Direct mapping from literal type to `OatsType`
+/// - **Arrays**: Element type inferred from first non-null element
+/// - **Complex expressions**: Currently unsupported, returns `None`
 pub fn infer_type_from_expr(expr: &ast::Expr) -> Option<OatsType> {
     match expr {
         ast::Expr::Lit(lit) => match lit {
@@ -501,7 +568,7 @@ pub fn infer_type_from_expr(expr: &ast::Expr) -> Option<OatsType> {
             _ => None,
         },
         ast::Expr::Array(arr) => {
-            // Infer array element type from first element
+            // Infer array element type from first non-null element
             if let Some(Some(first_elem)) = arr.elems.first() {
                 infer_type_from_expr(&first_elem.expr)
                     .map(|elem_type| OatsType::Array(Box::new(elem_type)))
@@ -513,10 +580,24 @@ pub fn infer_type_from_expr(expr: &ast::Expr) -> Option<OatsType> {
     }
 }
 
-// Comprehensive type inference that tries multiple sources:
-// 1. TypeScript type annotations
-// 2. Expression-based inference
-// 3. Fallback to default
+/// Performs comprehensive type inference using multiple information sources.
+///
+/// This function implements a fallback hierarchy for type inference, attempting
+/// to determine the most accurate type representation by consulting TypeScript
+/// type annotations first, then expression-based inference, and finally falling
+/// back to conservative defaults.
+///
+/// # Arguments
+/// * `ts_type` - Optional TypeScript type annotation
+/// * `expr` - Optional expression for inference
+///
+/// # Returns
+/// The most specific `OatsType` that can be determined from available information
+///
+/// # Inference Priority
+/// 1. **TypeScript annotations**: Explicit type information (highest priority)
+/// 2. **Expression inference**: Types derived from literal values and patterns
+/// 3. **Generic fallback**: Conservative `Generic` type when inference fails
 pub fn infer_type(ts_type: Option<&ast::TsType>, expr: Option<&ast::Expr>) -> OatsType {
     // First priority: explicit TypeScript type annotation
     if let Some(ts_ty) = ts_type
@@ -532,15 +613,33 @@ pub fn infer_type(ts_type: Option<&ast::TsType>, expr: Option<&ast::Expr>) -> Oa
         return oats_type;
     }
 
-    // Fallback: default to Number (most common type)
+    // Fallback: default to Number (most conservative common type)
     OatsType::Number
 }
 
-/// Apply a simple inferred substitution to an OatsType: if the type contains
-/// a `Generic` placeholder or Option<Generic> use the first `inferred` type
-/// as a heuristic replacement. This is used as a last-resort to resolve
-/// generics during monomorphization when we couldn't map explicit type
-/// parameters by name.
+/// Applies inferred type substitutions to resolve generic placeholders.
+///
+/// This function performs a simple heuristic-based substitution for generic
+/// types that could not be resolved through explicit type parameter mapping.
+/// It serves as a last-resort mechanism during monomorphization to ensure
+/// that all generic placeholders are replaced with concrete types.
+///
+/// # Arguments
+/// * `ty` - Type that may contain generic placeholders
+/// * `inferred` - Array of inferred concrete types for substitution
+///
+/// # Returns
+/// A new `OatsType` with generic placeholders replaced by inferred types
+///
+/// # Substitution Strategy
+/// - **Generic placeholders**: Replaced with the first inferred type
+/// - **Optional generics**: Wrapped in `Option` with the inferred type
+/// - **Array generics**: Element type is recursively substituted
+/// - **Concrete types**: Returned unchanged
+///
+/// # Fallback Behavior
+/// When no inferred types are available, generic placeholders default to
+/// `Number` type as the most conservative choice for the Oats type system.
 pub fn apply_inferred_subst(ty: &OatsType, inferred: &[OatsType]) -> OatsType {
     match ty {
         OatsType::Generic(_) => {

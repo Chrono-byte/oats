@@ -1,3 +1,21 @@
+//! Common testing utilities for the Oats compiler test suite.
+//!
+//! This module provides shared functionality used across multiple test files,
+//! including IR generation helpers, test harness utilities, and diagnostic
+//! suppression for clean test output. The utilities are designed to simplify
+//! test authoring while maintaining consistency across the test suite.
+//!
+//! # Key Functions
+//!
+//! - `gen_ir_for_source`: Generates LLVM IR from Oats source code for testing
+//! - Test setup helpers for consistent compilation environment
+//! - Diagnostic output management for focused test results
+//!
+//! # Usage Pattern
+//!
+//! Test files typically import this module to access shared compilation
+//! infrastructure without duplicating setup code across individual tests.
+
 use anyhow::Result;
 
 use oats::codegen::CodeGen;
@@ -10,18 +28,34 @@ use std::collections::HashMap;
 use inkwell::context::Context;
 use inkwell::targets::TargetMachine;
 
+/// Generates LLVM IR from Oats source code for testing purposes.
+///
+/// This function provides a convenient way to compile Oats source code to
+/// LLVM IR without going through the full compilation pipeline. It's designed
+/// specifically for testing scenarios where IR output needs to be inspected
+/// or validated.
+///
+/// # Arguments
+/// * `src` - Oats source code to compile
+///
+/// # Returns
+/// String containing the generated LLVM IR, or an error if compilation fails
+///
+/// # Behavior
+/// The function automatically suppresses diagnostic output to stderr to keep
+/// test output clean and focused. Diagnostics are restored when the function
+/// completes, ensuring proper error reporting in subsequent operations.
 #[cfg(test)]
 #[allow(dead_code)]
 pub fn gen_ir_for_source(src: &str) -> Result<String> {
-    // Silence diagnostics printed to stderr during test runs to keep test
-    // output focused. The suppress guard restores the previous state when
-    // dropped at the end of this function.
+    // Suppress diagnostic output during test execution to maintain clean test output.
+    // The guard automatically restores previous diagnostic settings when dropped.
     let _diag_guard = oats::diagnostics::suppress();
 
     let parsed_mod = parser::parse_oats_module(src, None)?;
     let parsed = &parsed_mod.parsed;
 
-    // find exported main
+    // Locate the exported main function required for test compilation
     let mut func_decl_opt: Option<deno_ast::swc::ast::Function> = None;
     for item_ref in parsed.program_ref().body() {
         if let deno_ast::ModuleItemRef::ModuleDecl(module_decl) = item_ref

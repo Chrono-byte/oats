@@ -144,9 +144,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     // Borrow const_items immutably for evaluation and drop
                                     let const_map = self.const_items.borrow();
                                     match crate::codegen::const_eval::eval_const_expr(
-                                        &*init,
+                                        init,
                                         span_start,
-                                        &*const_map,
+                                        &const_map,
                                     ) {
                                         Ok(cv) => {
                                             drop(const_map);
@@ -165,7 +165,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 // call-site monomorphization to see concrete types for
                                 // locals (e.g., `Array(String)`) when no explicit
                                 // annotation was provided.
-                                let init_inferred = crate::types::infer_type(None, Some(&*init));
+                                let init_inferred = crate::types::infer_type(None, Some(init));
                                 // If the initializer is an object literal and the
                                 // declared local carries a nominal struct name
                                 // (for example `const user: User = { ... }`),
@@ -855,14 +855,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     // Always store the initializer into the slot and
                                     // perform RC increment for pointer-like values.
                                     let _ = self.builder.build_store(alloca, val);
-                                    if val.get_type().is_pointer_type() {
-                                        if let BasicValueEnum::PointerValue(pv) = val {
-                                            if !self.should_elide_rc_for_local(&name) {
+                                    if val.get_type().is_pointer_type()
+                                        && let BasicValueEnum::PointerValue(pv) = val
+                                            && !self.should_elide_rc_for_local(&name) {
                                                 let rc_inc = self.get_rc_inc();
                                                 let _ = self.builder.build_call(rc_inc, &[pv.into()], "rc_inc_local");
                                             }
-                                        }
-                                    }
 
                                     // If we reused an existing local, mark it initialized.
                                     if maybe_existing.is_some() {
@@ -1319,18 +1317,18 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             self.emit_rc_dec_for_locals(_locals_stack);
                             // build return with the lowered value
                             let _ = self.builder.build_return(Some(&val));
-                            return Ok(true);
+                            Ok(true)
                         }
                         Err(diag) => {
                             // Emit diagnostic so we know why the return expression failed to lower
                             crate::diagnostics::emit_diagnostic(&diag, Some(self.source));
-                            return Ok(false);
+                            Ok(false)
                         }
                     }
                 } else {
                     self.emit_rc_dec_for_locals(_locals_stack);
                     let _ = self.builder.build_return(None);
-                    return Ok(true);
+                    Ok(true)
                 }
             }
             deno_ast::swc::ast::Stmt::Break(_break_stmt) => {

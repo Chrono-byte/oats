@@ -424,21 +424,20 @@ pub fn map_ts_type_with_subst(
                         }
                         other = Some(t);
                     }
-                    if seen_nullish {
-                        if let Some(o) = other {
+                    if seen_nullish
+                        && let Some(o) = other {
                             if let Some(mapped) = map_ts_type_with_subst(o, subst) {
                                 return Some(OatsType::Option(Box::new(mapped)));
                             }
                             return None;
                         }
-                    }
 
                 }
 
                 // General union: map each part with substitution
                 let mut parts = Vec::new();
                 for t in &un.types {
-                    if let Some(mapped) = map_ts_type_with_subst(&*t, subst) {
+                    if let Some(mapped) = map_ts_type_with_subst(t, subst) {
                         parts.push(mapped);
                     } else {
                         return None;

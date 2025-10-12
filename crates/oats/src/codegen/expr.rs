@@ -167,16 +167,14 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             inkwell::Either::Left(bv) => {
                                 // After creating the concatenated string, decrement
                                 // temporary operands that didn't originate from locals.
-                                if left_origin.is_none() {
-                                    if let Some(rc_dec_fn) = self.module.get_function("rc_dec") {
+                                if left_origin.is_none()
+                                    && let Some(rc_dec_fn) = self.module.get_function("rc_dec") {
                                         let _ = self.builder.build_call(rc_dec_fn, &[lp.into()], "rc_dec_tmp_left").ok();
                                     }
-                                }
-                                if right_origin.is_none() {
-                                    if let Some(rc_dec_fn) = self.module.get_function("rc_dec") {
+                                if right_origin.is_none()
+                                    && let Some(rc_dec_fn) = self.module.get_function("rc_dec") {
                                         let _ = self.builder.build_call(rc_dec_fn, &[rp.into()], "rc_dec_tmp_right").ok();
                                     }
-                                }
                                 return Ok(bv);
                             }
                             _ => {
@@ -310,7 +308,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     // guards against lowering paths that may have switched the
                     // insertion point while lowering nested expressions.
                     if self.builder.get_insert_block().is_some() {
-                        let _ = self.builder.position_at_end(then_bb);
+                        self.builder.position_at_end(then_bb);
                         if self.builder.build_unconditional_branch(merge_bb).is_err() {
                             return Err(Diagnostic::simple("expression lowering failed"))?;
                         }
@@ -321,7 +319,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     // phi node to select the correct value.
                     self.builder.position_at_end(else_bb);
                     if self.builder.get_insert_block().is_some() {
-                        let _ = self.builder.position_at_end(else_bb);
+                        self.builder.position_at_end(else_bb);
                         let _ = self
                             .builder
                             .build_unconditional_branch(merge_bb)
@@ -1039,7 +1037,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 if let Some(type_args) = &call.type_args {
                                     for targ in &type_args.params {
                                         // targ is Box<ast::TsType>
-                                        if let Some(mapped) = crate::types::map_ts_type(&*targ) {
+                                        if let Some(mapped) = crate::types::map_ts_type(targ) {
                                             explicit_targs.push(mapped);
                                         }
                                     }
@@ -1060,14 +1058,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         // First, check lexical locals
                                         if let Some((_, _, _, _, _, _, oats_type_opt)) =
                                             self.find_local(locals, &arg_name)
-                                        {
-                                            if let Some(ot) = oats_type_opt {
+                                            && let Some(ot) = oats_type_opt {
                                                 inferred_opt = Some(ot.clone());
                                             }
-                                        }
                                         // Next, check if it's a parameter of the current function
-                                        if inferred_opt.is_none() {
-                                            if let Some(idx) = param_map.get(&arg_name) {
+                                        if inferred_opt.is_none()
+                                            && let Some(idx) = param_map.get(&arg_name) {
                                                 let caller_name = function.get_name().to_str().unwrap_or("");
                                                 if let Some(param_types) = self.fn_param_types.borrow().get(caller_name) {
                                                     let idx_us = *idx as usize;
@@ -1076,7 +1072,6 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                     }
                                                 }
                                             }
-                                        }
                                     }
 
                                     let inferred = if let Some(ot) = inferred_opt {
@@ -1106,14 +1101,13 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     use deno_ast::swc::ast;
                                     match ty {
                                         ast::TsType::TsTypeRef(type_ref) => {
-                                            if let Some(ident) = type_ref.type_name.as_ident() {
-                                                if ident.sym.as_ref() == name {
+                                            if let Some(ident) = type_ref.type_name.as_ident()
+                                                && ident.sym.as_ref() == name {
                                                     return true;
                                                 }
-                                            }
                                             if let Some(tp) = &type_ref.type_params {
                                                 for param in &tp.params {
-                                                    if ts_type_contains_name(&*param, name) {
+                                                    if ts_type_contains_name(param, name) {
                                                         return true;
                                                     }
                                                 }
@@ -1128,7 +1122,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                 u
                                             {
                                                 for t in &un.types {
-                                                    if ts_type_contains_name(&*t, name) {
+                                                    if ts_type_contains_name(t, name) {
                                                         return true;
                                                     }
                                                 }
@@ -1149,16 +1143,13 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                 if let ast::TsTypeElement::TsPropertySignature(
                                                     prop,
                                                 ) = member
-                                                {
-                                                    if let Some(type_ann) = &prop.type_ann {
-                                                        if ts_type_contains_name(
+                                                    && let Some(type_ann) = &prop.type_ann
+                                                        && ts_type_contains_name(
                                                             &type_ann.type_ann,
                                                             name,
                                                         ) {
                                                             return true;
                                                         }
-                                                    }
-                                                }
                                             }
                                             false
                                         }
@@ -1176,8 +1167,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     // Try name-based mapping: find a parameter that references this type param
                                     let mut found = false;
                                     for (pidx, param) in nested_fn.params.iter().enumerate() {
-                                        if let ast::Pat::Ident(ident) = &param.pat {
-                                            if let Some(type_ann) = &ident.type_ann {
+                                        if let ast::Pat::Ident(ident) = &param.pat
+                                            && let Some(type_ann) = &ident.type_ann {
                                                 let ts_ty = &*type_ann.type_ann;
                                                 if ts_type_contains_name(ts_ty, name) {
                                                     // use inferred type for this parameter position if available
@@ -1220,7 +1211,6 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                     }
                                                 }
                                             }
-                                        }
                                     }
                                     if found {
                                         continue;
@@ -1240,8 +1230,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 // the original AST link; instead we inspect nested_fn.params
                                 // to preserve mapping accuracy when types are named.
                                 for (idx, param) in nested_fn.params.iter().enumerate() {
-                                    if let ast::Pat::Ident(ident) = &param.pat {
-                                        if let Some(type_ann) = &ident.type_ann {
+                                    if let ast::Pat::Ident(ident) = &param.pat
+                                        && let Some(type_ann) = &ident.type_ann {
                                             let ts_ty = &*type_ann.type_ann;
                                             if let Some(mapped) =
                                                 crate::types::map_ts_type_with_subst(ts_ty, &subst)
@@ -1250,7 +1240,6 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                 continue;
                                             }
                                         }
-                                    }
                                     // Fallback: use fsig.params if AST mapping fails
                                     if let Some(p) = fsig.params.get(idx) {
                                         spec_params.push(p.clone());
@@ -1282,8 +1271,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 if needs_extra_infer {
                                     // Look through declared_names and nested_fn.params to find an array param that references the generic name
                                     for (pidx, param) in nested_fn.params.iter().enumerate() {
-                                        if let deno_ast::swc::ast::Pat::Ident(ident) = &param.pat {
-                                            if let Some(type_ann) = &ident.type_ann {
+                                        if let deno_ast::swc::ast::Pat::Ident(ident) = &param.pat
+                                            && let Some(type_ann) = &ident.type_ann {
                                                 // If the param AST type mentions a declared type param
                                                 // and that declared name is present in declared_names,
                                                 // and the call-site inferred param is an Array(inner),
@@ -1295,8 +1284,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                     }
                                                     // If the parameter annotation contains the declared name,
                                                     // and the inferred param at this position is Array(inner), use it.
-                                                    if ts_type_contains_name(&*type_ann.type_ann, decl_name) {
-                                                        if pidx < inferred_params.len() {
+                                                    if ts_type_contains_name(&type_ann.type_ann, decl_name)
+                                                        && pidx < inferred_params.len() {
                                                             let inferred = inferred_params[pidx].clone();
                                                             if let crate::types::OatsType::Array(inner_box) = inferred {
                                                                 subst.insert(decl_name.clone(), (*inner_box).clone());
@@ -1306,24 +1295,21 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                                 subst.insert(decl_name.clone(), inferred);
                                                             }
                                                         }
-                                                    }
                                                 }
                                             }
-                                        }
                                     }
 
                                     // Recompute specialized params and return using the updated subst
                                     spec_params.clear();
                                     for (idx, param) in nested_fn.params.iter().enumerate() {
-                                        if let deno_ast::swc::ast::Pat::Ident(ident) = &param.pat {
-                                            if let Some(type_ann) = &ident.type_ann {
+                                        if let deno_ast::swc::ast::Pat::Ident(ident) = &param.pat
+                                            && let Some(type_ann) = &ident.type_ann {
                                                 let ts_ty = &*type_ann.type_ann;
                                                 if let Some(mapped) = crate::types::map_ts_type_with_subst(ts_ty, &subst) {
                                                     spec_params.push(mapped);
                                                     continue;
                                                 }
                                             }
-                                        }
                                         if let Some(p) = fsig.params.get(idx) {
                                             spec_params.push(p.clone());
                                         } else {
@@ -2496,8 +2482,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         }
                                     };
                                 // check initialized flag
-                                if _init {
-                                    if !self.should_elide_rc_for_local(&name) {
+                                if _init
+                                    && !self.should_elide_rc_for_local(&name) {
                                         let rc_dec = self.get_rc_dec();
                                         let _ = match self.builder.build_call(
                                             rc_dec,
@@ -2510,12 +2496,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             }
                                         };
                                     }
-                                }
                                 // store new value
                                 let _ = self.builder.build_store(ptr, val);
                                 // increment refcount of new value
-                                if let BasicValueEnum::PointerValue(newpv) = val {
-                                    if !self.should_elide_rc_for_local(&name) {
+                                if let BasicValueEnum::PointerValue(newpv) = val
+                                    && !self.should_elide_rc_for_local(&name) {
                                         let rc_inc = self.get_rc_inc();
                                         let _ = match self.builder.build_call(
                                             rc_inc,
@@ -2528,7 +2513,6 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             }
                                         };
                                     }
-                                }
                             } else {
                                 let _ = self.builder.build_store(ptr, val);
                             }
@@ -3219,7 +3203,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     Ok(v) => Ok(v),
                     Err(_) => {
                         if let ast::Expr::Ident(id) = &*cond.alt {
-                            if id.sym.to_string() == "undefined" {
+                            if id.sym == "undefined" {
                                 let null_ptr = self.i8ptr_t.const_null();
                                 eprintln!("[debug cond] else arm is `undefined` -> using null pointer fallback");
                                 Ok(null_ptr.as_basic_value_enum())
@@ -3267,11 +3251,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             BasicValueEnum::FloatValue(fv) => {
                                 let box_fn = codegen.get_union_box_f64();
                                 let cs = codegen.builder.build_call(box_fn, &[fv.into()], "box_phi");
-                                if let Ok(cs) = cs {
-                                    if let inkwell::Either::Left(bv2) = cs.try_as_basic_value() {
+                                if let Ok(cs) = cs
+                                    && let inkwell::Either::Left(bv2) = cs.try_as_basic_value() {
                                         return Ok(bv2);
                                     }
-                                }
                                 Err(Diagnostic::simple("boxing failed for phi"))
                             }
                             BasicValueEnum::IntValue(iv) => {
@@ -3279,11 +3262,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 let as_f64 = codegen.builder.build_signed_int_to_float(iv, codegen.f64_t, "i2f_phi").map_err(|_| Diagnostic::simple("int->float cast failed"))?;
                                 let box_fn = codegen.get_union_box_f64();
                                 let cs = codegen.builder.build_call(box_fn, &[as_f64.into()], "box_phi");
-                                if let Ok(cs) = cs {
-                                    if let inkwell::Either::Left(bv2) = cs.try_as_basic_value() {
+                                if let Ok(cs) = cs
+                                    && let inkwell::Either::Left(bv2) = cs.try_as_basic_value() {
                                         return Ok(bv2);
                                     }
-                                }
                                 Err(Diagnostic::simple("boxing failed for phi"))
                             }
                             _ => Err(Diagnostic::simple("unsupported phi arm type")),
@@ -4106,31 +4088,25 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 } else if let deno_ast::swc::ast::Expr::Ident(ident) = &*member.obj {
                                     let arr_name = ident.sym.to_string();
                                     // Check lexical locals first
-                                    if let Some((_p, _ty, _init, _is_const, _is_weak, _nominal, oats_type_opt)) = self.find_local(locals, &arr_name) {
-                                        if let Some(ot) = oats_type_opt {
-                                            if let crate::types::OatsType::Array(inner) = ot {
-                                                if matches!(*inner, crate::types::OatsType::Number) {
+                                    if let Some((_p, _ty, _init, _is_const, _is_weak, _nominal, oats_type_opt)) = self.find_local(locals, &arr_name)
+                                        && let Some(ot) = oats_type_opt
+                                            && let crate::types::OatsType::Array(inner) = ot
+                                                && matches!(*inner, crate::types::OatsType::Number) {
                                                     prefer_f64 = true;
                                                 }
-                                            }
-                                        }
-                                    }
                                     // Check function params if not found in locals
-                                    if !prefer_f64 {
-                                        if let Some(idx_p) = param_map.get(&arr_name) {
+                                    if !prefer_f64
+                                        && let Some(idx_p) = param_map.get(&arr_name) {
                                             let fname = function.get_name().to_str().unwrap_or("");
                                             if let Some(param_types) = self.fn_param_types.borrow().get(fname) {
                                                 let pidx = *idx_p as usize;
-                                                if pidx < param_types.len() {
-                                                    if let crate::types::OatsType::Array(inner) = &param_types[pidx] {
-                                                        if matches!(**inner, crate::types::OatsType::Number) {
+                                                if pidx < param_types.len()
+                                                    && let crate::types::OatsType::Array(inner) = &param_types[pidx]
+                                                        && matches!(**inner, crate::types::OatsType::Number) {
                                                             prefer_f64 = true;
                                                         }
-                                                    }
-                                                }
                                             }
                                         }
-                                    }
                                 }
                                 if prefer_f64 {
                                     let array_get = self.get_array_get_f64();

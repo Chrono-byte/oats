@@ -261,7 +261,7 @@ impl EscapeAnalyzer {
     fn analyze_expr(&mut self, expr: &ast::Expr) {
         use deno_ast::swc::ast::*;
         match expr {
-            Expr::Ident(ident) => self.info.use_var(&ident.sym.to_string()),
+            Expr::Ident(ident) => self.info.use_var(ident.sym.as_ref()),
             Expr::Call(call) => {
                 if let Callee::Expr(callee_expr) = &call.callee {
                     self.analyze_expr(callee_expr);

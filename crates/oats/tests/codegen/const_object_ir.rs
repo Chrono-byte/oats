@@ -48,16 +48,16 @@ export function main(): number {
 
     let mut top_level_consts: Vec<(String, Box<ast::Expr>, usize)> = Vec::new();
     for item in parsed.program_ref().body() {
-        if let deno_ast::ModuleItemRef::Stmt(ast::Stmt::Decl(ast::Decl::Var(vd))) = item {
-            if matches!(vd.kind, ast::VarDeclKind::Const) {
-                for decl in &vd.decls {
-                    if let ast::Pat::Ident(binding) = &decl.name {
-                        if let Some(init) = &decl.init {
-                            let name = binding.id.sym.to_string();
-                            let span_start = vd.span.lo.0 as usize;
-                            top_level_consts.push((name, init.clone(), span_start));
-                        }
-                    }
+        if let deno_ast::ModuleItemRef::Stmt(ast::Stmt::Decl(ast::Decl::Var(vd))) = item
+            && matches!(vd.kind, ast::VarDeclKind::Const)
+        {
+            for decl in &vd.decls {
+                if let ast::Pat::Ident(binding) = &decl.name
+                    && let Some(init) = &decl.init
+                {
+                    let name = binding.id.sym.to_string();
+                    let span_start = vd.span.lo.0 as usize;
+                    top_level_consts.push((name, init.clone(), span_start));
                 }
             }
         }
@@ -82,10 +82,10 @@ export function main(): number {
                 }
                 Expr::Object(obj) => {
                     for prop in &obj.props {
-                        if let PropOrSpread::Prop(pb) = prop {
-                            if let Prop::KeyValue(kv) = pb.as_ref() {
-                                collect_idents(&kv.value, out);
-                            }
+                        if let PropOrSpread::Prop(pb) = prop
+                            && let Prop::KeyValue(kv) = pb.as_ref()
+                        {
+                            collect_idents(&kv.value, out);
                         }
                     }
                 }
@@ -164,8 +164,7 @@ export function main(): number {
             // Borrow const_items immutably for evaluation and drop when done to avoid
             // conflicting RefCell borrows when we later mutably insert the result.
             let const_map = codegen.const_items.borrow();
-            match oats::codegen::const_eval::eval_const_expr(init_expr, *span_start, &const_map)
-            {
+            match oats::codegen::const_eval::eval_const_expr(init_expr, *span_start, &const_map) {
                 Ok(cv) => {
                     drop(const_map);
                     codegen

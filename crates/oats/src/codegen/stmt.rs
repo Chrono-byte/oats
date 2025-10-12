@@ -468,13 +468,15 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         let _ = self
                                             .builder
                                             .build_store(alloca, malloc_ret.as_basic_value_enum());
-                                        // increment rc for stored pointer
-                                        let rc_inc = self.get_rc_inc();
-                                        let _ = self.builder.build_call(
-                                            rc_inc,
-                                            &[malloc_ret.into()],
-                                            "rc_inc_local",
-                                        );
+                                        // increment rc for stored pointer (unless elided)
+                                        if !self.should_elide_rc_for_local(&name) {
+                                            let rc_inc = self.get_rc_inc();
+                                            let _ = self.builder.build_call(
+                                                rc_inc,
+                                                &[malloc_ret.into()],
+                                                "rc_inc_local",
+                                            );
+                                        }
 
                                         // mark initialized and insert local with nominal pointing to tuple generated name
                                         self.insert_local_current_scope(
@@ -855,8 +857,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     let _ = self.builder.build_store(alloca, val);
                                     if val.get_type().is_pointer_type() {
                                         if let BasicValueEnum::PointerValue(pv) = val {
-                                            let rc_inc = self.get_rc_inc();
-                                            let _ = self.builder.build_call(rc_inc, &[pv.into()], "rc_inc_local");
+                                            if !self.should_elide_rc_for_local(&name) {
+                                                let rc_inc = self.get_rc_inc();
+                                                let _ = self.builder.build_call(rc_inc, &[pv.into()], "rc_inc_local");
+                                            }
                                         }
                                     }
 
@@ -1181,8 +1185,18 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
                                 // Emit constructor IR. Ensure current_class_parent is set so `super(...)` works.
                                 let prev_block = self.builder.get_insert_block();
+                                // Collect simple identifier decorators (MVP): only support
+                                // decorator expressions that are plain identifiers.
+                                let mut deco_names: Vec<String> = Vec::new();
+                                for d in &class_decl.class.decorators {
+                                    if let deno_ast::swc::ast::Expr::Ident(id) = &*d.expr {
+                                        deco_names.push(id.sym.to_string());
+                                    } else {
+                                        // Non-ident decorators are currently unsupported in the MVP.
+                                    }
+                                }
                                 if let Err(diag) =
-                                    self.gen_constructor_ir(&class_name, ctor, &fields)
+                                    self.gen_constructor_ir(&class_name, ctor, &fields, if deco_names.is_empty() { None } else { Some(deco_names) })
                                 {
                                     crate::diagnostics::emit_diagnostic(&diag, Some(self.source));
                                 }
@@ -1652,12 +1666,14 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         }
                                     };
                                     let _ = self.builder.build_store(alloca, bv);
-                                    let rc_inc = self.get_rc_inc();
-                                    let _ = self.builder.build_call(
-                                        rc_inc,
-                                        &[pv.into()],
-                                        "rc_inc_loop_var",
-                                    );
+                                    if !self.should_elide_rc_for_local(&loop_var_name) {
+                                        let rc_inc = self.get_rc_inc();
+                                        let _ = self.builder.build_call(
+                                            rc_inc,
+                                            &[pv.into()],
+                                            "rc_inc_loop_var",
+                                        );
+                                    }
                                     self.insert_local_current_scope(
                                         _locals_stack,
                                         crate::codegen::helpers::LocalVarInfo {

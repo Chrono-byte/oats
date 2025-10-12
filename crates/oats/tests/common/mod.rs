@@ -180,7 +180,7 @@ pub fn gen_ir_for_source(src: &str) -> Result<String> {
                             .cloned()
                             .unwrap_or_else(Vec::new);
                         codegen
-                            .gen_constructor_ir(&class_name, cons, &fields_vec)
+                            .gen_constructor_ir(&class_name, cons, &fields_vec, None)
                             .map_err(|d| anyhow::anyhow!(d.message))?;
                     }
                     _ => {}

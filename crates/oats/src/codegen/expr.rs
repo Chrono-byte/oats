@@ -2497,33 +2497,37 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     };
                                 // check initialized flag
                                 if _init {
-                                    let rc_dec = self.get_rc_dec();
-                                    let _ = match self.builder.build_call(
-                                        rc_dec,
-                                        &[old.into()],
-                                        "rc_dec_old",
-                                    ) {
-                                        Ok(cs) => cs,
-                                        Err(_) => {
-                                            return Err(Diagnostic::simple("operation failed"));
-                                        }
-                                    };
+                                    if !self.should_elide_rc_for_local(&name) {
+                                        let rc_dec = self.get_rc_dec();
+                                        let _ = match self.builder.build_call(
+                                            rc_dec,
+                                            &[old.into()],
+                                            "rc_dec_old",
+                                        ) {
+                                            Ok(cs) => cs,
+                                            Err(_) => {
+                                                return Err(Diagnostic::simple("operation failed"));
+                                            }
+                                        };
+                                    }
                                 }
                                 // store new value
                                 let _ = self.builder.build_store(ptr, val);
                                 // increment refcount of new value
                                 if let BasicValueEnum::PointerValue(newpv) = val {
-                                    let rc_inc = self.get_rc_inc();
-                                    let _ = match self.builder.build_call(
-                                        rc_inc,
-                                        &[newpv.into()],
-                                        "rc_inc_assign",
-                                    ) {
-                                        Ok(cs) => cs,
-                                        Err(_) => {
-                                            return Err(Diagnostic::simple("operation failed"));
-                                        }
-                                    };
+                                    if !self.should_elide_rc_for_local(&name) {
+                                        let rc_inc = self.get_rc_inc();
+                                        let _ = match self.builder.build_call(
+                                            rc_inc,
+                                            &[newpv.into()],
+                                            "rc_inc_assign",
+                                        ) {
+                                            Ok(cs) => cs,
+                                            Err(_) => {
+                                                return Err(Diagnostic::simple("operation failed"));
+                                            }
+                                        };
+                                    }
                                 }
                             } else {
                                 let _ = self.builder.build_store(ptr, val);

@@ -503,6 +503,20 @@ impl<'a> CodeGen<'a> {
         f
     }
 
+    /// Decide whether RC operations for a named local can be elided.
+    /// Controlled by the environment variable `OATS_ELIDE_ARC=1` and the
+    /// optional `current_escape_info` computed before lowering the function.
+    pub fn should_elide_rc_for_local(&self, local_name: &str) -> bool {
+        if std::env::var("OATS_ELIDE_ARC").unwrap_or_default() != "1" {
+            return false;
+        }
+        if let Some(info) = &*self.current_escape_info.borrow() {
+            // elide only when the local is present and NOT marked as escaping
+            return !info.escapes(local_name);
+        }
+        false
+    }
+
     fn get_promise_resolve(&self) -> FunctionValue<'a> {
         // promise_resolve(i8*) -> i8*
         let fn_type = self.i8ptr_t.fn_type(&[self.i8ptr_t.into()], false);

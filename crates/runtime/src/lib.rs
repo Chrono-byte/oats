@@ -1239,7 +1239,6 @@ unsafe fn array_grow(arr: *mut c_void, min_capacity: usize) -> *mut c_void {
 ///
 /// # Safety
 /// Caller must ensure arr is a valid array pointer and manage refcounts appropriately.
-
 /// Load a f64 element from an array.
 ///
 /// # Safety
@@ -1328,7 +1327,7 @@ pub extern "C" fn array_get_ptr_borrow(arr: *mut c_void, idx: usize) -> *mut c_v
 /// Caller must ensure `arr_ptr` points to a valid array pointer variable.
 /// The array pointer may be updated if reallocation occurs.
 #[unsafe(no_mangle)]
-pub extern "C" fn array_set_f64(arr_ptr: *mut *mut c_void, idx: usize, v: f64) {
+pub unsafe extern "C" fn array_set_f64(arr_ptr: *mut *mut c_void, idx: usize, v: f64) {
     if arr_ptr.is_null() {
         return;
     }

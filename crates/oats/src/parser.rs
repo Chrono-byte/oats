@@ -93,8 +93,8 @@ pub fn parse_oats_module(source_code: &str, file_path: Option<&str>) -> Result<P
 
     // Strip BOM (Byte Order Mark) if present - deno_ast requires this
     // UTF-8 BOM is 0xEF 0xBB 0xBF
-    let source_without_bom = if source_code.starts_with('\u{FEFF}') {
-        &source_code[3..]
+    let source_without_bom = if let Some(stripped) = source_code.strip_prefix('\u{FEFF}') {
+        stripped
     } else {
         source_code
     };
@@ -512,18 +512,16 @@ pub fn parse_oats_module(source_code: &str, file_path: Option<&str>) -> Result<P
     for item in parsed.program_ref().body() {
         if let deno_ast::ModuleItemRef::Stmt(stmt) = item {
             collect_var_decl_spans(stmt, &mut var_spans);
-        } else if let deno_ast::ModuleItemRef::ModuleDecl(module_decl) = item {
+        } else if let deno_ast::ModuleItemRef::ModuleDecl(deno_ast::swc::ast::ModuleDecl::ExportDecl(decl)) = item {
             // export decls may contain VarDecls
-            if let deno_ast::swc::ast::ModuleDecl::ExportDecl(decl) = module_decl {
-                if let ast::Decl::Var(v) = &decl.decl {
-                    var_spans.push(v.span);
-                }
-                if let ast::Decl::Fn(fdecl) = &decl.decl
-                    && let Some(body) = &fdecl.function.body
-                {
-                    for s in &body.stmts {
-                        collect_var_decl_spans(s, &mut var_spans);
-                    }
+            if let ast::Decl::Var(v) = &decl.decl {
+                var_spans.push(v.span);
+            }
+            if let ast::Decl::Fn(fdecl) = &decl.decl
+                && let Some(body) = &fdecl.function.body
+            {
+                for s in &body.stmts {
+                    collect_var_decl_spans(s, &mut var_spans);
                 }
             }
         }

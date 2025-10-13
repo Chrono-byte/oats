@@ -6,6 +6,9 @@ use colored::Colorize;
 #[derive(Parser)]
 #[command(name = "toasty", about = "Oats: build and run AOT-compiled programs")]
 struct Cli {
+    /// Print verbose debug information even in release builds
+    #[arg(long = "verbose")]
+    verbose: bool,
     #[command(subcommand)]
     cmd: Commands,
 }
@@ -83,11 +86,27 @@ enum Commands {
 }
 
 // Preflight dependency check so CLI users and CI get a clear error early.
+#[allow(dead_code)]
 fn preflight_check() -> anyhow::Result<()> {
-    use std::process::Command;
+    // legacy: kept no-arg wrapper for compatibility, forwards to new fn
+    preflight_check_with_verbosity(false)
+}
+
+fn preflight_check_with_verbosity(verbose: bool) -> anyhow::Result<()> {
+    use std::process::{Command, Stdio};
 
     // Check rustc
-    match Command::new("rustc").arg("--version").status() {
+    // Run `rustc --version` but avoid printing its output by default
+    let status = if cfg!(debug_assertions) || verbose {
+        Command::new("rustc").arg("--version").status()
+    } else {
+        Command::new("rustc")
+            .arg("--version")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+    };
+    match status {
         Ok(s) if s.success() => {}
         Ok(_) => {
             anyhow::bail!("`rustc` present but returned non-zero when invoked with --version")
@@ -107,7 +126,19 @@ fn preflight_check() -> anyhow::Result<()> {
     let clang_candidates = ["clang", "clang-18", "clang-17"];
     let mut any_ok = false;
     for &c in &clang_candidates {
-        match Command::new(c).arg("--version").status() {
+        // Avoid printing clang's version in non-debug (release) builds by
+        // redirecting stdout/stderr to null unless we're in debug mode or the
+        // user requested verbose output.
+        let status = if cfg!(debug_assertions) || verbose {
+            Command::new(c).arg("--version").status()
+        } else {
+            Command::new(c)
+                .arg("--version")
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+        };
+        match status {
             Ok(s) if s.success() => {
                 any_ok = true;
                 break;
@@ -131,7 +162,7 @@ fn preflight_check() -> anyhow::Result<()> {
 
 fn main() -> Result<()> {
     // Perform preflight checks to ensure required tools are available
-    preflight_check()?;
+    // preflight_check()?;
 
     let cli = Cli::parse();
 
@@ -152,6 +183,14 @@ fn main() -> Result<()> {
             quiet,
             color,
         } => {
+            // determine effective verbosity: CLI flag overrides env var
+            let verbose = if cli.verbose {
+                true
+            } else {
+                std::env::var("TOASTY_VERBOSE").is_ok()
+            };
+            // run preflight with verbosity so tool detection honors `--verbose`
+            preflight_check_with_verbosity(verbose)?;
             // color handling: support always/never/auto (auto=enable when stderr is a TTY)
             let enable_color = match color.as_deref() {
                 Some("always") => true,
@@ -161,12 +200,12 @@ fn main() -> Result<()> {
             };
             colored::control::set_override(enable_color);
             if release {
-                if !quiet {
+                if !quiet && (verbose || cfg!(debug_assertions)) {
                     eprintln!("{}", "Building in release mode...".green());
                 }
                 unsafe { std::env::set_var("OATS_BUILD_PROFILE", "release") };
             } else {
-                if !quiet {
+                if !quiet && (verbose || cfg!(debug_assertions)) {
                     eprintln!("{}", "Building in debug mode...".yellow());
                 }
             }
@@ -201,7 +240,9 @@ fn main() -> Result<()> {
                 unsafe { std::env::set_var("OATS_OUT_NAME", name) };
             }
             // Delegate to builder. Construct argv so builder sees the source path as argv[1]
-            eprintln!("{}", "Invoking builder...".blue());
+            if !quiet && (verbose || cfg!(debug_assertions)) {
+                eprintln!("{}", "Invoking builder...".blue());
+            }
             let prog = std::env::args()
                 .next()
                 .unwrap_or_else(|| "toasty".to_string());
@@ -212,7 +253,7 @@ fn main() -> Result<()> {
                 vec![prog]
             };
             let _build_out = oats::builder::run_from_args(&argv)?;
-            if !quiet {
+            if !quiet && (verbose || cfg!(debug_assertions)) {
                 eprintln!("{}", "Build finished.".green());
             }
             Ok(())
@@ -224,6 +265,13 @@ fn main() -> Result<()> {
             quiet,
             color,
         } => {
+            let verbose = if cli.verbose {
+                true
+            } else {
+                std::env::var("TOASTY_VERBOSE").is_ok()
+            };
+            preflight_check_with_verbosity(verbose)?;
+
             // honor color/quiet: same auto behavior as Build
             let enable_color = match color.as_deref() {
                 Some("always") => true,
@@ -238,7 +286,7 @@ fn main() -> Result<()> {
                 unsafe { std::env::set_var("OATS_SRC_FILE", s) };
             }
             // Build first
-            if !quiet {
+            if !quiet && (verbose || cfg!(debug_assertions)) {
                 eprintln!("{}", "Building before run...".blue());
             }
             let prog = std::env::args()

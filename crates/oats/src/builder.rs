@@ -1200,7 +1200,9 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
     if used_cpu != "" {
         eprintln!("using target CPU: {}", used_cpu);
     } else {
-        eprintln!("using generic/default CPU for triple {}", target_triple);
+        if cfg!(debug_assertions) {
+            eprintln!("using generic/default CPU for triple {}", target_triple);
+        }
     }
 
     // Emit object file directly from the in-memory module.
@@ -1272,7 +1274,19 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
 
     // helper to test whether a program is runnable
     fn is_prog_available(name: &str) -> bool {
-        match Command::new(name).arg("--version").status() {
+        use std::process::Stdio;
+        // Respect TOASTY_VERBOSE or debug builds to allow printing --version output
+        let verbose = std::env::var("TOASTY_VERBOSE").is_ok();
+        let status = if cfg!(debug_assertions) || verbose {
+            Command::new(name).arg("--version").status()
+        } else {
+            Command::new(name)
+                .arg("--version")
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+        };
+        match status {
             Ok(s) => s.success(),
             Err(_) => false,
         }

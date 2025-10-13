@@ -13,6 +13,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use crate::header::*;
 use crate::*;
 
+// Small usage anchor for the module during staged refactors. Calling
+// `crate::ffi::ffi_init()` from the crate root ensures the `ffi` module
+// is considered used and avoids `unused_imports` warnings while we
+// incrementally move symbols out of the monolith.
+#[allow(dead_code)]
+pub(crate) fn ffi_init() {}
+
 // Re-exported from this module by `lib.rs`.
 
 /// Initialize the background collector (idempotent).
@@ -103,6 +110,9 @@ pub extern "C" fn heap_str_alloc(str_len: size_t) -> *mut c_void {
 }
 
 #[unsafe(no_mangle)]
+/// # Safety
+/// `s` must be a valid nul-terminated C string. The returned pointer is an
+/// owning heap string data pointer and must be released via `rc_dec_str`.
 pub unsafe extern "C" fn heap_str_from_cstr(s: *const c_char) -> *mut c_char {
     if s.is_null() {
         return ptr::null_mut();
@@ -130,6 +140,10 @@ unsafe fn heap_str_to_obj(data: *const c_char) -> *mut c_void {
 }
 
 #[unsafe(no_mangle)]
+/// # Safety
+/// `data` must be a pointer previously returned by this runtime for string data
+/// (either a static literal or a heap-allocated string). Passing invalid
+/// pointers is undefined behavior.
 pub unsafe extern "C" fn rc_inc_str(data: *mut c_char) {
     if data.is_null() {
         return;
@@ -141,6 +155,10 @@ pub unsafe extern "C" fn rc_inc_str(data: *mut c_char) {
 }
 
 #[unsafe(no_mangle)]
+/// # Safety
+/// `data` must be a pointer previously returned by this runtime for string data
+/// (either a static literal or a heap-allocated string). Passing invalid
+/// pointers is undefined behavior.
 pub unsafe extern "C" fn rc_dec_str(data: *mut c_char) {
     if data.is_null() {
         return;
@@ -162,7 +180,7 @@ pub fn runtime_malloc(size: size_t) -> *mut c_void {
             return std::ptr::null_mut();
         }
 
-        if !check_and_reserve_allocation(total as u64) {
+        if !crate::heap::check_and_reserve_allocation(total as u64) {
             if RUNTIME_LOG.load(Ordering::Relaxed) {
                 let _ = io::stderr().write_all(
                     format!(
@@ -178,7 +196,7 @@ pub fn runtime_malloc(size: size_t) -> *mut c_void {
         let layout = std::alloc::Layout::from_size_align(total, 8).unwrap();
         let base = std::alloc::alloc(layout);
         if base.is_null() {
-            release_allocation(total as u64);
+            crate::heap::release_allocation(total as u64);
             return std::ptr::null_mut();
         }
         let size_ptr = base as *mut u64;
@@ -187,6 +205,9 @@ pub fn runtime_malloc(size: size_t) -> *mut c_void {
     }
 }
 
+/// # Safety
+/// `p` must be a pointer previously returned by `runtime_malloc` or null.
+/// Passing arbitrary or already-freed pointers is undefined behavior.
 #[unsafe(no_mangle)]
 pub unsafe fn runtime_free(p: *mut c_void) {
     unsafe {
@@ -200,13 +221,15 @@ pub unsafe fn runtime_free(p: *mut c_void) {
             return;
         }
 
-        release_allocation(total as u64);
+        crate::heap::release_allocation(total as u64);
 
         let layout = std::alloc::Layout::from_size_align(total, 8).unwrap();
         std::alloc::dealloc(base, layout);
     }
 }
 
+/// # Safety
+/// `s` must be a valid nul-terminated C string pointer or null.
 #[unsafe(no_mangle)]
 pub unsafe fn runtime_strlen(s: *const c_char) -> size_t {
     if s.is_null() {
@@ -216,6 +239,10 @@ pub unsafe fn runtime_strlen(s: *const c_char) -> size_t {
     c.to_bytes().len() as size_t
 }
 
+/// # Safety
+/// `s` must be a valid nul-terminated C string. The returned pointer is an
+/// owning C string which should be released with `runtime_free` when no
+/// longer needed.
 #[unsafe(no_mangle)]
 pub unsafe fn str_dup(s: *const c_char) -> *mut c_char {
     unsafe {
@@ -232,6 +259,9 @@ pub unsafe fn str_dup(s: *const c_char) -> *mut c_char {
     }
 }
 
+/// # Safety
+/// `a` and `b` must be valid nul-terminated C string pointers. The returned
+/// pointer is an owning C string which should be released with `runtime_free`.
 #[unsafe(no_mangle)]
 pub unsafe fn str_concat(a: *const c_char, b: *const c_char) -> *mut c_char {
     unsafe {
@@ -281,6 +311,9 @@ pub extern "C" fn print_f64(v: f64) {
     let _ = io::stdout().flush();
 }
 
+/// # Safety
+/// `s` must be a valid nul-terminated C string pointer or null. Passing
+/// invalid pointers is undefined behavior.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn print_str(s: *const c_char) {
     unsafe {
@@ -305,6 +338,9 @@ pub extern "C" fn print_f64_no_nl(v: f64) {
     let _ = io::stdout().flush();
 }
 
+/// # Safety
+/// `s` must be a valid nul-terminated C string pointer or null. Passing
+/// invalid pointers is undefined behavior.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn print_str_no_nl(s: *const c_char) {
     unsafe {
@@ -329,6 +365,9 @@ pub extern "C" fn number_to_string(num: f64) -> *mut c_char {
     unsafe { heap_str_from_cstr(c.as_ptr()) }
 }
 
+/// # Safety
+/// `arr` must be a pointer returned by `array_alloc` (a valid runtime array
+/// object). Passing arbitrary pointers is undefined behavior.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn array_to_string(arr: *mut c_void) -> *mut c_char {
     if arr.is_null() {
@@ -404,65 +443,8 @@ pub unsafe extern "C" fn array_to_string(arr: *mut c_void) -> *mut c_char {
     }
 }
 
-fn stringify_value_raw(val_raw: u64, depth: usize) -> String {
-    if depth > MAX_RECURSION_DEPTH {
-        return "...".to_string();
-    }
-    let addr = val_raw as usize;
-    if is_plausible_addr(addr) {
-        let p = addr as *mut c_void;
-        let s_ptr = unsafe { array_to_string(p) };
-        if !s_ptr.is_null() {
-            let s = unsafe { CStr::from_ptr(s_ptr) };
-            let res = s.to_string_lossy().into_owned();
-            unsafe { rc_dec_str(s_ptr) };
-            return res;
-        }
-        let maybe = unsafe { CStr::from_ptr(p as *const c_char) };
-        if let Ok(st) = maybe.to_str() {
-            return format!("\"{}\"", st);
-        }
-        return format!("<ptr {:p}>", p);
-    }
-    let f = f64::from_bits(val_raw);
-    format!("{}", f)
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn tuple_to_string(obj: *mut c_void) -> *mut c_char {
-    if obj.is_null() {
-        return ptr::null_mut();
-    }
-    let base = unsafe { get_object_base(obj) };
-    if base.is_null() {
-        return ptr::null_mut();
-    }
-    let meta_ptr_ptr = unsafe { (base as *mut u8).add(8) as *mut *mut u64 };
-    let meta = unsafe { *meta_ptr_ptr };
-    if meta.is_null() {
-        return ptr::null_mut();
-    }
-    if unsafe { !validate_meta_block(meta, 1024) } {
-        return ptr::null_mut();
-    }
-
-    let len = unsafe { ((*meta) & 0xffffffffu64) as usize };
-    let offsets_ptr = unsafe { meta.add(1) as *const i32 };
-
-    let mut parts: Vec<String> = Vec::new();
-    for i in 0..len {
-        let off_i32 = unsafe { *offsets_ptr.add(i) };
-        let off = off_i32 as isize as usize;
-        let field_addr = unsafe { (base as *mut u8).add(off) as *const u64 };
-        let raw = unsafe { *field_addr as u64 };
-        let s = stringify_value_raw(raw, 0);
-        parts.push(s);
-    }
-    let joined = parts.join(", ");
-    let out = format!("({})", joined);
-    let c = std::ffi::CString::new(out).unwrap_or_default();
-    unsafe { heap_str_from_cstr(c.as_ptr()) }
-}
+// `stringify_value_raw` exists in `lib.rs` as the canonical helper; use
+// `crate::stringify_value_raw` from other modules.
 
 #[unsafe(no_mangle)]
 pub extern "C" fn math_random() -> f64 {
@@ -503,9 +485,11 @@ pub extern "C" fn math_random() -> f64 {
 pub extern "C" fn array_alloc(len: usize, elem_size: usize, elem_is_number: i32) -> *mut c_void {
     // body copied from lib.rs
     // For empty arrays, allocate with minimum capacity to allow push/assignment
-    const ARRAY_HEADER_SIZE: usize = mem::size_of::<u64>() * 3;
-    const MIN_ARRAY_CAPACITY: usize = 8;
-    let capacity = if len == 0 { MIN_ARRAY_CAPACITY } else { len };
+    let capacity = if len == 0 {
+        crate::MIN_ARRAY_CAPACITY
+    } else {
+        len
+    };
     let data_bytes = match capacity.checked_mul(elem_size) {
         Some(bytes) => bytes,
         None => {
@@ -521,7 +505,7 @@ pub extern "C" fn array_alloc(len: usize, elem_size: usize, elem_is_number: i32)
             return ptr::null_mut();
         }
     };
-    let total_bytes = match ARRAY_HEADER_SIZE.checked_add(data_bytes) {
+    let total_bytes = match crate::ARRAY_HEADER_SIZE.checked_add(data_bytes) {
         Some(total) => total,
         None => {
             if RUNTIME_LOG.load(Ordering::Relaxed) {
@@ -554,56 +538,9 @@ pub extern "C" fn array_alloc(len: usize, elem_size: usize, elem_is_number: i32)
     }
 }
 
-// array_grow remains internal to this module
-unsafe fn array_grow(arr: *mut c_void, min_capacity: usize) -> *mut c_void {
-    if arr.is_null() {
-        return ptr::null_mut();
-    }
-
-    unsafe {
-        let header_ptr = arr as *const u64;
-        let header = *header_ptr;
-        let elem_is_number = ((header >> 32) & 1) as i32;
-
-        let len_ptr = (arr as *mut u8).add(mem::size_of::<u64>()) as *const u64;
-        let len = *len_ptr as usize;
-
-        let cap_ptr = (arr as *mut u8).add(mem::size_of::<u64>() * 2) as *const u64;
-        let old_capacity = *cap_ptr as usize;
-
-        let mut new_capacity = old_capacity + (old_capacity / 2).max(1);
-        if new_capacity < min_capacity {
-            new_capacity = min_capacity;
-        }
-
-        let elem_size = if elem_is_number != 0 { mem::size_of::<f64>() } else { mem::size_of::<*mut c_void>() };
-
-        let new_arr = array_alloc(new_capacity, elem_size, elem_is_number);
-        if new_arr.is_null() {
-            return ptr::null_mut();
-        }
-
-        let new_len_ptr = (new_arr as *mut u8).add(mem::size_of::<u64>()) as *mut u64;
-        *new_len_ptr = len as u64;
-
-        let old_data = (arr as *mut u8).add(ARRAY_HEADER_SIZE);
-        let new_data = (new_arr as *mut u8).add(ARRAY_HEADER_SIZE);
-        ptr::copy_nonoverlapping(old_data, new_data, len * elem_size);
-
-        if elem_is_number == 0 {
-            let ptrs = new_data as *mut *mut c_void;
-            for i in 0..len {
-                let p = *ptrs.add(i);
-                if !p.is_null() {
-                    rc_inc(p);
-                }
-            }
-        }
-
-        new_arr
-    }
-}
-
+/// # Safety
+/// `arr` must be a pointer returned by `array_alloc` (a valid runtime array
+/// object). Passing arbitrary pointers is undefined behavior.
 #[unsafe(no_mangle)]
 pub extern "C" fn array_get_f64(arr: *mut c_void, idx: usize) -> f64 {
     if arr.is_null() {
@@ -622,4 +559,3 @@ pub extern "C" fn array_get_f64(arr: *mut c_void, idx: usize) -> f64 {
 }
 
 // End of `ffi.rs` — extern symbols centralized here.
-

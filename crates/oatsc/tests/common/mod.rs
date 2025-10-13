@@ -191,8 +191,9 @@ pub fn gen_ir_for_source(src: &str) -> Result<String> {
                                 &mut oatsc::types::SymbolTable::new(),
                             ) {
                                 let mut params = Vec::new();
-                                params
-                                    .push(oatsc::types::OatsType::NominalStruct(class_name.clone()));
+                                params.push(oatsc::types::OatsType::NominalStruct(
+                                    class_name.clone(),
+                                ));
                                 params.extend(sig2.params.into_iter());
                                 let fname = format!("{}_{}", class_name, mname);
                                 codegen
@@ -254,7 +255,8 @@ pub fn create_codegen<'a>(
 
     // Simulate module resolution and symbol registration
     let mut modules = std::collections::HashMap::new();
-    let parsed_mod = oatsc::parser::parse_oats_module(source, None).expect("Failed to parse module");
+    let parsed_mod =
+        oatsc::parser::parse_oats_module(source, None).expect("Failed to parse module");
     modules.insert(module_name.to_string(), parsed_mod);
 
     for (_, parsed_module) in modules.iter() {

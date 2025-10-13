@@ -1197,12 +1197,10 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
     }
     let (tm, used_cpu) = tm_opt
         .ok_or_else(|| anyhow::anyhow!("failed to create TargetMachine with any cpu candidate"))?;
-    if used_cpu != "" {
+    if !used_cpu.is_empty() {
         eprintln!("using target CPU: {}", used_cpu);
-    } else {
-        if cfg!(debug_assertions) {
-            eprintln!("using generic/default CPU for triple {}", target_triple);
-        }
+    } else if cfg!(debug_assertions) {
+        eprintln!("using generic/default CPU for triple {}", target_triple);
     }
 
     // Emit object file directly from the in-memory module.

@@ -1,5 +1,8 @@
-//! Object/class helpers for runtime (placeholder)
+//! Object/class helpers for runtime (shims)
+
+#[allow(unused_imports)]
+pub use crate::tuple_to_string;
 
 pub(crate) fn init_object_placeholders() {
-    // Placeholder to be implemented during refactor.
+    // no-op shim
 }

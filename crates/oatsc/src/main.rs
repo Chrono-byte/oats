@@ -585,8 +585,9 @@ fn main() -> Result<()> {
                             } {
                                 // Prepend `this` as the first param (nominal struct pointer)
                                 let mut params = Vec::new();
-                                params
-                                    .push(oatsc::types::OatsType::NominalStruct(class_name.clone()));
+                                params.push(oatsc::types::OatsType::NominalStruct(
+                                    class_name.clone(),
+                                ));
                                 params.extend(sig.params.into_iter());
                                 let ret = sig.ret;
                                 let fname = format!("{}_{}", class_name, mname);

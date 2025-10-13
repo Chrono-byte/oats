@@ -23,7 +23,7 @@
 //!
 
 use libc::{c_char, c_void, size_t};
-use std::ffi::{CStr, CString};
+use std::ffi::CStr;
 use std::io::{self, Write};
 use std::mem;
 use std::process;
@@ -56,18 +56,36 @@ thread_local! {
 const MAX_RECURSION_DEPTH: usize = 128;
 
 // Module placeholders for incremental refactor.
-mod header;
-mod rc;
-mod heap;
-mod string;
 mod array;
-mod object;
 mod ffi;
+mod header;
+mod heap;
+mod object;
+mod rc;
+mod string;
 mod utils;
+#[allow(unused_imports)]
 pub use crate::ffi::*;
 
 // Re-export header helpers from crate root for other modules
 pub use crate::header::*;
+
+// Ensure placeholder modules are referenced during incremental refactor.
+// This function is called by tests or the binary runner to initialize
+// runtime logging/limits and to anchor the placeholder modules so the
+// compiler does not warn about unused imports while we migrate code.
+#[allow(dead_code)]
+pub(crate) fn init_runtime_placeholders() {
+    // Call per-module no-op initializers so the modules are considered used.
+    crate::array::init_array_placeholders();
+    crate::heap::init_heap_placeholders();
+    crate::object::init_object_placeholders();
+    crate::rc::init_rc_placeholders();
+    crate::string::init_string_placeholders();
+    crate::utils::init_utils_placeholders();
+    // Ensure ffi is referenced
+    crate::ffi::ffi_init();
+}
 
 // Collector implementation lives in a separate module.
 mod collector;
@@ -128,43 +146,8 @@ fn init_resource_limits() {
 
 /// Check if an allocation would exceed limits, and if not, reserve the space.
 /// Returns true if allocation is allowed, false if it would exceed limits.
-fn check_and_reserve_allocation(size: u64) -> bool {
-    init_resource_limits();
-
-    // Check single allocation limit
-    let max_alloc = MAX_ALLOC_BYTES.load(Ordering::Relaxed);
-    if size > max_alloc {
-        return false;
-    }
-
-    // Check total heap limit with atomic compare-exchange loop
-    let max_heap = MAX_HEAP_BYTES.load(Ordering::Relaxed);
-    loop {
-        let current = CURRENT_HEAP_BYTES.load(Ordering::Relaxed);
-        let new_total = current.saturating_add(size);
-
-        if new_total > max_heap {
-            return false; // Would exceed limit
-        }
-
-        // Try to atomically update current allocation
-        match CURRENT_HEAP_BYTES.compare_exchange_weak(
-            current,
-            new_total,
-            Ordering::Relaxed,
-            Ordering::Relaxed,
-        ) {
-            Ok(_) => return true, // Successfully reserved
-            Err(_) => continue,   // Retry on contention
-        }
-    }
-}
-
-/// Release allocated space back to the pool
-fn release_allocation(size: u64) {
-    CURRENT_HEAP_BYTES.fetch_sub(size, Ordering::Relaxed);
-}
-
+// Allocation accounting helpers moved to `heap.rs`.
+// See `crate::heap::check_and_reserve_allocation` and `crate::heap::release_allocation`.
 fn init_runtime_log() {
     // Fast-path: if already enabled, do nothing
     if RUNTIME_LOG.load(Ordering::Relaxed) {
@@ -198,41 +181,7 @@ fn init_collector() -> Arc<Collector> {
         .clone()
 }
 
-/// Extract the runtime type tag from a full header value while masking out
-/// the embedded claim bit. This ensures other helpers can test type tags
-/// reliably even when the collector has temporarily set the claim bit.
-#[inline]
-pub fn header_type_tag(h: u64) -> u64 {
-    let raw = h >> HEADER_TYPE_TAG_SHIFT;
-    // Remove the claim bit if present in the shifted range.
-    let claim_shifted = HEADER_CLAIM_BIT >> HEADER_TYPE_TAG_SHIFT;
-    raw & !claim_shifted
-}
-
-// FFI: collector control helpers -------------------------------------------------
-
-/// Initialize the background collector (idempotent).
-#[unsafe(no_mangle)]
-pub extern "C" fn collector_init() {
-    let _ = init_collector();
-}
-
-/// Shutdown the background collector worker. This stops the background thread
-/// but does not reclaim the OnceLock-held instance. Idempotent.
-#[unsafe(no_mangle)]
-pub extern "C" fn collector_shutdown() {
-    let c = init_collector();
-    c.stop();
-}
-
-/// Force a synchronous collection pass: drain queued roots and process them
-/// synchronously on the calling thread. This is useful for tests.
-#[unsafe(no_mangle)]
-pub extern "C" fn collector_collect_now() {
-    let c = init_collector();
-    let roots = c.drain_now();
-    crate::collector::Collector::process_roots(&roots);
-}
+// header_type_tag is provided by `header` module (migrated). Re-exported above.
 
 // --- Safety helpers for collector traversal ---
 // Perform lightweight, conservative checks on raw pointers to avoid
@@ -331,583 +280,21 @@ fn add_root_candidate(p: *mut c_void) {
     col.push_root(p as usize);
 }
 
-// Test helper: allocate a tiny control block and enqueue it for collector inspection.
-// This helper is only included when the `collector-test` Cargo feature is enabled.
-#[cfg(feature = "collector-test")]
-#[unsafe(no_mangle)]
-/// Test-only helper: enqueue a freshly-allocated control block for collector inspection.
-///
-/// Safety contract:
-/// - This symbol is test-only and should not be used in normal runtime code.
-/// - The function allocates and enqueues a synthetic heap block; callers need not
-///   manage the returned pointer. The function is safe to call from any thread.
-pub extern "C" fn collector_test_enqueue() {
-    // Allocate minimal heap block: header + one u64 word
-    let size = std::mem::size_of::<u64>() * 2;
-    let mem = runtime_malloc(size as size_t) as *mut u8;
-    if mem.is_null() {
-        return;
-    }
-    // initialize header: refcount=1, no flags
-    unsafe {
-        let header_ptr = mem as *mut u64;
-        *header_ptr = make_heap_header(1);
-        // zero next word
-        let second = mem.add(std::mem::size_of::<u64>()) as *mut u64;
-        *second = 0u64;
-    }
-
-    add_root_candidate(mem as *mut c_void);
-}
-
-// When the feature is disabled, provide no symbol. This keeps release builds
-// free of test-only helpers.
-
-/// Allocate a heap string with runtime header and length field.
-///
-/// Layout: `[u64 header][u64 length][char data + null terminator]`
-///
-/// Returns a pointer to the start of the control block (header). Callers
-/// that want the C-compatible `char*` should offset by +16 bytes.
-/// The returned pointer must be released via `rc_dec_str` when no longer used.
-///
-/// The refcount is initialized to 1.
-///
-/// # Security
-/// Uses checked arithmetic to prevent integer overflow. Returns null if
-/// str_len + overhead would overflow usize or exceed allocation limits.
-#[unsafe(no_mangle)]
-pub extern "C" fn heap_str_alloc(str_len: size_t) -> *mut c_void {
-    unsafe {
-        // SECURITY: Use checked arithmetic to prevent integer overflow
-        // Total size: 8 (header) + 8 (length) + str_len + 1 (null terminator)
-        let total_size = match 16usize.checked_add(str_len) {
-            Some(s) => match s.checked_add(1) {
-                Some(total) => total,
-                None => {
-                    if RUNTIME_LOG.load(Ordering::Relaxed) {
-                        let _ = io::stderr().write_all(
-                            format!(
-                                "[oats runtime] heap_str_alloc: integer overflow (str_len={})\n",
-                                str_len
-                            )
-                            .as_bytes(),
-                        );
-                    }
-                    return ptr::null_mut();
-                }
-            },
-            None => {
-                if RUNTIME_LOG.load(Ordering::Relaxed) {
-                    let _ = io::stderr().write_all(
-                        format!(
-                            "[oats runtime] heap_str_alloc: integer overflow (str_len={})\n",
-                            str_len
-                        )
-                        .as_bytes(),
-                    );
-                }
-                return ptr::null_mut();
-            }
-        };
-
-        let p = runtime_malloc(total_size);
-        if p.is_null() {
-            return ptr::null_mut();
-        }
-
-        // Initialize header with refcount = 1
-        let header_ptr = p as *mut u64;
-        *header_ptr = make_heap_header(1);
-
-        // Initialize length
-        let len_ptr = (p as *mut u8).add(8) as *mut u64;
-        *len_ptr = str_len as u64;
-
-        p
-    }
-}
-
-/// Create a heap string from a nul-terminated C string and return data pointer (+16).
-///
-/// # Safety
-/// - `s` must be a valid nul-terminated C string. Passing invalid or non-nul-terminated
-///   pointers is undefined behavior.
-/// - The returned pointer is an owning data pointer; callers must call `rc_dec_str`.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn heap_str_from_cstr(s: *const c_char) -> *mut c_char {
-    if s.is_null() {
-        return ptr::null_mut();
-    }
-    unsafe {
-        // Use CStr to compute length safely and copy bytes
-        let cstr = CStr::from_ptr(s);
-        let bytes = cstr.to_bytes_with_nul();
-        let len = bytes.len() - 1; // excluding trailing NUL
-        let obj = heap_str_alloc(len as size_t);
-        if obj.is_null() {
-            return ptr::null_mut();
-        }
-
-        // Copy string data to offset +16
-        let data_ptr = (obj as *mut u8).add(16) as *mut c_char;
-        ptr::copy_nonoverlapping(bytes.as_ptr(), data_ptr as *mut u8, bytes.len());
-
-        data_ptr
-    }
-}
-
-/// Convert a data pointer returned to user-space back to the object base pointer.
-///
-/// This reverses the +16 offset to get back to the header from a heap string data pointer.
-///
-/// # Safety
-/// `data` must be a pointer previously returned by this runtime for string data
-/// (i.e., pointer at offset +16). Passing arbitrary pointers is undefined behavior.
-#[inline]
-unsafe fn heap_str_to_obj(data: *const c_char) -> *mut c_void {
-    if data.is_null() {
-        return ptr::null_mut();
-    }
-    unsafe { (data as *mut u8).sub(16) as *mut c_void }
-}
-
-/// Increment the strong reference count for a string data pointer.
-///
-/// This helper accepts a pointer to string data (the pointer returned to
-/// user-space code, which points at offset +16 from the header). It
-/// resolves the header and delegates to `rc_inc` which handles both
-/// string-data and object-base pointers.
-///
-/// Handles both static and heap strings. For heap strings, the data pointer
-/// is at offset +16 from the object header.
-///
-/// # Safety
-/// `data` must be a pointer previously returned by the runtime for a string
-/// (either a static literal or a heap-allocated string). Passing arbitrary
-/// or already-freed pointers is undefined behavior.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn rc_inc_str(data: *mut c_char) {
-    if data.is_null() {
-        return;
-    }
-    unsafe {
-        // Check if this looks like a heap string by checking if there's a valid header at -16
-        // Use a heuristic to detect static/heap pointers: attempt to read the
-        // object header and test the static flag bit. This is tolerant to
-        // both base-pointer and string-data-pointer inputs.
-        let obj = heap_str_to_obj(data);
-        rc_inc(obj);
-    }
-}
-
-/// Decrement the strong reference count for a string data pointer.
-///
-/// This resolves the header (handles data vs base pointer) and delegates
-/// to `rc_dec`. If the reference count reaches zero, destructor logic may
-/// run which frees heap storage. Static string literals are immortal and
-/// are not freed.
-///
-/// Handles both static and heap strings.
-///
-/// # Safety
-/// `data` must be a pointer previously returned by the runtime for a string
-/// (either a static literal or a heap-allocated string). Passing arbitrary
-/// pointers or double-dropping is undefined behavior.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn rc_dec_str(data: *mut c_char) {
-    if data.is_null() {
-        return;
-    }
-    unsafe {
-        let obj = heap_str_to_obj(data);
-        rc_dec(obj);
-    }
-}
-
-// --- Memory Management ---
-
-/// Allocate memory from the runtime allocator with resource limits.
-///
-/// This wrapper enforces heap size limits and tracks total allocations.
-/// The allocator stores bookkeeping data (allocation size) at offset -8
-/// from the returned pointer for use by `runtime_free`.
-///
-/// Resource limits can be configured via environment variables:
-/// - OATS_MAX_HEAP_BYTES: Total heap size limit (default: 1 GB)
-/// - OATS_MAX_ALLOC_BYTES: Single allocation limit (default: 256 MB)
-///
-/// Returns null if allocation would exceed limits or if system allocator fails.
-/// Returned pointer must be freed with `runtime_free`.
-///
-/// # Safety
-/// Caller must not exceed the allocated size when writing to the returned pointer.
-#[unsafe(no_mangle)]
-pub fn runtime_malloc(size: size_t) -> *mut c_void {
-    // Allocate size + 8 bytes of bookkeeping. Return pointer to the
-    // usable area (bookkeeping precedes returned pointer). The bookkeeping
-    // stores the total allocation size as a u64 so deallocation can find the
-    // original base and layout. This keeps the object-base ABI unchanged
-    // for codegen (returned pointer is the start of the object header).
-    unsafe {
-        if size == 0 {
-            return std::ptr::null_mut();
-        }
-        let total = size.checked_add(std::mem::size_of::<u64>()).unwrap_or(0);
-        if total == 0 {
-            return std::ptr::null_mut();
-        }
-
-        // Check resource limits before allocating
-        if !check_and_reserve_allocation(total as u64) {
-            // Allocation would exceed limits
-            if RUNTIME_LOG.load(Ordering::Relaxed) {
-                let _ = io::stderr().write_all(
-                    format!(
-                        "[oats runtime] runtime_malloc: allocation of {} bytes denied (exceeds limits)\n",
-                        total
-                    )
-                    .as_bytes(),
-                );
-            }
-            return std::ptr::null_mut();
-        }
-
-        let layout = std::alloc::Layout::from_size_align(total, 8).unwrap();
-        let base = std::alloc::alloc(layout);
-        if base.is_null() {
-            // System allocator failed, release reserved space
-            release_allocation(total as u64);
-            return std::ptr::null_mut();
-        }
-        // store total size as u64 at base
-        let size_ptr = base as *mut u64;
-        *size_ptr = total as u64;
-        // return pointer to usable area (after bookkeeping u64)
-        base.add(std::mem::size_of::<u64>()) as *mut c_void
-    }
-}
-
-/// Free memory previously allocated by the runtime allocator and release allocation count.
-///
-/// # Safety
-/// The pointer `p` must have been allocated by `runtime_malloc` (or compatible
-/// allocator) and not already freed. Freeing invalid or non-owned pointers is
-/// undefined behavior.
-#[unsafe(no_mangle)]
-pub unsafe fn runtime_free(p: *mut c_void) {
-    unsafe {
-        if p.is_null() {
-            return;
-        }
-        // compute base pointer where size was stored
-        let base = (p as *mut u8).sub(std::mem::size_of::<u64>());
-        // read stored size
-        let size_ptr = base as *mut u64;
-        let total = *size_ptr as usize;
-        if total == 0 {
-            return;
-        }
-
-        // Release allocation from resource tracking
-        release_allocation(total as u64);
-
-        let layout = std::alloc::Layout::from_size_align(total, 8).unwrap();
-        std::alloc::dealloc(base, layout);
-    }
-}
-
-// --- String Operations ---
-
-/// Compute the length of a nul-terminated C string.
-///
-/// # Safety
-/// `s` must be a valid pointer to a nul-terminated C string. Passing an
-/// invalid pointer or non-nul-terminated memory is undefined behavior.
-#[unsafe(no_mangle)]
-pub unsafe fn runtime_strlen(s: *const c_char) -> size_t {
-    if s.is_null() {
-        return 0;
-    }
-    // Use CStr to compute length safely
-    let c = unsafe { CStr::from_ptr(s) };
-    c.to_bytes().len() as size_t
-}
-
-/// Duplicate a nul-terminated C string into a newly allocated runtime buffer.
-///
-/// The returned pointer points to a newly allocated C string (no RC header).
-/// The caller is responsible for freeing the returned buffer when no longer
-/// needed using `runtime_free`.
-///
-/// # Safety
-/// `s` must point to a valid nul-terminated C string.
-#[unsafe(no_mangle)]
-pub unsafe fn str_dup(s: *const c_char) -> *mut c_char {
-    unsafe {
-        if s.is_null() {
-            return ptr::null_mut();
-        }
-        let len = libc::strlen(s) + 1;
-        let dst = runtime_malloc(len) as *mut c_char;
-        if dst.is_null() {
-            return ptr::null_mut();
-        }
-        ptr::copy_nonoverlapping(s as *const u8, dst as *mut u8, len);
-        dst
-    }
-}
-
-/// Concatenate two nul-terminated C strings into a newly allocated runtime string with RC header.
-///
-/// This allocates a heap string with the runtime header and returns a
-/// pointer to the data section (offset +16). The returned string is an
-/// owning pointer and must be released with `rc_dec_str` when no longer
-/// needed.
-///
-/// # Safety
-/// Both `a` and `b` must be valid pointers to nul-terminated C strings.
-///
-/// # Security
-/// Uses checked arithmetic to prevent integer overflow when computing total length.
-#[unsafe(no_mangle)]
-pub unsafe fn str_concat(a: *const c_char, b: *const c_char) -> *mut c_char {
-    unsafe {
-        if a.is_null() || b.is_null() {
-            return ptr::null_mut();
-        }
-        let la = CStr::from_ptr(a).to_bytes().len();
-        let lb = CStr::from_ptr(b).to_bytes().len();
-
-        // SECURITY: Check for integer overflow when adding lengths
-        let total_len = match la.checked_add(lb) {
-            Some(len) => len,
-            None => {
-                if RUNTIME_LOG.load(Ordering::Relaxed) {
-                    let _ = io::stderr().write_all(
-                        format!(
-                            "[oats runtime] str_concat: integer overflow (len_a={}, len_b={})\n",
-                            la, lb
-                        )
-                        .as_bytes(),
-                    );
-                }
-                return ptr::null_mut();
-            }
-        };
-
-        // Allocate heap string with RC header (this also checks for overflow)
-        let obj = heap_str_alloc(total_len);
-        if obj.is_null() {
-            return ptr::null_mut();
-        }
-
-        // Get data pointer (offset +16)
-        let data_ptr = (obj as *mut u8).add(16) as *mut c_char;
-
-        // Copy both strings
-        // copy bytes from CStrs
-        let aslice = CStr::from_ptr(a).to_bytes();
-        let bslice = CStr::from_ptr(b).to_bytes();
-        ptr::copy_nonoverlapping(aslice.as_ptr(), data_ptr as *mut u8, la);
-        ptr::copy_nonoverlapping(bslice.as_ptr(), data_ptr.add(la) as *mut u8, lb);
-
-        // Null terminate
-        *data_ptr.add(la + lb) = 0;
-
-        data_ptr
-    }
-}
-
+// Increment the strong reference count for a string data pointer.
+//
+// This helper accepts a pointer to string data (the pointer returned to
+// user-space code, which points at offset +16 from the header). It
+// resolves the header and delegates to `rc_inc` which handles both
+// string-data and object-base pointers.
+//
+// Handles both static and heap strings. For heap strings, the data pointer
+// is at offset +16 from the object header.
+//
+// # Safety
+// `data` must be a pointer previously returned by the runtime for a string
+// (either a static literal or a heap-allocated string). Passing arbitrary
+// or already-freed pointers is undefined behavior.
 // --- Printing ---
-
-/// Print a f64 value to stdout with a newline.
-///
-/// Safe to call from any thread.
-#[unsafe(no_mangle)]
-pub extern "C" fn print_f64(v: f64) {
-    let _ = io::stdout().write_all(format!("{}\n", v).as_bytes());
-    let _ = io::stdout().flush();
-}
-
-/// Print a nul-terminated C string to stdout (with newline).
-///
-/// # Safety
-/// `s` must be a valid pointer to a nul-terminated C string. Passing an
-/// invalid pointer is undefined behavior.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn print_str(s: *const c_char) {
-    unsafe {
-        if s.is_null() {
-            return;
-        }
-        let _ = io::stdout().write_all(CStr::from_ptr(s).to_bytes());
-        let _ = io::stdout().write_all(b"\n");
-        let _ = io::stdout().flush();
-    }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn print_i32(v: i32) {
-    let _ = io::stdout().write_all(format!("{}\n", v).as_bytes());
-    let _ = io::stdout().flush();
-}
-
-/// Print a float without trailing newline.
-///
-/// # Safety
-/// The caller must ensure that calling libc::printf with a formatted float is safe
-/// in the current environment. This function does not dereference raw pointers.
-#[unsafe(no_mangle)]
-pub extern "C" fn print_f64_no_nl(v: f64) {
-    let _ = io::stdout().write_all(format!("{}", v).as_bytes());
-    let _ = io::stdout().flush();
-}
-
-/// Print a C string without trailing newline.
-///
-/// # Safety
-/// `s` must be a valid nul-terminated C string pointer. Passing invalid pointers
-/// is undefined behavior.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn print_str_no_nl(s: *const c_char) {
-    unsafe {
-        if s.is_null() {
-            return;
-        }
-        let _ = io::stdout().write_all(CStr::from_ptr(s).to_bytes());
-        // no newline
-    }
-}
-
-/// Print just a newline.
-///
-/// # Safety
-/// This function does not dereference raw pointers and is safe to call from any thread.
-#[unsafe(no_mangle)]
-pub extern "C" fn print_newline() {
-    // Write the newline byte to the stdout buffer
-    let _ = io::stdout().write_all(b"\n");
-    // Explicitly flush the buffer to ensure it's written to the console
-    let _ = io::stdout().flush();
-    // Also flush C stdio buffers in case other runtime helpers used libc::printf
-    // to write to stdout. This avoids interleaving / buffering issues when
-    // mixing Rust std::io and libc stdio.
-    // We intentionally avoid calling C stdio flush here to remain pure-Rust.
-    // If mixing with C stdio is needed, call libc::fflush(ptr::null_mut())
-    // in a separate compatibility shim.
-}
-/// Convert a number to a heap string. The returned pointer is an owning data pointer
-/// (offset +16) and must be released with `rc_dec_str`.
-///
-/// # Safety
-/// The function allocates runtime memory and writes to raw pointers. Callers must
-/// treat the returned pointer as owning and eventually release it with `rc_dec_str`.
-#[allow(clippy::manual_c_str_literals)]
-#[unsafe(no_mangle)]
-pub extern "C" fn number_to_string(num: f64) -> *mut c_char {
-    // Use Rust formatting to produce the string and then create a heap-owned
-    // runtime string using the helper that consumes a C string pointer.
-    let s = format!("{}", num);
-    let c = CString::new(s).unwrap_or_default();
-    unsafe { heap_str_from_cstr(c.as_ptr()) }
-}
-
-/// Convert an array object to a printable C string. The returned pointer is an owning
-/// data pointer (offset +16) and must be released with `rc_dec_str`.
-///
-/// # Safety
-/// `arr` must be a valid array pointer returned by the runtime allocator. Passing
-/// invalid pointers is undefined behavior.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn array_to_string(arr: *mut c_void) -> *mut c_char {
-    if arr.is_null() {
-        return ptr::null_mut();
-    }
-    unsafe {
-        // Read header flags to determine if elements are numbers.
-        let header_ptr = arr as *const u64;
-        let header = *header_ptr;
-        // elem_is_number stored in high 32 bits at bit 32
-        let flags = (header >> 32) as u32;
-        let elem_is_number = (flags & 1) != 0;
-
-        let len_ptr = (arr as *mut u8).add(mem::size_of::<u64>()) as *const u64;
-        let len = *len_ptr as usize;
-
-        if elem_is_number {
-            // Build a Rust String with comma-and-space separated values
-            let mut s = String::new();
-            s.push('[');
-            for i in 0..len {
-                let v = array_get_f64(arr, i);
-                if i != 0 {
-                    s.push_str(", ");
-                }
-                s.push_str(&format!("{}", v));
-            }
-            s.push(']');
-            // Convert to C string and allocate heap string
-            let c = std::ffi::CString::new(s).unwrap_or_default();
-            heap_str_from_cstr(c.as_ptr())
-        } else {
-            // Pointer arrays: iterate elements and attempt to stringify nested arrays/tuples
-            let mut s = String::new();
-            s.push('[');
-            for i in 0..len {
-                if i != 0 {
-                    s.push_str(", ");
-                }
-                let p = array_get_ptr(arr, i);
-                if p.is_null() {
-                    s.push_str("null");
-                    continue;
-                }
-                // Try to heuristically detect if this pointer is an array
-                // by reading its header and checking the flags. If it looks
-                // like an array, recursively stringify it.
-                let mut printed = false;
-                let header_ptr = p as *const AtomicU64;
-                let header_val = (*header_ptr).load(Ordering::Relaxed);
-                // If the high-most type tag bits are zero, treat as array and recurse
-                let type_tag = (header_val >> HEADER_TYPE_TAG_SHIFT) as u64;
-                if type_tag == 0 {
-                    let nested = array_to_string(p);
-                    if !nested.is_null() {
-                        // read C string
-                        let cstr = CStr::from_ptr(nested);
-                        if let Ok(str_slice) = cstr.to_str() {
-                            s.push_str(str_slice);
-                            printed = true;
-                        }
-                        // release the temporary nested string
-                        rc_dec_str(nested);
-                    }
-                }
-                if !printed {
-                    // Fallback: try to interpret as a C string (common)
-                    let maybe = CStr::from_ptr(p as *const c_char);
-                    if let Ok(st) = maybe.to_str() {
-                        // wrap with quotes
-                        s.push('"');
-                        s.push_str(st);
-                        s.push('"');
-                        printed = true;
-                    }
-                }
-                if !printed {
-                    // As a last resort show a pointer summary
-                    s.push_str(&format!("<ptr {:p}>", p));
-                }
-                // release the owning pointer returned by array_get_ptr
-                rc_dec(p);
-            }
-            s.push(']');
-            let c = std::ffi::CString::new(s).unwrap_or_default();
-            heap_str_from_cstr(c.as_ptr())
-        }
-    }
-}
 
 // Helper: stringify an arbitrary pointer-or-raw-8-bytes value with depth guard.
 fn stringify_value_raw(val_raw: u64, depth: usize) -> String {
@@ -940,97 +327,8 @@ fn stringify_value_raw(val_raw: u64, depth: usize) -> String {
     format!("{}", f)
 }
 
-/// Convert a tuple/object into a printable C string.
-///
-/// Iterates the tuple metadata block and stringifies each 8-byte field.
-/// The returned pointer is an owning data pointer (offset +16) and must
-/// be released with `rc_dec_str`.
-///
-/// # Safety
-/// `obj` must be a valid object pointer allocated by this runtime and contain a
-/// valid metadata pointer at +8. Passing arbitrary pointers is undefined behavior.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn tuple_to_string(obj: *mut c_void) -> *mut c_char {
-    if obj.is_null() {
-        return ptr::null_mut();
-    }
-    // Resolve base pointer (handles string-data pointers too)
-    let base = unsafe { get_object_base(obj) };
-    if base.is_null() {
-        return ptr::null_mut();
-    }
-    // meta pointer stored at offset +8
-    let meta_ptr_ptr = unsafe { (base as *mut u8).add(8) as *mut *mut u64 };
-    let meta = unsafe { *meta_ptr_ptr };
-    if meta.is_null() {
-        return ptr::null_mut();
-    }
-    if unsafe { !validate_meta_block(meta, 1024) } {
-        return ptr::null_mut();
-    }
-
-    let len = unsafe { ((*meta) & 0xffffffffu64) as usize };
-    let offsets_ptr = unsafe { meta.add(1) as *const i32 };
-
-    let mut parts: Vec<String> = Vec::new();
-    for i in 0..len {
-        let off_i32 = unsafe { *offsets_ptr.add(i) };
-        let off = off_i32 as isize as usize;
-        let field_addr = unsafe { (base as *mut u8).add(off) as *const u64 };
-        let raw = unsafe { *field_addr as u64 };
-        let s = stringify_value_raw(raw, 0);
-        parts.push(s);
-    }
-    let joined = parts.join(", ");
-    let out = format!("({})", joined);
-    let c = std::ffi::CString::new(out).unwrap_or_default();
-    unsafe { heap_str_from_cstr(c.as_ptr()) }
-}
-
-/// PRNG helper used for `Math.random()`.
-///
-/// Returns a pseudo-random `f64` value in the range [0, 1). The function
-/// ensures libc's PRNG is seeded once per process using high-resolution
-/// time and process ID for better entropy.
-#[unsafe(no_mangle)]
-pub extern "C" fn math_random() -> f64 {
-    // Use a small internal SplitMix64-based PRNG seeded once per process.
-    // This avoids dependence on libc::rand and provides deterministic but
-    // well-distributed values for Math.random() usage in tests/examples.
-    use std::sync::atomic::{AtomicU64, Ordering};
-
-    static RNG_STATE: AtomicU64 = AtomicU64::new(0);
-    static INIT: std::sync::Once = std::sync::Once::new();
-
-    // splitmix64 next function
-    fn splitmix64_next(s: &AtomicU64) -> u64 {
-        let mut x = s.load(Ordering::Relaxed);
-        // advance by large odd constant
-        x = x.wrapping_add(0x9e3779b97f4a7c15);
-        s.store(x, Ordering::Relaxed);
-        let mut z = x;
-        z = (z ^ (z >> 30)).wrapping_mul(0xbf58476d1ce4e5b9);
-        z = (z ^ (z >> 27)).wrapping_mul(0x94d049bb133111eb);
-        z ^ (z >> 31)
-    }
-
-    INIT.call_once(|| {
-        // Seed from SystemTime nanos + process id
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos() as u64)
-            .unwrap_or(0);
-        let pid = process::id() as u64;
-        let seed = now ^ (pid.wrapping_mul(0x9e3779b97f4a7c15));
-        RNG_STATE.store(seed, Ordering::Relaxed);
-    });
-
-    let bits = splitmix64_next(&RNG_STATE);
-    // Convert to double in [0,1)
-    let mant = bits >> 12; // keep top 52 bits
-    let denom = (1u64 << 52) as f64;
-    (mant as f64) / denom
-}
+// `tuple_to_string` implementation moved to `object.rs`; the C ABI symbol is
+// exported from that module. Keep this file free of duplicate exports.
 
 // --- Reference Counting ---
 
@@ -1044,10 +342,10 @@ pub extern "C" fn math_random() -> f64 {
 // capacity: allocated space (in number of elements, not bytes)
 //
 // The header offset for data is 24 bytes (3 * u64).
-const ARRAY_HEADER_SIZE: usize = mem::size_of::<u64>() * 3;
+pub const ARRAY_HEADER_SIZE: usize = mem::size_of::<u64>() * 3;
 
 // Minimum initial capacity for empty arrays
-const MIN_ARRAY_CAPACITY: usize = 8;
+pub const MIN_ARRAY_CAPACITY: usize = 8;
 
 // Called when an array index is out-of-bounds. Prints a helpful message
 // to stderr and aborts the process to avoid undefined behavior.
@@ -1063,83 +361,6 @@ fn runtime_index_oob_abort(_arr: *mut c_void, idx: usize, len: usize) -> ! {
     let _ = io::stderr().write_all(s2.as_bytes());
     let _ = io::stderr().write_all(b"\n");
     process::abort();
-}
-
-/// Allocate an array on the runtime heap.
-///
-/// Layout: `[header: u64][len: u64][capacity: u64][data...]`
-/// - header: high 32 bits = flags/type, low 32 bits = refcount
-/// - length: current number of elements
-/// - capacity: allocated space (in number of elements)
-///
-/// If len is 0, allocates with MIN_ARRAY_CAPACITY to allow for growth.
-///
-/// # Safety
-/// This function performs raw memory allocation and writes to raw pointers.
-/// Callers must ensure the returned pointer is handled correctly and not
-/// dereferenced from safe Rust code without proper checks.
-#[unsafe(no_mangle)]
-pub extern "C" fn array_alloc(len: usize, elem_size: usize, elem_is_number: i32) -> *mut c_void {
-    // For empty arrays, allocate with minimum capacity to allow push/assignment
-    let capacity = if len == 0 { MIN_ARRAY_CAPACITY } else { len };
-
-    // SECURITY: Use checked arithmetic to prevent integer overflow attacks
-    // An attacker could pass huge len or elem_size values to cause overflow,
-    // leading to under-allocation and buffer overflows.
-    let data_bytes = match capacity.checked_mul(elem_size) {
-        Some(bytes) => bytes,
-        None => {
-            // Overflow detected - refuse allocation
-            if RUNTIME_LOG.load(Ordering::Relaxed) {
-                let _ = io::stderr().write_all(
-                    format!(
-                        "[oats runtime] array_alloc: integer overflow (capacity={}, elem_size={})\n",
-                        capacity, elem_size
-                    )
-                    .as_bytes(),
-                );
-            }
-            return ptr::null_mut();
-        }
-    };
-
-    let total_bytes = match ARRAY_HEADER_SIZE.checked_add(data_bytes) {
-        Some(total) => total,
-        None => {
-            if RUNTIME_LOG.load(Ordering::Relaxed) {
-                let _ = io::stderr().write_all(
-                    b"[oats runtime] array_alloc: integer overflow in total size calculation\n",
-                );
-            }
-            return ptr::null_mut();
-        }
-    };
-
-    unsafe {
-        let p = runtime_malloc(total_bytes) as *mut u8;
-        if p.is_null() {
-            return ptr::null_mut();
-        }
-
-        // Initialize header with unified format:
-        // - Low 32 bits: refcount (initialized to 1)
-        // - High 32 bits: flags (elem_is_number flag at bit 32, other bits for future use)
-        let header_ptr = p as *mut u64;
-        let flags = ((elem_is_number as u64) << 32) & 0xffffffff00000000u64;
-        let initial_rc = 1u64;
-        *header_ptr = flags | initial_rc;
-
-        // Initialize length.
-        let len_ptr = p.add(mem::size_of::<u64>()) as *mut u64;
-        *len_ptr = len as u64;
-
-        // Initialize capacity (new field at offset +16).
-        let cap_ptr = p.add(mem::size_of::<u64>() * 2) as *mut u64;
-        *cap_ptr = capacity as u64;
-
-        // The data area is not zeroed by default.
-        p as *mut c_void
-    }
 }
 
 /// Grow an array to accommodate at least min_capacity elements.
@@ -1208,36 +429,6 @@ unsafe fn array_grow(arr: *mut c_void, min_capacity: usize) -> *mut c_void {
         }
 
         new_arr
-    }
-}
-
-/// Grow an array to accommodate at least min_capacity elements.
-/// Returns a new array pointer with the same refcount and data copied over.
-/// The old array is NOT freed - caller is responsible for managing refcounts.
-///
-/// Uses geometric growth (1.5x) to amortize reallocation costs.
-///
-/// # Safety
-/// Caller must ensure arr is a valid array pointer and manage refcounts appropriately.
-/// Load a f64 element from an array.
-///
-/// # Safety
-/// Caller must ensure `arr` is a valid array pointer returned by `array_alloc` and
-/// `idx` is within bounds. Undefined behavior may occur otherwise.
-#[unsafe(no_mangle)]
-pub extern "C" fn array_get_f64(arr: *mut c_void, idx: usize) -> f64 {
-    if arr.is_null() {
-        return 0.0;
-    }
-    unsafe {
-        let len_ptr = (arr as *mut u8).add(mem::size_of::<u64>()) as *const u64;
-        let len = *len_ptr as usize;
-        if idx >= len {
-            runtime_index_oob_abort(arr, idx, len);
-        }
-        let data_start = (arr as *mut u8).add(ARRAY_HEADER_SIZE);
-        let elem_ptr = data_start.add(idx * mem::size_of::<f64>()) as *const f64;
-        *elem_ptr
     }
 }
 
@@ -1604,11 +795,11 @@ pub extern "C" fn array_pop_ptr(arr: *mut c_void) -> *mut c_void {
 // --- Atomic Reference Counting ---
 
 // Re-export rc module functions
-pub use crate::rc::rc_inc;
 pub(crate) use crate::rc::get_object_base;
 pub use crate::rc::rc_dec;
-pub use crate::rc::rc_weak_inc;
+pub use crate::rc::rc_inc;
 pub use crate::rc::rc_weak_dec;
+pub use crate::rc::rc_weak_inc;
 pub use crate::rc::rc_weak_upgrade;
 
 // --- Union helpers ---

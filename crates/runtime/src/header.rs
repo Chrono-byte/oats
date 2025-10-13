@@ -19,31 +19,30 @@ pub const HEADER_FLAGS_MASK: u64 = 0xffffffff00000000u64;
 /// Create a header value for a heap-allocated object with initial refcount
 #[inline]
 pub fn make_heap_header(initial_rc: u32) -> u64 {
-	(initial_rc as u64) & HEADER_RC_MASK
+    (initial_rc as u64) & HEADER_RC_MASK
 }
 
 /// Helper to extract weak count from a header value
 #[inline]
 pub fn header_get_weak_bits(h: u64) -> u64 {
-	(h & HEADER_WEAK_MASK) >> HEADER_WEAK_SHIFT
+    (h & HEADER_WEAK_MASK) >> HEADER_WEAK_SHIFT
 }
 
 /// Helper to set weak bits into a header value (weak must fit in 16 bits)
 #[inline]
 pub fn header_with_weak(h: u64, weak: u64) -> u64 {
-	let cleared = h & !HEADER_WEAK_MASK;
-	cleared | ((weak & 0xffffu64) << HEADER_WEAK_SHIFT)
+    let cleared = h & !HEADER_WEAK_MASK;
+    cleared | ((weak & 0xffffu64) << HEADER_WEAK_SHIFT)
 }
 
 /// Extract the runtime type tag from a full header value while masking out
 /// the embedded claim bit.
 #[inline]
 pub fn header_type_tag(h: u64) -> u64 {
-	let raw = h >> HEADER_TYPE_TAG_SHIFT;
-	let claim_shifted = HEADER_CLAIM_BIT >> HEADER_TYPE_TAG_SHIFT;
-	raw & !claim_shifted
+    let raw = h >> HEADER_TYPE_TAG_SHIFT;
+    let claim_shifted = HEADER_CLAIM_BIT >> HEADER_TYPE_TAG_SHIFT;
+    raw & !claim_shifted
 }
 
 // Re-export atomic type for callers
 pub type HeaderAtomic = AtomicU64;
-

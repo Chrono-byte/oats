@@ -8,6 +8,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use crate::header::*;
 
 /// Atomically increment the strong reference count of a heap-allocated object.
+/// # Safety
+/// `p` must be a valid pointer returned by the runtime allocator (or a
+/// string-data pointer); passing arbitrary or freed pointers is undefined behavior.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rc_inc(p: *mut c_void) {
     if p.is_null() {
@@ -78,6 +81,9 @@ pub(crate) unsafe fn get_object_base(p: *mut c_void) -> *mut c_void {
 }
 
 /// Atomically decrement the strong reference count and free the object if the count reaches zero.
+/// # Safety
+/// `p` must be a valid pointer returned by the runtime allocator (or a
+/// string-data pointer). Double-free or invalid pointers are undefined behaviour.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rc_dec(p: *mut c_void) {
     if p.is_null() {
@@ -157,6 +163,8 @@ pub unsafe extern "C" fn rc_dec(p: *mut c_void) {
 }
 
 /// Atomically increment the weak reference count on an object.
+/// # Safety
+/// `p` must be a valid pointer previously returned by the runtime.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rc_weak_inc(p: *mut c_void) {
     if p.is_null() {
@@ -192,6 +200,8 @@ pub unsafe extern "C" fn rc_weak_inc(p: *mut c_void) {
 }
 
 /// Atomically decrement the weak reference count and free the control block
+/// # Safety
+/// `p` must be a valid pointer previously returned by the runtime.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rc_weak_dec(p: *mut c_void) {
     if p.is_null() {
@@ -241,6 +251,8 @@ pub unsafe extern "C" fn rc_weak_dec(p: *mut c_void) {
 }
 
 /// Attempt to upgrade a weak pointer into a strong one.
+/// # Safety
+/// `p` must be a valid pointer previously returned by the runtime.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rc_weak_upgrade(p: *mut c_void) -> *mut c_void {
     if p.is_null() {
@@ -275,4 +287,9 @@ pub unsafe extern "C" fn rc_weak_upgrade(p: *mut c_void) -> *mut c_void {
             }
         }
     }
+}
+
+#[allow(dead_code)]
+pub(crate) fn init_rc_placeholders() {
+    // no-op shim for incremental refactor
 }

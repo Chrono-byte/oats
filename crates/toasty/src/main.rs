@@ -204,10 +204,8 @@ fn main() -> Result<()> {
                     eprintln!("{}", "Building in release mode...".green());
                 }
                 unsafe { std::env::set_var("OATS_BUILD_PROFILE", "release") };
-            } else {
-                if !quiet && (verbose || cfg!(debug_assertions)) {
-                    eprintln!("{}", "Building in debug mode...".yellow());
-                }
+            } else if !quiet && (verbose || cfg!(debug_assertions)) {
+                eprintln!("{}", "Building in debug mode...".yellow());
             }
             if let Some(s) = src.clone() {
                 unsafe { std::env::set_var("OATS_SRC_FILE", s) };

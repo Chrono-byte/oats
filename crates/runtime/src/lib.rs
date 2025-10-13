@@ -70,6 +70,17 @@ thread_local! {
 /// stack exhaustion on typical systems (default stack size ~8MB).
 const MAX_RECURSION_DEPTH: usize = 128;
 
+// Module placeholders for incremental refactor.
+mod header;
+mod rc;
+mod heap;
+mod string;
+mod array;
+mod object;
+mod ffi;
+mod utils;
+pub use crate::ffi::*;
+
 // Create a header value for a heap-allocated object with initial refcount
 #[inline]
 fn make_heap_header(initial_rc: u32) -> u64 {

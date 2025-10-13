@@ -55,12 +55,20 @@ sudo dnf install llvm18 llvm18-devel clang18
 2. **Oats Example**: Review or edit `examples/add.oats` for your first build.
 
 3. **Compile and Run**:
-   ```bash
-   source ./scripts/setup_env.sh
-   cargo build --workspace
-   cargo run -p oats --bin toasty -- examples/add.oats
-   ./aot_out/add
-   ```
+
+```bash
+# Prepare environment (sets LLVM paths)
+source ./scripts/setup_env.sh
+
+# Build in release mode for better performance
+cargo build --workspace --release
+
+  # Run the `toasty` CLI in release mode to compile and run the example
+  cargo run -p toasty --release -- run examples/add.oats
+
+# The compiled executable will be written to `./aot_out/add`
+./aot_out/add
+```
 
 ---
 
@@ -96,9 +104,10 @@ Contributions are welcome! Start by exploring the `docs/` directory:
 ### Development Workflow
 
 1. **Set Up Environment**:
-   ```bash
-   source ./scripts/setup_env.sh
-   ```
+
+```bash
+source ./scripts/setup_env.sh
+```
 
 2. **Build and Test**:
    ```bash

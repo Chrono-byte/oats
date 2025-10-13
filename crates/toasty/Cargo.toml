@@ -10,9 +10,8 @@ clap = { version = "4.4", features = ["derive"] }
 colored = "2.0"
 
 atty = "0.2"
-# note: oats is a workspace member; use a path dependency
-[dependencies.oats]
-path = "../oats"
+[dependencies.oatsc]
+path = "../oatsc"
 
 [dev-dependencies]
 assert_cmd = "2.0"

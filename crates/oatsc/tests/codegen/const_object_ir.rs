@@ -2,8 +2,8 @@ use super::common::create_codegen;
 use anyhow::Result;
 use inkwell::context::Context;
 use inkwell::targets::TargetMachine;
-use oats::parser;
-use oats::types::{SymbolTable, check_function_strictness};
+use oatsc::parser;
+use oatsc::types::{SymbolTable, check_function_strictness};
 
 #[test]
 fn const_object_emits_meta_and_globals() -> Result<()> {
@@ -164,7 +164,7 @@ export function main(): number {
             // Borrow const_items immutably for evaluation and drop when done to avoid
             // conflicting RefCell borrows when we later mutably insert the result.
             let const_map = codegen.const_items.borrow();
-            match oats::codegen::const_eval::eval_const_expr(init_expr, *span_start, &const_map) {
+            match oatsc::codegen::const_eval::eval_const_expr(init_expr, *span_start, &const_map) {
                 Ok(cv) => {
                     drop(const_map);
                     codegen
@@ -172,9 +172,9 @@ export function main(): number {
                         .borrow_mut()
                         .insert(name.clone(), cv.clone());
                     match cv {
-                        oats::codegen::const_eval::ConstValue::Str(_)
-                        | oats::codegen::const_eval::ConstValue::Array(_)
-                        | oats::codegen::const_eval::ConstValue::Object(_) => {
+                        oatsc::codegen::const_eval::ConstValue::Str(_)
+                        | oatsc::codegen::const_eval::ConstValue::Array(_)
+                        | oatsc::codegen::const_eval::ConstValue::Object(_) => {
                             let gname = format!("const.{}", name);
                             match codegen.emit_const_global(&gname, &cv) {
                                 Ok(ptr) => {

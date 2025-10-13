@@ -1,5 +1,5 @@
 use anyhow::Result;
-use oats::parser;
+use oatsc::parser;
 
 #[test]
 fn semicolon_after_block_comment_is_ok() -> Result<()> {

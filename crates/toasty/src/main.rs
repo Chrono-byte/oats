@@ -252,7 +252,7 @@ fn main() -> Result<()> {
             } else {
                 vec![prog]
             };
-            let _build_out = oats::builder::run_from_args(&argv)?;
+            let _build_out = oatsc::builder::run_from_args(&argv)?;
             if !quiet && (verbose || cfg!(debug_assertions)) {
                 eprintln!("{}", "Build finished.".green());
             }
@@ -300,7 +300,7 @@ fn main() -> Result<()> {
             } else {
                 vec![prog.clone()]
             };
-            let build_res = oats::builder::run_from_args(&build_argv)?;
+            let build_res = oatsc::builder::run_from_args(&build_argv)?;
 
             // Determine output exe path (builder uses OATS_OUT_DIR or current dir and input filename)
             let out_dir = std::env::var("OATS_OUT_DIR").unwrap_or_else(|_| ".".to_string());

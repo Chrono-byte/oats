@@ -1,8 +1,8 @@
 use anyhow::Result;
 
-use oats::codegen::CodeGen;
-use oats::parser;
-use oats::types::{SymbolTable, check_function_strictness};
+use oatsc::codegen::CodeGen;
+use oatsc::parser;
+use oatsc::types::{SymbolTable, check_function_strictness};
 
 use inkwell::context::Context;
 use inkwell::targets::TargetMachine;

@@ -18,9 +18,9 @@
 
 use anyhow::Result;
 
-use oats::codegen::CodeGen;
-use oats::parser;
-use oats::types::{SymbolTable, check_function_strictness};
+use oatsc::codegen::CodeGen;
+use oatsc::parser;
+use oatsc::types::{SymbolTable, check_function_strictness};
 use std::cell::Cell;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -52,7 +52,7 @@ pub mod deno_adapter;
 pub fn gen_ir_for_source(src: &str) -> Result<String> {
     // Suppress diagnostic output during test execution to maintain clean test output.
     // The guard automatically restores previous diagnostic settings when dropped.
-    let _diag_guard = oats::diagnostics::suppress();
+    let _diag_guard = oatsc::diagnostics::suppress();
 
     let parsed_mod = parser::parse_oats_module(src, None)?;
     let parsed = &parsed_mod.parsed;
@@ -97,7 +97,7 @@ pub fn gen_ir_for_source(src: &str) -> Result<String> {
         {
             let class_name = c.ident.sym.to_string();
             // collect fields as in main.rs
-            let mut fields: Vec<(String, oats::types::OatsType)> = Vec::new();
+            let mut fields: Vec<(String, oatsc::types::OatsType)> = Vec::new();
             use deno_ast::swc::ast::{ClassMember, Expr, MemberProp, Stmt};
             for member in &c.class.body {
                 if let ClassMember::ClassProp(prop) = member
@@ -105,7 +105,7 @@ pub fn gen_ir_for_source(src: &str) -> Result<String> {
                 {
                     let fname = id.sym.to_string();
                     if !fields.iter().any(|(n, _)| n == &fname) {
-                        fields.push((fname, oats::types::OatsType::Number));
+                        fields.push((fname, oatsc::types::OatsType::Number));
                     }
                 }
             }
@@ -122,8 +122,8 @@ pub fn gen_ir_for_source(src: &str) -> Result<String> {
                                 let ty = binding_ident
                                     .type_ann
                                     .as_ref()
-                                    .and_then(|ann| oats::types::map_ts_type(&ann.type_ann))
-                                    .unwrap_or(oats::types::OatsType::Number);
+                                    .and_then(|ann| oatsc::types::map_ts_type(&ann.type_ann))
+                                    .unwrap_or(oatsc::types::OatsType::Number);
                                 fields.push((fname, ty));
                             }
                         }
@@ -146,7 +146,7 @@ pub fn gen_ir_for_source(src: &str) -> Result<String> {
                             && let MemberProp::Ident(ident) = &mem.prop
                         {
                             let name = ident.sym.to_string();
-                            let inferred = oats::types::infer_type(None, Some(&assign.right));
+                            let inferred = oatsc::types::infer_type(None, Some(&assign.right));
                             if fields.iter().all(|(n, _)| n != &name) {
                                 fields.push((name, inferred));
                             }
@@ -172,12 +172,12 @@ pub fn gen_ir_for_source(src: &str) -> Result<String> {
                             deno_ast::swc::ast::PropName::Str(s) => s.value.to_string(),
                             _ => continue,
                         };
-                        if let Ok(sig) = oats::types::check_function_strictness(
+                        if let Ok(sig) = oatsc::types::check_function_strictness(
                             &m.function,
-                            &mut oats::types::SymbolTable::new(),
+                            &mut oatsc::types::SymbolTable::new(),
                         ) {
                             let mut params = Vec::new();
-                            params.push(oats::types::OatsType::NominalStruct(class_name.clone()));
+                            params.push(oatsc::types::OatsType::NominalStruct(class_name.clone()));
                             params.extend(sig.params.into_iter());
                             let ret = sig.ret;
                             let fname = format!("{}_{}", class_name, mname);
@@ -186,13 +186,13 @@ pub fn gen_ir_for_source(src: &str) -> Result<String> {
                                 .map_err(|d| anyhow::anyhow!(d.message))?;
                         } else {
                             // fallback: emit with void return
-                            if let Ok(sig2) = oats::types::check_function_strictness(
+                            if let Ok(sig2) = oatsc::types::check_function_strictness(
                                 &m.function,
-                                &mut oats::types::SymbolTable::new(),
+                                &mut oatsc::types::SymbolTable::new(),
                             ) {
                                 let mut params = Vec::new();
                                 params
-                                    .push(oats::types::OatsType::NominalStruct(class_name.clone()));
+                                    .push(oatsc::types::OatsType::NominalStruct(class_name.clone()));
                                 params.extend(sig2.params.into_iter());
                                 let fname = format!("{}_{}", class_name, mname);
                                 codegen
@@ -200,7 +200,7 @@ pub fn gen_ir_for_source(src: &str) -> Result<String> {
                                         &fname,
                                         &m.function,
                                         &params,
-                                        &oats::types::OatsType::Void,
+                                        &oatsc::types::OatsType::Void,
                                         Some("this"),
                                     )
                                     .map_err(|d| anyhow::anyhow!(d.message))?;
@@ -254,7 +254,7 @@ pub fn create_codegen<'a>(
 
     // Simulate module resolution and symbol registration
     let mut modules = std::collections::HashMap::new();
-    let parsed_mod = oats::parser::parse_oats_module(source, None).expect("Failed to parse module");
+    let parsed_mod = oatsc::parser::parse_oats_module(source, None).expect("Failed to parse module");
     modules.insert(module_name.to_string(), parsed_mod);
 
     for (_, parsed_module) in modules.iter() {
@@ -266,11 +266,11 @@ pub fn create_codegen<'a>(
                 match &decl.decl {
                     deno_ast::swc::ast::Decl::Class(c) => {
                         let name = c.ident.sym.to_string();
-                        symbols.insert(name.clone(), oats::types::OatsType::NominalStruct(name));
+                        symbols.insert(name.clone(), oatsc::types::OatsType::NominalStruct(name));
                     }
                     deno_ast::swc::ast::Decl::TsInterface(iface) => {
                         let name = iface.id.sym.to_string();
-                        symbols.insert(name.clone(), oats::types::OatsType::NominalStruct(name));
+                        symbols.insert(name.clone(), oatsc::types::OatsType::NominalStruct(name));
                     }
                     _ => {}
                 }

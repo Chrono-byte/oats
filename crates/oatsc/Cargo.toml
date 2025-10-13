@@ -1,5 +1,5 @@
 [package]
-name = "oats"
+name = "oatsc"
 version = "0.1.0"
 edition = "2024"
 license = "zlib-acknowledgement"

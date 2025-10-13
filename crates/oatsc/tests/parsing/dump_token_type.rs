@@ -1,5 +1,5 @@
 use anyhow::Result;
-use oats::parser;
+use oatsc::parser;
 use std::any::type_name;
 
 fn type_of<T>(_: &T) -> &str {

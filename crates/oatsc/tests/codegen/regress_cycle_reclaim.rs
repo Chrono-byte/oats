@@ -7,7 +7,7 @@ use common::gen_ir_for_source;
 #[test]
 fn regress_cycle_reclaim() {
     // Silence diagnostics printed to stderr during tests
-    let _guard = oats::diagnostics::suppress();
+    let _guard = oatsc::diagnostics::suppress();
 
     // examples/cycle_reclaim.oats lives at repository_root/examples/cycle_reclaim.oats
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))

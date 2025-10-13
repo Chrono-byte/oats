@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-use oats::parser;
+use oatsc::parser;
 
 #[test]
 fn missing_semicolon_is_rejected() -> Result<()> {

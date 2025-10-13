@@ -12,7 +12,7 @@ fn parse_simple_arrow_function() -> Result<()> {
         }
     "#;
 
-    let parsed_mod = oats::parser::parse_oats_module(src, None)?;
+    let parsed_mod = oatsc::parser::parse_oats_module(src, None)?;
     let parsed = &parsed_mod.parsed;
 
     // Verify it parses without errors
@@ -56,7 +56,7 @@ fn parse_arrow_with_block_body() -> Result<()> {
         };
     "#;
 
-    let parsed_mod = oats::parser::parse_oats_module(src, None)?;
+    let parsed_mod = oatsc::parser::parse_oats_module(src, None)?;
     let parsed = &parsed_mod.parsed;
 
     // Should parse successfully
@@ -81,7 +81,7 @@ fn parse_arrow_as_callback() -> Result<()> {
         }
     "#;
 
-    let parsed_mod = oats::parser::parse_oats_module(src, None)?;
+    let parsed_mod = oatsc::parser::parse_oats_module(src, None)?;
     let parsed = &parsed_mod.parsed;
 
     // Should parse successfully

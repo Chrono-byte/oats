@@ -10,6 +10,7 @@ use std::process;
 use std::ptr;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use crate::header::*;
 use crate::*;
 
 // Re-exported from this module by `lib.rs`.

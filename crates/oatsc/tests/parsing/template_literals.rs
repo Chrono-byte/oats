@@ -12,7 +12,7 @@ fn parse_simple_template_literal() -> Result<()> {
         }
     "#;
 
-    let parsed_mod = oats::parser::parse_oats_module(src, None)?;
+    let parsed_mod = oatsc::parser::parse_oats_module(src, None)?;
     let parsed = &parsed_mod.parsed;
 
     // Verify it parses without errors
@@ -35,7 +35,7 @@ fn parse_template_with_multiple_expressions() -> Result<()> {
         }
     "#;
 
-    let parsed_mod = oats::parser::parse_oats_module(src, None)?;
+    let parsed_mod = oatsc::parser::parse_oats_module(src, None)?;
     let parsed = &parsed_mod.parsed;
 
     let body_count = parsed.program_ref().body().count();
@@ -54,7 +54,7 @@ fn parse_template_with_number() -> Result<()> {
         }
     "#;
 
-    let parsed_mod = oats::parser::parse_oats_module(src, None)?;
+    let parsed_mod = oatsc::parser::parse_oats_module(src, None)?;
     let parsed = &parsed_mod.parsed;
 
     let body_count = parsed.program_ref().body().count();
@@ -74,7 +74,7 @@ Line 3`;
         }
     "#;
 
-    let parsed_mod = oats::parser::parse_oats_module(src, None)?;
+    let parsed_mod = oatsc::parser::parse_oats_module(src, None)?;
     let parsed = &parsed_mod.parsed;
 
     let body_count = parsed.program_ref().body().count();

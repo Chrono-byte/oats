@@ -10,7 +10,7 @@ fn for_loop_generates_basic_blocks() {
         }
     "#;
 
-    let result = oats::parser::parse_oats_module(src, None);
+    let result = oatsc::parser::parse_oats_module(src, None);
     assert!(result.is_ok(), "For-loop should parse successfully");
 }
 
@@ -27,6 +27,6 @@ fn if_statement_generates_basic_blocks() {
         }
     "#;
 
-    let result = oats::parser::parse_oats_module(src, None);
+    let result = oatsc::parser::parse_oats_module(src, None);
     assert!(result.is_ok(), "If statement should parse successfully");
 }

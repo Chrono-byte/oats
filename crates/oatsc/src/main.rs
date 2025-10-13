@@ -32,9 +32,9 @@
 
 use anyhow::Result;
 
-use oats::codegen::CodeGen;
-use oats::parser;
-use oats::types::{OatsType, SymbolTable, check_function_strictness};
+use oatsc::codegen::CodeGen;
+use oatsc::parser;
+use oatsc::types::{OatsType, SymbolTable, check_function_strictness};
 
 use inkwell::context::Context;
 use inkwell::targets::TargetMachine;
@@ -207,7 +207,7 @@ fn main() -> Result<()> {
                     deno_ast::swc::ast::Decl::TsTypeAlias(type_alias) => {
                         let name = type_alias.id.sym.to_string();
                         // If the alias maps directly to a known OatsType, record it.
-                        if let Some(mapped) = oats::types::map_ts_type(&type_alias.type_ann) {
+                        if let Some(mapped) = oatsc::types::map_ts_type(&type_alias.type_ann) {
                             emap.insert(name.clone(), mapped);
                         } else {
                             // If it's an object literal type (TsTypeLit), extract properties
@@ -221,7 +221,7 @@ fn main() -> Result<()> {
                                             let fname = id.sym.to_string();
                                             if let Some(type_ann) = &prop.type_ann
                                                 && let Some(mapped) =
-                                                    oats::types::map_ts_type(&type_ann.type_ann)
+                                                    oatsc::types::map_ts_type(&type_ann.type_ann)
                                             {
                                                 fields.push((fname, mapped));
                                                 continue;
@@ -327,7 +327,7 @@ fn main() -> Result<()> {
                 )) = stmt
                 {
                     let name = type_alias.id.sym.to_string();
-                    if let Some(mapped) = oats::types::map_ts_type(&type_alias.type_ann) {
+                    if let Some(mapped) = oatsc::types::map_ts_type(&type_alias.type_ann) {
                         pre_symbols.insert(name.clone(), mapped);
                     }
                 }
@@ -474,7 +474,7 @@ fn main() -> Result<()> {
                                     let ty = binding_ident
                                         .type_ann
                                         .as_ref()
-                                        .and_then(|ann| oats::types::map_ts_type(&ann.type_ann))
+                                        .and_then(|ann| oatsc::types::map_ts_type(&ann.type_ann))
                                         .unwrap_or(OatsType::Number);
                                     fields.push((fname, ty));
                                 }
@@ -534,7 +534,7 @@ fn main() -> Result<()> {
                         if let deno_ast::swc::ast::Expr::Ident(id) = &*prop.key {
                             let fname = id.sym.to_string();
                             if let Some(type_ann) = &prop.type_ann
-                                && let Some(mapped) = oats::types::map_ts_type(&type_ann.type_ann)
+                                && let Some(mapped) = oatsc::types::map_ts_type(&type_ann.type_ann)
                             {
                                 fields.push((fname, mapped));
                                 continue;
@@ -586,7 +586,7 @@ fn main() -> Result<()> {
                                 // Prepend `this` as the first param (nominal struct pointer)
                                 let mut params = Vec::new();
                                 params
-                                    .push(oats::types::OatsType::NominalStruct(class_name.clone()));
+                                    .push(oatsc::types::OatsType::NominalStruct(class_name.clone()));
                                 params.extend(sig.params.into_iter());
                                 let ret = sig.ret;
                                 let fname = format!("{}_{}", class_name, mname);
@@ -599,7 +599,7 @@ fn main() -> Result<()> {
                                         Some("this"),
                                     )
                                     .map_err(|d| {
-                                        oats::diagnostics::emit_diagnostic(
+                                        oatsc::diagnostics::emit_diagnostic(
                                             &d,
                                             Some(parsed_module.source.as_str()),
                                         );
@@ -612,7 +612,7 @@ fn main() -> Result<()> {
                                     check_function_strictness(&m.function, &mut symbols_ref)
                                 } {
                                     let mut params = Vec::new();
-                                    params.push(oats::types::OatsType::NominalStruct(
+                                    params.push(oatsc::types::OatsType::NominalStruct(
                                         class_name.clone(),
                                     ));
                                     params.extend(sig2.params.into_iter());
@@ -622,11 +622,11 @@ fn main() -> Result<()> {
                                             &fname,
                                             &m.function,
                                             &params,
-                                            &oats::types::OatsType::Void,
+                                            &oatsc::types::OatsType::Void,
                                             Some("this"),
                                         )
                                         .map_err(|d| {
-                                            oats::diagnostics::emit_diagnostic(
+                                            oatsc::diagnostics::emit_diagnostic(
                                                 &d,
                                                 Some(parsed_module.source.as_str()),
                                             );
@@ -646,7 +646,7 @@ fn main() -> Result<()> {
                             if let Err(d) =
                                 codegen.gen_constructor_ir(&class_name, ctor, &fields, None)
                             {
-                                oats::diagnostics::emit_diagnostic(
+                                oatsc::diagnostics::emit_diagnostic(
                                     &d,
                                     Some(parsed_module.source.as_str()),
                                 );
@@ -672,7 +672,7 @@ fn main() -> Result<()> {
             None,
         )
         .map_err(|d| {
-            oats::diagnostics::emit_diagnostic(&d, Some(parsed_mod.source.as_str()));
+            oatsc::diagnostics::emit_diagnostic(&d, Some(parsed_mod.source.as_str()));
             anyhow::anyhow!("{}", d.message)
         })?;
 

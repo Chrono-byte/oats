@@ -1,7 +1,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use oats::parser::parse_oats_module;
+use oatsc::parser::parse_oats_module;
 use std::panic;
 
 fuzz_target!(|data: &[u8]| {

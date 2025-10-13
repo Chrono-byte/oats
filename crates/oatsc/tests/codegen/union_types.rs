@@ -13,7 +13,7 @@ fn union_local_and_param_boxing() -> Result<()> {
     "#;
 
     let context = inkwell::context::Context::create();
-    let symbols = oats::types::SymbolTable::new();
+    let symbols = oatsc::types::SymbolTable::new();
     let codegen = create_codegen(&context, "union_types_test", symbols, src);
 
     let ir = codegen.module.print_to_string().to_string();
@@ -36,7 +36,7 @@ fn union_param_boxing() -> Result<()> {
     "#;
 
     let context = inkwell::context::Context::create();
-    let symbols = oats::types::SymbolTable::new();
+    let symbols = oatsc::types::SymbolTable::new();
     let codegen = create_codegen(&context, "union_types_test", symbols, src);
 
     let ir = codegen.module.print_to_string().to_string();
@@ -61,7 +61,7 @@ fn typeof_guard_uses_discriminant() -> Result<()> {
     "#;
 
     let context = inkwell::context::Context::create();
-    let symbols = oats::types::SymbolTable::new();
+    let symbols = oatsc::types::SymbolTable::new();
     let codegen = create_codegen(&context, "union_types_test", symbols, src);
 
     let ir = codegen.module.print_to_string().to_string();

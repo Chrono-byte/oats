@@ -1,7 +1,7 @@
 use super::common::gen_ir_for_source;
 use anyhow::Result;
-use oats::parser;
-use oats::types::{SymbolTable, check_function_strictness};
+use oatsc::parser;
+use oatsc::types::{SymbolTable, check_function_strictness};
 
 #[test]
 fn test_closure_weak_capture_codegen() -> Result<()> {

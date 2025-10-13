@@ -1,7 +1,7 @@
 use anyhow::Result;
-use oats::parser;
-use oats::codegen::CodeGen;
-use oats::types::{SymbolTable, check_function_strictness};
+use oatsc::parser;
+use oatsc::codegen::CodeGen;
+use oatsc::types::{SymbolTable, check_function_strictness};
 use inkwell::context::Context;
 use inkwell::targets::TargetMachine;
 use std::cell::Cell;
@@ -18,7 +18,7 @@ export function main(): number {
 "#;
 
     let context = inkwell::context::Context::create();
-    let symbols = oats::types::SymbolTable::new();
+    let symbols = oatsc::types::SymbolTable::new();
     let codegen = create_codegen(&context, "weak_refs_test", symbols, source);
 
     let ir = codegen.module.print_to_string().to_string();

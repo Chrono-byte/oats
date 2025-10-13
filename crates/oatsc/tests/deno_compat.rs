@@ -6,7 +6,7 @@
 //! parser does not emit diagnostics. This provides an early warning if new
 //! language constructs appear in the upstream fixtures.
 
-use oats::parser;
+use oatsc::parser;
 use std::fs;
 use std::path::{Path, PathBuf};
 

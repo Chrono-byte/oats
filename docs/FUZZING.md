@@ -41,7 +41,7 @@ cargo fuzz build fuzz_parser
 
 ### `fuzz_parser`
 
-**Target:** Parser (`oats::parser::parse_oats_module`)
+**Target:** Parser (`oatsc::parser::parse_oats_module`)
 
 **What it tests:**
 
@@ -178,7 +178,7 @@ bench = false
 ✅ Run fuzzing for at least 24 hours before release ✅ Minimize crash inputs
 before filing bug reports ✅ Add fixed crashes to regression test suite ✅ Keep
 seed corpus up-to-date with new examples ✅ Use
-`_guard = oats::diagnostics::suppress()` to silence stderr ✅ Check coverage to
+`_guard = oatsc::diagnostics::suppress()` to silence stderr ✅ Check coverage to
 find untested code paths
 
 ### DON'T:

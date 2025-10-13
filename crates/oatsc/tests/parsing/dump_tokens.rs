@@ -1,5 +1,5 @@
 use anyhow::Result;
-use oats::parser;
+use oatsc::parser;
 
 #[test]
 fn dump_tokens() -> Result<()> {

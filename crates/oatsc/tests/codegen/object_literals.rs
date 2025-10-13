@@ -10,7 +10,7 @@ fn object_literal_basic() -> Result<()> {
         }
     "#;
 
-    let parsed = oats::parser::parse_oats_module(src, None)?;
+    let parsed = oatsc::parser::parse_oats_module(src, None)?;
     // ensure it parsed
     assert!(parsed.parsed.program_ref().body().count() > 0);
     Ok(())

@@ -2,7 +2,7 @@ use anyhow::Result;
 
 use super::common;
 use common::gen_ir_for_source;
-use oats::parser;
+use oatsc::parser;
 
 // use the shared helper
 

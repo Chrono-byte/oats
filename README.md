@@ -63,8 +63,8 @@ source ./scripts/setup_env.sh
 # Build in release mode for better performance
 cargo build --workspace --release
 
-  # Run the `toasty` CLI in release mode to compile and run the example
-  cargo run -p toasty --release -- run examples/add.oats
+# Run the `toasty` CLI in release mode to compile and run the example
+cargo run -p toasty --release -- run examples/add.oats
 
 # The compiled executable will be written to `./aot_out/add`
 ./aot_out/add

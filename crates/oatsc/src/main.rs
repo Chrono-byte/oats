@@ -201,6 +201,13 @@ fn main() -> Result<()> {
                         // Functions are not stored in the type export map at
                         // present.
                     }
+                    deno_ast::swc::ast::Decl::TsEnum(e) => {
+                        let name = e.id.sym.to_string();
+                        let variants: Vec<String> = e.members.iter()
+                            .map(|member| member.id.sym.to_string())
+                            .collect();
+                        emap.insert(name.clone(), OatsType::Enum(name, variants));
+                    }
                     deno_ast::swc::ast::Decl::TsInterface(iface) => {
                         let name = iface.id.sym.to_string();
                         emap.insert(name.clone(), OatsType::NominalStruct(name));

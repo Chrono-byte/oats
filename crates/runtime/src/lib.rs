@@ -64,6 +64,8 @@ mod object;
 mod rc;
 mod string;
 mod utils;
+// Collector implementation lives in a separate module.
+mod collector;
 #[allow(unused_imports)]
 pub use crate::ffi::*;
 
@@ -87,20 +89,17 @@ pub(crate) fn init_runtime_placeholders() {
     crate::ffi::ffi_init();
 }
 
-// Collector implementation lives in a separate module.
-mod collector;
-use crate::collector::Collector;
+// Global runtime logging flag for ad-hoc diagnostics. Disabled by default.
+// Set OATS_RUNTIME_LOG=1 in the environment to enable.
+pub static RUNTIME_LOG: AtomicBool = AtomicBool::new(false);
 
-static COLLECTOR: OnceLock<Arc<Collector>> = OnceLock::new();
+// Global collector instance for background cycle collection.
+pub static COLLECTOR: OnceLock<Arc<collector::Collector>> = OnceLock::new();
 
 // Control whether the background collector emits diagnostic logging.
 // Disabled by default; enable by setting the environment variable
 // OATS_COLLECTOR_LOG=1 before running the generated binary.
-static COLLECTOR_LOG: AtomicBool = AtomicBool::new(false);
-
-// Global runtime logging flag for ad-hoc diagnostics. Disabled by default.
-// Set OATS_RUNTIME_LOG=1 in the environment to enable.
-static RUNTIME_LOG: AtomicBool = AtomicBool::new(false);
+pub static COLLECTOR_LOG: AtomicBool = AtomicBool::new(false);
 
 // --- Resource Limits (Security Hardening) ---
 // These limits prevent malicious or buggy programs from exhausting system resources.
@@ -161,10 +160,10 @@ fn init_runtime_log() {
     }
 }
 
-fn init_collector() -> Arc<Collector> {
+pub fn init_collector() -> Arc<collector::Collector> {
     COLLECTOR
         .get_or_init(|| {
-            let collector = Collector::new();
+            let collector = collector::Collector::new();
 
             // Configure collector logging from environment (disabled by default).
             if std::env::var("OATS_COLLECTOR_LOG")
@@ -181,16 +180,31 @@ fn init_collector() -> Arc<Collector> {
         .clone()
 }
 
-// header_type_tag is provided by `header` module (migrated). Re-exported above.
+pub fn add_root_candidate(p: *mut c_void) {
+    if p.is_null() {
+        return;
+    }
+    let col = init_collector();
+    col.push_root(p as usize);
+}
 
-// --- Safety helpers for collector traversal ---
-// Perform lightweight, conservative checks on raw pointers to avoid
-// obviously invalid addresses before dereferencing in the background
-// collector. These checks do NOT guarantee safety but reduce the
-// chance of immediately dereferencing small/null/unaligned addresses.
+// Increment the strong reference count for a string data pointer.
+//
+// This helper accepts a pointer to string data (the pointer returned to
+// user-space code, which points at offset +16 from the header). It
+// resolves the header and delegates to `rc_inc` which handles both
+// string-data and object-base pointers.
+//
+// Handles both static and heap strings. For heap strings, the data pointer
+// is at offset +16 from the object header.
+//
+// # Safety
+// `data` must be a pointer previously returned by the runtime for a string
+// (either a static literal or a heap-allocated string). Passing arbitrary
+// or already-freed pointers is undefined behavior.
+// --- Printing ---
 
-#[inline]
-fn is_plausible_addr(addr: usize) -> bool {
+pub fn is_plausible_addr(addr: usize) -> bool {
     // Reject null or very small addresses (below common page sizes),
     // and require 8-byte alignment for our u64-based headers.
     if addr == 0 {
@@ -211,10 +225,6 @@ fn is_plausible_addr(addr: usize) -> bool {
 //   memory for at least `1 + len` u64/i32 words as implied by the metadata.
 // - This function performs only conservative checks (magic, length, offsets)
 //   and DOES NOT guarantee that following dereferences are fully memory-safe
-//   in the presence of concurrently freed memory. Callers must only invoke
-//   this on pointers that are expected to be heap-allocated by this runtime
-//   allocator and not already freed.
-// - The function uses raw pointer reads; therefore the caller must ensure the
 //   pointer is aligned and non-null. The helper `is_plausible_addr` is used to
 //   reduce false positives but is not a formal memory-safety proof.
 //
@@ -222,7 +232,7 @@ fn is_plausible_addr(addr: usize) -> bool {
 // - Use prior to dereferencing class metadata blocks that were previously
 //   stored by the code generator. If `validate_meta_block` returns `true`, the
 //   caller may proceed with cautious reads of the metadata fields.
-unsafe fn validate_meta_block(meta: *mut u64, max_len: usize) -> bool {
+pub unsafe fn validate_meta_block(meta: *mut u64, max_len: usize) -> bool {
     if meta.is_null() {
         return false;
     }
@@ -248,53 +258,16 @@ unsafe fn validate_meta_block(meta: *mut u64, max_len: usize) -> bool {
         // reasonably bounded to avoid huge or negative values.
         let max_off = 1usize << 20; // conservative 1 MiB object bound
         let min_off = 16usize; // header (8) + meta_slot (8)
-        let offsets_ptr = meta.add(1) as *const i32;
+        let offsets_ptr = meta.add(1) as *mut i32;
         for i in 0..len {
-            let off_i32 = *offsets_ptr.add(i);
-            // disallow zero or negative offsets
-            if off_i32 <= 0 {
-                return false;
-            }
-            let off = off_i32 as isize as usize; // sign-extend if needed
-            if (off & 7) != 0 {
-                return false;
-            }
-            if off < min_off || off > max_off {
+            let off = *offsets_ptr.add(i) as usize;
+            if off < min_off || off > max_off || (off & 7) != 0 {
                 return false;
             }
         }
+        true
     }
-    true
 }
-
-// (validate_meta_block unit tests were moved into the consolidated
-// tests module at the end of this file to avoid duplicate `mod tests`.)
-
-// The trial-deletion collector implementation was moved into `collector.rs`.
-
-fn add_root_candidate(p: *mut c_void) {
-    if p.is_null() {
-        return;
-    }
-    let col = init_collector();
-    col.push_root(p as usize);
-}
-
-// Increment the strong reference count for a string data pointer.
-//
-// This helper accepts a pointer to string data (the pointer returned to
-// user-space code, which points at offset +16 from the header). It
-// resolves the header and delegates to `rc_inc` which handles both
-// string-data and object-base pointers.
-//
-// Handles both static and heap strings. For heap strings, the data pointer
-// is at offset +16 from the object header.
-//
-// # Safety
-// `data` must be a pointer previously returned by the runtime for a string
-// (either a static literal or a heap-allocated string). Passing arbitrary
-// or already-freed pointers is undefined behavior.
-// --- Printing ---
 
 // Helper: stringify an arbitrary pointer-or-raw-8-bytes value with depth guard.
 fn stringify_value_raw(val_raw: u64, depth: usize) -> String {
@@ -329,10 +302,6 @@ fn stringify_value_raw(val_raw: u64, depth: usize) -> String {
 
 // `tuple_to_string` implementation moved to `object.rs`; the C ABI symbol is
 // exported from that module. Keep this file free of duplicate exports.
-
-// --- Reference Counting ---
-
-// --- Reference Counting ---
 
 // --- Array Operations ---
 //

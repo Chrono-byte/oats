@@ -56,5 +56,6 @@ fuzz/artifacts/**
 fuzz/corpus/**
 
 # Allow exceptions: keep README, scripts, source code tracked
-
-
+review.md
+TODO.md
+docs/plans/*

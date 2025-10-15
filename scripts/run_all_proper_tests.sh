@@ -52,7 +52,7 @@ for file in "${files[@]}"; do
     tmp_out=$(mktemp)
 
     # Run the selected compiler binary and check its exit code.
-    if cargo run -p oats --bin "$compiler_bin" -- "$file" &> "$tmp_out"; then
+    if cargo run -p toasty --bin "$compiler_bin" -- build "$file" &> "$tmp_out"; then
         # Command succeeded (exit code 0), but we still need to scan the output
         # for diagnostics like type errors that don't cause a non-zero exit.
         

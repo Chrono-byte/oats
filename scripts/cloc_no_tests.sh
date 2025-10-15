@@ -2,12 +2,13 @@
 set -euo pipefail
 
 # cloc_no_tests.sh
-# Run cloc for the repository while excluding any directories named `tests`.
-# Usage: ./scripts/cloc_no_tests.sh [--extra-args "--by-file --include-lang=Rust"]
+# Run cloc for the repository while excluding any directories named `tests` and specific files.
+# Usage: ./scripts/cloc_no_tests.sh [--extra-args "--by-file --include-lang=Rust"] [--exclude-files "file1,file2"]
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 EXTRA_ARGS=""
+EXCLUDE_FILES=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --extra-args)
@@ -15,10 +16,15 @@ while [[ $# -gt 0 ]]; do
       EXTRA_ARGS="$1"
       shift
       ;;
+    --exclude-files)
+      shift
+      EXCLUDE_FILES="$1"
+      shift
+      ;;
     -h|--help)
-      echo "Usage: $0 [--extra-args \"<additional cloc args>\"]"
+      echo "Usage: $0 [--extra-args \"<additional cloc args>\"] [--exclude-files \"<comma-separated file list>\"]"
       echo
-      echo "Runs cloc on the repository root and excludes any directories named 'tests'."
+      echo "Runs cloc on the repository root, excluding directories named 'tests' and specific files."
       exit 0
       ;;
     *)
@@ -33,16 +39,19 @@ if ! command -v cloc >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "Running cloc on: $REPO_ROOT (excluding directories named 'tests')"
+echo "Running cloc on: $REPO_ROOT (excluding directories named 'tests' and specified files)"
 cd "$REPO_ROOT"
 
 # Default exclude list: common non-code or build directories
-DEFAULT_EXCLUDES=(tests target aot_out examples tmp .git build dist fuzz)
+DEFAULT_EXCLUDES=(tests target aot_out examples tmp .git build dist fuzz docs scripts .venv .vscode)
 
 # Join excludes into a comma-separated list
-IFS=',' read -r -a _ <<< "${DEFAULT_EXCLUDES[*]}"
-EXCLUDE_LIST=$(printf ",%s" "${DEFAULT_EXCLUDES[@]}")
-EXCLUDE_LIST=${EXCLUDE_LIST:1}
+EXCLUDE_DIRS=$(IFS=','; echo "${DEFAULT_EXCLUDES[*]}")
 
-echo "Excluding directories: $EXCLUDE_LIST"
-cloc --exclude-dir="$EXCLUDE_LIST" ${EXTRA_ARGS} .
+echo "Excluding directories: $EXCLUDE_DIRS"
+if [[ -n "$EXCLUDE_FILES" ]]; then
+  echo "Excluding files: $EXCLUDE_FILES"
+  cloc --exclude-dir="$EXCLUDE_DIRS" --exclude-list-file=<(echo "$EXCLUDE_FILES" | tr ',' '\n') ${EXTRA_ARGS} .
+else
+  cloc --exclude-dir="$EXCLUDE_DIRS" ${EXTRA_ARGS} .
+fi

@@ -59,7 +59,8 @@ impl<'a> super::CodeGen<'a> {
             | OatsType::Array(_)
             | OatsType::Tuple(_)
             | OatsType::Promise(_)
-            | OatsType::Weak(_) => self.i8ptr_t.as_basic_type_enum(),
+            | OatsType::Weak(_)
+            | OatsType::Enum(_, _) => self.i8ptr_t.as_basic_type_enum(),
             OatsType::Option(inner) => {
                 // If the inner type is numeric (or a union of numeric-only arms),
                 // represent Option<number> using the numeric ABI (f64). This lets
@@ -78,6 +79,7 @@ impl<'a> super::CodeGen<'a> {
                                     | OatsType::Promise(_)
                                     | OatsType::Weak(_)
                                     | OatsType::Option(_)
+                                    | OatsType::Enum(_, _)
                             )
                         });
                         if any_ptr {
@@ -101,6 +103,7 @@ impl<'a> super::CodeGen<'a> {
                             | OatsType::Promise(_)
                             | OatsType::Weak(_)
                             | OatsType::Option(_)
+                            | OatsType::Enum(_, _)
                     )
                 });
                 if any_ptr {

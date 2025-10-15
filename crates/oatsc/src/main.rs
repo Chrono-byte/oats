@@ -388,6 +388,7 @@ fn main() -> Result<()> {
         class_fields: std::cell::RefCell::new(std::collections::HashMap::new()),
         fn_param_types: std::cell::RefCell::new(std::collections::HashMap::new()),
         loop_context_stack: std::cell::RefCell::new(Vec::new()),
+        current_label: std::cell::RefCell::new(None),
         closure_local_rettype: std::cell::RefCell::new(std::collections::HashMap::new()),
         last_expr_origin_local: std::cell::RefCell::new(None),
         async_await_live_sets: std::cell::RefCell::new(None),

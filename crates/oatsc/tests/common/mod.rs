@@ -320,6 +320,7 @@ pub fn create_codegen<'a>(
         class_fields: RefCell::new(HashMap::new()),
         fn_param_types: RefCell::new(HashMap::new()),
         loop_context_stack: RefCell::new(Vec::new()),
+        current_label: RefCell::new(None),
         current_class_parent: RefCell::new(None),
         closure_local_rettype: RefCell::new(HashMap::new()),
         last_expr_origin_local: RefCell::new(None),

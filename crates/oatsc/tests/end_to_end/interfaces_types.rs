@@ -15,7 +15,7 @@ fn test_interfaces_types_example_end_to_end() -> Result<()> {
 
     // Build the `toasty` CLI binary
     let status = Command::new("cargo")
-        .args(["build", "-p", "oats", "--bin", "toasty"])
+        .args(["build", "-p", "toasty"])
         .status()?;
     assert!(status.success(), "building toasty failed");
 
@@ -37,7 +37,7 @@ fn test_interfaces_types_example_end_to_end() -> Result<()> {
     );
 
     let status = Command::new(&bin_path)
-        .arg(example)
+        .args(["build", &example.to_string_lossy()])
         .env("OATS_OUT_DIR", out_dir)
         .current_dir(workspace_root)
         .status()?;

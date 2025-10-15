@@ -636,34 +636,33 @@ impl Collector {
 
             // Atomic check and claim
             let old = unsafe { (*header_ptr).load(Ordering::Acquire) };
-            if (old & crate::HEADER_CLAIM_BIT) == 0 {
-                if let Ok(_) = unsafe {
+            if (old & crate::HEADER_CLAIM_BIT) == 0
+                && unsafe {
                     (*header_ptr).compare_exchange_weak(
                         old,
                         old | crate::HEADER_CLAIM_BIT,
                         Ordering::AcqRel,
                         Ordering::Acquire,
                     )
-                } {
-                    let claimed_header = unsafe { (*header_ptr).load(Ordering::Acquire) };
-                    if (claimed_header & crate::HEADER_STATIC_BIT) == 0 {
-                        // Call destructor if present
-                        let dtor_ptr_ptr =
-                            unsafe { (obj as *mut u8).add(std::mem::size_of::<u64>()) }
-                                as *const *mut std::ffi::c_void;
-                        let dtor_raw = unsafe { *dtor_ptr_ptr };
-                        if !dtor_raw.is_null() {
-                            let dtor: fn(*mut std::ffi::c_void) =
-                                unsafe { std::mem::transmute(dtor_raw) };
-                            dtor(obj as *mut std::ffi::c_void);
-                        }
-                        // Decrement weak references
-                        unsafe { crate::rc_weak_dec(obj as *mut std::ffi::c_void) };
-                    }
-                    let _ = unsafe {
-                        (*header_ptr).fetch_and(!crate::HEADER_CLAIM_BIT, Ordering::AcqRel)
-                    };
                 }
+                .is_ok()
+            {
+                let claimed_header = unsafe { (*header_ptr).load(Ordering::Acquire) };
+                if (claimed_header & crate::HEADER_STATIC_BIT) == 0 {
+                    // Call destructor if present
+                    let dtor_ptr_ptr = unsafe { (obj as *mut u8).add(std::mem::size_of::<u64>()) }
+                        as *const *mut std::ffi::c_void;
+                    let dtor_raw = unsafe { *dtor_ptr_ptr };
+                    if !dtor_raw.is_null() {
+                        let dtor: fn(*mut std::ffi::c_void) =
+                            unsafe { std::mem::transmute(dtor_raw) };
+                        dtor(obj as *mut std::ffi::c_void);
+                    }
+                    // Decrement weak references
+                    unsafe { crate::rc_weak_dec(obj as *mut std::ffi::c_void) };
+                }
+                let _ =
+                    unsafe { (*header_ptr).fetch_and(!crate::HEADER_CLAIM_BIT, Ordering::AcqRel) };
             }
         }
     }

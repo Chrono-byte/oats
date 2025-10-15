@@ -12,6 +12,10 @@ pub struct EscapeInfo {
     pub uses_before_def: HashSet<String>,
     /// Variables live across await points (async-specific).
     pub await_live: HashSet<String>,
+    /// Variables that are captured by closures (for inter-procedural analysis).
+    pub captured: HashSet<String>,
+    /// Function calls that may cause escapes (for inter-procedural tracking).
+    pub escape_calls: HashSet<String>,
 }
 
 impl EscapeInfo {
@@ -45,6 +49,21 @@ impl EscapeInfo {
     /// Marks a variable as being live across an await point.
     pub fn mark_await_live(&mut self, name: String) {
         self.await_live.insert(name);
+    }
+
+    /// Marks a variable as captured by a closure.
+    pub fn mark_captured(&mut self, name: String) {
+        self.captured.insert(name);
+    }
+
+    /// Marks a function call as potentially causing escapes.
+    pub fn mark_escape_call(&mut self, func_name: String) {
+        self.escape_calls.insert(func_name);
+    }
+
+    /// Checks if a variable is captured by closures.
+    pub fn is_captured(&self, name: &str) -> bool {
+        self.captured.contains(name)
     }
 }
 
@@ -263,7 +282,23 @@ impl EscapeAnalyzer {
         match expr {
             Expr::Ident(ident) => self.info.use_var(ident.sym.as_ref()),
             Expr::Call(call) => {
+                // Check if this is a call that might cause escapes
                 if let Callee::Expr(callee_expr) = &call.callee {
+                    if let Expr::Ident(ident) = &**callee_expr {
+                        let func_name = ident.sym.to_string();
+                        // Mark certain functions as escape-causing
+                        if matches!(
+                            func_name.as_str(),
+                            "println" | "console.log" | "setTimeout" | "setInterval"
+                        ) {
+                            self.info.mark_escape_call(func_name.clone());
+                            // All arguments to escape calls are considered escaping
+                            for arg in &call.args {
+                                self.analyze_expr_as_escaping(&arg.expr);
+                            }
+                            return;
+                        }
+                    }
                     self.analyze_expr(callee_expr);
                 }
                 for arg in &call.args {
@@ -335,6 +370,38 @@ impl EscapeAnalyzer {
             }
             Expr::Await(await_expr) => self.analyze_expr(&await_expr.arg),
             Expr::Paren(paren) => self.analyze_expr(&paren.expr),
+            Expr::Arrow(arrow) => {
+                // Analyze arrow function body for captured variables
+                let mut captured = HashSet::new();
+                Self::collect_vars_from_expr(&Expr::Arrow(arrow.clone()), &mut captured);
+
+                // Remove parameters from captured set (they're not captured)
+                let mut params = HashSet::new();
+                for param in &arrow.params {
+                    Self::collect_vars_from_pat(param, &mut params);
+                }
+
+                for param in params {
+                    captured.remove(&param);
+                }
+
+                // Mark remaining variables as captured
+                for var in captured {
+                    if self.is_defined(&var) {
+                        self.info.mark_captured(var);
+                    }
+                }
+
+                // Analyze the body
+                match &*arrow.body {
+                    BlockStmtOrExpr::Expr(e) => self.analyze_expr(e),
+                    BlockStmtOrExpr::BlockStmt(block) => {
+                        self.enter_scope();
+                        self.analyze_block_stmt(block);
+                        self.exit_scope();
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -386,6 +453,34 @@ impl EscapeAnalyzer {
             }
             Expr::Assign(assign) => Self::collect_vars_from_expr(&assign.right, vars),
             Expr::Paren(paren) => Self::collect_vars_from_expr(&paren.expr, vars),
+            _ => {}
+        }
+    }
+
+    /// Recursively collects all variable names from a pattern.
+    fn collect_vars_from_pat(pat: &ast::Pat, vars: &mut HashSet<String>) {
+        use deno_ast::swc::ast::*;
+        match pat {
+            Pat::Ident(ident) => {
+                vars.insert(ident.id.sym.to_string());
+            }
+            Pat::Array(arr) => {
+                for elem in arr.elems.iter().flatten() {
+                    Self::collect_vars_from_pat(elem, vars);
+                }
+            }
+            Pat::Object(obj) => {
+                for prop in &obj.props {
+                    match prop {
+                        ObjectPatProp::KeyValue(kv) => Self::collect_vars_from_pat(&kv.value, vars),
+                        ObjectPatProp::Assign(assign) => {
+                            vars.insert(assign.key.sym.to_string());
+                        }
+                        ObjectPatProp::Rest(rest) => Self::collect_vars_from_pat(&rest.arg, vars),
+                    }
+                }
+            }
+            Pat::Rest(rest) => Self::collect_vars_from_pat(&rest.arg, vars),
             _ => {}
         }
     }

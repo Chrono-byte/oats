@@ -95,6 +95,7 @@ fn gen_add_function_ir_contains_fadd() -> Result<()> {
         symbol_table: std::cell::RefCell::new(symbols),
         nested_generic_fns: std::cell::RefCell::new(std::collections::HashMap::new()),
         monomorphized_map: std::cell::RefCell::new(std::collections::HashMap::new()),
+        rta_results: None,
     };
 
     codegen

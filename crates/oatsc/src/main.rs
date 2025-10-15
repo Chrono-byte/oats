@@ -34,6 +34,7 @@ use anyhow::Result;
 
 use oatsc::codegen::CodeGen;
 use oatsc::parser;
+use oatsc::rta;
 use oatsc::types::{OatsType, SymbolTable, check_function_strictness};
 
 use inkwell::context::Context;
@@ -345,6 +346,9 @@ fn main() -> Result<()> {
     let mut symbols = pre_symbols;
     let func_sig = check_function_strictness(&func_decl, &mut symbols)?;
 
+    // PHASE 3: Rapid Type Analysis for optimization
+    let rta_results = rta::analyze(&modules);
+
     // LLVM setup
     let context = Context::create();
     let module = context.create_module("oats");
@@ -408,6 +412,7 @@ fn main() -> Result<()> {
         symbol_table: std::cell::RefCell::new(symbols),
         nested_generic_fns: std::cell::RefCell::new(HashMap::new()),
         monomorphized_map: std::cell::RefCell::new(HashMap::new()),
+        rta_results: Some(rta_results),
     };
 
     // Merge collected alias_fields from earlier passes into codegen.class_fields so
@@ -619,6 +624,14 @@ fn main() -> Result<()> {
                                     ));
                                     params.extend(sig2.params.into_iter());
                                     let fname = format!("{}_{}", class_name, mname);
+                                    // Dead code elimination: skip if method not in live set
+                                    if let Some(rta) = &codegen.rta_results {
+                                        if let Some(live_meths) = rta.live_methods.get(&class_name) {
+                                            if !live_meths.contains(&mname) {
+                                                continue;
+                                            }
+                                        }
+                                    }
                                     codegen
                                         .gen_function_ir(
                                             &fname,
@@ -638,6 +651,12 @@ fn main() -> Result<()> {
                             }
                         }
                         ClassMember::Constructor(ctor) => {
+                            // Dead code elimination: skip if class not in live set
+                            if let Some(rta) = &codegen.rta_results {
+                                if !rta.live_classes.contains(&class_name) {
+                                    continue;
+                                }
+                            }
                             // Emit full constructor with field initialization
                             let fields = codegen
                                 .class_fields

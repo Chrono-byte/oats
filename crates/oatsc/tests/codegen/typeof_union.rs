@@ -93,6 +93,7 @@ export function main(x: number | string): string {
         loop_context_stack: std::cell::RefCell::new(Vec::new()),
         nested_generic_fns: std::cell::RefCell::new(std::collections::HashMap::new()),
         monomorphized_map: std::cell::RefCell::new(std::collections::HashMap::new()),
+        rta_results: None,
     };
 
     codegen

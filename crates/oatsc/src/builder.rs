@@ -911,7 +911,7 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
                             .const_items
                             .borrow_mut()
                             .insert(name.clone(), cv.clone());
-                        // If heap-shaped (string/array/object) emit a const global
+                        // If heap-shaped (string/array/objects) emit a const global
                         match cv {
                             crate::codegen::const_eval::ConstValue::Str(_)
                             | crate::codegen::const_eval::ConstValue::Array(_)

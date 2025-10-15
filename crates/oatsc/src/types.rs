@@ -54,6 +54,8 @@ pub enum OatsType {
     StructLiteral(Vec<(String, OatsType)>),
     // Generic type with type parameters
     Generic(Vec<OatsType>),
+    // Enum type with name and variant names
+    Enum(String, Vec<String>),
 }
 
 #[derive(Debug, Clone)]

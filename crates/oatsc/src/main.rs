@@ -203,8 +203,15 @@ fn main() -> Result<()> {
                     }
                     deno_ast::swc::ast::Decl::TsEnum(e) => {
                         let name = e.id.sym.to_string();
-                        let variants: Vec<String> = e.members.iter()
-                            .map(|member| member.id.sym.to_string())
+                        let variants: Vec<String> = e
+                            .members
+                            .iter()
+                            .map(|member| match &member.id {
+                                deno_ast::swc::ast::TsEnumMemberId::Ident(id) => id.sym.to_string(),
+                                deno_ast::swc::ast::TsEnumMemberId::Str(str) => {
+                                    str.value.to_string()
+                                }
+                            })
                             .collect();
                         emap.insert(name.clone(), OatsType::Enum(name, variants));
                     }
@@ -632,12 +639,11 @@ fn main() -> Result<()> {
                                     params.extend(sig2.params.into_iter());
                                     let fname = format!("{}_{}", class_name, mname);
                                     // Dead code elimination: skip if method not in live set
-                                    if let Some(rta) = &codegen.rta_results {
-                                        if let Some(live_meths) = rta.live_methods.get(&class_name) {
-                                            if !live_meths.contains(&mname) {
-                                                continue;
-                                            }
-                                        }
+                                    if let Some(rta) = &codegen.rta_results
+                                        && let Some(live_meths) = rta.live_methods.get(&class_name)
+                                        && !live_meths.contains(&mname)
+                                    {
+                                        continue;
                                     }
                                     codegen
                                         .gen_function_ir(
@@ -659,10 +665,10 @@ fn main() -> Result<()> {
                         }
                         ClassMember::Constructor(ctor) => {
                             // Dead code elimination: skip if class not in live set
-                            if let Some(rta) = &codegen.rta_results {
-                                if !rta.live_classes.contains(&class_name) {
-                                    continue;
-                                }
+                            if let Some(rta) = &codegen.rta_results
+                                && !rta.live_classes.contains(&class_name)
+                            {
+                                continue;
                             }
                             // Emit full constructor with field initialization
                             let fields = codegen

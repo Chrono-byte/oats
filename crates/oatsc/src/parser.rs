@@ -203,6 +203,7 @@ pub fn parse_oats_module(source_code: &str, file_path: Option<&str>) -> Result<P
         match stmt {
             ast::Stmt::Expr(_) => true,
             ast::Stmt::Decl(ast::Decl::Var(_)) => true,
+            ast::Stmt::Decl(ast::Decl::TsEnum(_)) => true,
             ast::Stmt::Return(_) => true,
             ast::Stmt::Break(_) => true,
             ast::Stmt::Continue(_) => true,
@@ -307,6 +308,7 @@ pub fn parse_oats_module(source_code: &str, file_path: Option<&str>) -> Result<P
                 let span = match stmt {
                     ast::Stmt::Expr(es) => es.span,
                     ast::Stmt::Decl(ast::Decl::Var(v)) => v.span,
+                    ast::Stmt::Decl(ast::Decl::TsEnum(e)) => e.span,
                     ast::Stmt::Return(r) => r.span,
                     ast::Stmt::Break(b) => b.span,
                     ast::Stmt::Continue(c) => c.span,
@@ -352,6 +354,7 @@ pub fn parse_oats_module(source_code: &str, file_path: Option<&str>) -> Result<P
                         let span = match s {
                             ast::Stmt::Expr(es) => es.span,
                             ast::Stmt::Decl(ast::Decl::Var(v)) => v.span,
+                            ast::Stmt::Decl(ast::Decl::TsEnum(e)) => e.span,
                             ast::Stmt::Return(r) => r.span,
                             ast::Stmt::Break(b) => b.span,
                             ast::Stmt::Continue(c) => c.span,
@@ -432,6 +435,7 @@ pub fn parse_oats_module(source_code: &str, file_path: Option<&str>) -> Result<P
                         let span = match s {
                             ast::Stmt::Expr(es) => es.span,
                             ast::Stmt::Decl(ast::Decl::Var(v)) => v.span,
+                            ast::Stmt::Decl(ast::Decl::TsEnum(e)) => e.span,
                             ast::Stmt::Return(r) => r.span,
                             ast::Stmt::Break(b) => b.span,
                             ast::Stmt::Continue(c) => c.span,

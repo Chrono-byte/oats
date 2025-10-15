@@ -54,7 +54,7 @@ type LocalEntry<'a> = (
 type LocalsStackLocal<'a> = Vec<std::collections::HashMap<String, LocalEntry<'a>>>;
 
 // Loop context for tracking break/continue targets
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct LoopContext<'a> {
     pub continue_block: inkwell::basic_block::BasicBlock<'a>,
     pub break_block: inkwell::basic_block::BasicBlock<'a>,
@@ -62,6 +62,8 @@ pub struct LoopContext<'a> {
     // the loop. When breaking/continuing we should only emit rc_decs for
     // locals added from this index onward.
     pub locals_start: usize,
+    // Optional label for labeled break/continue
+    pub label: Option<String>,
 }
 
 // The main code generation structure, holding the LLVM context, module,
@@ -98,6 +100,7 @@ pub struct CodeGen<'a> {
     pub class_fields: RefCell<HashMap<String, Vec<(String, crate::types::OatsType)>>>,
     pub fn_param_types: RefCell<HashMap<String, Vec<crate::types::OatsType>>>,
     pub loop_context_stack: RefCell<Vec<LoopContext<'a>>>,
+    pub current_label: RefCell<Option<String>>,
     // Optional mapping for the currently-emitted constructor's parent class name.
     // Used to lower `super(...)` calls inside constructors to call the
     // parent's `<Parent>_init(this, ...)` initializer.
@@ -1208,5 +1211,41 @@ impl<'a> CodeGen<'a> {
             .ptr_type(AddressSpace::default())
             .const_null()
             .into())
+    }
+
+    /// Infer return type from arrow function body
+    pub fn infer_return_type_from_arrow_body(
+        &self,
+        body: &deno_ast::swc::ast::BlockStmtOrExpr,
+    ) -> Result<crate::types::OatsType, crate::diagnostics::Diagnostic> {
+        match body {
+            deno_ast::swc::ast::BlockStmtOrExpr::Expr(expr) => {
+                // Simple inference for single expression body
+                self.infer_type_from_expr(expr)
+            }
+            deno_ast::swc::ast::BlockStmtOrExpr::BlockStmt(_block) => {
+                // For block, look for return statements
+                // For simplicity, default to Number if no returns or complex
+                // TODO: Implement full inference from return statements
+                Ok(crate::types::OatsType::Number)
+            }
+        }
+    }
+
+    /// Simple type inference from expression
+    fn infer_type_from_expr(
+        &self,
+        expr: &deno_ast::swc::ast::Expr,
+    ) -> Result<crate::types::OatsType, crate::diagnostics::Diagnostic> {
+        match expr {
+            deno_ast::swc::ast::Expr::Lit(lit) => match lit {
+                deno_ast::swc::ast::Lit::Num(_) => Ok(crate::types::OatsType::Number),
+                deno_ast::swc::ast::Lit::Str(_) => Ok(crate::types::OatsType::String),
+                deno_ast::swc::ast::Lit::Bool(_) => Ok(crate::types::OatsType::Number), // bool as number
+                _ => Ok(crate::types::OatsType::Number), // default
+            },
+            deno_ast::swc::ast::Expr::Ident(_) => Ok(crate::types::OatsType::Number), // unknown
+            _ => Ok(crate::types::OatsType::Number), // default for complex expr
+        }
     }
 }

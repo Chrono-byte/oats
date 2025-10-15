@@ -265,7 +265,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
     /// * `receiver_name` - optional `this` receiver name for methods.
     ///
     /// # Returns
-    /// Returns the created `FunctionValue` on success or a `Diagnostic` on
+    /// Returns the created `FunctionValue
     /// failure. The function emits calls to runtime helpers (for example
     /// for union boxing) and expects the runtime to provide those symbols
     /// during linking.
@@ -1386,7 +1386,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 | OatsType::Tuple(_)
                 | OatsType::Promise(_)
                 | OatsType::Weak(_)
-                | OatsType::Option(_) => self.i8ptr_t.into(),
+                | OatsType::Option(_)
+                | OatsType::Enum(_, _) => self.i8ptr_t.into(),
                 OatsType::Boolean => self.bool_t.into(),
                 OatsType::Union(parts) => {
                     let any_ptr = parts.iter().any(|p| {
@@ -1457,13 +1458,6 @@ impl<'a> crate::codegen::CodeGen<'a> {
             // and we use the resolved parameter type as its field type.
             combined_fields.push((pname.clone(), param_types_vec[i].clone()));
         }
-
-        eprintln!("[DEBUG] gen_constructor_ir: fields = {:?}", fields);
-        eprintln!(
-            "[DEBUG] gen_constructor_ir: param_names = {:?}",
-            param_names
-        );
-        println!("Combined fields: {:?}", combined_fields);
 
         // Layout: [ header (8) | metadata ptr (8) | field0 (8) | field1 (8) | ... ]
         // Reserve an 8-byte metadata slot immediately after the header so the
@@ -1850,6 +1844,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         let ctor_entry = self.context.append_basic_block(impl_f, "entry");
         self.builder.position_at_end(ctor_entry);
         // allocate object
+
         let malloc_fn = self.get_malloc();
         let size_const = self.i64_t.const_int(total_size, false);
         let call_site2 = self

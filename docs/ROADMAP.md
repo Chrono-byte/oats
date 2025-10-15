@@ -29,22 +29,21 @@ and tests exercised during this session.
 
 ## Short-term priorities (next 2–4 weeks)
 
-   - Audit all lowering sites that allocate heap temporaries: template literals,
+- Audit all lowering sites that allocate heap temporaries: template literals,
      string concatenation, `number_to_string`, `union_box_*`,
      `array`/`tuple`/object literal lowering, and `println`/printing helpers.
-   - Emit missing `rc_dec` where temporaries are created and ownership is not
+- Emit missing `rc_dec` where temporaries are created and ownership is not
      transferred.
-   - Add focused tests (IR string-contains or insta snapshots) for each pattern
+- Add focused tests (IR string-contains or insta snapshots) for each pattern
      to prevent regressions.
 
-
-2. Address warnings and run lints
-   - Clean up any remaining compiler warnings (unused assignments) found in
+- Address warnings and run lints
+  - Clean up any remaining compiler warnings (unused assignments) found in
      `stmt.rs` and other files.
-   - Run `cargo clippy --workspace` and fix critical lints.
+  - Run `cargo clippy --workspace` and fix critical lints.
 
-3. Run fuzzing and integration smoke tests
-   - Run `./scripts/run_fuzzing.sh` for fuzz targets and
+- Run fuzzing and integration smoke tests
+  - Run `./scripts/run_fuzzing.sh` for fuzz targets and
      `./scripts/run_all_proper_tests.sh` to compile all proper_tests examples and
      catch regressions.
 

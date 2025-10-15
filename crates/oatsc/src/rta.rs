@@ -85,11 +85,14 @@ fn build_class_hierarchy(modules: &HashMap<String, ParsedModule>) -> ClassHierar
                 if let Some(super_class) = &class_decl.class.super_class {
                     if let ast::Expr::Ident(super_ident) = &**super_class {
                         let super_name = super_ident.sym.to_string();
-                        hierarchy.entry(super_name).or_insert(Vec::new()).push(class_name.clone());
+                        hierarchy
+                            .entry(super_name)
+                            .or_default()
+                            .push(class_name.clone());
                     }
                 } else {
                     // Root class, ensure it's in the map
-                    hierarchy.entry(class_name).or_insert(Vec::new());
+                    hierarchy.entry(class_name).or_default();
                 }
             }
         }
@@ -111,14 +114,19 @@ fn find_instantiations(modules: &HashMap<String, ParsedModule>) -> LiveClasses {
     live_classes
 }
 
-fn visit_module_item_for_instantiations(item: deno_ast::ModuleItemRef, live_classes: &mut LiveClasses) {
+fn visit_module_item_for_instantiations(
+    item: deno_ast::ModuleItemRef,
+    live_classes: &mut LiveClasses,
+) {
     match item {
         deno_ast::ModuleItemRef::ModuleDecl(module_decl) => match module_decl {
-            deno_ast::swc::ast::ModuleDecl::ExportDecl(decl) => visit_decl_for_instantiations(&decl.decl, live_classes),
-            deno_ast::swc::ast::ModuleDecl::Import(_) => {},
-            _ => {},
+            deno_ast::swc::ast::ModuleDecl::ExportDecl(decl) => {
+                visit_decl_for_instantiations(&decl.decl, live_classes)
+            }
+            deno_ast::swc::ast::ModuleDecl::Import(_) => {}
+            _ => {}
         },
-        deno_ast::ModuleItemRef::Stmt(stmt) => visit_stmt_for_instantiations(&stmt, live_classes),
+        deno_ast::ModuleItemRef::Stmt(stmt) => visit_stmt_for_instantiations(stmt, live_classes),
     }
 }
 
@@ -132,11 +140,13 @@ fn visit_decl_for_instantiations(decl: &ast::Decl, live_classes: &mut LiveClasse
                 }
             }
         }
-        ast::Decl::Fn(fn_decl) => visit_function_for_instantiations(&fn_decl.function, live_classes),
+        ast::Decl::Fn(fn_decl) => {
+            visit_function_for_instantiations(&fn_decl.function, live_classes)
+        }
         ast::Decl::TsEnum(_) => {
             // Enums don't have instantiations to track for RTA
         }
-        _ => {},
+        _ => {}
     }
 }
 
@@ -144,30 +154,24 @@ fn visit_stmt_for_instantiations(stmt: &ast::Stmt, live_classes: &mut LiveClasse
     match stmt {
         ast::Stmt::Expr(expr_stmt) => visit_expr_for_instantiations(&expr_stmt.expr, live_classes),
         ast::Stmt::Decl(decl) => visit_decl_for_instantiations(decl, live_classes),
-        _ => {},
+        _ => {}
     }
 }
 
 fn visit_expr_for_instantiations(expr: &ast::Expr, live_classes: &mut LiveClasses) {
-    match expr {
-        ast::Expr::New(new_expr) => {
-            if let ast::Expr::Ident(ident) = &*new_expr.callee {
-                live_classes.insert(ident.sym.to_string());
-            }
-        }
-        _ => {},
+    if let ast::Expr::New(new_expr) = expr
+        && let ast::Expr::Ident(ident) = &*new_expr.callee
+    {
+        live_classes.insert(ident.sym.to_string());
     }
     // Recursively visit children
-    match expr {
-        ast::Expr::New(new_expr) => {
-            visit_expr_for_instantiations(&new_expr.callee, live_classes);
-            if let Some(args) = &new_expr.args {
-                for arg in args {
-                    visit_expr_for_instantiations(&*arg.expr, live_classes);
-                }
+    if let ast::Expr::New(new_expr) = expr {
+        visit_expr_for_instantiations(&new_expr.callee, live_classes);
+        if let Some(args) = &new_expr.args {
+            for arg in args {
+                visit_expr_for_instantiations(&arg.expr, live_classes);
             }
         }
-        _ => {},
     }
 }
 
@@ -190,7 +194,7 @@ fn collect_methods(modules: &HashMap<String, ParsedModule>) -> HashMap<String, H
                 && let deno_ast::swc::ast::Decl::Class(class_decl) = &decl.decl
             {
                 let class_name = class_decl.ident.sym.to_string();
-                let class_methods = methods.entry(class_name).or_insert(HashSet::new());
+                let class_methods = methods.entry(class_name).or_default();
 
                 for member in &class_decl.class.body {
                     if let ast::ClassMember::Method(method) = member {
@@ -208,7 +212,9 @@ fn collect_methods(modules: &HashMap<String, ParsedModule>) -> HashMap<String, H
 }
 
 /// Collects all function and method ASTs for worklist processing
-fn collect_function_asts(modules: &HashMap<String, ParsedModule>) -> HashMap<String, ast::Function> {
+fn collect_function_asts(
+    modules: &HashMap<String, ParsedModule>,
+) -> HashMap<String, ast::Function> {
     let mut functions = HashMap::new();
 
     for module in modules.values() {
@@ -232,11 +238,11 @@ fn collect_function_asts(modules: &HashMap<String, ParsedModule>) -> HashMap<Str
             {
                 let class_name = class_decl.ident.sym.to_string();
                 for member in &class_decl.class.body {
-                    if let ast::ClassMember::Method(method) = member {
-                        if let ast::PropName::Ident(ident) = &method.key {
-                            let method_name = format!("{}_{}", class_name, ident.sym);
-                            functions.insert(method_name, (*method.function).clone());
-                        }
+                    if let ast::ClassMember::Method(method) = member
+                        && let ast::PropName::Ident(ident) = &method.key
+                    {
+                        let method_name = format!("{}_{}", class_name, ident.sym);
+                        functions.insert(method_name, (*method.function).clone());
                     }
                 }
             }
@@ -247,7 +253,11 @@ fn collect_function_asts(modules: &HashMap<String, ParsedModule>) -> HashMap<Str
 }
 
 /// Runs the RTA worklist algorithm to find precisely live methods
-fn run_worklist(live_classes: &LiveClasses, methods: &HashMap<String, HashSet<String>>, functions: &HashMap<String, ast::Function>) -> LiveMethods {
+fn run_worklist(
+    live_classes: &LiveClasses,
+    methods: &HashMap<String, HashSet<String>>,
+    functions: &HashMap<String, ast::Function>,
+) -> LiveMethods {
     let mut live_methods: LiveMethods = HashMap::new();
     let mut worklist: VecDeque<String> = VecDeque::new();
 
@@ -257,7 +267,11 @@ fn run_worklist(live_classes: &LiveClasses, methods: &HashMap<String, HashSet<St
         if let Some(meths) = methods.get(class) {
             for method in meths {
                 let fname = format!("{}_{}", class, method);
-                if !live_methods.entry(class.clone()).or_insert(HashSet::new()).contains(method) {
+                if !live_methods
+                    .entry(class.clone())
+                    .or_default()
+                    .contains(method)
+                {
                     live_methods.get_mut(class).unwrap().insert(method.clone());
                     worklist.push_back(fname);
                 }
@@ -269,7 +283,11 @@ fn run_worklist(live_classes: &LiveClasses, methods: &HashMap<String, HashSet<St
         if let Some(func) = functions.get(&func_name) {
             let called_methods = find_method_calls(func);
             for (class, method) in called_methods {
-                if !live_methods.entry(class.clone()).or_insert(HashSet::new()).contains(&method) {
+                if !live_methods
+                    .entry(class.clone())
+                    .or_default()
+                    .contains(&method)
+                {
                     live_methods.get_mut(&class).unwrap().insert(method.clone());
                     let fname = format!("{}_{}", class, method);
                     worklist.push_back(fname);
@@ -309,33 +327,24 @@ fn find_method_calls_in_stmt(stmt: &ast::Stmt, calls: &mut Vec<(String, String)>
 }
 
 fn find_method_calls_in_expr(expr: &ast::Expr, calls: &mut Vec<(String, String)>) {
-    match expr {
-        ast::Expr::Call(call_expr) => {
-            if let ast::Callee::Expr(callee_expr) = &call_expr.callee {
-                if let ast::Expr::Member(member) = &**callee_expr {
-                    if let ast::Expr::Ident(obj_ident) = &*member.obj {
-                        if let ast::MemberProp::Ident(prop_ident) = &member.prop {
-                            // Assume obj_ident is 'this' or similar, but for simplicity, assume class name is known
-                            // This is a simplification; in full RTA, need type analysis
-                            // For now, just collect all member calls
-                            calls.push((obj_ident.sym.to_string(), prop_ident.sym.to_string()));
-                        }
-                    }
-                }
-            }
-        }
-        _ => {}
+    if let ast::Expr::Call(call_expr) = expr
+        && let ast::Callee::Expr(callee_expr) = &call_expr.callee
+        && let ast::Expr::Member(member) = &**callee_expr
+        && let ast::Expr::Ident(obj_ident) = &*member.obj
+        && let ast::MemberProp::Ident(prop_ident) = &member.prop
+    {
+        // Assume obj_ident is 'this' or similar, but for simplicity, assume class name is known
+        // This is a simplification; in full RTA, need type analysis
+        // For now, just collect all member calls
+        calls.push((obj_ident.sym.to_string(), prop_ident.sym.to_string()));
     }
     // Recursively visit children
-    match expr {
-        ast::Expr::Call(call_expr) => {
-            if let ast::Callee::Expr(callee_expr) = &call_expr.callee {
-                find_method_calls_in_expr(&callee_expr, calls);
-            }
-            for arg in &call_expr.args {
-                find_method_calls_in_expr(&arg.expr, calls);
-            }
+    if let ast::Expr::Call(call_expr) = expr {
+        if let ast::Callee::Expr(callee_expr) = &call_expr.callee {
+            find_method_calls_in_expr(callee_expr, calls);
         }
-        _ => {}
+        for arg in &call_expr.args {
+            find_method_calls_in_expr(&arg.expr, calls);
+        }
     }
 }

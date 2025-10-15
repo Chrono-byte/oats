@@ -33,6 +33,7 @@ pub mod escape;
 pub mod expr;
 pub mod helpers;
 pub mod stmt;
+pub mod utils;
 
 use crate::codegen::const_eval::ConstValue;
 

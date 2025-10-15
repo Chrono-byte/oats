@@ -5446,9 +5446,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         return Err(Diagnostic::simple("Arrow return type not supported"));
                     }
                 } else {
-                    // If no return type annotation is present, default to Number.
-                    // TODO: Implement type inference and propagate inferred types.
-                    crate::types::OatsType::Number
+                    // If no return type annotation is present, infer from body.
+                    self.infer_return_type_from_arrow_body(&arrow.body)?
                 };
 
                 // Build LLVM function type. If captures are present, the first

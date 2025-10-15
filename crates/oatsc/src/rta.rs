@@ -133,6 +133,9 @@ fn visit_decl_for_instantiations(decl: &ast::Decl, live_classes: &mut LiveClasse
             }
         }
         ast::Decl::Fn(fn_decl) => visit_function_for_instantiations(&fn_decl.function, live_classes),
+        ast::Decl::TsEnum(_) => {
+            // Enums don't have instantiations to track for RTA
+        }
         _ => {},
     }
 }

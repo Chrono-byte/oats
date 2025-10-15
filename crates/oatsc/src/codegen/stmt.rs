@@ -395,27 +395,22 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                                     let cs2 = self.builder.build_call(box_fn, &[ev.into()], "union_box_f64_ctor");
                                                                     if let Ok(cs2) = cs2 && let inkwell::Either::Left(bv2) = cs2.try_as_basic_value() {
                                                                         let boxed_ptr = bv2.into_pointer_value();
-                                                                        let boxed_bv = inkwell::values::BasicValueEnum::PointerValue(boxed_ptr);
-                                                                        let _ = self.builder.build_store(field_ptr, boxed_bv);
                                                                         let rc_inc = self.get_rc_inc();
                                                                         let _ = self.builder.build_call(rc_inc, &[boxed_ptr.into()], "rc_inc_field");
-                                                                        // release temporary ownership of boxed_ptr (runtime/store did inc)
-                                                                        if let Some(rc_dec_fn) = self.module.get_function("rc_dec") {
-                                                                            let _ = self.builder.build_call(rc_dec_fn, &[boxed_ptr.into()], "rc_dec_boxed_tmp").ok();
-                                                                        }
+                                                                        let boxed_bv = inkwell::values::BasicValueEnum::PointerValue(boxed_ptr);
+                                                                        let _ = self.builder.build_store(field_ptr, boxed_bv);
+                                                                        // Note: no rc_dec here as the store takes ownership of the newly boxed object
                                                                     }
                                                                 } else if ev.get_type().is_pointer_type() {
                                                                     let box_fn = self.get_union_box_ptr();
                                                                     let cs2 = self.builder.build_call(box_fn, &[ev.into()], "union_box_ptr_ctor");
                                                                     if let Ok(cs2) = cs2 && let inkwell::Either::Left(bv2) = cs2.try_as_basic_value() {
                                                                         let boxed_ptr = bv2.into_pointer_value();
-                                                                        let boxed_bv = inkwell::values::BasicValueEnum::PointerValue(boxed_ptr);
-                                                                        let _ = self.builder.build_store(field_ptr, boxed_bv);
                                                                         let rc_inc = self.get_rc_inc();
                                                                         let _ = self.builder.build_call(rc_inc, &[boxed_ptr.into()], "rc_inc_field");
-                                                                            if let Some(rc_dec_fn) = self.module.get_function("rc_dec") {
-                                                                                let _ = self.builder.build_call(rc_dec_fn, &[boxed_ptr.into()], "rc_dec_boxed_tmp").ok();
-                                                                            }
+                                                                        let boxed_bv = inkwell::values::BasicValueEnum::PointerValue(boxed_ptr);
+                                                                        let _ = self.builder.build_store(field_ptr, boxed_bv);
+                                                                        // Note: no rc_dec here as the store takes ownership of the newly boxed object
                                                                     }
                                                                 } else {
                                                                     return Err(crate::diagnostics::Diagnostic::simple("unsupported tuple union element type at init"));
@@ -429,9 +424,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                             | crate::types::OatsType::Weak(_)
                                                             | crate::types::OatsType::Promise(_) => {
                                                                 if let inkwell::values::BasicValueEnum::PointerValue(p) = ev {
-                                                                    let _ = self.builder.build_store(field_ptr, ev);
                                                                     let rc_inc = self.get_rc_inc();
                                                                     let _ = self.builder.build_call(rc_inc, &[p.into()], "rc_inc_field");
+                                                                    let _ = self.builder.build_store(field_ptr, ev);
                                                                 } else {
                                                                     return Err(crate::diagnostics::Diagnostic::simple("expected pointer for tuple reference element"));
                                                                 }
@@ -465,9 +460,6 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                     return Ok(false);
                                                 }
                                             };
-                                        let _ = self
-                                            .builder
-                                            .build_store(alloca, malloc_ret.as_basic_value_enum());
                                         // increment rc for stored pointer (unless elided)
                                         if !self.should_elide_rc_for_local(&name) {
                                             let rc_inc = self.get_rc_inc();
@@ -477,7 +469,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                 "rc_inc_local",
                                             );
                                         }
-
+                                        let _ = self
+                                            .builder
+                                            .build_store(alloca, malloc_ret.as_basic_value_enum());
                                         // mark initialized and insert local with nominal pointing to tuple generated name
                                         self.insert_local_current_scope(
                                             _locals_stack,
@@ -486,7 +480,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                 ptr: alloca,
                                                 ty: allocated_ty,
                                                 initialized: true,
-                                                is_const: false,
+                                                // If this was a `let` without `mut`, treat as const/immutable
+                                                is_const: matches!(
+                                                    var_decl.kind,
+                                                    deno_ast::swc::ast::VarDeclKind::Const
+                                                ) || !is_mut_decl,
                                                 is_weak: declared_is_weak,
                                                 nominal: Some(gen_name),
                                                 oats_type: declared_union.clone(),
@@ -855,7 +853,6 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     };
                                     // Always store the initializer into the slot and
                                     // perform RC increment for pointer-like values.
-                                    let _ = self.builder.build_store(alloca, val);
                                     if val.get_type().is_pointer_type()
                                         && let BasicValueEnum::PointerValue(pv) = val
                                         && !self.should_elide_rc_for_local(&name)
@@ -867,7 +864,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             "rc_inc_local",
                                         );
                                     }
-
+                                    let _ = self.builder.build_store(alloca, val);
                                     // If we reused an existing local, mark it initialized.
                                     if maybe_existing.is_some() {
                                         self.set_local_initialized(_locals_stack, &name, true);
@@ -893,47 +890,47 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             },
                                         );
                                     }
-                                }
-                            } else {
-                                // No initializer: create an uninitialized slot
-                                // using `i64` as a conservative ABI choice. The
-                                // slot will be marked uninitialized so further
-                                // lowering can detect reads of uninitialized
-                                // locals and emit diagnostics if necessary.
-                                // For union types, use i8ptr since unions are boxed.
-                                let ty = if declared_union.is_some() {
-                                    self.i8ptr_t.as_basic_type_enum()
                                 } else {
-                                    self.i64_t.as_basic_type_enum()
-                                };
-                                let alloca = match self.builder.build_alloca(ty, &name) {
-                                    Ok(a) => a,
-                                    Err(_) => {
-                                        crate::diagnostics::emit_diagnostic(
-                                            &crate::diagnostics::Diagnostic::simple(
-                                                "alloca failed for uninitialized var",
-                                            ),
-                                            Some(self.source),
-                                        );
-                                        return Ok(false);
-                                    }
-                                };
-                                self.insert_local_current_scope(
-                                    _locals_stack,
-                                    crate::codegen::helpers::LocalVarInfo {
-                                        name,
-                                        ptr: alloca,
-                                        ty,
-                                        initialized: false,
-                                        is_const: matches!(
-                                            var_decl.kind,
-                                            deno_ast::swc::ast::VarDeclKind::Const
-                                        ) || !is_mut_decl,
-                                        is_weak: declared_is_weak,
-                                        nominal: declared_nominal.clone(),
-                                        oats_type: declared_union.clone(),
-                                    },
-                                );
+                                    // No initializer: create an uninitialized slot
+                                    // using `i64` as a conservative ABI choice. The
+                                    // slot will be marked uninitialized so further
+                                    // lowering can detect reads of uninitialized
+                                    // locals and emit diagnostics if necessary.
+                                    // For union types, use i8ptr since unions are boxed.
+                                    let ty = if declared_union.is_some() {
+                                        self.i8ptr_t.as_basic_type_enum()
+                                    } else {
+                                        self.i64_t.as_basic_type_enum()
+                                    };
+                                    let alloca = match self.builder.build_alloca(ty, &name) {
+                                        Ok(a) => a,
+                                        Err(_) => {
+                                            crate::diagnostics::emit_diagnostic(
+                                                &crate::diagnostics::Diagnostic::simple(
+                                                    "alloca failed for uninitialized var",
+                                                ),
+                                                Some(self.source),
+                                            );
+                                            return Ok(false);
+                                        }
+                                    };
+                                    self.insert_local_current_scope(
+                                        _locals_stack,
+                                        crate::codegen::helpers::LocalVarInfo {
+                                            name,
+                                            ptr: alloca,
+                                            ty,
+                                            initialized: false,
+                                            is_const: matches!(
+                                                var_decl.kind,
+                                                deno_ast::swc::ast::VarDeclKind::Const
+                                            ) || !is_mut_decl,
+                                            is_weak: declared_is_weak,
+                                            nominal: declared_nominal.clone(),
+                                            oats_type: declared_union.clone(),
+                                        },
+                                    );
+                                }
                             }
                         }
                     }
@@ -1351,53 +1348,46 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 }
             }
             deno_ast::swc::ast::Stmt::Break(_break_stmt) => {
-                // Break statement: jump to the loop's break (exit) block.
-                //
-                // We must emit RC decrements for locals before branching out
-                // of the current lexical scope because `break` logically
-                // exits the scope and any pointer-valued locals need their
-                // reference counts adjusted. `emit_rc_dec_for_locals` is the
-                // helper that lowers these decrements.
-                if let Some(loop_ctx) = self.loop_context_stack.borrow().last().copied() {
-                    // TODO: Support labeled breaks by resolving the label to the
-                    // target loop context. Currently only unlabeled `break`
-                    // statements are implemented. See issue #TODO (add issue)
-                    // for full labeled-break semantics and tests.
+                // Find the target loop context
+                let target_ctx = if let Some(label) = _break_stmt.label.as_ref() {
+                    // Labeled break: find the loop with matching label
+                    let label_str = label.sym.as_str();
+                    self.loop_context_stack.borrow().iter().rev().find(|ctx| {
+                        ctx.label.as_deref() == Some(label_str)
+                    }).cloned()
+                } else {
+                    // Unlabeled break: use innermost loop
+                    self.loop_context_stack.borrow().last().cloned()
+                };
 
-                    // Emit RC decrements for locals owned by the current loop
-                    // (only scopes starting at `locals_start`). This avoids
-                    // decreffing outer scopes that remain live after the break.
+                if let Some(loop_ctx) = target_ctx {
+                    // Emit RC decrements for locals owned by the target loop
                     self._emit_rc_dec_for_locals_from(_locals_stack, loop_ctx.locals_start);
 
                     // Branch to break block
                     let _ = self
                         .builder
                         .build_unconditional_branch(loop_ctx.break_block);
-
-                    Ok(true) // break terminates the current block
                 } else {
-                    // Break outside of a loop is a semantic error. Current
-                    // behavior is to ignore it; a diagnostic should be emitted
-                    // instead. See issue #TODO (add issue) to track error
-                    // reporting for invalid control-flow statements.
-                    Ok(false)
+                    return Err(crate::diagnostics::Diagnostic::simple("break statement outside of loop"));
                 }
+                Ok(true)
             }
             deno_ast::swc::ast::Stmt::Continue(_continue_stmt) => {
-                // Continue statement: jump to the loop's continue block.
-                //
-                // Like `break`, a `continue` may exit the current lexical
-                // scope. Emit RC decrements for locals to preserve correct
-                // lifetime semantics before transferring control.
-                if let Some(loop_ctx) = self.loop_context_stack.borrow().last().copied() {
-                    // TODO: Support labeled continues by resolving the label to
-                    // the target loop context. Currently only unlabeled
-                    // `continue` statements are implemented. See issue #TODO
-                    // (add issue) for full labeled-continue semantics and tests.
+                // Find the target loop context
+                let target_ctx = if let Some(label) = _continue_stmt.label.as_ref() {
+                    // Labeled continue: find the loop with matching label
+                    let label_str = label.sym.as_str();
+                    self.loop_context_stack.borrow().iter().rev().find(|ctx| {
+                        ctx.label.as_deref() == Some(label_str)
+                    }).cloned()
+                } else {
+                    // Unlabeled continue: use innermost loop
+                    self.loop_context_stack.borrow().last().cloned()
+                };
 
-                    // Emit RC decrements for locals owned by the current loop
-                    // (only scopes starting at `locals_start`). This avoids
-                    // decreffing outer scopes that remain live after the continue.
+                if let Some(loop_ctx) = target_ctx {
+                    // Emit RC decrements for locals owned by the target loop
                     self._emit_rc_dec_for_locals_from(_locals_stack, loop_ctx.locals_start);
 
                     // Branch to continue block
@@ -1493,6 +1483,14 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     Ok(false)
                 }
             }
+            deno_ast::swc::ast::Stmt::Labeled(labeled) => {
+                // Set the current label for labeled statements
+                let label_str = labeled.label.sym.to_string();
+                *self.current_label.borrow_mut() = Some(label_str);
+                let result = self.lower_stmt(&labeled.body, _function, _param_map, _locals_stack);
+                *self.current_label.borrow_mut() = None;
+                result
+            }
             // Minimal ForOf lowering: handle `for (let v of iterable) { body }`.
             deno_ast::swc::ast::Stmt::ForOf(forof) => {
                 // Only handle the case where the left-hand side is a var
@@ -1548,6 +1546,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     continue_block: loop_cond_bb,
                                     break_block: loop_after_bb,
                                     locals_start: _locals_stack.len(),
+                                    label: self.current_label.borrow().clone(),
                                 },
                             );
 
@@ -1682,7 +1681,6 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             return Ok(false);
                                         }
                                     };
-                                    let _ = self.builder.build_store(alloca, bv);
                                     if !self.should_elide_rc_for_local(&loop_var_name) {
                                         let rc_inc = self.get_rc_inc();
                                         let _ = self.builder.build_call(
@@ -1691,19 +1689,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             "rc_inc_loop_var",
                                         );
                                     }
-                                    self.insert_local_current_scope(
-                                        _locals_stack,
-                                        crate::codegen::helpers::LocalVarInfo {
-                                            name: loop_var_name.clone(),
-                                            ptr: alloca,
-                                            ty,
-                                            initialized: true,
-                                            is_const: false,
-                                            is_weak: false,
-                                            nominal: declared_nominal.clone(),
-                                            oats_type: None,
-                                        },
-                                    );
+                                    let _ = self.builder.build_store(alloca, bv);
                                 }
                             }
 
@@ -1793,6 +1779,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         continue_block: loop_incr_bb,
                         break_block: loop_after_bb,
                         locals_start: _locals_stack.len(),
+                        label: self.current_label.borrow().clone(),
                     });
 
                 // Branch to condition
@@ -1872,6 +1859,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         continue_block: loop_cond_bb,
                         break_block: loop_after_bb,
                         locals_start: _locals_stack.len(),
+                        label: self.current_label.borrow().clone(),
                     });
 
                 // Branch to condition
@@ -1934,6 +1922,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         continue_block: loop_cond_bb,
                         break_block: loop_after_bb,
                         locals_start: _locals_stack.len(),
+                        label: self.current_label.borrow().clone(),
                     });
 
                 // Branch directly to body (execute at least once)
@@ -1961,16 +1950,17 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     self.lower_expr(&dowhile_stmt.test, _function, _param_map, _locals_stack)
                 {
                     // Coerce to i1 boolean
+
                     if let Some(cond_bool) = self.to_condition_i1(cond_val) {
                         let _ = self.builder.build_conditional_branch(
                             cond_bool,
                             loop_body_bb, // Loop back to body
                             loop_after_bb,
-                        );
+                                               );
                     } else {
                         self.loop_context_stack.borrow_mut().pop();
                         return Ok(false);
-                    }
+                                                         }
                 } else {
                     self.loop_context_stack.borrow_mut().pop();
                     return Ok(false);
@@ -1984,6 +1974,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
                 Ok(false) // do-while loops don't terminate unless body always returns
             }
+           
             _ => Ok(false),
         }
     }

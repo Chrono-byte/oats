@@ -1,0 +1,60 @@
+// Test for escape analysis optimization
+// Non-escaping locals should skip RC ops
+
+export class Counter {
+    private value: number;
+
+    constructor() {
+        this.value = 0;
+    }
+
+    increment(): void {
+        this.value = this.value + 1;
+    }
+
+    get(): number {
+        return this.value;
+    }
+}
+
+export function test_local_no_escape(): number {
+    // Local counter doesn't escape - should skip RC ops
+    let c = new Counter();
+    c.increment();
+    c.increment();
+    return c.get();
+}
+
+export function test_local_with_escape(): Counter {
+    // Local counter escapes via return - should NOT skip RC ops
+    let c = new Counter();
+    c.increment();
+    return c;
+}
+
+export function test_multiple_locals(): void {
+    // Multiple non-escaping locals - should skip all RC ops
+    let c1 = new Counter();
+    let c2 = new Counter();
+    c1.increment();
+    c2.increment();
+    c2.increment();
+    // Both should be freed at end without RC
+}
+
+export function test_reassignment(): number {
+    // Reassigned local that doesn't escape
+    let mut c = new Counter();
+    c.increment();
+    c = new Counter();
+    c.increment();
+    c.increment();
+    return c.get();
+}
+
+export function main(): void {
+    println(test_local_no_escape());       // Should print 2
+    test_multiple_locals();                 // Should complete without error
+    println(test_reassignment());          // Should print 2
+    return;
+}

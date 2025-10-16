@@ -1,0 +1,94 @@
+/**
+ * A memory-intensive test script for the Oats runtime.
+ *
+ * This script performs the following actions:
+ * 1. Defines a `Node` class to act as our memory-consuming object. Each node
+ * contains a number, a reference to another node, and an array of numbers.
+ * 2. Allocates millions of `Node` instances in a loop.
+ * 3. Stores all created nodes in a long-lived array to prevent immediate deallocation.
+ * 4. Links all nodes into a single, long linked list to create many object references.
+ * 5. Pauses for several seconds to allow the garbage collector time to run.
+ * 6. Traverses the entire linked list, performing calculations to ensure the data is used.
+ * 7. Prints the final result and status messages.
+ */
+
+// A class designed to consume a moderate amount of memory per instance.
+class Node {
+    public value: number;
+    public next: Node | null;
+    public data: number[]; // An array to increase the object's memory footprint.
+
+    constructor(value: number) {
+        this.value = value;
+        this.next = null;
+        // Each node allocates an array of 10 numbers to increase memory pressure.
+        this.data = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
+    }
+}
+
+// FFI declarations for external functions provided by the Oats runtime.
+declare function print_str(s: string): void;
+declare function print_f64(n: number): void;
+declare function print_newline(): void;
+declare function sleep_ms(ms: number): void;
+
+
+export function main(): void {
+    print_str("Starting memory stress test...");
+    print_newline();
+
+    // Create 2 million objects. Adjust this number based on machine specs.
+    const iterations = 1000;
+    
+    let mut head: Node | null = null;
+    let mut previous: Node | null = null;
+
+    // This array holds references to all created nodes, keeping them alive
+    // and forcing the memory manager to handle a large, active heap.
+    const allNodes: Node[] = [];
+
+    print_str("Phase 1: Allocating 2 million objects...");
+    print_newline();
+    for (let mut i = 0; i < iterations; i = i + 1) {
+        let newNode = new Node(i);
+        
+        // Keep a strong reference to the node in the array.
+        allNodes.push(newNode);
+
+        // Build the linked list.
+        if (head === null) {
+            head = newNode;
+        }
+
+        if (previous !== null) {
+            previous.next = newNode;
+        }
+        previous = newNode;
+    }
+    print_str("Allocation complet mute.");
+    print_newline();
+
+    // Introduce a delay to ensure the script's runtime is noticeable
+    // and to give the background cycle collector a window to operate.
+    print_str("Phase 2: Sleeping for 3 seconds...");
+    print_newline();
+    sleep_ms(3000);
+
+    print_str("Phase 3: Performing work by traversing the list...");
+    print_newline();
+    let mut currentNode = head;
+    let mut sum = 0;
+    while (currentNode !== null) {
+        sum = sum + currentNode.value;
+        // Access the internal data array to make the work more realistic.
+        sum = sum + currentNode.data[5]; 
+        currentNode = currentNode.next;
+    }
+
+    print_str("Calculation complet mute. Final sum: ");
+    print_f64(sum);
+    print_newline();
+
+    print_str("Test finished. All objects are now out of scope and will be reclaimed.");
+    print_newline();
+}

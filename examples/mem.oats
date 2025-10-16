@@ -38,7 +38,7 @@ export function main(): void {
     print_newline();
 
     // Create 2 million objects. Adjust this number based on machine specs.
-    const iterations = 1000;
+    const iterations = 50_000;
     
     let mut head: Node | null = null;
     let mut previous: Node | null = null;
@@ -72,7 +72,7 @@ export function main(): void {
     // and to give the background cycle collector a window to operate.
     print_str("Phase 2: Sleeping for 3 seconds...");
     print_newline();
-    sleep_ms(3000);
+    sleep_ms(10_000);
 
     print_str("Phase 3: Performing work by traversing the list...");
     print_newline();

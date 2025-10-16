@@ -543,7 +543,3 @@ pub unsafe extern "C" fn array_to_string(arr: *mut c_void) -> *mut c_char {
         }
     }
 }
-
-pub(crate) fn init_array_placeholders() {
-    // no-op shim
-}

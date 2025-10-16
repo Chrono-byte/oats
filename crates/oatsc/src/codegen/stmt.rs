@@ -1352,9 +1352,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 let target_ctx = if let Some(label) = _break_stmt.label.as_ref() {
                     // Labeled break: find the loop with matching label
                     let label_str = label.sym.as_str();
-                    self.loop_context_stack.borrow().iter().rev().find(|ctx| {
-                        ctx.label.as_deref() == Some(label_str)
-                    }).cloned()
+                    self.loop_context_stack
+                        .borrow()
+                        .iter()
+                        .rev()
+                        .find(|ctx| ctx.label.as_deref() == Some(label_str))
+                        .cloned()
                 } else {
                     // Unlabeled break: use innermost loop
                     self.loop_context_stack.borrow().last().cloned()
@@ -1369,7 +1372,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         .builder
                         .build_unconditional_branch(loop_ctx.break_block);
                 } else {
-                    return Err(crate::diagnostics::Diagnostic::simple("break statement outside of loop"));
+                    return Err(crate::diagnostics::Diagnostic::simple(
+                        "break statement outside of loop",
+                    ));
                 }
                 Ok(true)
             }
@@ -1378,9 +1383,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 let target_ctx = if let Some(label) = _continue_stmt.label.as_ref() {
                     // Labeled continue: find the loop with matching label
                     let label_str = label.sym.as_str();
-                    self.loop_context_stack.borrow().iter().rev().find(|ctx| {
-                        ctx.label.as_deref() == Some(label_str)
-                    }).cloned()
+                    self.loop_context_stack
+                        .borrow()
+                        .iter()
+                        .rev()
+                        .find(|ctx| ctx.label.as_deref() == Some(label_str))
+                        .cloned()
                 } else {
                     // Unlabeled continue: use innermost loop
                     self.loop_context_stack.borrow().last().cloned()
@@ -1956,11 +1964,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             cond_bool,
                             loop_body_bb, // Loop back to body
                             loop_after_bb,
-                                               );
+                        );
                     } else {
                         self.loop_context_stack.borrow_mut().pop();
                         return Ok(false);
-                                                         }
+                    }
                 } else {
                     self.loop_context_stack.borrow_mut().pop();
                     return Ok(false);
@@ -1974,7 +1982,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
                 Ok(false) // do-while loops don't terminate unless body always returns
             }
-           
+
             _ => Ok(false),
         }
     }

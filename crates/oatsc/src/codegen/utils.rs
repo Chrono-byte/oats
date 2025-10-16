@@ -135,24 +135,24 @@ pub mod constants {
 pub mod variables {
     use super::*;
 
+    /// Information about a local variable in the codegen context
+    type LocalVarInfo<'a> = (
+        PointerValue<'a>,
+        inkwell::types::BasicTypeEnum<'a>,
+        bool,
+        bool,
+        Option<String>,
+        Option<String>,
+        OatsType,
+    );
+
     /// Resolve a variable by name, checking parameters first, then locals
     pub fn resolve_variable<'a>(
         codegen: &CodeGen<'a>,
         name: &str,
         param_map: &HashMap<String, usize>,
         function: FunctionValue<'a>,
-        locals: &HashMap<
-            String,
-            (
-                PointerValue<'a>,
-                inkwell::types::BasicTypeEnum<'a>,
-                bool,
-                bool,
-                Option<String>,
-                Option<String>,
-                OatsType,
-            ),
-        >,
+        locals: &HashMap<String, LocalVarInfo<'a>>,
     ) -> Option<BasicValueEnum<'a>> {
         // Check parameters first
         if let Some(&idx) = param_map.get(name)

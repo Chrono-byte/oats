@@ -5,6 +5,8 @@ mod common;
 
 #[path = "codegen/aot_runner_integration.rs"]
 mod aot_runner_integration;
+#[path = "codegen/arrow_return_inference.rs"]
+mod arrow_return_inference;
 #[path = "codegen/arrays_and_loops.rs"]
 mod arrays_and_loops;
 #[path = "codegen/class_fields.rs"]

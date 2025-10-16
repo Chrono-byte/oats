@@ -1228,13 +1228,105 @@ impl<'a> CodeGen<'a> {
                 // Simple inference for single expression body
                 self.infer_type_from_expr(expr)
             }
-            deno_ast::swc::ast::BlockStmtOrExpr::BlockStmt(_block) => {
-                // For block, look for return statements
-                // For simplicity, default to Number if no returns or complex
-                // TODO: Implement full inference from return statements
-                Ok(crate::types::OatsType::Number)
+            deno_ast::swc::ast::BlockStmtOrExpr::BlockStmt(block) => {
+                // Collect all return types from the block
+                let mut return_types = Vec::new();
+                self.collect_return_types_from_stmts(&block.stmts, &mut return_types)?;
+                
+                // If no returns found, the function returns void
+                if return_types.is_empty() {
+                    return Ok(crate::types::OatsType::Void);
+                }
+                
+                // If all returns are the same type, use that type
+                if return_types.len() == 1 {
+                    return Ok(return_types[0].clone());
+                }
+                
+                // Check if all return types are identical
+                let first = &return_types[0];
+                if return_types.iter().all(|t| t == first) {
+                    return Ok(first.clone());
+                }
+                
+                // Different return types -> create a union
+                Ok(crate::types::OatsType::Union(return_types))
             }
         }
+    }
+
+    /// Collect return types from a list of statements (recursively traversing nested blocks)
+    fn collect_return_types_from_stmts(
+        &self,
+        stmts: &[ast::Stmt],
+        return_types: &mut Vec<crate::types::OatsType>,
+    ) -> Result<(), crate::diagnostics::Diagnostic> {
+        for stmt in stmts {
+            self.collect_return_types_from_stmt(stmt, return_types)?;
+        }
+        Ok(())
+    }
+
+    /// Collect return types from a single statement
+    fn collect_return_types_from_stmt(
+        &self,
+        stmt: &ast::Stmt,
+        return_types: &mut Vec<crate::types::OatsType>,
+    ) -> Result<(), crate::diagnostics::Diagnostic> {
+        match stmt {
+            ast::Stmt::Return(ret) => {
+                if let Some(arg) = &ret.arg {
+                    let ty = self.infer_type_from_expr(arg)?;
+                    return_types.push(ty);
+                } else {
+                    // return with no value -> void
+                    return_types.push(crate::types::OatsType::Void);
+                }
+            }
+            ast::Stmt::Block(block) => {
+                self.collect_return_types_from_stmts(&block.stmts, return_types)?;
+            }
+            ast::Stmt::If(if_stmt) => {
+                // Check the consequent block
+                self.collect_return_types_from_stmt(&if_stmt.cons, return_types)?;
+                // Check the alternate block if present
+                if let Some(alt) = &if_stmt.alt {
+                    self.collect_return_types_from_stmt(alt, return_types)?;
+                }
+            }
+            ast::Stmt::While(while_stmt) => {
+                self.collect_return_types_from_stmt(&while_stmt.body, return_types)?;
+            }
+            ast::Stmt::For(for_stmt) => {
+                self.collect_return_types_from_stmt(&for_stmt.body, return_types)?;
+            }
+            ast::Stmt::ForIn(for_in) => {
+                self.collect_return_types_from_stmt(&for_in.body, return_types)?;
+            }
+            ast::Stmt::ForOf(for_of) => {
+                self.collect_return_types_from_stmt(&for_of.body, return_types)?;
+            }
+            ast::Stmt::Switch(switch) => {
+                for case in &switch.cases {
+                    self.collect_return_types_from_stmts(&case.cons, return_types)?;
+                }
+            }
+            ast::Stmt::Try(try_stmt) => {
+                self.collect_return_types_from_stmts(&try_stmt.block.stmts, return_types)?;
+                if let Some(handler) = &try_stmt.handler {
+                    self.collect_return_types_from_stmts(&handler.body.stmts, return_types)?;
+                }
+                if let Some(finalizer) = &try_stmt.finalizer {
+                    self.collect_return_types_from_stmts(&finalizer.stmts, return_types)?;
+                }
+            }
+            ast::Stmt::Labeled(labeled) => {
+                self.collect_return_types_from_stmt(&labeled.body, return_types)?;
+            }
+            // Other statement types don't contain returns
+            _ => {}
+        }
+        Ok(())
     }
 
     /// Simple type inference from expression

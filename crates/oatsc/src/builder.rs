@@ -1100,34 +1100,42 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
     f.write_all(ir.as_bytes())?;
     f.sync_all()?;
 
-    // Build Rust runtime staticlib
-    // Build the runtime crate from the workspace
-    let status = Command::new("cargo")
-        .arg("build")
-        .arg("-p")
-        .arg("runtime")
-        .arg("--release")
-        .status()?;
-    if !status.success() {
-        anyhow::bail!("building rust runtime failed");
-    }
+    // Try to fetch pre-built runtime from GitHub releases, or build locally
+    let rust_lib = if let Some(cached_runtime) = crate::runtime_fetch::try_fetch_runtime() {
+        // Use the cached pre-built runtime
+        cached_runtime.to_string_lossy().to_string()
+    } else {
+        // Fall back to building runtime locally
+        eprintln!("Building runtime locally...");
+        // Build Rust runtime staticlib
+        // Build the runtime crate from the workspace
+        let status = Command::new("cargo")
+            .arg("build")
+            .arg("-p")
+            .arg("runtime")
+            .arg("--release")
+            .status()?;
+        if !status.success() {
+            anyhow::bail!("building rust runtime failed");
+        }
 
-    // locate the produced staticlib
-    // Locate the produced staticlib. Cargo may put workspace artifacts under
-    // the workspace `target/` directory instead of `crates/runtime/target/`.
-    let candidates = [
-        "crates/runtime/target/release/libruntime.a",
-        "target/release/libruntime.a",
-        "crates/runtime/target/debug/libruntime.a",
-        "target/debug/libruntime.a",
-    ];
-    let rust_lib = candidates
-        .into_iter()
-        .find(|p| Path::new(p).exists())
-        .map(|s| s.to_string())
-        .ok_or_else(|| {
-            anyhow::anyhow!("runtime staticlib not found; please build the runtime crate")
-        })?;
+        // locate the produced staticlib
+        // Locate the produced staticlib. Cargo may put workspace artifacts under
+        // the workspace `target/` directory instead of `crates/runtime/target/`.
+        let candidates = [
+            "crates/runtime/target/release/libruntime.a",
+            "target/release/libruntime.a",
+            "crates/runtime/target/debug/libruntime.a",
+            "target/debug/libruntime.a",
+        ];
+        candidates
+            .into_iter()
+            .find(|p| Path::new(p).exists())
+            .map(|s| s.to_string())
+            .ok_or_else(|| {
+                anyhow::anyhow!("runtime staticlib not found; please build the runtime crate")
+            })?
+    };
 
     // Compile IR to object file using LLVM's in-process TargetMachine. This
     // avoids shelling out to clang for the IR -> object step and is more

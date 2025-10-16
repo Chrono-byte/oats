@@ -574,30 +574,6 @@ impl<'a> CodeGen<'a> {
             .unwrap_or_else(|| self.module.add_function("executor_run", fn_type, None))
     }
 
-    #[allow(dead_code)]
-    fn get_waker_create_for_task(&self) -> FunctionValue<'a> {
-        // waker_create_for_task(i8*) -> i8*
-        let fn_type = self.i8ptr_t.fn_type(&[self.i8ptr_t.into()], false);
-        self.module
-            .get_function("waker_create_for_task")
-            .unwrap_or_else(|| {
-                self.module
-                    .add_function("waker_create_for_task", fn_type, None)
-            })
-    }
-
-    #[allow(dead_code)]
-    fn get_waker_wake(&self) -> FunctionValue<'a> {
-        // waker_wake(i8*) -> void
-        let fn_type = self
-            .context
-            .void_type()
-            .fn_type(&[self.i8ptr_t.into()], false);
-        self.module
-            .get_function("waker_wake")
-            .unwrap_or_else(|| self.module.add_function("waker_wake", fn_type, None))
-    }
-
     fn get_math_random(&self) -> FunctionValue<'a> {
         self.module.get_function("math_random").unwrap_or_else(|| {
             let fn_type = self.f64_t.fn_type(&[], false);
@@ -790,20 +766,6 @@ impl<'a> CodeGen<'a> {
             })
     }
 
-    #[allow(dead_code)]
-    fn get_array_push_ptr_weak(&self) -> FunctionValue<'a> {
-        self.module
-            .get_function("array_push_ptr_weak")
-            .unwrap_or_else(|| {
-                let fn_type = self
-                    .context
-                    .void_type()
-                    .fn_type(&[self.i8ptr_t.into(), self.i8ptr_t.into()], false);
-                self.module
-                    .add_function("array_push_ptr_weak", fn_type, None)
-            })
-    }
-
     fn get_array_pop_ptr(&self) -> FunctionValue<'a> {
         self.module
             .get_function("array_pop_ptr")
@@ -844,20 +806,6 @@ impl<'a> CodeGen<'a> {
                     false,
                 );
                 self.module.add_function("array_set_ptr", fn_type, None)
-            })
-    }
-    #[allow(dead_code)]
-    fn get_array_set_ptr_weak(&self) -> FunctionValue<'a> {
-        self.module
-            .get_function("array_set_ptr_weak")
-            .unwrap_or_else(|| {
-                // array_set_ptr_weak(arr: i8*, idx: i64, p: i8*) -> void
-                let fn_type = self.context.void_type().fn_type(
-                    &[self.i8ptr_t.into(), self.i64_t.into(), self.i8ptr_t.into()],
-                    false,
-                );
-                self.module
-                    .add_function("array_set_ptr_weak", fn_type, None)
             })
     }
 

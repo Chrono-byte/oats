@@ -574,7 +574,7 @@ fn main() -> Result<()> {
     // Generate IR
     // Emit class methods/constructors as top-level functions so they can be
     // linked and called. We lower each ClassDecl's members into functions
-    // named `<Class>_<method>` and `<Class>_ctor` for constructors.
+    // named `<Class>_<method>` and `<Class>_init` for constructors.
     // Generate IR for exported classes found in all modules and use the
     // originating module's source for diagnostics.
     for (_mkey, parsed_module) in modules.iter() {

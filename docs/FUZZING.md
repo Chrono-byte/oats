@@ -1,5 +1,7 @@
 # Fuzzing Guide for Oats
 
+**Last Updated:** October 16, 2025
+
 This document describes the fuzzing infrastructure for the Oats compiler and how
 to use it to discover bugs and crashes.
 
@@ -147,26 +149,26 @@ python3 -m http.server 8000
 
 1. **Create target file:** `fuzz/fuzz_targets/fuzz_my_feature.rs`
 
-```rust
-#![no_main]
-use libfuzzer_sys::fuzz_target;
+    ```rust
+    #![no_main]
+    use libfuzzer_sys::fuzz_target;
 
-fuzz_target!(|data: &[u8]| {
-    // Your fuzzing code here
-    // Should NEVER panic or crash
-});
-```
+    fuzz_target!(|data: &[u8]| {
+        // Your fuzzing code here
+        // Should NEVER panic or crash
+    });
+    ```
 
 2. **Update `fuzz/Cargo.toml`:**
 
-```toml
-[[bin]]
-name = "fuzz_my_feature"
-path = "fuzz_targets/fuzz_my_feature.rs"
-test = false
-doc = false
-bench = false
-```
+    ```toml
+    [[bin]]
+    name = "fuzz_my_feature"
+    path = "fuzz_targets/fuzz_my_feature.rs"
+    test = false
+    doc = false
+    bench = false
+    ```
 
 3. **Create seed corpus:** `fuzz/corpus/fuzz_my_feature/`
 

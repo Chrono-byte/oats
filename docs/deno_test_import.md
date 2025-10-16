@@ -1,5 +1,7 @@
 # Deno Test Import Plan
 
+**Last Updated:** October 16, 2025
+
 This document tracks the subset of `deno/tests` that map cleanly onto the Oats
 compiler test harness and outlines how to vendor them.
 
@@ -11,8 +13,7 @@ compiler test harness and outlines how to vendor them.
 
 ## Target Layout
 
-```
-third_party/
+```third_party/
   deno_tests/
     README.md        # license notice + update instructions
     unit/            # mirrored subtrees from deno/tests/unit
@@ -71,7 +72,7 @@ Add `scripts/vendor_deno_tests.sh` with the following responsibilities:
 Create `third_party/deno_tests/allowlist.txt` (one path per line) that the
 vendoring script consumes. Example:
 
-```
+```text
 unit/async_iteration.ts
 unit/array_filter.ts
 spec/url/basic.ts

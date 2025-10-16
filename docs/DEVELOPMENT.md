@@ -1,5 +1,7 @@
 # Development Guide
 
+**Last Updated:** October 16, 2025
+
 This is the concise development guide for contributors. It replaces the older,
 more fragmented development docs and points to deeper references when needed.
 
@@ -45,7 +47,7 @@ For building Oats for Windows from Linux, see [CROSS_COMPILATION.md](CROSS_COMPI
 
 ### Project Structure
 
-tree
+```text
 ├── crates/
 │   ├── oats/          # Compiler (parser, typechecker, codegen)
 │   │   ├── src/
@@ -57,14 +59,15 @@ tree
 │   │   │   │   ├── expr.rs     # Expression lowering
 │   │   │   │   ├── stmt.rs     # Statement lowering
 │   │   │   │   └── emit.rs     # Top-level emission
-│   │   │   └── bin/
-│   │   │       └── toasty.rs  # CLI driver
-│   │   └── tests/              # Compiler tests
+│   │   │   ├── bin/
+│   │   │   │   └── toasty.rs  # CLI driver
+│   │   │   └── tests/              # Compiler tests
 │   └── runtime/       # C-callable runtime library
-│       ├── src/lib.rs          # RC, allocators, builtins
+│       ├── src/lib.rs          # RC helpers, allocators, builtins
 │       └── tests/              # Runtime tests
 ├── examples/          # Test programs
 └── docs/             # Documentation
+```
 
 ### Compilation Pipeline
 
@@ -357,5 +360,5 @@ suite easier to maintain.
 
 ---
 
-**Last Updated:** October 11, 2025\
+**Last Updated:** October 16, 2025\
 **For PR guidelines, see:** `CONTRIBUTING.md` at repository root

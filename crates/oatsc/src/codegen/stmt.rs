@@ -141,20 +141,28 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 // If this is a `const` declaration, attempt compile-time evaluation
                                 if matches!(var_decl.kind, deno_ast::swc::ast::VarDeclKind::Const) {
                                     let span_start = var_decl.span.lo.0 as usize;
-                                    // Borrow const_items immutably for evaluation and drop
+                                    // Borrow const_items immutably for evaluation
                                     let const_map = self.const_items.borrow();
                                     match crate::codegen::const_eval::eval_const_expr(
-                                        init, span_start, &const_map,
+                                        init, span_start, &*const_map,
                                     ) {
                                         Ok(cv) => {
-                                            drop(const_map);
-                                            // Insert into compile-time const map keyed by name
-                                            self.const_items.borrow_mut().insert(name.clone(), cv);
-                                            // For consts we do not lower the initializer further; the
-                                            // lowered uses will be replaced by LLVM constants later.
+                                            // Only treat primitives as const; arrays and objects need runtime allocation
+                                            if matches!(cv, crate::codegen::const_eval::ConstValue::Number(_) | crate::codegen::const_eval::ConstValue::Bool(_) | crate::codegen::const_eval::ConstValue::Str(_)) {
+                                                drop(const_map);
+                                                // Insert into compile-time const map keyed by name
+                                                self.const_items.borrow_mut().insert(name.clone(), cv);
+                                                // For consts we do not lower the initializer further; the
+                                                // lowered uses will be replaced by LLVM constants later.
+                                                continue;
+                                            } else {
+                                                drop(const_map);
+                                                // For arrays/objects, fall through to normal lowering
+                                            }
                                         }
-                                        Err(diag) => {
-                                            return Err(diag);
+                                        Err(_diag) => {
+                                            // If const evaluation fails, fall through to normal lowering
+                                            drop(const_map);
                                         }
                                     }
                                 }

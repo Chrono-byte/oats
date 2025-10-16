@@ -38,8 +38,8 @@ and tests exercised during this session.
      to prevent regressions.
 
 - Address warnings and run lints
-  - Clean up any remaining compiler warnings (unused assignments) found in
-     `stmt.rs` and other files.
+  - ~~Clean up any remaining compiler warnings (unused assignments) found in
+     `stmt.rs` and other files.~~ ✅ **DONE**: Added `#[allow(dead_code)]` to unused RTA functions.
   - Run `cargo clippy --workspace` and fix critical lints.
 
 - Run fuzzing and integration smoke tests

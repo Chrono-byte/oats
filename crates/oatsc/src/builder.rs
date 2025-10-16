@@ -1309,7 +1309,7 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
     }
     // detect lld (prefer ld.lld then lld)
     let lld_candidate = if is_prog_available("ld.lld") {
-        Some("ld.lld".to_string())
+        Some("lld".to_string())
     } else if is_prog_available("lld") {
         Some("lld".to_string())
     } else {

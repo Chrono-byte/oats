@@ -91,6 +91,10 @@ cargo run -p oats --bin toasty -- examples/add.oats
 - **Slow builds:** Use `cargo build -j4` to limit parallelism if
   memory-constrained
 
+### Cross-Compilation
+
+For building Oats for Windows from Linux, see [CROSS_COMPILATION.md](CROSS_COMPILATION.md).
+
 ## Architecture Quick Reference
 
 ### Project Structure
@@ -208,13 +212,13 @@ Diagnostic {
 
 ### Conversion Patterns
 
-#### Caller Converted to Return Result:
+#### Caller Converted to Return Result
 
 ```rust
 let val = self.lower_expr_result(expr, function, param_map, locals)?;
 ```
 
-#### Caller That Must Remain Option (emit & fallback):
+#### Caller That Must Remain Option (emit & fallback)
 
 ```rust
 match self.lower_expr_result(expr, function, param_map, locals) {
@@ -226,7 +230,7 @@ match self.lower_expr_result(expr, function, param_map, locals) {
 }
 ```
 
-#### Replace `.expect("build_call failed")`:
+#### Replace `.expect("build_call failed")`
 
 ```rust
 let call_site = match self.builder.build_call(fn_val, args, "name") {
@@ -404,10 +408,10 @@ suite easier to maintain.
     INSTA_UPDATE=auto cargo test -p oats --test codegen_snapshot
     ```
 
-* End-to-end testing: `crates/oats/tests/end_to_end.rs` runs the `toasty`
-* runner to compile `examples/add.oats` into a temporary directory, runs the
-* produced binary, and asserts the numeric output. This test builds `runtime`
-* and `toasty` as needed, and may take a few seconds on first run.
+- End-to-end testing: `crates/oats/tests/end_to_end.rs` runs the `toasty`
+- runner to compile `examples/add.oats` into a temporary directory, runs the
+- produced binary, and asserts the numeric output. This test builds `runtime`
+- and `toasty` as needed, and may take a few seconds on first run.
 
 ---
 

@@ -2674,11 +2674,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 if let deno_ast::swc::ast::Expr::Ident(ident) = &*member.obj {
                                     let ident_name = ident.sym.to_string();
                                     if ident_name == "this" {
-                                        // If we're inside a constructor function named <Class>_ctor,
+                                        // If we're inside a constructor function named <Class>_init,
                                         // infer the class name from the function name. Otherwise
                                         // fall back to fn_param_types map (receiver typed functions).
                                         let fname = function.get_name().to_str().unwrap_or("");
-                                        if let Some(cls) = fname.strip_suffix("_ctor") {
+                                        if let Some(cls) = fname.strip_suffix("_init") {
                                             class_name_opt = Some(cls.to_string());
                                         } else if let Some(param_types) =
                                             self.fn_param_types.borrow().get(fname)
@@ -2723,7 +2723,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 } else if matches!(&*member.obj, deno_ast::swc::ast::Expr::This(_))
                                 {
                                     let fname = function.get_name().to_str().unwrap_or("");
-                                    if let Some(cls) = fname.strip_suffix("_ctor") {
+                                    if let Some(cls) = fname.strip_suffix("_init") {
                                         class_name_opt = Some(cls.to_string());
                                     } else if let Some(param_types) =
                                         self.fn_param_types.borrow().get(fname)

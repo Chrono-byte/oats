@@ -1033,19 +1033,19 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         _ => {
                                             let slot_ptr_val = loaded_slot.into_pointer_value();
                                             let casted = match self.builder.build_pointer_cast(
-                                                slot_ptr_val,
-                                                alloca_ptr.get_type(),
-                                                "cast_resume",
-                                            ) {
-                                                Ok(c) => c,
-                                                Err(_) => {
-                                                    return Err(
-                                                        crate::diagnostics::Diagnostic::simple(
-                                                            "pointer cast failed when resuming locals",
-                                                        ),
-                                                    );
-                                                }
-                                            };
+                            slot_ptr_val,
+                            alloca_ptr.get_type(),
+                            "cast_resume",
+                        ) {
+                            Ok(c) => c,
+                            Err(_) => {
+                                return Err(
+                                    crate::diagnostics::Diagnostic::simple(
+                                        "pointer cast failed when resuming locals",
+                                    ),
+                                );
+                            }
+                        };
                                             let _ = self.builder.build_store(
                                                 alloca_ptr,
                                                 casted.as_basic_value_enum(),
@@ -1329,6 +1329,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
     ) -> Result<(), crate::diagnostics::Diagnostic> {
         use crate::types::OatsType;
 
+        // Check if this class can form reference cycles
+        // For now, check for direct self-reference in fields
+        let can_form_cycles = fields.iter().any(|(_, field_type)| {
+            matches!(field_type, OatsType::NominalStruct(name) if name == class_name)
+        });
+
         // We'll emit an implementation function and a thin wrapper so that
         // decorators can be applied by replacing/indirecting the wrapper at
         // runtime. The impl name holds the original emitted body; the
@@ -1419,14 +1425,13 @@ impl<'a> crate::codegen::CodeGen<'a> {
         // We'll emit two functions:
         // - `<Class>_init(this, ...params)` which assumes `this` is already
         //    allocated and stores parameters into fields (used by `super(...)`)
-        // - `<Class>_ctor(...params)` which allocates the object and then
+        // - `<Class>_init(...params)` which allocates the object and then
         //    calls `<Class>_init` to perform initialization and finally
         //    returns the allocated object.
 
         let init_param_types = std::iter::once(self.i8ptr_t.into())
-            .chain(llvm_param_types.iter().cloned())
+            .chain(llvm_param_types.clone())
             .collect::<Vec<_>>();
-
         let init_fn_ty = self.i8ptr_t.fn_type(&init_param_types, false);
         let init_f = self.module.add_function(&init_name, init_fn_ty, None);
 
@@ -1481,19 +1486,14 @@ impl<'a> crate::codegen::CodeGen<'a> {
             })?
             .into_pointer_value();
 
+        // Set header with cycle bit
         let header_ptr = self
             .builder
             .build_pointer_cast(malloc_ret, self.i8ptr_t, "hdr_ptr")
             .map_err(|_| crate::diagnostics::Diagnostic::simple("pointer cast failed"))?;
-        // Set header: rc=1 and type_tag=2 (class with field_map)
-        // The header is a packed 64-bit value. Here we set the strong refcount
-        // to 1 in the low bits and set a type tag in the high bits so the
-        // runtime can recognize class objects quickly. The magic bit layout
-        // is defined in the runtime; we mirror its expectations here.
         let type_tag_val = 2u64 << 49;
-        let header_val = self.i64_t.const_int(type_tag_val | 1u64, false);
-        // Store the header as an i64 at the object base. We intentionally cast
-        // the malloc return to an i8* then store the i64 header at offset 0.
+        let cycle_bit = if can_form_cycles { 0 } else { 1u64 << 48 };
+        let header_val = self.i64_t.const_int(type_tag_val | cycle_bit | 1u64, false);
         let _ = self.builder.build_store(header_ptr, header_val);
 
         // For the init function, `this` is the first parameter; set up locals and store params
@@ -1821,7 +1821,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         // Lower ctor body inside init function context (so `super(...)` can call parent init)
         if let Some(body) = &ctor.body {
             for stmt in &body.stmts {
-                let _ = self.lower_stmt(stmt, init_f, &param_map, &mut locals);
+                self.lower_stmt(stmt, init_f, &param_map, &mut locals)?;
             }
         }
 
@@ -1859,12 +1859,14 @@ impl<'a> crate::codegen::CodeGen<'a> {
             })?
             .into_pointer_value();
 
-        // store header
+        // Set header with cycle bit
         let header_ptr = self
             .builder
             .build_pointer_cast(malloc_ret2, self.i8ptr_t, "hdr_ptr")
             .map_err(|_| crate::diagnostics::Diagnostic::simple("pointer cast failed"))?;
-        let header_val = self.i64_t.const_int(2u64 << 49 | 1u64, false);
+        let type_tag_val = 2u64 << 49;
+        let cycle_bit = if can_form_cycles { 0 } else { 1u64 << 48 };
+        let header_val = self.i64_t.const_int(type_tag_val | cycle_bit | 1u64, false);
         let _ = self.builder.build_store(header_ptr, header_val);
 
         // call init(this, ...) - prepare args
@@ -1878,14 +1880,17 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 init_args.push(self.i8ptr_t.const_null().as_basic_value_enum().into());
             }
         }
-        let _ = self
+        let call_init = self
             .builder
             .build_call(init_f, &init_args, "call_init")
-            .map_err(|_| crate::diagnostics::Diagnostic::simple("init call failed"))?;
-
-        let _ = self
-            .builder
-            .build_return(Some(&malloc_ret2.as_basic_value_enum()));
+            .map_err(|_| crate::diagnostics::Diagnostic::simple("build_call failed"))?;
+        let init_result = call_init
+            .try_as_basic_value()
+            .left()
+            .ok_or_else(|| {
+                crate::diagnostics::Diagnostic::simple("init call did not return a value")
+            })?;
+        let _ = self.builder.build_return(Some(&init_result));
 
         // Build the public wrapper `fname` which will apply decorators (if any)
         // and then indirect-call the final constructor pointer. The wrapper

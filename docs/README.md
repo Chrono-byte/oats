@@ -1,6 +1,6 @@
 # Oats Documentation Guide
 
-**Last Updated:** October 12, 2025
+**Last Updated:** October 16, 2025
 
 Welcome to the Oats compiler documentation! This guide helps you navigate the
 documentation and find what you need.
@@ -33,50 +33,6 @@ contracts\
 
 **When to read:** Before making changes to object layout, RC behavior, or core
 codegen.
-
-# Project Documentation
-
-This folder contains the project's concise, contributor-friendly documentation.
-Long-form historical and technical specifications were intentionally removed
-from the top-level to keep the docs small and focused. To inspect the original
-detailed design notes, use the repository's Git history (the files exist in
-earlier commits).
-
-Top-level files (concise):
-
-- `DEVELOPMENT.md` — contributor and workflow guide for new contributors
-- `ARCHITECTURE.md` — high-level architecture and compilation pipeline
-- `LANGUAGE_DESIGN.md` — language-level decisions and type system overview
-- `MEMORY_DESIGN.md` — memory layout, RC rules, and safety guidance (expanded)
-- `ESCAPE_ANALYSIS.md` — current escape-analysis pass and future work items
-- `FUZZING.md` — parser fuzzing setup and maintenance
-- `ROADMAP.md` — short roadmap and project phases
-
-To view older, long-form specifications that were previously part of this
-directory, use Git commands such as:
-
-```bash
-# show commit history for a file that used to exist here
-git log -- <path/to/old-doc.md>
-
-# view a previous version of a file at a commit
-git show <commit_hash>:<path/to/old-doc.md>
-```
-
-Replace `<path/to/old-doc.md>` with the historical filename (for example,
-`docs/CCRC.md` or `docs/ASYNC_AWAIT.md`) and use `git log` to find the commit
-that contains it.
-
-**Content:**
-
-- Environment setup
-- Coding standards and error handling patterns
-- Testing strategies (unit, snapshot, integration)
-- Common development tasks (adding runtime functions, types, expressions)
-- Debugging guide
-- Pre-commit checklist
-
-**When to read:** Before starting any development work.
 
 #### [`ROADMAP.md`](ROADMAP.md) ⭐ START HERE for project direction
 

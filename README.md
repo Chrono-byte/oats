@@ -4,7 +4,7 @@
 [![Rust](https://img.shields.io/badge/built%20with-Rust-000000.svg?logo=rust)](https://www.rust-lang.org/)
 [![LLVM](https://img.shields.io/badge/powered%20by-LLVM%2018-262D3A.svg)](https://llvm.org/)
 
-> An Ahead-of-Time (AOT) Compiler for TypeScript
+> An Ahead-of-Time (AOT) Compiler for a TypeScript-Inspired Language
 
 Oats is an experimental ahead-of-time (AOT) compiler that converts a small,
 well-defined subset of TypeScript into native machine code using LLVM. It
@@ -40,6 +40,19 @@ manual memory management.
 
 ```bash
 sudo dnf install llvm18 llvm18-devel clang18
+```
+
+**Ubuntu/Debian**:
+
+```bash
+sudo apt update
+sudo apt install llvm-18 llvm-18-dev clang-18
+```
+
+**macOS** (with Homebrew):
+
+```bash
+brew install llvm@18
 ```
 
 <!-- add instructions for other platforms here! -->
@@ -106,9 +119,9 @@ Contributions are welcome! Start by exploring the `docs/` directory:
 
 1. **Set Up Environment**:
 
-```bash
-source ./scripts/setup_env.sh
-```
+    ```bash
+    source ./scripts/setup_env.sh
+    ```
 
 2. **Build and Test**:
 

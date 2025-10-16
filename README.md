@@ -47,6 +47,7 @@ sudo dnf install llvm18 llvm18-devel clang18
 ### Compile Your First Program
 
 1. **Clone the Repository**:
+
    ```bash
    git clone https://github.com/Chrono-byte/oats.git
    cd oats
@@ -110,6 +111,7 @@ source ./scripts/setup_env.sh
 ```
 
 2. **Build and Test**:
+
    ```bash
    cargo build --workspace
    cargo test --workspace

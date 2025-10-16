@@ -29,60 +29,6 @@ more fragmented development docs and points to deeper references when needed.
 - Tests: `cargo test --workspace` (must pass)
 - Lint: `cargo clippy --workspace` (fix warnings where possible)
 
-````
-# Oats — Development Guide
-
-This document provides practical, actionable guidance for contributors working
-on the Oats compiler. It covers development workflows, coding standards, testing
-strategies, and common patterns.
-
-## Table of Contents
-
-1. [Getting Started](#getting-started)
-2. [Architecture Quick Reference](#architecture-quick-reference)
-3. [Coding Standards](#coding-standards)
-4. [Testing Strategy](#testing-strategy)
-5. [Common Development Tasks](#common-development-tasks)
-6. [Debugging Guide](#debugging-guide)
-7. [Contributing Workflow](#contributing-workflow)
-
-## Getting Started
-
-### Prerequisites
-
-**Required:**
-
-- Rust toolchain (1.70+): Install via [rustup](https://rustup.rs/)
-- LLVM 18: Development headers and libraries
-- Basic understanding of compilers and LLVM IR
-
-**Optional:**
-
-- `llvm-config` for debugging
-- `valgrind` for memory leak detection
-- `perf` for performance profiling
-
-### Environment Setup
-
-```bash
-# Clone the repository
-git clone https://github.com/Chrono-byte/oats.git
-cd oats
-
-# Setup LLVM environment (required before building)
-source ./scripts/setup_env.sh
-
-# Build the project
-cargo build --workspace
-
-# Run tests
-cargo test --workspace
-
-# Try an example
-cargo run -p oats --bin toasty -- examples/add.oats
-./aot_out/add
-````
-
 ### First-Time Build Tips
 
 - **LLVM errors:** Ensure `LLVM_SYS_181_PREFIX` points to your LLVM 18
@@ -99,8 +45,7 @@ For building Oats for Windows from Linux, see [CROSS_COMPILATION.md](CROSS_COMPI
 
 ### Project Structure
 
-```
-oats/
+tree
 ├── crates/
 │   ├── oats/          # Compiler (parser, typechecker, codegen)
 │   │   ├── src/
@@ -120,11 +65,9 @@ oats/
 │       └── tests/              # Runtime tests
 ├── examples/          # Test programs
 └── docs/             # Documentation
-```
 
 ### Compilation Pipeline
 
-```
 TypeScript Source (.oats)
     ↓ [parser.rs - deno_ast]
 Abstract Syntax Tree (AST)
@@ -136,7 +79,6 @@ LLVM IR (.ll)
 Object File (.o)
     ↓ [linker with runtime]
 Native Executable
-```
 
 ### Key Abstractions
 
@@ -161,6 +103,8 @@ Native Executable
 - Used throughout for error propagation
 
 ## Coding Standards
+
+Oats adheres to rigorous coding standards for reliability, safety, and maintainability. Core principles include returning `Result<T, Diagnostic>` from all codegen functions to avoid panics, explicit error propagation, and adherence to the unified heap object memory layout and reference counting protocol. Common tasks involve adding runtime helpers and codegen tests with snapshot validation. Quality gates enforce passing builds, tests, and linting, with a focus on zero unwraps and comprehensive diagnostics.
 
 ### Error Handling
 

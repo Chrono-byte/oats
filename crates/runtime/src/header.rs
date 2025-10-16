@@ -3,6 +3,8 @@ use std::sync::atomic::AtomicU64;
 // Header flag constants
 // New header layout reserves 16 bits for a weak reference count in bits 33-48.
 pub const HEADER_STATIC_BIT: u64 = 1u64 << 32;
+// Cycle potential bit - if set, object cannot form reference cycles and can skip GC
+pub const HEADER_CYCLE_BIT: u64 = 1u64 << 48;
 // Low 32 bits are strong refcount
 pub const HEADER_RC_MASK: u64 = 0xffffffffu64;
 // Weak count occupies bits 33-48 (16 bits)

@@ -152,7 +152,10 @@ pub unsafe extern "C" fn rc_dec(p: *mut c_void) {
 
                         crate::rc_weak_dec(obj_ptr);
                     } else {
-                        crate::add_root_candidate(obj_ptr);
+                        // Check if this object can form cycles - if not, skip GC
+                        if (old_header & HEADER_CYCLE_BIT) == 0 {
+                            crate::add_root_candidate(obj_ptr);
+                        }
                     }
                     break;
                 }

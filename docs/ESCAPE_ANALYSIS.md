@@ -1,5 +1,7 @@
 # Escape Analysis & Redundant RC Elimination
 
+**Last Updated:** October 16, 2025
+
 **Status:** Implemented for intra-procedural analysis (October 2025)
 
 The compiler now performs a conservative, intra-procedural escape analysis

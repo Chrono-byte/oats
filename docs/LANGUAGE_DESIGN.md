@@ -1,8 +1,10 @@
 # Oats Language Design
 
+**Last Updated:** October 16, 2025
+
 ## Overview
 
-Oats is an ahead-of-time compiler that lowers a TypeScript-compatible language
+Oats is an ahead-of-time compiler that lowers a TypeScript-based language
 to native executables via LLVM. It targets predictable performance, a small safe
 runtime, and a compact language surface suitable for systems programming. The
 language surface and type system follow TypeScript conventions where practical;
@@ -34,10 +36,10 @@ Reference Counting) adapted for a deterministic, low-level runtime.
   - Number (f64)
   - Boolean
   - String
-  - Array<T>
+  - Array`T`
   - NominalStruct / Class
   - Union (either numeric-only or pointer)
-  - Weak<T> (zeroing weak references)
+  - Weak`T` (zeroing weak references)
   - Nominal typing metadata retained for runtime semantics
   - Optional/nullable values are represented using TypeScript-style unions (for
     example `T | null` / `T | undefined`) and are lowered according to the
@@ -66,16 +68,16 @@ Header (64 bits):
 Object layouts (byte offsets)
 
 - Static string:
-  - [header+static][i64 len][data + NUL]
+  - \[header+static\]\[i64 len\]\[data + NUL\]
   - Codegen returns pointer to string data (offset 16)
 - Heap string:
-  - [header RC=1][i64 len][data + NUL]
+  - \[header RC=1\]\[i64 len\]\[data + NUL\]
   - Runtime returns pointer to string data (offset 16)
 - Array:
-  - [header][i64 len][elements...]
+  - \[header\]\[i64 len\]\[elements...\]
   - Returns base pointer (offset 0)
 - Class / Object:
-  - [header][i64 meta_ptr][fields...]
+  - \[header\]\[i64 meta_ptr\]\[fields...\]
   - Returns base pointer (offset 0)
   - Offset +8 is the meta-slot (reserved for field map pointer) — never
     overwrite with fields. Fields start at offset 16.

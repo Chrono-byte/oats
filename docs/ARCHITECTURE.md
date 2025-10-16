@@ -1,6 +1,6 @@
 # Architecture Reference
 
-**Last Updated:** October 12, 2025
+**Last Updated:** October 16, 2025
 
 This reference summarizes the current compiler architecture, runtime object
 model, and the non-negotiable contracts between codegen and the runtime. It is
@@ -23,7 +23,7 @@ systems.
 
 ## Compilation Pipeline
 
-```
+```text
 TypeScript-like source (.oats)
   ↓  parser.rs (deno_ast)
 Abstract Syntax Tree (AST)

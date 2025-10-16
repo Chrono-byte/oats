@@ -1,5 +1,7 @@
 # Memory Design
 
+**Last Updated:** October 16, 2025
+
 This document describes the canonical memory layout, reference-counting rules,
 and safety guidance contributors must follow when modifying runtime or codegen.
 

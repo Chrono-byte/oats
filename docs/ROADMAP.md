@@ -1,6 +1,6 @@
 # Project Roadmap (summary)
 
-**Last Updated:** October 12, 2025
+**Last Updated:** October 16, 2025
 
 This document tracks short- and mid-term priorities and records recent progress
 so the team and contributors can see what to work on next.
@@ -113,9 +113,7 @@ expecting correct output.
   aliases — Limited support. The resolver and codegen focus on value-level
   imports; purely type-only imports may be ignored or treated as no-ops.
 
-- Enums and `const enum` — Not fully supported. Enums require lowering and
-  runtime representation decisions that are not implemented. Prefer numeric
-  constants or small nominal wrappers when possible.
+- Enums and `const enum` — Basic support implemented (type checking and declaration), but advanced features like enum literals and runtime operations are not fully supported. Prefer numeric constants for now.
 
 - Advanced type-level features — Many complex TypeScript type-system features
   are not reflected into lowering or codegen (they remain in the typechecker

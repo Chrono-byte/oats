@@ -178,3 +178,7 @@ pub unsafe fn str_concat(a: *const c_char, b: *const c_char) -> *mut c_char {
         data_ptr
     }
 }
+
+pub(crate) fn init_string_placeholders() {
+    // no-op shim
+}

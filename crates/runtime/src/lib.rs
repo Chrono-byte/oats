@@ -771,6 +771,18 @@ pub use crate::rc::rc_weak_dec;
 pub use crate::rc::rc_weak_inc;
 pub use crate::rc::rc_weak_upgrade;
 
+// Re-export heap functions
+pub use crate::heap::runtime_free;
+pub use crate::heap::runtime_malloc;
+
+// Re-export string functions
+pub use crate::string::heap_str_from_cstr;
+pub use crate::string::rc_dec_str;
+
+// Re-export array functions
+pub use crate::array::array_alloc;
+pub use crate::array::array_to_string;
+
 // --- Union helpers ---
 
 /// Destructor used for union-boxed objects.

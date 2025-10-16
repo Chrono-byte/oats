@@ -318,11 +318,11 @@ fn find_method_calls_in_stmt(stmt: &ast::Stmt, calls: &mut Vec<(String, String)>
     match stmt {
         ast::Stmt::Expr(expr_stmt) => find_method_calls_in_expr(&expr_stmt.expr, calls),
         ast::Stmt::Decl(ast::Decl::Var(var_decl)) => {
-                for decl in &var_decl.decls {
-                    if let Some(init) = &decl.init {
-                        find_method_calls_in_expr(init, calls);
-                    }
+            for decl in &var_decl.decls {
+                if let Some(init) = &decl.init {
+                    find_method_calls_in_expr(init, calls);
                 }
+            }
         }
         _ => {}
     }

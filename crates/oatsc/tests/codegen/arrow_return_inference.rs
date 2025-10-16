@@ -110,7 +110,8 @@ fn infer_number_return_from_block() -> Result<()> {
     let context = Context::create();
     let codegen = create_test_codegen(&context, source);
 
-    let inferred_type = codegen.infer_return_type_from_arrow_body(body)
+    let inferred_type = codegen
+        .infer_return_type_from_arrow_body(body)
         .map_err(|e| anyhow::anyhow!("{:?}", e))?;
     assert_eq!(inferred_type, OatsType::Number);
 
@@ -150,7 +151,8 @@ fn infer_string_return_from_block() -> Result<()> {
     let context = Context::create();
     let codegen = create_test_codegen(&context, source);
 
-    let inferred_type = codegen.infer_return_type_from_arrow_body(body)
+    let inferred_type = codegen
+        .infer_return_type_from_arrow_body(body)
         .map_err(|e| anyhow::anyhow!("{:?}", e))?;
     assert_eq!(inferred_type, OatsType::String);
 
@@ -190,7 +192,8 @@ fn infer_void_return_from_block_no_return() -> Result<()> {
     let context = Context::create();
     let codegen = create_test_codegen(&context, source);
 
-    let inferred_type = codegen.infer_return_type_from_arrow_body(body)
+    let inferred_type = codegen
+        .infer_return_type_from_arrow_body(body)
         .map_err(|e| anyhow::anyhow!("{:?}", e))?;
     assert_eq!(inferred_type, OatsType::Void);
 
@@ -233,9 +236,10 @@ fn infer_union_return_from_block_multiple_types() -> Result<()> {
     let context = Context::create();
     let codegen = create_test_codegen(&context, source);
 
-    let inferred_type = codegen.infer_return_type_from_arrow_body(body)
+    let inferred_type = codegen
+        .infer_return_type_from_arrow_body(body)
         .map_err(|e| anyhow::anyhow!("{:?}", e))?;
-    
+
     // Should infer a union of String and Number
     match inferred_type {
         OatsType::Union(types) => {
@@ -285,7 +289,8 @@ fn infer_number_return_from_nested_if() -> Result<()> {
     let context = Context::create();
     let codegen = create_test_codegen(&context, source);
 
-    let inferred_type = codegen.infer_return_type_from_arrow_body(body)
+    let inferred_type = codegen
+        .infer_return_type_from_arrow_body(body)
         .map_err(|e| anyhow::anyhow!("{:?}", e))?;
     // Both returns are numbers, so should infer Number
     assert_eq!(inferred_type, OatsType::Number);
@@ -324,7 +329,8 @@ fn infer_expr_body_return() -> Result<()> {
     let context = Context::create();
     let codegen = create_test_codegen(&context, source);
 
-    let inferred_type = codegen.infer_return_type_from_arrow_body(body)
+    let inferred_type = codegen
+        .infer_return_type_from_arrow_body(body)
         .map_err(|e| anyhow::anyhow!("{:?}", e))?;
     // Expression body should infer Number
     assert_eq!(inferred_type, OatsType::Number);

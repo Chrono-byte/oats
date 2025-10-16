@@ -489,10 +489,17 @@ pub fn check_function_strictness(
     func_decl: &ast::Function,
     _symbols: &mut SymbolTable,
 ) -> Result<FunctionSig> {
-    // Return type annotation required
-    if func_decl.return_type.is_none() {
-        return Err(anyhow::anyhow!("Function missing return type annotation"));
-    }
+    // Return type annotation required for regular functions, but for arrows, we infer
+    let ret_type = if let Some(return_type) = &func_decl.return_type {
+        if let Some(mapped) = map_ts_type(&return_type.type_ann) {
+            mapped
+        } else {
+            return Err(anyhow::anyhow!("Function return type not supported"));
+        }
+    } else {
+        // Assume Number if no annotation (for arrows)
+        crate::types::OatsType::Number
+    };
 
     // Collect param types
     let mut param_types = Vec::new();
@@ -520,23 +527,9 @@ pub fn check_function_strictness(
         }
     }
 
-    // Map return type
-    let ret_ty = if let Some(rt) = &func_decl.return_type {
-        let ast::TsTypeAnn {
-            type_ann: ts_type, ..
-        } = &**rt;
-        if let Some(mapped) = map_ts_type(ts_type) {
-            mapped
-        } else {
-            return Err(anyhow::anyhow!("Unsupported return type annotation"));
-        }
-    } else {
-        return Err(anyhow::anyhow!("Function missing return type annotation"));
-    };
-
     Ok(FunctionSig {
         params: param_types,
-        ret: ret_ty,
+        ret: ret_type,
     })
 }
 

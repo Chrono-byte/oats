@@ -1283,9 +1283,9 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
     // helper to test whether a program is runnable
     fn is_prog_available(name: &str) -> bool {
         use std::process::Stdio;
-        // Respect TOASTY_VERBOSE or debug builds to allow printing --version output
+        // Respect TOASTY_VERBOSE to allow printing --version output
         let verbose = std::env::var("TOASTY_VERBOSE").is_ok();
-        let status = if cfg!(debug_assertions) || verbose {
+        let status = if verbose {
             Command::new(name).arg("--version").status()
         } else {
             Command::new(name)

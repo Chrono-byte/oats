@@ -79,7 +79,12 @@ fn download_runtime(tag: &str, artifact_name: &str, dest_path: &Path) -> Result<
         GITHUB_OWNER, GITHUB_REPO, tag, artifact_name
     );
     
-    eprintln!("Downloading runtime from: {}", url);
+    let verbose = std::env::var("TOASTY_VERBOSE").is_ok() || cfg!(debug_assertions);
+    if verbose {
+        eprintln!("Downloading runtime from: {}", url);
+    } else {
+        eprintln!("Downloading pre-built runtime library...");
+    }
     
     let response = ureq::get(&url)
         .set("User-Agent", "oats-compiler")
@@ -87,7 +92,11 @@ fn download_runtime(tag: &str, artifact_name: &str, dest_path: &Path) -> Result<
         .map_err(|e| anyhow::anyhow!("Failed to download runtime: {}", e))?;
     
     let mut file = fs::File::create(dest_path)?;
-    std::io::copy(&mut response.into_reader(), &mut file)?;
+    let bytes_written = std::io::copy(&mut response.into_reader(), &mut file)?;
+    
+    if verbose {
+        eprintln!("Downloaded {} bytes", bytes_written);
+    }
     
     Ok(())
 }
@@ -97,19 +106,36 @@ fn download_runtime(tag: &str, artifact_name: &str, dest_path: &Path) -> Result<
 /// Returns the path to the runtime library if successful.
 /// If fetching fails, returns None and caller should fall back to local build.
 pub fn try_fetch_runtime() -> Option<PathBuf> {
+    let verbose = std::env::var("TOASTY_VERBOSE").is_ok() || cfg!(debug_assertions);
+    
     // Check if we should skip remote fetch
     if std::env::var("OATS_NO_REMOTE_RUNTIME").is_ok() {
+        if verbose {
+            eprintln!("Skipping remote runtime fetch (OATS_NO_REMOTE_RUNTIME is set)");
+        }
         return None;
     }
     
     let artifact_name = get_runtime_artifact_name();
     if artifact_name == "libruntime-unsupported.a" {
+        if verbose {
+            eprintln!("Platform not supported for pre-built runtime, will build locally");
+        }
         return None; // Unsupported platform, build locally
+    }
+    
+    if verbose {
+        eprintln!("Attempting to fetch pre-built runtime for {}", artifact_name);
     }
     
     // Get cache directory
     let cache_dir = match get_cache_dir() {
-        Ok(dir) => dir,
+        Ok(dir) => {
+            if verbose {
+                eprintln!("Runtime cache directory: {}", dir.display());
+            }
+            dir
+        }
         Err(e) => {
             eprintln!("Warning: Failed to get cache directory: {}", e);
             return None;
@@ -118,9 +144,16 @@ pub fn try_fetch_runtime() -> Option<PathBuf> {
     
     // Get latest runtime tag
     let tag = match get_latest_runtime_tag() {
-        Ok(t) => t,
+        Ok(t) => {
+            if verbose {
+                eprintln!("Latest runtime release: {}", t);
+            }
+            t
+        }
         Err(e) => {
-            eprintln!("Warning: Failed to fetch latest runtime tag: {}", e);
+            if verbose {
+                eprintln!("Warning: Failed to fetch latest runtime tag: {}", e);
+            }
             return None;
         }
     };
@@ -133,6 +166,9 @@ pub fn try_fetch_runtime() -> Option<PathBuf> {
     }
     
     // Download the runtime
+    if verbose {
+        eprintln!("Cache miss, downloading runtime...");
+    }
     fs::create_dir_all(cached_path.parent().unwrap()).ok()?;
     match download_runtime(&tag, artifact_name, &cached_path) {
         Ok(_) => {

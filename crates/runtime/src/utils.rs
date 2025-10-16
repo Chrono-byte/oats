@@ -70,6 +70,6 @@ pub(crate) use crate::init_runtime_log;
 #[allow(unused_imports)]
 pub(crate) use crate::validate_meta_block;
 
-pub(crate) fn _init_utils_placeholders() {
+pub(crate) fn init_utils_placeholders() {
     // no-op shim
 }

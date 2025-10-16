@@ -105,3 +105,7 @@ pub unsafe fn runtime_free(p: *mut c_void) {
         std::alloc::dealloc(base, layout);
     }
 }
+
+pub(crate) fn init_heap_placeholders() {
+    // no-op shim
+}

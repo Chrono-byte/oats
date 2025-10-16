@@ -8,13 +8,6 @@ use std::io::{self, Write};
 
 use crate::*;
 
-// Small usage anchor for the module during staged refactors. Calling
-// `crate::ffi::ffi_init()` from the crate root ensures the `ffi` module
-// is considered used and avoids `unused_imports` warnings while we
-// incrementally move symbols out of the monolith.
-#[allow(dead_code)]
-pub(crate) fn ffi_init() {}
-
 // Re-exported from this module by `lib.rs`.
 
 /// Initialize the background collector (idempotent).

@@ -29,6 +29,7 @@ pub extern "C" fn sleep_ms(ms: f64) {
 }
 
 /// Helper: stringify an arbitrary pointer-or-raw-8-bytes value with depth guard.
+#[allow(dead_code)]
 pub(crate) fn stringify_value_raw(val_raw: u64, depth: usize) -> String {
     if depth > MAX_RECURSION_DEPTH {
         return "...".to_string();
@@ -69,7 +70,3 @@ pub(crate) use crate::init_resource_limits;
 pub(crate) use crate::init_runtime_log;
 #[allow(unused_imports)]
 pub(crate) use crate::validate_meta_block;
-
-pub(crate) fn init_utils_placeholders() {
-    // no-op shim
-}

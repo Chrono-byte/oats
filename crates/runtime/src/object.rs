@@ -58,11 +58,6 @@ pub unsafe extern "C" fn tuple_to_string(obj: *mut c_void) -> *mut c_char {
     unsafe { heap_str_from_cstr(c.as_ptr()) }
 }
 
-#[allow(dead_code)]
-pub(crate) fn init_object_placeholders() {
-    // no-op shim
-}
-
 /// Destructor used for union-boxed objects.
 ///
 /// Reads the discriminant at offset +16 and if the payload is a pointer

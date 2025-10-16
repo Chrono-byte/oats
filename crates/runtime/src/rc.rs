@@ -291,8 +291,3 @@ pub unsafe extern "C" fn rc_weak_upgrade(p: *mut c_void) -> *mut c_void {
         }
     }
 }
-
-#[allow(dead_code)]
-pub(crate) fn init_rc_placeholders() {
-    // no-op shim for incremental refactor
-}

@@ -59,6 +59,7 @@ cargo fuzz build fuzz_parser
 ```bash
 cargo +nightly fuzz run fuzz_parser
 ```
+
 > **Note:** `fuzz/fuzz_targets/fuzz_target_1.rs` is a placeholder. Add a new
 > entry to `Cargo.toml` before using it.
 
@@ -173,7 +174,7 @@ bench = false
 
 ## Best Practices
 
-### DO:
+### DO
 
 ✅ Run fuzzing for at least 24 hours before release ✅ Minimize crash inputs
 before filing bug reports ✅ Add fixed crashes to regression test suite ✅ Keep
@@ -181,7 +182,7 @@ seed corpus up-to-date with new examples ✅ Use
 `_guard = oatsc::diagnostics::suppress()` to silence stderr ✅ Check coverage to
 find untested code paths
 
-### DON'T:
+### DON'T
 
 ❌ Panic or crash in fuzz targets (defeats the purpose) ❌ Perform I/O
 operations (slow, non-deterministic) ❌ Use global mutable state (causes flaky

@@ -5,7 +5,7 @@ compiler test harness and outlines how to vendor them.
 
 ## Source Repository
 
-- Repo: https://github.com/denoland/deno
+- Repo: <https://github.com/denoland/deno>
 - License: MIT / Apache-2.0 (retain headers when vendoring)
 - Baseline commit: _TBD_ (capture the exact SHA when we first import)
 

@@ -1242,7 +1242,7 @@ impl<'a> CodeGen<'a> {
                 deno_ast::swc::ast::Lit::Num(_) => Ok(crate::types::OatsType::Number),
                 deno_ast::swc::ast::Lit::Str(_) => Ok(crate::types::OatsType::String),
                 deno_ast::swc::ast::Lit::Bool(_) => Ok(crate::types::OatsType::Number), // bool as number
-                _ => Ok(crate::types::OatsType::Number), // default
+                _ => Ok(crate::types::OatsType::Number),                                // default
             },
             deno_ast::swc::ast::Expr::Ident(_) => Ok(crate::types::OatsType::Number), // unknown
             _ => Ok(crate::types::OatsType::Number), // default for complex expr

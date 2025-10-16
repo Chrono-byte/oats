@@ -79,7 +79,7 @@ fn download_runtime(tag: &str, artifact_name: &str, dest_path: &Path) -> Result<
         GITHUB_OWNER, GITHUB_REPO, tag, artifact_name
     );
     
-    let verbose = std::env::var("TOASTY_VERBOSE").is_ok() || cfg!(debug_assertions);
+    let verbose = std::env::var("TOASTY_VERBOSE").is_ok();
     if verbose {
         eprintln!("Downloading runtime from: {}", url);
     } else {
@@ -106,7 +106,7 @@ fn download_runtime(tag: &str, artifact_name: &str, dest_path: &Path) -> Result<
 /// Returns the path to the runtime library if successful.
 /// If fetching fails, returns None and caller should fall back to local build.
 pub fn try_fetch_runtime() -> Option<PathBuf> {
-    let verbose = std::env::var("TOASTY_VERBOSE").is_ok() || cfg!(debug_assertions);
+    let verbose = std::env::var("TOASTY_VERBOSE").is_ok();
     
     // Check if we should skip remote fetch
     if std::env::var("OATS_NO_REMOTE_RUNTIME").is_ok() {

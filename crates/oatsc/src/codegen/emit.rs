@@ -1033,19 +1033,19 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         _ => {
                                             let slot_ptr_val = loaded_slot.into_pointer_value();
                                             let casted = match self.builder.build_pointer_cast(
-                            slot_ptr_val,
-                            alloca_ptr.get_type(),
-                            "cast_resume",
-                        ) {
-                            Ok(c) => c,
-                            Err(_) => {
-                                return Err(
-                                    crate::diagnostics::Diagnostic::simple(
-                                        "pointer cast failed when resuming locals",
-                                    ),
-                                );
-                            }
-                        };
+                                                slot_ptr_val,
+                                                alloca_ptr.get_type(),
+                                                "cast_resume",
+                                            ) {
+                                                Ok(c) => c,
+                                                Err(_) => {
+                                                    return Err(
+                                                        crate::diagnostics::Diagnostic::simple(
+                                                            "pointer cast failed when resuming locals",
+                                                        ),
+                                                    );
+                                                }
+                                            };
                                             let _ = self.builder.build_store(
                                                 alloca_ptr,
                                                 casted.as_basic_value_enum(),
@@ -1884,12 +1884,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
             .builder
             .build_call(init_f, &init_args, "call_init")
             .map_err(|_| crate::diagnostics::Diagnostic::simple("build_call failed"))?;
-        let init_result = call_init
-            .try_as_basic_value()
-            .left()
-            .ok_or_else(|| {
-                crate::diagnostics::Diagnostic::simple("init call did not return a value")
-            })?;
+        let init_result = call_init.try_as_basic_value().left().ok_or_else(|| {
+            crate::diagnostics::Diagnostic::simple("init call did not return a value")
+        })?;
         let _ = self.builder.build_return(Some(&init_result));
 
         // Build the public wrapper `fname` which will apply decorators (if any)

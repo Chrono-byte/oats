@@ -76,7 +76,9 @@ impl Collector {
         thread::spawn(move || {
             while c.running.load(Ordering::SeqCst) {
                 let mut guard = c.queue.lock().unwrap();
-                let (g, _timeout) = c.cv.wait_timeout(guard, Duration::from_millis(100)).unwrap();
+                let (g, _timeout) =
+                    c.cv.wait_timeout(guard, Duration::from_millis(100))
+                        .unwrap();
                 guard = g;
                 if !guard.is_empty() {
                     let roots: Vec<usize> = guard.drain(..).collect();

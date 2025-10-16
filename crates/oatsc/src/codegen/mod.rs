@@ -511,13 +511,15 @@ impl<'a> CodeGen<'a> {
     /// Controlled by the environment variable `OATS_ELIDE_ARC=1` and the
     /// optional `current_escape_info` computed before lowering the function.
     pub fn should_elide_rc_for_local(&self, local_name: &str) -> bool {
-        if std::env::var("OATS_ELIDE_ARC").unwrap_or_default() != "1" {
-            return false;
-        }
+        // Use escape analysis to determine if we can elide RC ops for this local.
+        // If a variable doesn't escape the function scope, we skip both rc_inc
+        // and rc_dec operations since the variable will be cleaned up automatically
+        // by LLVM at function exit.
         if let Some(info) = &*self.current_escape_info.borrow() {
             // elide only when the local is present and NOT marked as escaping
             return !info.escapes(local_name);
         }
+        // If no escape info available, be conservative and don't elide
         false
     }
 

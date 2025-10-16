@@ -43,7 +43,7 @@ echo "Running cloc on: $REPO_ROOT (excluding directories named 'tests' and speci
 cd "$REPO_ROOT"
 
 # Default exclude list: common non-code or build directories
-DEFAULT_EXCLUDES=(tests target aot_out examples tmp .git build dist fuzz docs scripts .venv .vscode)
+DEFAULT_EXCLUDES=(tests target aot_out examples tmp .git build dist fuzz docs scripts .venv .vscode third_party)
 
 # Join excludes into a comma-separated list
 EXCLUDE_DIRS=$(IFS=','; echo "${DEFAULT_EXCLUDES[*]}")

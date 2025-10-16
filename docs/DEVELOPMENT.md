@@ -102,7 +102,7 @@ Native Executable
 - Includes span information for source location
 - Used throughout for error propagation
 
-## Coding Standards
+## Detailed Coding Standards
 
 Oats adheres to rigorous coding standards for reliability, safety, and maintainability. Core principles include returning `Result<T, Diagnostic>` from all codegen functions to avoid panics, explicit error propagation, and adherence to the unified heap object memory layout and reference counting protocol. Common tasks involve adding runtime helpers and codegen tests with snapshot validation. Quality gates enforce passing builds, tests, and linting, with a focus on zero unwraps and comprehensive diagnostics.
 
@@ -267,10 +267,8 @@ for (field_idx, (field_name, _field_type)) in fields.iter().enumerate() {
 
 For `class Person { constructor(public name: string) {} }`:
 
-```
 Offset 0:  i64 header (RC=1, flags)
 Offset 8:  ptr name (field 0)
-```
 
 Constructor receives `name` parameter, stores it at offset 8, and increments its
 RC.

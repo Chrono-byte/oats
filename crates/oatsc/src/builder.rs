@@ -410,8 +410,8 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
             *codegen.current_class_parent.borrow_mut() = parent_name_opt.clone();
 
             // Emit members for this class
+            use deno_ast::swc::ast::ClassMember;
             for member in &c.class.body {
-                use deno_ast::swc::ast::ClassMember;
                 match member {
                     ClassMember::Method(m) => {
                         // method name
@@ -466,7 +466,7 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
                             }
                         }
                     }
-                    ClassMember::Constructor(ctor) => {
+                    deno_ast::swc::ast::ClassMember::Constructor(ctor) => {
                         // Compute fields for this class from explicit props, constructor
                         // param properties, and `this.x = ...` assignments inside the ctor.
                         let mut fields: Vec<(String, crate::types::OatsType)> = Vec::new();
@@ -611,18 +611,22 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
                 None
             };
             *codegen.current_class_parent.borrow_mut() = parent_name_opt.clone();
+            // Emit members for this class
+            use deno_ast::swc::ast::ClassMember;
             for member in &c.class.body {
-                use deno_ast::swc::ast::ClassMember;
                 match member {
                     ClassMember::Method(m) => {
+                        // method name
                         let mname = match &m.key {
                             deno_ast::swc::ast::PropName::Ident(id) => id.sym.to_string(),
                             deno_ast::swc::ast::PropName::Str(s) => s.value.to_string(),
                             _ => continue,
                         };
+                        // Try to type-check the method function
                         let mut method_symbols = SymbolTable::new();
                         if let Ok(sig) = check_function_strictness(&m.function, &mut method_symbols)
                         {
+                            // Prepend `this` as the first param (nominal struct pointer)
                             let mut params = Vec::new();
                             params.push(crate::types::OatsType::NominalStruct(class_name.clone()));
                             params.extend(sig.params.into_iter());
@@ -635,6 +639,7 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
                                     anyhow::anyhow!(d.message)
                                 })?;
                         } else {
+                            // If strict check failed (e.g., missing return annotation), try to emit with Void return
                             let mut method_symbols = SymbolTable::new();
                             if let Ok(sig2) =
                                 check_function_strictness(&m.function, &mut method_symbols)
@@ -663,7 +668,7 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
                             }
                         }
                     }
-                    ClassMember::Constructor(ctor) => {
+                    deno_ast::swc::ast::ClassMember::Constructor(ctor) => {
                         // Compute fields for non-exported class similarly to exported case
                         let mut fields: Vec<(String, crate::types::OatsType)> = Vec::new();
                         use deno_ast::swc::ast::{
@@ -705,6 +710,7 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
                                 }
                             }
                         }
+                        // scan ctor body for `this.x = ...` assignments
                         if let Some(body) = &ctor.body {
                             for stmt in &body.stmts {
                                 if let Stmt::Expr(expr_stmt) = stmt

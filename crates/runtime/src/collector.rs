@@ -20,7 +20,6 @@
 //! The collector is designed to be non-intrusive, running with low priority
 //! and using timeouts to avoid blocking program execution. Collection frequency
 //! can be tuned based on allocation patterns and performance requirements.
-
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{self, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -77,7 +76,7 @@ impl Collector {
         thread::spawn(move || {
             while c.running.load(Ordering::SeqCst) {
                 let mut guard = c.queue.lock().unwrap();
-                let (g, _timeout) = c.cv.wait_timeout(guard, Duration::from_secs(1)).unwrap();
+                let (g, _timeout) = c.cv.wait_timeout(guard, Duration::from_millis(100)).unwrap();
                 guard = g;
                 if !guard.is_empty() {
                     let roots: Vec<usize> = guard.drain(..).collect();

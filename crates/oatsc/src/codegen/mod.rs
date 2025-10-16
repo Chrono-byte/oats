@@ -259,10 +259,9 @@ impl<'a> CodeGen<'a> {
                     let len_t = self.i64_t;
                     // Empty array of pointers
                     let elem_array_t = self.i8ptr_t.array_type(0);
-                    let struct_t = self.context.struct_type(
-                        &[header_t.into(), len_t.into(), elem_array_t.into()],
-                        false,
-                    );
+                    let struct_t = self
+                        .context
+                        .struct_type(&[header_t.into(), len_t.into(), elem_array_t.into()], false);
                     let mut hasher = DefaultHasher::new();
                     key.hash(&mut hasher);
                     let h = hasher.finish();
@@ -271,10 +270,9 @@ impl<'a> CodeGen<'a> {
                     let static_header = self.i64_t.const_int(1u64 << 32, false);
                     let len_val = self.i64_t.const_int(0, false);
                     let arr = self.i8ptr_t.const_array(&[]);
-                    let init = self.context.const_struct(
-                        &[static_header.into(), len_val.into(), arr.into()],
-                        false,
-                    );
+                    let init = self
+                        .context
+                        .const_struct(&[static_header.into(), len_val.into(), arr.into()], false);
                     gv.set_initializer(&init);
                     let pv = gv.as_pointer_value();
                     self.const_interns.borrow_mut().insert(key.clone(), pv);
@@ -288,7 +286,8 @@ impl<'a> CodeGen<'a> {
                             let elem_count = elems.len();
                             let header_t = self.i64_t;
                             let len_t = self.i64_t;
-                            let elem_array_t = self.context.f64_type().array_type(elem_count as u32);
+                            let elem_array_t =
+                                self.context.f64_type().array_type(elem_count as u32);
                             let struct_t = self.context.struct_type(
                                 &[header_t.into(), len_t.into(), elem_array_t.into()],
                                 false,
@@ -1215,12 +1214,20 @@ impl<'a> CodeGen<'a> {
                         return_types.push(self.infer_type_from_expr(expr)?);
                     }
 
-                    // For now, assume all returns have the same type; take the first
-                    // TODO: Handle union types if returns have different types
-                    Ok(return_types
-                        .into_iter()
-                        .next()
-                        .unwrap_or(crate::types::OatsType::Void))
+                    // Deduplicate types
+                    let mut unique_types = Vec::new();
+                    for ty in return_types {
+                        if !unique_types.contains(&ty) {
+                            unique_types.push(ty);
+                        }
+                    }
+
+                    // If only one unique type, return it; otherwise create union
+                    if unique_types.len() == 1 {
+                        Ok(unique_types.into_iter().next().unwrap())
+                    } else {
+                        Ok(crate::types::OatsType::Union(unique_types))
+                    }
                 }
             }
         }

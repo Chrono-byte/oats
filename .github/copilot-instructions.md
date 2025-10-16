@@ -13,15 +13,15 @@ This guide provides the critical patterns, conventions, and architectural detail
 Oats is an experimental Ahead-of-Time (AOT) compiler that transforms a subset of TypeScript into native code using LLVM.
 
 * **Workspace Crates**:
-    * `crates/oatsc`: The core compiler logic (parsing, type checking, codegen).
-    * `crates/runtime`: The C-callable runtime library that the compiled code links against (provides memory management, string/array operations, etc.).
-    * `crates/toasty`: A thin CLI wrapper for the compiler.
+  * `crates/oatsc`: The core compiler logic (parsing, type checking, codegen).
+  * `crates/runtime`: The C-callable runtime library that the compiled code links against (provides memory management, string/array operations, etc.).
+  * `crates/toasty`: A thin CLI wrapper for the compiler.
 
 * **Compilation Pipeline**:
-    1.  **Parsing**: `deno_ast` parses TypeScript source into an Abstract Syntax Tree (AST). (`oatsc/src/parser.rs`)
-    2.  **Type Checking**: The AST is traversed to map TypeScript types to the internal `OatsType` representation. (`oatsc/src/types.rs`)
-    3.  **Code Generation**: The typed AST is lowered into LLVM IR using the `inkwell` crate. (`oatsc/src/codegen/*.rs`)
-    4.  **Linking**: The final object file is linked with the Oats runtime library to produce a standalone executable.
+    1. **Parsing**: `deno_ast` parses TypeScript source into an Abstract Syntax Tree (AST). (`oatsc/src/parser.rs`)
+    2. **Type Checking**: The AST is traversed to map TypeScript types to the internal `OatsType` representation. (`oatsc/src/types.rs`)
+    3. **Code Generation**: The typed AST is lowered into LLVM IR using the `inkwell` crate. (`oatsc/src/codegen/*.rs`)
+    4. **Linking**: The final object file is linked with the Oats runtime library to produce a standalone executable.
 
 ---
 
@@ -30,15 +30,15 @@ Oats is an experimental Ahead-of-Time (AOT) compiler that transforms a subset of
 **This is the most important contract in the compiler.** All heap-allocated objects in Oats share a unified 64-bit header for reference counting and type information. Mismanaging this structure will lead to memory corruption.
 
 * **Unified 64-bit Header**: Located at offset `0` for **all** heap objects.
-    * **Bits 0-31 (u32)**: Strong reference count (atomic).
-    * **Bit 32 (bool)**: Static flag. If `1`, the object is immortal (e.g., a string literal) and RC operations are no-ops.
-    * **Bits 33-48 (u16)**: Weak reference count.
-    * **Bits 49-63**: Reserved for type tags and flags.
+  * **Bits 0-31 (u32)**: Strong reference count (atomic).
+  * **Bit 32 (bool)**: Static flag. If `1`, the object is immortal (e.g., a string literal) and RC operations are no-ops.
+  * **Bits 33-48 (u16)**: Weak reference count.
+  * **Bits 49-63**: Reserved for type tags and flags.
 
 * **Object Layouts (Byte Offsets)**:
-    * **String**: `[header][i64 length][char data ... NUL]`
-    * **Array**: `[header][i64 length][element data ...]`
-    * **Class/Object**: `[header][i64 meta_ptr][field data ...]`
+  * **String**: `[header][i64 length][char data ... NUL]`
+  * **Array**: `[header][i64 length][element data ...]`
+  * **Class/Object**: `[header][i64 meta_ptr][field data ...]`
 
 ---
 
@@ -75,9 +75,9 @@ Analyze the user-provided `git status` and `git diff` output to propose a series
 
 #### **Workflow**
 
-1.  **Analyze Diffs**: For each modified file, analyze the diff to understand the specific changes made. Use the **Contributor Guide** above to understand the context of the code.
-2.  **Group Changes**: Group related changes into atomic commits. A single commit should represent one logical change (e.g., implementing a feature, fixing a bug).
-3.  **Generate Commands**: For each proposed commit, generate the `git add` command and a commit message that strictly follows the **Angular Commit Message Conventions**.
+1. **Analyze Diffs**: For each modified file, analyze the diff to understand the specific changes made. Use the **Contributor Guide** above to understand the context of the code.
+2. **Group Changes**: Group related changes into atomic commits. A single commit should represent one logical change (e.g., implementing a feature, fixing a bug).
+3. **Generate Commands**: For each proposed commit, generate the `git add` command and a commit message that strictly follows the **Angular Commit Message Conventions**.
 
 #### **Angular Commit Message Rules**
 
@@ -87,16 +87,16 @@ The commit message must follow this exact structure:
 
 * **Type**: Must be one of `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`.
 * **Scope (optional)**: **This is critical.** The scope must be a noun specifying the part of the codebase affected, derived from the **Contributor Guide**. Good examples include:
-    * `codegen`: For changes in the code generation logic.
-    * `parser`: For changes related to parsing.
-    * `types`: For the type checking system.
-    * `runtime`: For the `crates/runtime` library.
-    * `rc`: For changes to the reference counting protocol.
-    * `diag`: For error handling and diagnostics.
-    * `ci`: For CI/CD workflow changes.
-    * `deps`: For dependency updates.
+  * `codegen`: For changes in the code generation logic.
+  * `parser`: For changes related to parsing.
+  * `types`: For the type checking system.
+  * `runtime`: For the `crates/runtime` library.
+  * `rc`: For changes to the reference counting protocol.
+  * `diag`: For error handling and diagnostics.
+  * `ci`: For CI/CD workflow changes.
+  * `deps`: For dependency updates.
 * **Subject**: A concise, imperative, lowercase description of the change. Do not end with a period.
 
 ---
 
-Now, please analyze the following `git status` and `git diff` output and generate the appropriate commits.
+Now, please analyze the following `git status` and `git diff` output and generate the appropriate commits. Execute those commits in the local repository.

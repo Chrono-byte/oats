@@ -144,14 +144,25 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     // Borrow const_items immutably for evaluation
                                     let const_map = self.const_items.borrow();
                                     match crate::codegen::const_eval::eval_const_expr(
-                                        init, span_start, &*const_map,
+                                        init, span_start, &const_map,
                                     ) {
                                         Ok(cv) => {
                                             // Only treat primitives as const; arrays and objects need runtime allocation
-                                            if matches!(cv, crate::codegen::const_eval::ConstValue::Number(_) | crate::codegen::const_eval::ConstValue::Bool(_) | crate::codegen::const_eval::ConstValue::Str(_)) {
+                                            if matches!(
+                                                cv,
+                                                crate::codegen::const_eval::ConstValue::Number(_)
+                                                    | crate::codegen::const_eval::ConstValue::Bool(
+                                                        _
+                                                    )
+                                                    | crate::codegen::const_eval::ConstValue::Str(
+                                                        _
+                                                    )
+                                            ) {
                                                 drop(const_map);
                                                 // Insert into compile-time const map keyed by name
-                                                self.const_items.borrow_mut().insert(name.clone(), cv);
+                                                self.const_items
+                                                    .borrow_mut()
+                                                    .insert(name.clone(), cv);
                                                 // For consts we do not lower the initializer further; the
                                                 // lowered uses will be replaced by LLVM constants later.
                                                 continue;

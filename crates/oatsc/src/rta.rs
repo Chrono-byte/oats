@@ -212,6 +212,7 @@ fn collect_methods(modules: &HashMap<String, ParsedModule>) -> HashMap<String, H
 }
 
 /// Collects all function and method ASTs for worklist processing
+#[allow(dead_code)]
 fn collect_function_asts(
     modules: &HashMap<String, ParsedModule>,
 ) -> HashMap<String, ast::Function> {
@@ -253,6 +254,7 @@ fn collect_function_asts(
 }
 
 /// Runs the RTA worklist algorithm to find precisely live methods
+#[allow(dead_code)]
 fn run_worklist(
     live_classes: &LiveClasses,
     methods: &HashMap<String, HashSet<String>>,
@@ -300,6 +302,7 @@ fn run_worklist(
 }
 
 /// Finds method calls in a function AST
+#[allow(dead_code)]
 fn find_method_calls(func: &ast::Function) -> Vec<(String, String)> {
     let mut calls = Vec::new();
     if let Some(body) = &func.body {
@@ -310,22 +313,22 @@ fn find_method_calls(func: &ast::Function) -> Vec<(String, String)> {
     calls
 }
 
+#[allow(dead_code)]
 fn find_method_calls_in_stmt(stmt: &ast::Stmt, calls: &mut Vec<(String, String)>) {
     match stmt {
         ast::Stmt::Expr(expr_stmt) => find_method_calls_in_expr(&expr_stmt.expr, calls),
-        ast::Stmt::Decl(decl) => {
-            if let ast::Decl::Var(var_decl) = decl {
+        ast::Stmt::Decl(ast::Decl::Var(var_decl)) => {
                 for decl in &var_decl.decls {
                     if let Some(init) = &decl.init {
                         find_method_calls_in_expr(init, calls);
                     }
                 }
-            }
         }
         _ => {}
     }
 }
 
+#[allow(dead_code)]
 fn find_method_calls_in_expr(expr: &ast::Expr, calls: &mut Vec<(String, String)>) {
     if let ast::Expr::Call(call_expr) = expr
         && let ast::Callee::Expr(callee_expr) = &call_expr.callee

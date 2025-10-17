@@ -575,6 +575,7 @@ impl<'a> super::CodeGen<'a> {
         // DEBUG: print insertion
         #[cfg(debug_assertions)]
         {
+            let key = info.name.clone();
             let keys: Vec<String> = scope.keys().cloned().collect();
             let entry = scope.get(&key).cloned();
             let nominal_str = entry

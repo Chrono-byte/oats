@@ -396,7 +396,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             // If state == 0 => call impl (first run). If state matches a resume
             // index (1-based) we will jump into the corresponding resume block.
             // Otherwise the promise is already completed and we return ready.
-            let state_param = poll_f.get_nth_param(0).unwrap();
+            let state_param = poll_f.get_nth_param(0).ok_or_else(|| crate::diagnostics::Diagnostic::simple("poll function missing state parameter"))?;
             let state_ptr = state_param.into_pointer_value();
 
             // Read state u32 at offset 8
@@ -650,7 +650,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 self.emit_rc_dec_for_locals(&locals_stack);
 
                 // Get the out_ptr parameter
-                let out_param = poll_f.get_nth_param(1).unwrap();
+                let out_param = poll_f.get_nth_param(1).ok_or_else(|| crate::diagnostics::Diagnostic::simple("poll function missing out parameter"))?;
                 let out_ptr_cast = self
                     .builder
                     .build_pointer_cast(out_param.into_pointer_value(), self.i8ptr_t, "out_cast")
@@ -1061,7 +1061,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     // The promise was saved in the await promise slot during await_pending
                     // Get the poll function's state parameter (first param)
                     let poll_f_val = *self.async_poll_function.borrow();
-                    let poll_state_param = poll_f_val.unwrap().get_nth_param(0).unwrap();
+                    let poll_f = poll_f_val.ok_or_else(|| crate::diagnostics::Diagnostic::simple("poll function not set"))?;
+                    let poll_state_param = poll_f.get_nth_param(0).ok_or_else(|| crate::diagnostics::Diagnostic::simple("poll function missing state parameter"))?;
                     let poll_state_ptr = poll_state_param.into_pointer_value();
 
                     let param_count = llvm_param_types.len();
@@ -1844,6 +1845,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
         let ctor_entry = self.context.append_basic_block(impl_f, "entry");
         self.builder.position_at_end(ctor_entry);
         // allocate object
+
+       
 
         let malloc_fn = self.get_malloc();
         let size_const = self.i64_t.const_int(total_size, false);

@@ -8,6 +8,7 @@ use inkwell::values::{BasicValueEnum, PointerValue};
 use std::collections::HashMap;
 
 use crate::codegen::CodeGen;
+use crate::diagnostics::Diagnostic;
 use crate::types::OatsType;
 
 /// Reference counting operation helpers
@@ -60,9 +61,9 @@ pub mod runtime {
     }
 
     /// Get the string concatenation function
-    pub fn get_str_concat<'a>(codegen: &CodeGen<'a>) -> inkwell::values::FunctionValue<'a> {
+    pub fn get_str_concat<'a>(codegen: &CodeGen<'a>) -> Result<inkwell::values::FunctionValue<'a>, Diagnostic> {
         codegen.gen_str_concat();
-        codegen.module.get_function("str_concat").unwrap()
+        codegen.module.get_function("str_concat").ok_or_else(|| Diagnostic::simple("str_concat function not found"))
     }
 
     /// Get the number to string function
@@ -80,14 +81,14 @@ pub mod memory {
         codegen: &CodeGen<'a>,
         size: inkwell::values::IntValue<'a>,
         name: &str,
-    ) -> PointerValue<'a> {
+    ) -> Result<PointerValue<'a>, Diagnostic> {
         let malloc_fn = codegen.get_malloc();
         let call_site = codegen
             .builder
             .build_call(malloc_fn, &[size.into()], name)
-            .unwrap();
-        let ptr = call_site.try_as_basic_value().left().unwrap();
-        ptr.into_pointer_value()
+            .map_err(|_| Diagnostic::simple("failed to build malloc call"))?;
+        let ptr = call_site.try_as_basic_value().left().ok_or_else(|| Diagnostic::simple("malloc call returned no value"))?;
+        Ok(ptr.into_pointer_value())
     }
 
     /// Allocate an array using the runtime array_alloc function
@@ -95,14 +96,14 @@ pub mod memory {
         codegen: &CodeGen<'a>,
         length: inkwell::values::IntValue<'a>,
         name: &str,
-    ) -> PointerValue<'a> {
+    ) -> Result<PointerValue<'a>, Diagnostic> {
         let array_alloc_fn = codegen.get_array_alloc();
         let call_site = codegen
             .builder
             .build_call(array_alloc_fn, &[length.into()], name)
-            .unwrap();
-        let ptr = call_site.try_as_basic_value().left().unwrap();
-        ptr.into_pointer_value()
+            .map_err(|_| Diagnostic::simple("failed to build array_alloc call"))?;
+        let ptr = call_site.try_as_basic_value().left().ok_or_else(|| Diagnostic::simple("array_alloc call returned no value"))?;
+        Ok(ptr.into_pointer_value())
     }
 }
 

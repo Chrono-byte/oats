@@ -182,11 +182,10 @@ pub fn parse_oats_module_with_options(
         match std::fs::canonicalize(p) {
             Ok(abs) => Url::from_file_path(abs)
                 .map_err(|()| anyhow::anyhow!("failed to convert path to file URL: {}", p))?,
-            Err(_) => Url::from_file_path(p).unwrap_or_else(|_| {
-                // Last-resort: treat as a plain file URL using the original
-                // string (not ideal but better than a constant placeholder).
-                Url::parse("file://file.ts").unwrap()
-            }),
+            Err(_) => match Url::from_file_path(p) {
+                Ok(url) => url,
+                Err(_) => Url::parse("file://file.ts").map_err(|e| anyhow::anyhow!("failed to parse fallback URL: {}", e))?,
+            },
         }
     } else {
         Url::parse("file://file.ts")?

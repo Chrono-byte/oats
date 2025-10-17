@@ -174,7 +174,9 @@ pub fn try_fetch_runtime() -> Option<PathBuf> {
     if verbose {
         eprintln!("Cache miss, downloading runtime...");
     }
-    fs::create_dir_all(cached_path.parent().unwrap()).ok()?;
+    if let Some(parent) = cached_path.parent() {
+        fs::create_dir_all(parent).ok();
+    }
     match download_runtime(&tag, artifact_name, &cached_path) {
         Ok(_) => {
             eprintln!(

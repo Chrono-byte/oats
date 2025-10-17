@@ -3095,14 +3095,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 None
                             };
 
-                        if arr_alloca_opt.is_none() {
-                            return Err(Diagnostic::simple_with_span(
-                                "array element assignment requires array stored in a variable",
-                                assign.span.lo.0 as usize,
-                            ));
-                        }
-
-                        let arr_alloca = arr_alloca_opt.unwrap();
+                        let arr_alloca = arr_alloca_opt.ok_or_else(|| Diagnostic::simple_with_span(
+                            "array element assignment requires array stored in a variable",
+                            assign.span.lo.0 as usize,
+                        ))?;
 
                         // Lower the index expression
                         let idx_val =
@@ -3565,8 +3561,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         let ptr_ty = self.i8ptr_t.as_basic_type_enum();
 
                         // Prepare placeholders for incoming values produced in preds
-                        let then_incoming: Result<BasicValueEnum<'a>, Diagnostic>;
-                        let else_incoming: Result<BasicValueEnum<'a>, Diagnostic>;
+                        let mut then_incoming: Option<BasicValueEnum<'a>> = None;
+                        let mut else_incoming: Option<BasicValueEnum<'a>> = None;
 
                         if !matches!(tv_ty, BasicTypeEnum::PointerType(_))
                             && matches!(ev_ty, BasicTypeEnum::PointerType(_))
@@ -3577,7 +3573,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 .map_err(|_| Diagnostic::simple("phi boxing failed"))?;
                             // ensure then block branches to merge
                             self.ensure_unconditional_branch(merge_bb);
-                            then_incoming = Ok(boxed_then);
+                            then_incoming = Some(boxed_then);
 
                             // else block: keep as pointer value
                             self.builder.position_at_end(else_bb);
@@ -3588,7 +3584,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 }
                             };
                             self.ensure_unconditional_branch(merge_bb);
-                            else_incoming = Ok(else_ptr);
+                            else_incoming = Some(else_ptr);
                         } else {
                             // else needs boxing
                             self.builder.position_at_end(then_bb);
@@ -3599,13 +3595,13 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 }
                             };
                             self.ensure_unconditional_branch(merge_bb);
-                            then_incoming = Ok(then_ptr);
+                            then_incoming = Some(then_ptr);
 
                             self.builder.position_at_end(else_bb);
                             let boxed_else = box_to_ptr(self, ev)
                                 .map_err(|_| Diagnostic::simple("phi boxing failed"))?;
                             self.ensure_unconditional_branch(merge_bb);
-                            else_incoming = Ok(boxed_else);
+                            else_incoming = Some(boxed_else);
                         }
 
                         // merge: create phi from incoming values (builder at merge_bb)
@@ -3614,11 +3610,15 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             .builder
                             .build_phi(ptr_ty, "phi_tmp")
                             .map_err(|_| Diagnostic::simple("phi creation failed"))?;
-                        phi_node.add_incoming(&[
-                            (&then_incoming.unwrap(), then_bb),
-                            (&else_incoming.unwrap(), else_bb),
-                        ]);
-                        return Ok(phi_node.as_basic_value());
+                        if let (Some(then_val), Some(else_val)) = (then_incoming, else_incoming) {
+                            phi_node.add_incoming(&[
+                                (&then_val, then_bb),
+                                (&else_val, else_bb),
+                            ]);
+                            return Ok(phi_node.as_basic_value());
+                        } else {
+                            return Err(Diagnostic::simple("missing incoming values for phi"));
+                        }
                     }
 
                     // Otherwise try the general helper
@@ -4769,7 +4769,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         // the *wrapper*); but the poll function is available
                         // in CodeGen.async_poll_function. Retrieve its param.
                         if let Some(poll_f) = *self.async_poll_function.borrow() {
-                            let state_param = poll_f.get_nth_param(0).unwrap();
+                            let state_param = match poll_f.get_nth_param(0) {
+                                Some(param) => param,
+                                None => {
+                                    return Err(Diagnostic::simple("missing state parameter in async poll function"));
+                                }
+                            };
                             let state_ptr = state_param.into_pointer_value();
 
                             // load live set and local map

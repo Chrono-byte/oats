@@ -2000,7 +2000,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
                 // Build body block
                 self.builder.position_at_end(loop_body_bb);
-                let body_terminated: bool = match &*dowhile_stmt.body {
+                let _body_terminated: bool = match &*dowhile_stmt.body {
                     deno_ast::swc::ast::Stmt::Block(block) => {
                         self.lower_stmts(&block.stmts, _function, _param_map, _locals_stack)?
                     }

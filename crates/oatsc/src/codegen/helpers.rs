@@ -560,7 +560,6 @@ impl<'a> super::CodeGen<'a> {
         }
         // Insert into the function-level scope (index 0)
         let scope = &mut locals[0];
-        let key = info.name.clone();
         scope.insert(
             info.name,
             (

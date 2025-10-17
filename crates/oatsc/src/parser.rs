@@ -184,7 +184,8 @@ pub fn parse_oats_module_with_options(
                 .map_err(|()| anyhow::anyhow!("failed to convert path to file URL: {}", p))?,
             Err(_) => match Url::from_file_path(p) {
                 Ok(url) => url,
-                Err(_) => Url::parse("file://file.ts").map_err(|e| anyhow::anyhow!("failed to parse fallback URL: {}", e))?,
+                Err(_) => Url::parse("file://file.ts")
+                    .map_err(|e| anyhow::anyhow!("failed to parse fallback URL: {}", e))?,
             },
         }
     } else {

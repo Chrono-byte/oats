@@ -203,14 +203,20 @@ fn test_fetch_runtime() {
     let result = try_fetch_runtime();
 
     if !is_supported || has_no_remote {
-        assert!(result.is_none(), "Should return None on unsupported platform or when OATS_NO_REMOTE_RUNTIME is set");
+        assert!(
+            result.is_none(),
+            "Should return None on unsupported platform or when OATS_NO_REMOTE_RUNTIME is set"
+        );
     } else {
         // On supported platform, it should try to fetch
         if let Some(path) = result {
             assert!(path.exists(), "Fetched runtime should exist");
             assert!(path.is_file(), "Should be a file");
             let metadata = fs::metadata(&path).unwrap();
-            assert!(metadata.len() > 1000, "Runtime library should be reasonably sized");
+            assert!(
+                metadata.len() > 1000,
+                "Runtime library should be reasonably sized"
+            );
             // Check it's in cache dir
             let cache_dir = get_cache_dir().unwrap();
             assert!(path.starts_with(cache_dir), "Should be in cache directory");

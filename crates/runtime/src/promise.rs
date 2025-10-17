@@ -138,7 +138,7 @@ pub extern "C" fn executor_enqueue(_promise: *mut std::ffi::c_void) {
         return;
     }
     let exec = init_executor();
-    let mut q = exec.queue.lock().unwrap();
+    let mut q = exec.queue.lock().expect("failed to lock executor queue");
     q.push_back(_promise as usize);
     exec.cv.notify_one();
 }
@@ -148,11 +148,11 @@ pub extern "C" fn executor_run() {
     // Drain the queue synchronously until empty.
     let exec = init_executor();
     loop {
-        let mut q = exec.queue.lock().unwrap();
+        let mut q = exec.queue.lock().expect("failed to lock executor queue");
         if q.is_empty() {
             break;
         }
-        let p_addr = q.pop_front().unwrap();
+        let p_addr = q.pop_front().expect("queue should not be empty");
         let p = p_addr as *mut std::ffi::c_void;
         drop(q);
         unsafe {
@@ -163,7 +163,7 @@ pub extern "C" fn executor_run() {
             let ready = promise_poll_into(p, out_mem as *mut std::ffi::c_void);
             if ready == 0 {
                 // not ready: re-enqueue
-                let mut q2 = exec.queue.lock().unwrap();
+                let mut q2 = exec.queue.lock().expect("failed to lock executor queue");
                 q2.push_back(p as usize);
                 exec.cv.notify_one();
             } else {
@@ -194,9 +194,9 @@ fn init_executor() -> Arc<Exec> {
             let w = e.clone();
             std::thread::spawn(move || {
                 loop {
-                    let mut guard = w.queue.lock().unwrap();
+                    let mut guard = w.queue.lock().expect("failed to lock worker queue");
                     while guard.is_empty() {
-                        guard = w.cv.wait(guard).unwrap();
+                        guard = w.cv.wait(guard).expect("failed to wait on condition variable");
                     }
                     if let Some(p_addr) = guard.pop_front() {
                         drop(guard);
@@ -210,7 +210,7 @@ fn init_executor() -> Arc<Exec> {
                             let ready = promise_poll_into(p, out_mem as *mut std::ffi::c_void);
                             if ready == 0 {
                                 // not ready; re-enqueue
-                                let mut q2 = w.queue.lock().unwrap();
+                                let mut q2 = w.queue.lock().expect("failed to lock executor queue");
                                 q2.push_back(p as usize);
                                 w.cv.notify_one();
                             } else {

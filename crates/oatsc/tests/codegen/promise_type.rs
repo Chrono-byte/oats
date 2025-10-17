@@ -101,7 +101,8 @@ fn parse_promise_number_type() -> Result<()> {
                 let oats_type = map_ts_type(ts_type);
 
                 assert!(oats_type.is_some(), "Should parse Promise<number>");
-                let oats_type = oats_type.ok_or_else(|| anyhow::anyhow!("Failed to map TS type"))?;
+                let oats_type =
+                    oats_type.ok_or_else(|| anyhow::anyhow!("Failed to map TS type"))?;
                 assert!(oats_type.is_promise(), "Should be a Promise type");
                 assert_eq!(
                     oats_type.unwrap_promise_inner(),
@@ -216,7 +217,9 @@ fn parse_promise_custom_type() -> Result<()> {
             let oats_type = oats_type.ok_or_else(|| anyhow::anyhow!("Failed to map TS type"))?;
             assert!(oats_type.is_promise());
 
-            let inner = oats_type.unwrap_promise_inner().ok_or_else(|| anyhow::anyhow!("Promise should have inner type"))?;
+            let inner = oats_type
+                .unwrap_promise_inner()
+                .ok_or_else(|| anyhow::anyhow!("Promise should have inner type"))?;
             match inner {
                 OatsType::NominalStruct(name) => {
                     assert_eq!(name, "User");

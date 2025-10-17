@@ -22,7 +22,7 @@ fn semicolon_on_next_line_is_ok() -> Result<()> {
 #[test]
 fn comment_with_semicolon_inside_does_not_count() {
     let source = r#"export function main(): number { return 1 // ;\n }"#;
-    let parsed_mod = parser::parse_oats_module(source, None);
+    let parsed_mod = parser::parse_oats_module_with_options(source, None, true); // enforce_semicolons = true
     let parsed = parsed_mod.as_ref().map(|m| &m.parsed);
     assert!(parsed.is_err());
 }
@@ -31,7 +31,7 @@ fn comment_with_semicolon_inside_does_not_count() {
 fn block_comment_with_semicolon_inside_counts_only_if_followed_by_semicolon() -> Result<()> {
     // if semicolon appears inside block comment but not after, it's still missing
     let source = r#"export function main(): number { return 1 /* ; */ }"#;
-    let parsed_mod = parser::parse_oats_module(source, None);
+    let parsed_mod = parser::parse_oats_module_with_options(source, None, true); // enforce_semicolons = true
     let parsed = parsed_mod.as_ref().map(|m| &m.parsed);
     assert!(parsed.is_err());
     Ok(())

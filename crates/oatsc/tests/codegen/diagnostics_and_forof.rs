@@ -9,7 +9,7 @@ use oatsc::parser;
 #[test]
 fn parser_reports_missing_semicolon_with_hint() -> Result<()> {
     let src = "export function main(): number { let x = 1\n return x; }"; // missing semicolon after let
-    let res = parser::parse_oats_module(src, None);
+    let res = parser::parse_oats_module_with_options(src, None, true); // enforce_semicolons = true
     assert!(
         res.is_err(),
         "expected parse to fail due to missing semicolon"

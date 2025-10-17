@@ -54,9 +54,9 @@ Manual reference counting is used for all heap objects.
 
 #### **Error Handling: The `Diagnostic` Pattern**
 
-**This pattern is non-negotiable.** The compiler must never panic. All fallible functions must return `Result<T, Diagnostic>`.
+**This pattern is non-negotiable.** We must never panic. All fallible functions must return `Result<T, Diagnostic>`.
 
-* **NO `unwrap()` / `expect()`**: These methods are forbidden in `crates/oatsc/src`.
+* **NO `unwrap()` / `expect()`**: These methods are forbidden in our codebase.
 * **Propagation**: Use the `?` operator to propagate errors up the call stack.
 
 ---

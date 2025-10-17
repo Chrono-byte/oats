@@ -113,3 +113,18 @@ jobs:
             --title "Runtime Build ${{ steps.version.outputs.date }}" \
             --notes "Automated runtime library build from commit $(git rev-parse --short HEAD)" \
             artifacts/**/*.a
+
+  build-compiler:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          target: aarch64-unknown-linux-gnu
+      - name: Install cross-compiler
+        run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
+      - name: Build
+        run: cargo build --release --target aarch64-unknown-linux-gnu

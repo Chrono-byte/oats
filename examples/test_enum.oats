@@ -1,0 +1,12 @@
+export enum Color {
+    Red,
+    Green,
+    Blue
+}
+
+export function main(): void {
+    let c = Color.Red;
+
+    println(c)
+    return 1;
+}

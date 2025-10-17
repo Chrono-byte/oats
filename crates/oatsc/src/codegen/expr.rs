@@ -28,10 +28,12 @@
 //!   (e.g., closure return types) without heavy analysis.
 
 use crate::diagnostics::Diagnostic;
+use inkwell::llvm_sys::object;
 use inkwell::values::BasicValueEnum;
 use inkwell::values::FunctionValue;
 use std::collections::HashMap;
 
+use crate::types::OatsType;
 use inkwell::AddressSpace;
 use inkwell::builder::Builder;
 use inkwell::types::BasicType;
@@ -445,6 +447,17 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         .borrow_mut()
                         .replace(name.clone());
                     return Ok(pv);
+                }
+
+                // Check if the identifier refers to an enum type (enums themselves are not values)
+                if let Some(OatsType::Enum(_, _)) = self.symbol_table.borrow().get(&name) {
+                    return Err(Diagnostic::simple_with_span(
+                        format!(
+                            "'{}' is an enum type and cannot be used as a value. Use 'enum.member' syntax instead.",
+                            name
+                        ),
+                        id.span.lo.0 as usize,
+                    ));
                 }
 
                 // Next, check if the identifier is a compile-time const we evaluated earlier.
@@ -2648,6 +2661,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         use deno_ast::swc::ast::MemberProp;
                         if let MemberProp::Ident(prop_ident) = &member.prop {
                             let field_name = prop_ident.sym.to_string();
+                            eprintln!("DEBUG: field_name set to '{}'", field_name);
+                            eprintln!("DEBUG: About to do enum check");
 
                             // Lower the object to get its pointer
                             let lowered_obj_res =
@@ -3627,6 +3642,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 use deno_ast::swc::ast::MemberProp;
                 match &member.prop {
                     MemberProp::Computed(boxed) => {
+                        eprintln!("DEBUG: Computed member access");
                         // lower object and index separately so we can produce clearer diagnostics
                         let obj_res = self.lower_expr(&member.obj, function, param_map, locals);
                         let idx_res = self.lower_expr(&boxed.expr, function, param_map, locals);
@@ -3995,8 +4011,41 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         }
                     }
                     MemberProp::Ident(prop_ident) => {
+                        eprintln!("DEBUG: Entered Ident case");
+                        eprintln!("DEBUG: Dot member access");
                         // dot-member access like obj.prop
                         let field_name = prop_ident.sym.to_string();
+                        eprintln!("DEBUG: field_name created");
+                        let obj_ident = if let deno_ast::swc::ast::Expr::Ident(ident) = &*member.obj
+                        {
+                            ident
+                        } else {
+                            // For now, only support enum member access on identifier objects
+                            return Err(Diagnostic::simple_with_span(
+                                "enum member access requires identifier object",
+                                member.span.lo.0 as usize,
+                            ));
+                        };
+                        let enum_name = obj_ident.sym.to_string();
+                        // Check if the object is an enum type
+                        if let Some(OatsType::Enum(_, variants)) =
+                            self.symbol_table.borrow().get(&enum_name)
+                        {
+                            // Find the index of the field in the enum variants
+                            if let Some(member_index) =
+                                variants.iter().position(|v| v == &field_name)
+                            {
+                                // Return the enum value as a constant integer (0-based index)
+                                let enum_value = self.i64_t.const_int(member_index as u64, false);
+                                return Ok(enum_value.as_basic_value_enum());
+                            } else {
+                                return Err(Diagnostic::simple_with_span(
+                                    format!("enum '{}' has no member '{}'", enum_name, field_name),
+                                    member.span.lo.0 as usize,
+                                ));
+                            }
+                        }
+
                         // Special-case: `arr.length` for array-like receivers. Load i64 length from array header (+8)
                         if field_name == "length" {
                             // Attempt to lower receiver and read length from header for pointer-like values

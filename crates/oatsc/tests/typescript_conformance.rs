@@ -1,7 +1,17 @@
 //! TypeScript Conformance Tests
 //!
 //! This module runs the official TypeScript conformance test suite against
-//! the Oats parser to ensure 100% parsing compatibility with TypeScript syntax.
+//! the Oats parser to ensure high parsing compatibility with TypeScript syntax.
+//!
+//! **Important Note**: The TypeScript conformance suite includes both positive
+//! and negative test cases. Negative tests contain intentionally invalid syntax
+//! to verify error reporting. Without TypeScript's baseline files, we cannot
+//! perfectly distinguish these cases. Therefore, the "success rate" includes
+//! some legitimate parse failures of invalid syntax.
+//!
+//! The primary goal is to ensure all valid TypeScript syntax parses correctly.
+//! See `tests/typescript_features.rs` for comprehensive validation of all
+//! high-priority language features (async/await, classes, destructuring, etc.).
 //!
 //! The tests are vendored from https://github.com/microsoft/TypeScript and
 //! updated via `scripts/vendor_typescript_conformance_tests.sh`.

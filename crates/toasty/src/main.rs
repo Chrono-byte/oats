@@ -97,7 +97,7 @@ fn preflight_check_with_verbosity(verbose: bool) -> anyhow::Result<()> {
 
     // Check rustc
     // Run `rustc --version` but avoid printing its output by default
-    let status = if cfg!(debug_assertions) || verbose {
+    let status = if verbose {
         Command::new("rustc").arg("--version").status()
     } else {
         Command::new("rustc")
@@ -126,10 +126,9 @@ fn preflight_check_with_verbosity(verbose: bool) -> anyhow::Result<()> {
     let clang_candidates = ["clang", "clang-18", "clang-17"];
     let mut any_ok = false;
     for &c in &clang_candidates {
-        // Avoid printing clang's version in non-debug (release) builds by
-        // redirecting stdout/stderr to null unless we're in debug mode or the
-        // user requested verbose output.
-        let status = if cfg!(debug_assertions) || verbose {
+        // Avoid printing clang's version in non-verbose mode by
+        // redirecting stdout/stderr to null unless the user requested verbose output.
+        let status = if verbose {
             Command::new(c).arg("--version").status()
         } else {
             Command::new(c)

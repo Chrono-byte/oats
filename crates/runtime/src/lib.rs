@@ -24,7 +24,11 @@
 
 use libc::{c_char, c_void};
 use std::ffi::CStr;
+use std::io;
+use std::io::Write;
 use std::mem;
+use std::process;
+use std::ptr;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 // Metadata magic used by codegen: ASCII 'OATS' (0x4F415453)
@@ -68,6 +72,28 @@ pub use crate::ffi::*;
 
 // Re-export header helpers from crate root for other modules
 pub use crate::header::*;
+
+// Re-export heap allocation functions
+pub use crate::heap::{runtime_free, runtime_malloc};
+
+// Re-export array functions
+pub use crate::array::{array_alloc, array_to_string};
+
+// Re-export string functions
+pub use crate::string::{heap_str_from_cstr, rc_dec_str};
+
+// Ensure placeholder modules are referenced during incremental refactor.
+// This function is called by tests or the binary runner to initialize
+// runtime logging/limits and to anchor the placeholder modules so the
+// compiler does not warn about unused imports while we migrate code.
+#[allow(dead_code)]
+pub(crate) fn init_runtime_placeholders() {
+    // Call per-module no-op initializers so the modules are considered used.
+    // crate::object::init_object_placeholders();
+    // crate::rc::init_rc_placeholders();
+    // Ensure ffi is referenced
+    // crate::ffi::ffi_init();
+}
 
 // Global runtime logging flag for ad-hoc diagnostics. Disabled by default.
 // Set OATS_RUNTIME_LOG=1 in the environment to enable.
@@ -296,6 +322,91 @@ pub const ARRAY_HEADER_SIZE: usize = mem::size_of::<u64>() * 3;
 // Minimum initial capacity for empty arrays
 pub const MIN_ARRAY_CAPACITY: usize = 8;
 
+// Called when an array index is out-of-bounds. Prints a helpful message
+// to stderr and aborts the process to avoid undefined behavior.
+fn runtime_index_oob_abort(_arr: *mut c_void, idx: usize, len: usize) -> ! {
+    // Try to print a best-effort diagnostic. Avoid panicking inside the
+    // runtime; just write to stderr and abort.
+    let _ = io::stderr().write_all(b"OATS runtime: array index out of bounds\n");
+    let _ = io::stderr().write_all(b"Index: ");
+    let s = idx.to_string();
+    let _ = io::stderr().write_all(s.as_bytes());
+    let _ = io::stderr().write_all(b"\nLength: ");
+    let s2 = len.to_string();
+    let _ = io::stderr().write_all(s2.as_bytes());
+    let _ = io::stderr().write_all(b"\n");
+    process::abort();
+}
+
+/// Grow an array to accommodate at least min_capacity elements.
+/// Returns a new array pointer with the same refcount and data copied over.
+/// The old array is NOT freed - caller is responsible for managing refcounts.
+///
+/// Uses geometric growth (1.5x) to amortize reallocation costs.
+///
+/// # Safety
+/// Caller must ensure arr is a valid array pointer and manage refcounts appropriately.
+unsafe fn array_grow(arr: *mut c_void, min_capacity: usize) -> *mut c_void {
+    if arr.is_null() {
+        return ptr::null_mut();
+    }
+
+    unsafe {
+        // Read current metadata
+        let header_ptr = arr as *const u64;
+        let header = *header_ptr;
+        let elem_is_number = ((header >> 32) & 1) as i32;
+
+        let len_ptr = (arr as *mut u8).add(mem::size_of::<u64>()) as *const u64;
+        let len = *len_ptr as usize;
+
+        let cap_ptr = (arr as *mut u8).add(mem::size_of::<u64>() * 2) as *const u64;
+        let old_capacity = *cap_ptr as usize;
+
+        // Calculate new capacity with geometric growth (1.5x)
+        let mut new_capacity = old_capacity + (old_capacity / 2).max(1);
+        if new_capacity < min_capacity {
+            new_capacity = min_capacity;
+        }
+
+        // Determine element size
+        let elem_size = if elem_is_number != 0 {
+            mem::size_of::<f64>()
+        } else {
+            mem::size_of::<*mut c_void>()
+        };
+
+        // Allocate new array with new_capacity but same length
+        // We pass new_capacity as the length parameter to allocate that many elements
+        let new_arr = array_alloc(new_capacity, elem_size, elem_is_number);
+        if new_arr.is_null() {
+            return ptr::null_mut();
+        }
+
+        // Update new array's length to match old array's length (not capacity)
+        let new_len_ptr = (new_arr as *mut u8).add(mem::size_of::<u64>()) as *mut u64;
+        *new_len_ptr = len as u64;
+
+        // Copy data from old to new
+        let old_data = (arr as *mut u8).add(ARRAY_HEADER_SIZE);
+        let new_data = (new_arr as *mut u8).add(ARRAY_HEADER_SIZE);
+        ptr::copy_nonoverlapping(old_data, new_data, len * elem_size);
+
+        // If pointer array, increment refcounts for copied pointers
+        if elem_is_number == 0 {
+            let ptrs = new_data as *mut *mut c_void;
+            for i in 0..len {
+                let p = *ptrs.add(i);
+                if !p.is_null() {
+                    rc_inc(p);
+                }
+            }
+        }
+
+        new_arr
+    }
+}
+
 // --- Atomic Reference Counting ---
 
 // Re-export rc module functions
@@ -306,17 +417,11 @@ pub use crate::rc::rc_weak_dec;
 pub use crate::rc::rc_weak_inc;
 pub use crate::rc::rc_weak_upgrade;
 
-// Re-export heap functions
-pub use crate::heap::runtime_free;
-pub use crate::heap::runtime_malloc;
+// Re-export utils functions
+pub use crate::utils::sleep_ms;
 
-// Re-export string functions
-pub use crate::string::heap_str_from_cstr;
-pub use crate::string::rc_dec_str;
-
-// Re-export array functions
-pub use crate::array::array_alloc;
-pub use crate::array::array_to_string;
+// Re-export object/union functions
+pub use crate::object::{union_box_f64, union_box_ptr, union_get_discriminant, union_unbox_f64, union_unbox_ptr};
 
 // --- Union helpers ---
 

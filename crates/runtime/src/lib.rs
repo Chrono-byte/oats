@@ -24,11 +24,7 @@
 
 use libc::{c_char, c_void};
 use std::ffi::CStr;
-use std::io;
-use std::io::Write;
 use std::mem;
-use std::process;
-use std::ptr;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 // Metadata magic used by codegen: ASCII 'OATS' (0x4F415453)
@@ -194,84 +190,98 @@ pub fn add_root_candidate(p: *mut c_void) {
     col.push_root(p as usize);
 }
 
-// Increment the strong reference count for a string data pointer.
-//
-// This helper accepts a pointer to string data (the pointer returned to
-// user-space code, which points at offset +16 from the header). It
-// resolves the header and delegates to `rc_inc` which handles both
-// string-data and object-base pointers.
-//
-// Handles both static and heap strings. For heap strings, the data pointer
-// is at offset +16 from the object header.
-//
-// # Safety
-// `data` must be a pointer previously returned by the runtime for a string
-// (either a static literal or a heap-allocated string). Passing arbitrary
-// or already-freed pointers is undefined behavior.
-// --- Printing ---
-
-pub fn is_plausible_addr(addr: usize) -> bool {
-    // Reject null or very small addresses (below common page sizes),
-    // and require 8-byte alignment for our u64-based headers.
-    if addr == 0 {
-        return false;
-    }
-    if addr < 4096 {
-        return false;
-    }
-    (addr & 7) == 0
-}
-
-// Validate a metadata block pointer: must be plausibly aligned/non-null and
-// contain a reasonable length value (1..=max_len). Also check each offset is
-// an 8-byte aligned positive value within a pragmatic object-size bound.
-//
-// # Safety contract:
-// - `meta` may be any raw pointer; callers must ensure it points to readable
-//   memory for at least `1 + len` u64/i32 words as implied by the metadata.
-// - This function performs only conservative checks (magic, length, offsets)
-//   and DOES NOT guarantee that following dereferences are fully memory-safe
-//   pointer is aligned and non-null. The helper `is_plausible_addr` is used to
-//   reduce false positives but is not a formal memory-safety proof.
-//
-// Where to use:
-// - Use prior to dereferencing class metadata blocks that were previously
-//   stored by the code generator. If `validate_meta_block` returns `true`, the
-//   caller may proceed with cautious reads of the metadata fields.
-pub unsafe fn validate_meta_block(meta: *mut u64, max_len: usize) -> bool {
+/// Validate a metadata block pointer: must be plausibly aligned/non-null and
+/// contain a reasonable length value (1..=max_len). Also check each offset is
+/// an 8-byte aligned positive value within a pragmatic object-size bound.
+///
+/// Where to use:
+///
+/// Use prior to dereferencing class metadata blocks that were previously
+/// stored by the code generator. If `validate_meta_block` returns `true`, the
+/// caller may proceed with cautious reads of the metadata fields.
+///
+/// # Safety
+///
+/// `meta` must be a valid pointer to readable memory for at least the size of one `u64`,
+/// plus `max_len * sizeof(i32)` bytes if the header is valid. This function ensures
+/// that if it returns `true`, the full metadata block can be safely read.
+pub unsafe fn validate_meta_block(meta: *const u64, max_len: usize) -> bool {
+    // Reject null pointers
     if meta.is_null() {
         return false;
     }
+
     let addr = meta as usize;
     if !is_plausible_addr(addr) {
         return false;
     }
-    // Expect layout: [meta0: u64 (magic<<32 | len)], [len x i32 offsets]
-    unsafe {
-        // Read meta0 (u64)
-        let meta0 = *meta;
-        let magic = meta0 >> 32;
-        if magic != META_MAGIC {
-            return false;
-        }
-        let len = (meta0 & 0xffffffffu64) as usize;
-        if len == 0 || len > max_len {
-            return false;
-        }
 
-        // Offsets now start at meta + 1 as i32 values. Check each.
-        // Enforce: offsets are 8-byte aligned, >= header+meta_slot (16), and
-        // reasonably bounded to avoid huge or negative values.
-        let max_off = 1usize << 20; // conservative 1 MiB object bound
-        let min_off = 16usize; // header (8) + meta_slot (8)
-        let offsets_ptr = meta.add(1) as *mut i32;
-        for i in 0..len {
-            let off = *offsets_ptr.add(i) as usize;
-            if off < min_off || off > max_off || (off & 7) != 0 {
-                return false;
-            }
+    // Read the header (magic + length)
+    let meta0 = unsafe { *meta };
+
+    // Validate magic number
+    let magic = meta0 >> 32;
+    if magic != META_MAGIC {
+        return false;
+    }
+
+    // Validate length is in range
+    let len = (meta0 & 0xffffffff) as usize;
+    if len == 0 || len > max_len {
+        return false;
+    }
+
+    // Validate each offset safely
+    const MAX_OFFSET: usize = 1 << 20; // 1 MiB conservative bound
+    const MIN_OFFSET: usize = 16; // header (8) + meta_slot (8)
+
+    // Calculate the offsets array pointer and total required size
+    let offsets_ptr = unsafe { meta.add(1) as *const i32 };
+
+    // Check for arithmetic overflow in required size
+    // let header_size = std::mem::size_of::<u64>();
+    // let offsets_size = len.saturating_mul(std::mem::size_of::<i32>());
+
+    // Ensure we can safely iterate over all offsets
+    for i in 0..len {
+        // Read each offset safely
+        let off_i32 = unsafe { *offsets_ptr.add(i) };
+        let off = off_i32 as usize;
+
+        // Validate offset constraints
+        if !(MIN_OFFSET..=MAX_OFFSET).contains(&off) || (off & 7) != 0 {
+            return false;
         }
-        true
+    }
+
+    true
+}
+
+/// Check if an address is plausible (aligned, within reasonable bounds)
+fn is_plausible_addr(addr: usize) -> bool {
+    // Must be 8-byte aligned
+    if addr & 7 != 0 {
+        return false;
+    }
+
+    // Reject null address (already checked by caller, but defensive)
+    if addr == 0 {
+        return false;
+    }
+
+    // On most systems, reject addresses in the low 64 KiB (common sentinel region)
+    // and reject addresses in the very high range (typically kernel space)
+    #[cfg(target_pointer_width = "64")]
+    {
+        const LOW_BOUND: usize = 0x10000; // 64 KiB
+        const HIGH_BOUND: usize = 0x0001_0000_0000_0000; // 2^48, typical user-space limit
+        (LOW_BOUND..HIGH_BOUND).contains(&addr)
+    }
+
+    #[cfg(target_pointer_width = "32")]
+    {
+        const LOW_BOUND: usize = 0x10000; // 64 KiB
+        addr >= LOW_BOUND
     }
 }
 
@@ -321,91 +331,6 @@ pub const ARRAY_HEADER_SIZE: usize = mem::size_of::<u64>() * 3;
 
 // Minimum initial capacity for empty arrays
 pub const MIN_ARRAY_CAPACITY: usize = 8;
-
-// Called when an array index is out-of-bounds. Prints a helpful message
-// to stderr and aborts the process to avoid undefined behavior.
-fn runtime_index_oob_abort(_arr: *mut c_void, idx: usize, len: usize) -> ! {
-    // Try to print a best-effort diagnostic. Avoid panicking inside the
-    // runtime; just write to stderr and abort.
-    let _ = io::stderr().write_all(b"OATS runtime: array index out of bounds\n");
-    let _ = io::stderr().write_all(b"Index: ");
-    let s = idx.to_string();
-    let _ = io::stderr().write_all(s.as_bytes());
-    let _ = io::stderr().write_all(b"\nLength: ");
-    let s2 = len.to_string();
-    let _ = io::stderr().write_all(s2.as_bytes());
-    let _ = io::stderr().write_all(b"\n");
-    process::abort();
-}
-
-/// Grow an array to accommodate at least min_capacity elements.
-/// Returns a new array pointer with the same refcount and data copied over.
-/// The old array is NOT freed - caller is responsible for managing refcounts.
-///
-/// Uses geometric growth (1.5x) to amortize reallocation costs.
-///
-/// # Safety
-/// Caller must ensure arr is a valid array pointer and manage refcounts appropriately.
-unsafe fn array_grow(arr: *mut c_void, min_capacity: usize) -> *mut c_void {
-    if arr.is_null() {
-        return ptr::null_mut();
-    }
-
-    unsafe {
-        // Read current metadata
-        let header_ptr = arr as *const u64;
-        let header = *header_ptr;
-        let elem_is_number = ((header >> 32) & 1) as i32;
-
-        let len_ptr = (arr as *mut u8).add(mem::size_of::<u64>()) as *const u64;
-        let len = *len_ptr as usize;
-
-        let cap_ptr = (arr as *mut u8).add(mem::size_of::<u64>() * 2) as *const u64;
-        let old_capacity = *cap_ptr as usize;
-
-        // Calculate new capacity with geometric growth (1.5x)
-        let mut new_capacity = old_capacity + (old_capacity / 2).max(1);
-        if new_capacity < min_capacity {
-            new_capacity = min_capacity;
-        }
-
-        // Determine element size
-        let elem_size = if elem_is_number != 0 {
-            mem::size_of::<f64>()
-        } else {
-            mem::size_of::<*mut c_void>()
-        };
-
-        // Allocate new array with new_capacity but same length
-        // We pass new_capacity as the length parameter to allocate that many elements
-        let new_arr = array_alloc(new_capacity, elem_size, elem_is_number);
-        if new_arr.is_null() {
-            return ptr::null_mut();
-        }
-
-        // Update new array's length to match old array's length (not capacity)
-        let new_len_ptr = (new_arr as *mut u8).add(mem::size_of::<u64>()) as *mut u64;
-        *new_len_ptr = len as u64;
-
-        // Copy data from old to new
-        let old_data = (arr as *mut u8).add(ARRAY_HEADER_SIZE);
-        let new_data = (new_arr as *mut u8).add(ARRAY_HEADER_SIZE);
-        ptr::copy_nonoverlapping(old_data, new_data, len * elem_size);
-
-        // If pointer array, increment refcounts for copied pointers
-        if elem_is_number == 0 {
-            let ptrs = new_data as *mut *mut c_void;
-            for i in 0..len {
-                let p = *ptrs.add(i);
-                if !p.is_null() {
-                    rc_inc(p);
-                }
-            }
-        }
-
-        new_arr
-    }
-}
 
 // --- Atomic Reference Counting ---
 
@@ -750,13 +675,13 @@ mod tests {
 
     #[test]
     fn validate_meta_block_bad_magic() {
+        let len: usize = 1;
+        let words = 1 + (len * 4).div_ceil(8);
+        let mut buf: Vec<u64> = vec![0u64; words];
+        // wrong magic
+        buf[0] = ((0x1234u64) << 32) | (len as u64 & 0xffffffffu64);
+        let ptr = buf.as_mut_ptr();
         unsafe {
-            let len: usize = 1;
-            let words = 1 + (len * 4).div_ceil(8);
-            let mut buf: Vec<u64> = vec![0u64; words];
-            // wrong magic
-            buf[0] = ((0x1234u64) << 32) | (len as u64 & 0xffffffffu64);
-            let ptr = buf.as_mut_ptr();
             assert!(!validate_meta_block(ptr, 10));
         }
     }

@@ -560,6 +560,8 @@ impl<'a> super::CodeGen<'a> {
         }
         // Insert into the function-level scope (index 0)
         let scope = &mut locals[0];
+        #[cfg(debug_assertions)]
+        let _key = info.name.clone();
         scope.insert(
             info.name,
             (
@@ -575,15 +577,14 @@ impl<'a> super::CodeGen<'a> {
         // DEBUG: print insertion
         #[cfg(debug_assertions)]
         {
-            let key = info.name.clone();
             let keys: Vec<String> = scope.keys().cloned().collect();
-            let entry = scope.get(&key).cloned();
+            let entry = scope.get(&_key).cloned();
             let nominal_str = entry
                 .and_then(|(_, _, _, _, _, nom, _)| nom)
                 .unwrap_or("<none>".to_string());
             eprintln!(
                 "[debug insert_local_function] inserted='{}' nominal='{}' keys_now={:?}",
-                key, nominal_str, keys
+                _key, nominal_str, keys
             );
         }
     }

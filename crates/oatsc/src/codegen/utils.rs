@@ -61,9 +61,14 @@ pub mod runtime {
     }
 
     /// Get the string concatenation function
-    pub fn get_str_concat<'a>(codegen: &CodeGen<'a>) -> Result<inkwell::values::FunctionValue<'a>, Diagnostic> {
+    pub fn get_str_concat<'a>(
+        codegen: &CodeGen<'a>,
+    ) -> Result<inkwell::values::FunctionValue<'a>, Diagnostic> {
         codegen.gen_str_concat();
-        codegen.module.get_function("str_concat").ok_or_else(|| Diagnostic::simple("str_concat function not found"))
+        codegen
+            .module
+            .get_function("str_concat")
+            .ok_or_else(|| Diagnostic::simple("str_concat function not found"))
     }
 
     /// Get the number to string function
@@ -87,7 +92,10 @@ pub mod memory {
             .builder
             .build_call(malloc_fn, &[size.into()], name)
             .map_err(|_| Diagnostic::simple("failed to build malloc call"))?;
-        let ptr = call_site.try_as_basic_value().left().ok_or_else(|| Diagnostic::simple("malloc call returned no value"))?;
+        let ptr = call_site
+            .try_as_basic_value()
+            .left()
+            .ok_or_else(|| Diagnostic::simple("malloc call returned no value"))?;
         Ok(ptr.into_pointer_value())
     }
 
@@ -102,7 +110,10 @@ pub mod memory {
             .builder
             .build_call(array_alloc_fn, &[length.into()], name)
             .map_err(|_| Diagnostic::simple("failed to build array_alloc call"))?;
-        let ptr = call_site.try_as_basic_value().left().ok_or_else(|| Diagnostic::simple("array_alloc call returned no value"))?;
+        let ptr = call_site
+            .try_as_basic_value()
+            .left()
+            .ok_or_else(|| Diagnostic::simple("array_alloc call returned no value"))?;
         Ok(ptr.into_pointer_value())
     }
 }

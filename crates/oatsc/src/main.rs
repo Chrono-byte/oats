@@ -342,9 +342,8 @@ fn main() -> Result<()> {
                     let name = interface_decl.id.sym.to_string();
                     pre_symbols.insert(name.clone(), OatsType::NominalStruct(name));
                 }
-                if let deno_ast::swc::ast::Stmt::Decl(deno_ast::swc::ast::Decl::TsEnum(
-                    enum_decl,
-                )) = stmt
+                if let deno_ast::swc::ast::Stmt::Decl(deno_ast::swc::ast::Decl::TsEnum(enum_decl)) =
+                    stmt
                 {
                     let name = enum_decl.id.sym.to_string();
                     let variants: Vec<String> = enum_decl
@@ -352,9 +351,7 @@ fn main() -> Result<()> {
                         .iter()
                         .map(|member| match &member.id {
                             deno_ast::swc::ast::TsEnumMemberId::Ident(id) => id.sym.to_string(),
-                            deno_ast::swc::ast::TsEnumMemberId::Str(str) => {
-                                str.value.to_string()
-                            }
+                            deno_ast::swc::ast::TsEnumMemberId::Str(str) => str.value.to_string(),
                         })
                         .collect();
                     pre_symbols.insert(name.clone(), OatsType::Enum(name, variants));

@@ -64,9 +64,10 @@ fn get_latest_runtime_tag() -> Result<String> {
     if let Some(releases_array) = releases.as_array() {
         for release in releases_array {
             if let Some(tag) = release["tag_name"].as_str()
-                && tag.starts_with("runtime-") {
-                    return Ok(tag.to_string());
-                }
+                && tag.starts_with("runtime-")
+            {
+                return Ok(tag.to_string());
+            }
         }
     }
 

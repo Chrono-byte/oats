@@ -1282,6 +1282,7 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
             "No rt_main.o found and no runtime/rt_main/src/main.rs available; please provide a runtime main (rt_main.o) or add a runtime/rt_main/src/main.rs"
         );
     };
+
     // Link final binary. Prefer explicit linker via OATS_LINKER, otherwise
     // use clang (with -fuse-ld=lld when available) or fall back to ld.lld/lld.
     let oats_linker = std::env::var("OATS_LINKER").ok();

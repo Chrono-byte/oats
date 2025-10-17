@@ -426,7 +426,9 @@ impl<'a> CodeGen<'a> {
                 // Pointer fields start at offset 16 (header 8 + meta 8), each field is 8 bytes
                 let mut meta_offsets: Vec<i32> = Vec::new();
                 for (idx, k) in keys.iter().enumerate() {
-                    let v = map.get(k).unwrap();
+                    let v = map.get(k).ok_or_else(|| {
+                        crate::diagnostics::Diagnostic::simple("key not found in const map")
+                    })?;
                     match v {
                         ConstValue::Str(_) | ConstValue::Array(_) | ConstValue::Object(_) => {
                             let off = 16 + (idx * 8);

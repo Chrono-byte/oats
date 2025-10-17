@@ -3,10 +3,15 @@ name: Build and Publish Runtime
 on:
   push:
     branches:
+      - main
       - master
     paths:
       - "crates/runtime/**"
       - ".github/workflows/build-runtime.yml"
+  pull_request:
+    branches:
+      - main
+      - master
   release:
     types: [published]
   workflow_dispatch:
@@ -48,7 +53,16 @@ jobs:
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu
+          sudo apt-get install -y gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
+
+      - name: Create Cargo config for aarch64 linker
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          mkdir -p .cargo
+          cat > .cargo/config.toml <<'EOF'
+          [target.aarch64-unknown-linux-gnu]
+          linker = "aarch64-linux-gnu-gcc"
+          EOF
 
       - name: Build runtime
         run: |

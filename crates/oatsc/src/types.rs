@@ -583,6 +583,58 @@ pub fn infer_type_from_expr(expr: &ast::Expr) -> Option<OatsType> {
                 None
             }
         }
+        ast::Expr::Object(obj) => {
+            // Infer object literal type
+            let mut fields = Vec::new();
+            for prop in &obj.props {
+                if let ast::PropOrSpread::Prop(prop) = prop {
+                    if let ast::Prop::KeyValue(kv) = &**prop {
+                        if let ast::PropName::Ident(ident) = &kv.key {
+                            if let Some(field_type) = infer_type_from_expr(&kv.value) {
+                                fields.push((ident.sym.to_string(), field_type));
+                            }
+                        }
+                    }
+                }
+            }
+            if !fields.is_empty() {
+                Some(OatsType::StructLiteral(fields))
+            } else {
+                None
+            }
+        }
+        ast::Expr::Call(_call) => {
+            // For function calls, we can't infer the return type without knowing the function
+            // This would require a more sophisticated analysis
+            None
+        }
+        ast::Expr::Member(_member) => {
+            // For property access, we can't infer the type without knowing the object
+            None
+        }
+        ast::Expr::Unary(unary) => {
+            // Unary operations generally preserve the operand type
+            infer_type_from_expr(&unary.arg)
+        }
+        ast::Expr::Bin(bin) => {
+            // Binary operations: most return numbers, but some might return other types
+            match bin.op {
+                ast::BinaryOp::EqEq | ast::BinaryOp::NotEq | 
+                ast::BinaryOp::Lt | ast::BinaryOp::LtEq | 
+                ast::BinaryOp::Gt | ast::BinaryOp::GtEq => {
+                    // Comparison operations return boolean
+                    Some(OatsType::Boolean)
+                }
+                _ => {
+                    // Arithmetic operations return the type of the operands (usually number)
+                    infer_type_from_expr(&bin.left).or_else(|| infer_type_from_expr(&bin.right))
+                }
+            }
+        }
+        ast::Expr::Paren(paren) => {
+            // Parenthesized expressions have the same type as their contents
+            infer_type_from_expr(&paren.expr)
+        }
         _ => None,
     }
 }
@@ -690,15 +742,9 @@ pub fn apply_inferred_subst(ty: &OatsType, inferred: &[OatsType]) -> OatsType {
                 .map(|(n, t)| (n.clone(), apply_inferred_subst(t, inferred)))
                 .collect(),
         ),
-        OatsType::GenericInstance {
-            base_name,
-            type_args,
-        } => OatsType::GenericInstance {
+        OatsType::GenericInstance { base_name, type_args } => OatsType::GenericInstance {
             base_name: base_name.clone(),
-            type_args: type_args
-                .iter()
-                .map(|t| apply_inferred_subst(t, inferred))
-                .collect(),
+            type_args: type_args.iter().map(|t| apply_inferred_subst(t, inferred)).collect(),
         },
         other => other.clone(),
     }

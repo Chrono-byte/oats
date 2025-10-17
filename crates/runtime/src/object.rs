@@ -35,7 +35,7 @@ pub unsafe extern "C" fn tuple_to_string(obj: *mut c_void) -> *mut c_char {
     if meta.is_null() {
         return ptr::null_mut();
     }
-    if unsafe { !validate_meta_block(meta, 1024) } {
+    if !unsafe { validate_meta_block(meta, 1024) } {
         return ptr::null_mut();
     }
 

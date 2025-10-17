@@ -1,0 +1,41 @@
+name: Run Runtime Tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "crates/runtime/**"
+      - ".github/workflows/run-runtime-tests.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "crates/runtime/**"
+      - ".github/workflows/run-runtime-tests.yml"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Build workspace
+        run: cargo build --workspace
+
+      - name: Run tests
+        run: cargo test --workspace

@@ -40,7 +40,7 @@ export function main(): number {
     let module = context.create_module("test_module");
     let triple = TargetMachine::get_default_triple();
     module.set_triple(&triple);
-    let codegen = create_codegen(&context, "test_module", symbols, &parsed_mod.source);
+    let codegen = create_codegen(&context, "test_module", symbols, &parsed_mod.source)?;
 
     // Replicate builder's top-level const pass to emit const globals
     use deno_ast::swc::ast;

@@ -23,7 +23,7 @@ fn test_interfaces_types_example_end_to_end() -> Result<()> {
     let workspace_root = manifest_dir
         .parent()
         .and_then(|p| p.parent())
-        .expect("failed to find workspace root");
+        .ok_or_else(|| anyhow::anyhow!("failed to find workspace root"))?;
     // Run the `toasty` binary on the example
     let example = workspace_root
         .join("examples")

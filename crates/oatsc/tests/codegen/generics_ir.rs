@@ -3,7 +3,7 @@ use common::gen_ir_for_source;
 use std::path::PathBuf;
 
 #[test]
-fn generics_emits_specializations_and_rc_dec() {
+fn generics_emits_specializations_and_rc_dec() -> Result<(), Box<dyn std::error::Error>> {
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join("..");
@@ -11,8 +11,8 @@ fn generics_emits_specializations_and_rc_dec() {
         .join("examples")
         .join("proper_tests")
         .join("generics.oats");
-    let src = std::fs::read_to_string(&example_path).expect("read example");
-    let ir = gen_ir_for_source(&src).expect("generate IR");
+    let src = std::fs::read_to_string(&example_path)?;
+    let ir = gen_ir_for_source(&src)?;
 
     // Expect two distinct specializations for getFirstElement (number and string)
     assert!(
@@ -25,4 +25,6 @@ fn generics_emits_specializations_and_rc_dec() {
         ir.contains("number_to_string") && ir.contains("rc_dec"),
         "rc_dec or number_to_string missing"
     );
+
+    Ok(())
 }

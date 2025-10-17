@@ -5,7 +5,7 @@ use super::common;
 use common::gen_ir_for_source;
 
 #[test]
-fn regress_cycle_reclaim() {
+fn regress_cycle_reclaim() -> Result<(), Box<dyn std::error::Error>> {
     // Silence diagnostics printed to stderr during tests
     let _guard = oatsc::diagnostics::suppress();
 
@@ -14,14 +14,14 @@ fn regress_cycle_reclaim() {
         .join("..")
         .join("..");
     let example_path = repo_root.join("examples").join("cycle_reclaim.oats");
-    let src = fs::read_to_string(&example_path)
-        .unwrap_or_else(|e| panic!("failed to read {}: {}", example_path.display(), e));
+    let src = fs::read_to_string(&example_path)?;
 
     // Generate IR for the example source and ensure it produces something non-empty.
     // common::gen_ir_for_source() is the shared test helper used across the test suite.
-    let ir = gen_ir_for_source(&src).expect("generate IR");
+    let ir = gen_ir_for_source(&src)?;
     assert!(
         !ir.trim().is_empty(),
         "IR generation produced empty output for cycle_reclaim.oats"
     );
+    Ok(())
 }

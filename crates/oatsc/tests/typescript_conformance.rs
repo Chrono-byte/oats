@@ -24,12 +24,12 @@ use walkdir::WalkDir;
 /// Path to the vendored TypeScript conformance tests
 const CONFORMANCE_DIR: &str = "../../third_party/typescript_conformance_tests/conformance";
 
-// #[test]
+#[test]
 fn typescript_conformance_parsing() -> Result<()> {
     let conformance_path = Path::new(CONFORMANCE_DIR);
 
     if !conformance_path.exists() {
-        let cwd = std::env::current_dir().unwrap();
+        let cwd = std::env::current_dir()?;
         panic!(
             "TypeScript conformance tests not found at {} (absolute: {}). \
              CWD: {}. \

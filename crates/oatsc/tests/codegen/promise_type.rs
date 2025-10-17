@@ -4,7 +4,7 @@ use oatsc::parser;
 use oatsc::types::{OatsType, infer_type, infer_type_from_expr, map_ts_type};
 
 #[test]
-fn promise_type_creation() {
+fn promise_type_creation() -> Result<(), Box<dyn std::error::Error>> {
     // Test creating a Promise<number> type
     let promise_number = OatsType::wrap_in_promise(OatsType::Number);
     assert!(promise_number.is_promise());
@@ -12,6 +12,7 @@ fn promise_type_creation() {
         promise_number.unwrap_promise_inner(),
         Some(&OatsType::Number)
     );
+    Ok(())
 }
 
 #[test]
@@ -23,12 +24,14 @@ fn promise_type_nested() -> Result<(), Box<dyn std::error::Error>> {
     assert!(outer_promise.is_promise());
     let unwrapped = outer_promise.unwrap_promise_inner();
     assert!(unwrapped.is_some());
-    assert!(unwrapped.unwrap().is_promise());
+    if let Some(inner) = unwrapped {
+        assert!(inner.is_promise());
+    }
     Ok(())
 }
 
 #[test]
-fn promise_type_with_string() {
+fn promise_type_with_string() -> Result<(), Box<dyn std::error::Error>> {
     // Test Promise<string>
     let promise_string = OatsType::wrap_in_promise(OatsType::String);
     assert!(promise_string.is_promise());
@@ -36,20 +39,22 @@ fn promise_type_with_string() {
         promise_string.unwrap_promise_inner(),
         Some(&OatsType::String)
     );
+    Ok(())
 }
 
 #[test]
-fn promise_type_with_array() {
+fn promise_type_with_array() -> Result<(), Box<dyn std::error::Error>> {
     // Test Promise<number[]>
     let array_type = OatsType::Array(Box::new(OatsType::Number));
     let promise_array = OatsType::wrap_in_promise(array_type.clone());
 
     assert!(promise_array.is_promise());
     assert_eq!(promise_array.unwrap_promise_inner(), Some(&array_type));
+    Ok(())
 }
 
 #[test]
-fn non_promise_type_checks() {
+fn non_promise_type_checks() -> Result<(), Box<dyn std::error::Error>> {
     // Verify non-promise types return false for is_promise()
     assert!(!OatsType::Number.is_promise());
     assert!(!OatsType::String.is_promise());
@@ -61,13 +66,15 @@ fn non_promise_type_checks() {
 
     let struct_type = OatsType::NominalStruct("Foo".to_string());
     assert!(!struct_type.is_promise());
+    Ok(())
 }
 
 #[test]
-fn promise_type_unwrap_none_for_non_promise() {
+fn promise_type_unwrap_none_for_non_promise() -> Result<(), Box<dyn std::error::Error>> {
     // Verify unwrap_promise_inner returns None for non-promise types
     assert_eq!(OatsType::Number.unwrap_promise_inner(), None);
     assert_eq!(OatsType::String.unwrap_promise_inner(), None);
+    Ok(())
 }
 
 #[test]
@@ -94,7 +101,7 @@ fn parse_promise_number_type() -> Result<()> {
                 let oats_type = map_ts_type(ts_type);
 
                 assert!(oats_type.is_some(), "Should parse Promise<number>");
-                let oats_type = oats_type.unwrap();
+                let oats_type = oats_type.ok_or_else(|| anyhow::anyhow!("Failed to map TS type"))?;
                 assert!(oats_type.is_promise(), "Should be a Promise type");
                 assert_eq!(
                     oats_type.unwrap_promise_inner(),
@@ -132,7 +139,7 @@ fn parse_promise_string_type() -> Result<()> {
             let oats_type = map_ts_type(ts_type);
 
             assert!(oats_type.is_some());
-            let oats_type = oats_type.unwrap();
+            let oats_type = oats_type.ok_or_else(|| anyhow::anyhow!("Failed to map TS type"))?;
             assert!(oats_type.is_promise());
             assert_eq!(oats_type.unwrap_promise_inner(), Some(&OatsType::String));
             return Ok(());
@@ -165,7 +172,7 @@ fn parse_promise_void_type() -> Result<()> {
             let oats_type = map_ts_type(ts_type);
 
             assert!(oats_type.is_some());
-            let oats_type = oats_type.unwrap();
+            let oats_type = oats_type.ok_or_else(|| anyhow::anyhow!("Failed to map TS type"))?;
             assert!(oats_type.is_promise());
             assert_eq!(oats_type.unwrap_promise_inner(), Some(&OatsType::Void));
             return Ok(());
@@ -206,10 +213,10 @@ fn parse_promise_custom_type() -> Result<()> {
             let oats_type = map_ts_type(ts_type);
 
             assert!(oats_type.is_some());
-            let oats_type = oats_type.unwrap();
+            let oats_type = oats_type.ok_or_else(|| anyhow::anyhow!("Failed to map TS type"))?;
             assert!(oats_type.is_promise());
 
-            let inner = oats_type.unwrap_promise_inner().unwrap();
+            let inner = oats_type.unwrap_promise_inner().ok_or_else(|| anyhow::anyhow!("Promise should have inner type"))?;
             match inner {
                 OatsType::NominalStruct(name) => {
                     assert_eq!(name, "User");
@@ -224,7 +231,7 @@ fn parse_promise_custom_type() -> Result<()> {
 }
 
 #[test]
-fn promise_type_equality() {
+fn promise_type_equality() -> Result<(), Box<dyn std::error::Error>> {
     // Test that Promise types compare correctly
     let p1 = OatsType::wrap_in_promise(OatsType::Number);
     let p2 = OatsType::wrap_in_promise(OatsType::Number);
@@ -232,6 +239,7 @@ fn promise_type_equality() {
 
     assert_eq!(p1, p2);
     assert_ne!(p1, p3);
+    Ok(())
 }
 
 #[test]
@@ -297,7 +305,7 @@ export function main(): number {
 }
 
 #[test]
-fn infer_type_combined() {
+fn infer_type_combined() -> Result<(), Box<dyn std::error::Error>> {
     // Test the combined infer_type function with TypeScript annotations
     // Create a simple number type annotation
     use deno_ast::swc::ast::{TsKeywordType, TsKeywordTypeKind, TsType};
@@ -325,4 +333,5 @@ fn infer_type_combined() {
     // Test fallback when both are None
     let inferred_fallback = infer_type(None, None);
     assert_eq!(inferred_fallback, OatsType::Number);
+    Ok(())
 }

@@ -2,12 +2,12 @@ name: Run Oats Compiler Tests
 
 on:
   push:
-    branches: [main]
+    branches: [master]
     paths:
       - "crates/oatsc/**"
       - ".github/workflows/run-oastc-tests.yml"
   pull_request:
-    branches: [main]
+    branches: [master]
     paths:
       - "crates/oatsc/**"
       - ".github/workflows/run-oastc-tests.yml"

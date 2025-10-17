@@ -63,11 +63,13 @@ brew install llvm@18
 Toasty can work standalone by automatically fetching pre-built runtime libraries from GitHub releases:
 
 1. **Install toasty**:
+
    ```bash
    cargo install --git https://github.com/Chrono-byte/oats toasty
    ```
 
 2. **Compile and run programs**:
+
    ```bash
    # Create a simple program
    echo 'export function main(): number { return 5 + 3; }' > add.oats
@@ -82,6 +84,7 @@ Toasty can work standalone by automatically fetching pre-built runtime libraries
 The runtime is automatically cached in `~/.cache/oats/runtime/` for faster subsequent builds.
 
 **Environment variables**:
+
 - `OATS_NO_REMOTE_RUNTIME`: Force local runtime build instead of fetching
 - `OATS_RUNTIME_CACHE`: Override the cache directory
 

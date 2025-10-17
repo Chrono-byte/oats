@@ -5,7 +5,7 @@ use oatsc::parser;
 #[test]
 fn missing_semicolon_is_rejected() -> Result<()> {
     let source = r#"export function main(): number { return 1 }"#;
-    let parsed_mod = parser::parse_oats_module(source, None);
+    let parsed_mod = parser::parse_oats_module_with_options(source, None, true);
     let parsed = parsed_mod.as_ref().map(|m| &m.parsed);
     assert!(parsed.is_err(), "expected missing-semicolon to be an error");
     Ok(())

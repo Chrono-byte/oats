@@ -269,12 +269,9 @@ fn run_worklist(
         if let Some(meths) = methods.get(class) {
             for method in meths {
                 let fname = format!("{}_{}", class, method);
-                if !live_methods
-                    .entry(class.clone())
-                    .or_default()
-                    .contains(method)
-                {
-                    live_methods.get_mut(class).unwrap().insert(method.clone());
+                let methods = live_methods.entry(class.clone()).or_default();
+                if !methods.contains(method.as_str()) {
+                    methods.insert(method.clone());
                     worklist.push_back(fname);
                 }
             }
@@ -285,12 +282,9 @@ fn run_worklist(
         if let Some(func) = functions.get(&func_name) {
             let called_methods = find_method_calls(func);
             for (class, method) in called_methods {
-                if !live_methods
-                    .entry(class.clone())
-                    .or_default()
-                    .contains(&method)
-                {
-                    live_methods.get_mut(&class).unwrap().insert(method.clone());
+                let methods = live_methods.entry(class.clone()).or_default();
+                if !methods.contains(method.as_str()) {
+                    methods.insert(method.clone());
                     let fname = format!("{}_{}", class, method);
                     worklist.push_back(fname);
                 }
@@ -337,15 +331,12 @@ fn find_method_calls_in_expr(expr: &ast::Expr, calls: &mut Vec<(String, String)>
         && let ast::MemberProp::Ident(prop_ident) = &member.prop
     {
         // Assume obj_ident is 'this' or similar, but for simplicity, assume class name is known
-        // This is a simplification; in full RTA, need type analysis
-        // For now, just collect all member calls
+        // This is a simplification; in full RTA, need to resolve obj_ident to actual class
         calls.push((obj_ident.sym.to_string(), prop_ident.sym.to_string()));
     }
+
     // Recursively visit children
     if let ast::Expr::Call(call_expr) = expr {
-        if let ast::Callee::Expr(callee_expr) = &call_expr.callee {
-            find_method_calls_in_expr(callee_expr, calls);
-        }
         for arg in &call_expr.args {
             find_method_calls_in_expr(&arg.expr, calls);
         }

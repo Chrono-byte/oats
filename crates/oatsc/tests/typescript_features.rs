@@ -37,7 +37,7 @@ fn test_async_await() {
             }
         }
     "#;
-    
+
     parse_oats_module(code, None).expect("async/await should parse");
 }
 
@@ -89,7 +89,7 @@ fn test_classes() {
             }
         }
     "#;
-    
+
     parse_oats_module(code, None).expect("classes should parse");
 }
 
@@ -119,7 +119,7 @@ fn test_destructuring() {
         // Nested destructuring
         const {a: [b, c], d} = {a: [1, 2], d: 3};
     "#;
-    
+
     parse_oats_module(code, None).expect("destructuring should parse");
 }
 
@@ -145,7 +145,7 @@ fn test_template_literals() {
         
         const tagged = tag`value: ${42}`;
     "#;
-    
+
     parse_oats_module(code, None).expect("template literals should parse");
 }
 
@@ -161,7 +161,7 @@ fn test_arrow_functions() {
         const withRestParam = (...args: number[]) => args.reduce((a, b) => a + b, 0);
         const asyncArrow = async () => await Promise.resolve(42);
     "#;
-    
+
     parse_oats_module(code, None).expect("arrow functions should parse");
 }
 
@@ -182,7 +182,7 @@ fn test_for_await_of() {
             }
         }
     "#;
-    
+
     parse_oats_module(code, None).expect("for await...of should parse");
 }
 
@@ -205,7 +205,7 @@ fn test_spread_operator() {
         }
         const result = sum(...arr1);
     "#;
-    
+
     parse_oats_module(code, None).expect("spread operator should parse");
 }
 
@@ -229,7 +229,7 @@ fn test_decorators() {
             method() {}
         }
     "#;
-    
+
     parse_oats_module(code, None).expect("decorators should parse");
 }
 
@@ -251,7 +251,7 @@ fn test_computed_property_names() {
             ['method' + 'Name']() {}
         }
     "#;
-    
+
     parse_oats_module(code, None).expect("computed property names should parse");
 }
 
@@ -280,7 +280,7 @@ fn test_generators() {
             }
         }
     "#;
-    
+
     parse_oats_module(code, None).expect("generators should parse");
 }
 
@@ -294,7 +294,7 @@ fn test_optional_chaining_and_nullish_coalescing() {
         const value4 = obj ?? 'default';
         const value5 = obj?.nested?.deep?.property ?? 'fallback';
     "#;
-    
+
     parse_oats_module(code, None).expect("optional chaining and nullish coalescing should parse");
 }
 
@@ -311,7 +311,7 @@ fn test_using_declarations() {
             // asyncResource will be async disposed
         }
     "#;
-    
+
     parse_oats_module(code, None).expect("using declarations should parse");
 }
 
@@ -323,7 +323,7 @@ fn test_numeric_separators() {
         const binary = 0b1010_0001_1000_0101;
         const octal = 0o755_000;
     "#;
-    
+
     parse_oats_module(code, None).expect("numeric separators should parse");
 }
 
@@ -342,7 +342,7 @@ fn test_rest_and_default_parameters() {
             return a + rest.length;
         }
     "#;
-    
+
     parse_oats_module(code, None).expect("rest and default parameters should parse");
 }
 
@@ -370,7 +370,7 @@ fn test_complex_types() {
             return value;
         }
     "#;
-    
+
     parse_oats_module(code, None).expect("complex types should parse");
 }
 
@@ -389,7 +389,7 @@ fn test_namespaces_and_modules() {
 
         const instance = new MyNamespace.MyClass();
     "#;
-    
+
     parse_oats_module(code, None).expect("namespaces should parse");
 }
 
@@ -416,6 +416,6 @@ fn test_enums() {
 
         const color: Color = Color.Red;
     "#;
-    
+
     parse_oats_module(code, None).expect("enums should parse");
 }

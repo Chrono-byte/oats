@@ -421,7 +421,9 @@ pub use crate::rc::rc_weak_upgrade;
 pub use crate::utils::sleep_ms;
 
 // Re-export object/union functions
-pub use crate::object::{union_box_f64, union_box_ptr, union_get_discriminant, union_unbox_f64, union_unbox_ptr};
+pub use crate::object::{
+    union_box_f64, union_box_ptr, union_get_discriminant, union_unbox_f64, union_unbox_ptr,
+};
 
 // --- Union helpers ---
 

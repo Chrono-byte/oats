@@ -71,7 +71,10 @@ pub fn runtime_malloc(size: size_t) -> *mut c_void {
             return std::ptr::null_mut();
         }
 
-        let layout = Layout::from_size_align(total, 8).expect("invalid layout for heap allocation");
+        let layout = match Layout::from_size_align(total, 8) {
+            Ok(layout) => layout,
+            Err(_) => return std::ptr::null_mut(),
+        };
         let base = std::alloc::alloc(layout);
         if base.is_null() {
             release_allocation(total as u64);
@@ -101,7 +104,10 @@ pub unsafe fn runtime_free(p: *mut c_void) {
 
         release_allocation(total as u64);
 
-        let layout = Layout::from_size_align(total, 8).expect("invalid layout for heap allocation");
+        let layout = match Layout::from_size_align(total, 8) {
+            Ok(layout) => layout,
+            Err(_) => return, // Skip deallocation if layout is invalid
+        };
         std::alloc::dealloc(base, layout);
     }
 }

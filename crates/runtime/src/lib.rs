@@ -484,7 +484,7 @@ pub extern "C" fn executor_enqueue(_promise: *mut std::ffi::c_void) {
         return;
     }
     let exec = init_executor();
-    let mut q = exec.queue.lock().expect("failed to lock executor queue");
+    let Ok(mut q) = exec.queue.lock() else { return };
     q.push_back(_promise as usize);
     exec.cv.notify_one();
 }
@@ -494,11 +494,11 @@ pub extern "C" fn executor_run() {
     // Drain the queue synchronously until empty.
     let exec = init_executor();
     loop {
-        let mut q = exec.queue.lock().expect("failed to lock executor queue");
+        let Ok(mut q) = exec.queue.lock() else { break };
         if q.is_empty() {
             break;
         }
-        let p_addr = q.pop_front().expect("queue should not be empty");
+        let Some(p_addr) = q.pop_front() else { break };
         let p = p_addr as *mut std::ffi::c_void;
         drop(q);
         unsafe {
@@ -509,7 +509,9 @@ pub extern "C" fn executor_run() {
             let ready = promise_poll_into(p, out_mem as *mut std::ffi::c_void);
             if ready == 0 {
                 // not ready: re-enqueue
-                let mut q2 = exec.queue.lock().expect("failed to lock executor queue");
+                let Ok(mut q2) = exec.queue.lock() else {
+                    continue;
+                };
                 q2.push_back(p as usize);
                 exec.cv.notify_one();
             } else {
@@ -540,10 +542,21 @@ fn init_executor() -> std::sync::Arc<Exec> {
             let w = e.clone();
             std::thread::spawn(move || {
                 loop {
-                    let mut guard = w.queue.lock().expect("failed to lock worker queue");
-                    while guard.is_empty() {
-                        guard = w.cv.wait(guard).expect("failed to wait on condition variable");
+                    let Ok(mut guard) = w.queue.lock() else {
+                        continue;
+                    };
+                    if guard.is_empty() {
+                        let wait_result = w.cv.wait(guard);
+                        guard = match wait_result {
+                            Ok(g) => g,
+                            Err(_) => continue,
+                        };
+                        // After waiting, check again if empty (shouldn't be)
+                        if guard.is_empty() {
+                            continue;
+                        }
                     }
+
                     if let Some(p_addr) = guard.pop_front() {
                         drop(guard);
                         let p = p_addr as *mut std::ffi::c_void;
@@ -556,7 +569,7 @@ fn init_executor() -> std::sync::Arc<Exec> {
                             let ready = promise_poll_into(p, out_mem as *mut std::ffi::c_void);
                             if ready == 0 {
                                 // not ready; re-enqueue
-                                let mut q2 = w.queue.lock().expect("failed to lock worker queue");
+                                let Ok(mut q2) = w.queue.lock() else { continue };
                                 q2.push_back(p as usize);
                                 w.cv.notify_one();
                             } else {

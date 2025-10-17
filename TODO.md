@@ -1,8 +1,10 @@
 # Oats Compiler Enhancement TODO List
 
-**Last Updated:** October 16, 2025
+**Last Updated:** October 17, 2025
 
 This TODO list outlines potential improvements and tasks for the Oats compiler, prioritized for **full TypeScript compatibility**. Focus is on implementing missing language features and type system capabilities before performance optimizations and tooling.
+
+**TypeScript Conformance Status:** As of October 17, 2025, the parser achieves ~90.43% success rate on TypeScript conformance tests (4,547/5,028 files parsed successfully). The remaining failures are primarily due to missing support for advanced ES6+ features listed below.
 
 ## 1. Complete TypeScript Feature Parity
 
@@ -31,6 +33,10 @@ This section tracks TypeScript features not yet implemented in Oats to achieve f
 - **Abstract classes**: No `abstract` keyword or abstract methods.
 - **Getters/setters**: No `get`/`set` property accessors.
 - **Method overloading**: No support for multiple method signatures.
+- **Static blocks**: No `static { ... }` syntax for static initialization.
+- **Index signatures**: No `[key: string]: Type` or `[key: number]: Type` for dynamic property access.
+- **Constructor parameter properties**: No automatic property creation from constructor parameters.
+- **Auto-accessors**: No `accessor` keyword for automatic getter/setter generation.
 
 ### 1.3 Language Constructs
 
@@ -42,19 +48,26 @@ This section tracks TypeScript features not yet implemented in Oats to achieve f
 - **Module augmentation**: No `declare module` for extending external modules.
 - **Ambient declarations**: No `declare` for describing external APIs.
 - **Triple-slash directives**: No `/// <reference />` for compiler hints.
+- **Async/await functions**: No `async` keyword on functions/methods or `await` expressions.
+- **Destructuring**: No array/object destructuring in variable declarations, function parameters, or assignments.
+- **Template literals**: No template strings with `${}` interpolation or tagged templates.
+- **Exponentiation operator**: No `**` or `**=` operators.
+- **For-await-of loops**: No `for await (const x of iterable)` syntax.
+- **Numeric separators**: No underscore separators in numeric literals (e.g., `1_000`).
+- **Using declarations**: No `using` or `await using` for resource management.
 
 ### 1.4 Advanced Control Flow and Concurrency
 
 - **Concurrency beyond async/await**: No additional primitives like `Promise.all`, advanced scheduling, or concurrency models.
 - **Error handling**: Basic try/catch may be limited (not explicitly shown in examples).
-- **Advanced loops**: No `for...of`, `for...in`, or labeled breaks/continues beyond basic `for`.
+- **Advanced loops**: No `for...of`, `for...in`, `for await...of`, or labeled breaks/continues beyond basic `for`.
 
 ### 1.5 Runtime and Dynamic Features
 
 - **Dynamic evaluation**: No `eval`, dynamic imports, or runtime code generation (intentionally omitted for AOT).
 - **Reflection/introspection**: No runtime type information or `typeof` beyond basic checks.
 - **Global objects**: Limited standard library; no full DOM, Node.js, or browser APIs.
-- **Modules**: Static resolution only; no dynamic `import()` or CommonJS interop.
+- **Modules**: Static import/export supported, but no dynamic `import()`, import assertions/attributes, type-only imports (`import type`), re-exports, namespace imports, or verbatim module syntax.
 
 ### 1.6 Tooling and Ecosystem
 

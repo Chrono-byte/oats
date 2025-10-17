@@ -136,9 +136,15 @@ fn typescript_conformance_parsing() -> Result<()> {
     println!("  Positive tests: {}", total_files - negative_tests);
     println!("  Negative tests: {}", negative_tests);
     println!("  Successfully parsed (positive): {}", parsed_successfully);
-    println!("  Successfully rejected (negative): {}", negative_tests_passed);
+    println!(
+        "  Successfully rejected (negative): {}",
+        negative_tests_passed
+    );
     println!("  Parse failures (positive): {}", parse_failures.len());
-    println!("  Unexpected passes (negative): {}", negative_test_failures.len());
+    println!(
+        "  Unexpected passes (negative): {}",
+        negative_test_failures.len()
+    );
 
     let total_successes = parsed_successfully + negative_tests_passed;
     let success_rate = (total_successes as f64 / total_files as f64) * 100.0;

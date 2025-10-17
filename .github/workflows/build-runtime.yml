@@ -3,10 +3,10 @@ name: Build and Publish Runtime
 on:
   push:
     branches:
-      - main
+      - master
     paths:
-      - 'crates/runtime/**'
-      - '.github/workflows/build-runtime.yml'
+      - "crates/runtime/**"
+      - ".github/workflows/build-runtime.yml"
   release:
     types: [published]
   workflow_dispatch:
@@ -33,7 +33,7 @@ jobs:
             target: x86_64-apple-darwin
             artifact: libruntime-macos-x86_64.a
     runs-on: ${{ matrix.os }}
-    
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -70,10 +70,10 @@ jobs:
     name: Create Release
     needs: build-runtime
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     permissions:
       contents: write
-    
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4

@@ -106,7 +106,7 @@ fn gen_add_function_ir_contains_fadd() -> Result<()> {
             &func_sig.ret,
             None,
         )
-        .expect("codegen should succeed");
+        .map_err(|d| anyhow::anyhow!(d.message))?;
 
     let ir = codegen.module.print_to_string().to_string();
 

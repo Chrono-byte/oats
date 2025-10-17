@@ -10,10 +10,10 @@ use oatsc::parser;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-// #[test]
-fn deno_fixtures_parse_cleanly() {
+#[test]
+fn deno_fixtures_parse_cleanly() -> Result<(), Box<dyn std::error::Error>> {
     let root = deno_root();
-    let allowlist = load_allowlist(&root).expect("failed to load Deno allow-list");
+    let allowlist = load_allowlist(&root)?;
     assert!(
         !allowlist.is_empty(),
         "allow-list is empty; populate third_party/deno_tests/allowlist.txt"
@@ -29,8 +29,7 @@ fn deno_fixtures_parse_cleanly() {
             fixture_root.display()
         );
 
-        let sources = collect_source_files(&fixture_root)
-            .unwrap_or_else(|err| panic!("failed to scan {}: {err}", fixture_root.display()));
+        let sources = collect_source_files(&fixture_root)?;
 
         assert!(
             !sources.is_empty(),
@@ -39,10 +38,8 @@ fn deno_fixtures_parse_cleanly() {
         );
 
         for source in sources {
-            let contents = fs::read_to_string(&source)
-                .unwrap_or_else(|err| panic!("failed to read {}: {err}", source.display()));
-            parser::parse_oats_module(&contents, source.to_str())
-                .unwrap_or_else(|err| panic!("failed to parse {}: {err}", source.display()));
+            let contents = fs::read_to_string(&source)?;
+            parser::parse_oats_module(&contents, source.to_str())?;
             parsed_files.push(source);
         }
     }
@@ -51,6 +48,8 @@ fn deno_fixtures_parse_cleanly() {
         !parsed_files.is_empty(),
         "no files parsed from Deno fixtures; check allow-list entries"
     );
+
+    Ok(())
 }
 
 fn load_allowlist(root: &Path) -> std::io::Result<Vec<String>> {

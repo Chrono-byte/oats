@@ -25,7 +25,7 @@ fn test_add_example_end_to_end() -> Result<()> {
     let workspace_root = manifest_dir
         .parent()
         .and_then(|p| p.parent())
-        .expect("failed to find workspace root");
+        .ok_or_else(|| anyhow::anyhow!("failed to find workspace root"))?;
     let example = workspace_root.join("examples").join("add.oats");
     let bin_path = workspace_root.join("target").join("debug").join("toasty");
     assert!(

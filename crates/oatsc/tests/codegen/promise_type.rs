@@ -15,7 +15,7 @@ fn promise_type_creation() {
 }
 
 #[test]
-fn promise_type_nested() {
+fn promise_type_nested() -> Result<(), Box<dyn std::error::Error>> {
     // Test Promise<Promise<number>>
     let inner_promise = OatsType::wrap_in_promise(OatsType::Number);
     let outer_promise = OatsType::wrap_in_promise(inner_promise.clone());
@@ -24,6 +24,7 @@ fn promise_type_nested() {
     let unwrapped = outer_promise.unwrap_promise_inner();
     assert!(unwrapped.is_some());
     assert!(unwrapped.unwrap().is_promise());
+    Ok(())
 }
 
 #[test]

@@ -2,25 +2,25 @@
 use deno_ast::{MediaType, ParseParams, parse_module};
 
 #[test]
-fn dump_unary_ast() {
+fn dump_unary_ast() -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"
 export function main(): number {
     let x: number = 5;
-    let y: number = -x;
+    let y = -x;
     return y;
 }
 "#;
 
     let _parsed = parse_module(ParseParams {
-        specifier: deno_ast::ModuleSpecifier::parse("file://test.ts").unwrap(),
+        specifier: deno_ast::ModuleSpecifier::parse("file://test.ts")?,
         text: source.into(),
         media_type: MediaType::TypeScript,
         capture_tokens: false,
         scope_analysis: false,
         maybe_syntax: None,
-    })
-    .unwrap();
+    })?;
 
     // Print the program structure
     // println!("{:#?}", _parsed.program());
+    Ok(())
 }

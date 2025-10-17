@@ -11,7 +11,7 @@
 use oatsc::parser::parse_oats_module;
 
 #[test]
-fn test_async_await() {
+fn test_async_await() -> Result<(), Box<dyn std::error::Error>> {
     let code = r#"
         async function fetchData() {
             const response = await fetch('https://api.example.com/data');
@@ -38,11 +38,12 @@ fn test_async_await() {
         }
     "#;
 
-    parse_oats_module(code, None).expect("async/await should parse");
+    parse_oats_module(code, None)?;
+    Ok(())
 }
 
 #[test]
-fn test_classes() {
+fn test_classes() -> Result<(), Box<dyn std::error::Error>> {
     let code = r#"
         class BaseClass {
             constructor(public name: string) {}
@@ -90,11 +91,12 @@ fn test_classes() {
         }
     "#;
 
-    parse_oats_module(code, None).expect("classes should parse");
+    parse_oats_module(code, None)?;
+    Ok(())
 }
 
 #[test]
-fn test_destructuring() {
+fn test_destructuring() -> Result<(), Box<dyn std::error::Error>> {
     let code = r#"
         // Array destructuring
         const [a, b, c] = [1, 2, 3];
@@ -120,11 +122,12 @@ fn test_destructuring() {
         const {a: [b, c], d} = {a: [1, 2], d: 3};
     "#;
 
-    parse_oats_module(code, None).expect("destructuring should parse");
+    parse_oats_module(code, None)?;
+    Ok(())
 }
 
 #[test]
-fn test_template_literals() {
+fn test_template_literals() -> Result<(), Box<dyn std::error::Error>> {
     let code = r#"
         const name = 'World';
         const greeting = `Hello, ${name}!`;
@@ -146,11 +149,12 @@ fn test_template_literals() {
         const tagged = tag`value: ${42}`;
     "#;
 
-    parse_oats_module(code, None).expect("template literals should parse");
+    parse_oats_module(code, None)?;
+    Ok(())
 }
 
 #[test]
-fn test_arrow_functions() {
+fn test_arrow_functions() -> Result<(), Box<dyn std::error::Error>> {
     let code = r#"
         const simple = () => 42;
         const withParam = (x: number) => x * 2;
@@ -162,11 +166,12 @@ fn test_arrow_functions() {
         const asyncArrow = async () => await Promise.resolve(42);
     "#;
 
-    parse_oats_module(code, None).expect("arrow functions should parse");
+    parse_oats_module(code, None)?;
+    Ok(())
 }
 
 #[test]
-fn test_for_await_of() {
+fn test_for_await_of() -> Result<(), Box<dyn std::error::Error>> {
     let code = r#"
         async function processAsyncIterable() {
             const asyncIterable = {
@@ -183,11 +188,12 @@ fn test_for_await_of() {
         }
     "#;
 
-    parse_oats_module(code, None).expect("for await...of should parse");
+    parse_oats_module(code, None)?;
+    Ok(())
 }
 
 #[test]
-fn test_spread_operator() {
+fn test_spread_operator() -> Result<(), Box<dyn std::error::Error>> {
     let code = r#"
         // Array spread
         const arr1 = [1, 2, 3];
@@ -206,11 +212,12 @@ fn test_spread_operator() {
         const result = sum(...arr1);
     "#;
 
-    parse_oats_module(code, None).expect("spread operator should parse");
+    parse_oats_module(code, None)?;
+    Ok(())
 }
 
 #[test]
-fn test_decorators() {
+fn test_decorators() -> Result<(), Box<dyn std::error::Error>> {
     let code = r#"
         function sealed(target: any) {
             return target;
@@ -230,11 +237,12 @@ fn test_decorators() {
         }
     "#;
 
-    parse_oats_module(code, None).expect("decorators should parse");
+    parse_oats_module(code, None)?;
+    Ok(())
 }
 
 #[test]
-fn test_computed_property_names() {
+fn test_computed_property_names() -> Result<(), Box<dyn std::error::Error>> {
     let code = r#"
         const propName = 'dynamicProp';
         
@@ -252,11 +260,12 @@ fn test_computed_property_names() {
         }
     "#;
 
-    parse_oats_module(code, None).expect("computed property names should parse");
+    parse_oats_module(code, None)?;
+    Ok(())
 }
 
 #[test]
-fn test_generators() {
+fn test_generators() -> Result<(), Box<dyn std::error::Error>> {
     let code = r#"
         function* simpleGenerator() {
             yield 1;
@@ -281,11 +290,12 @@ fn test_generators() {
         }
     "#;
 
-    parse_oats_module(code, None).expect("generators should parse");
+    parse_oats_module(code, None)?;
+    Ok(())
 }
 
 #[test]
-fn test_optional_chaining_and_nullish_coalescing() {
+fn test_optional_chaining_and_nullish_coalescing() -> Result<(), Box<dyn std::error::Error>> {
     let code = r#"
         const obj: any = null;
         const value1 = obj?.property;
@@ -295,11 +305,12 @@ fn test_optional_chaining_and_nullish_coalescing() {
         const value5 = obj?.nested?.deep?.property ?? 'fallback';
     "#;
 
-    parse_oats_module(code, None).expect("optional chaining and nullish coalescing should parse");
+    parse_oats_module(code, None)?;
+    Ok(())
 }
 
 #[test]
-fn test_using_declarations() {
+fn test_using_declarations() -> Result<(), Box<dyn std::error::Error>> {
     let code = r#"
         {
             using resource = getResource();
@@ -312,11 +323,12 @@ fn test_using_declarations() {
         }
     "#;
 
-    parse_oats_module(code, None).expect("using declarations should parse");
+    parse_oats_module(code, None)?;
+    Ok(())
 }
 
 #[test]
-fn test_numeric_separators() {
+fn test_numeric_separators() -> Result<(), Box<dyn std::error::Error>> {
     let code = r#"
         const billion = 1_000_000_000;
         const hex = 0xFF_FF_FF_FF;
@@ -324,11 +336,12 @@ fn test_numeric_separators() {
         const octal = 0o755_000;
     "#;
 
-    parse_oats_module(code, None).expect("numeric separators should parse");
+    parse_oats_module(code, None)?;
+    Ok(())
 }
 
 #[test]
-fn test_rest_and_default_parameters() {
+fn test_rest_and_default_parameters() -> Result<(), Box<dyn std::error::Error>> {
     let code = r#"
         function withDefaults(a: number = 1, b: string = 'default') {
             return `${a}: ${b}`;
@@ -343,11 +356,12 @@ fn test_rest_and_default_parameters() {
         }
     "#;
 
-    parse_oats_module(code, None).expect("rest and default parameters should parse");
+    parse_oats_module(code, None)?;
+    Ok(())
 }
 
 #[test]
-fn test_complex_types() {
+fn test_complex_types() -> Result<(), Box<dyn std::error::Error>> {
     let code = r#"
         type StringOrNumber = string | number;
         type Point = {x: number, y: number};
@@ -371,11 +385,12 @@ fn test_complex_types() {
         }
     "#;
 
-    parse_oats_module(code, None).expect("complex types should parse");
+    parse_oats_module(code, None)?;
+    Ok(())
 }
 
 #[test]
-fn test_namespaces_and_modules() {
+fn test_namespaces_and_modules() -> Result<(), Box<dyn std::error::Error>> {
     let code = r#"
         namespace MyNamespace {
             export class MyClass {}
@@ -390,11 +405,12 @@ fn test_namespaces_and_modules() {
         const instance = new MyNamespace.MyClass();
     "#;
 
-    parse_oats_module(code, None).expect("namespaces should parse");
+    parse_oats_module(code, None)?;
+    Ok(())
 }
 
 #[test]
-fn test_enums() {
+fn test_enums() -> Result<(), Box<dyn std::error::Error>> {
     let code = r#"
         enum Color {
             Red,
@@ -417,5 +433,6 @@ fn test_enums() {
         const color: Color = Color.Red;
     "#;
 
-    parse_oats_module(code, None).expect("enums should parse");
+    parse_oats_module(code, None)?;
+    Ok(())
 }

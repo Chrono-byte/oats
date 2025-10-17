@@ -104,7 +104,7 @@ export function main(x: number | string): string {
             &func_sig.ret,
             None,
         )
-        .expect("codegen should succeed");
+        .map_err(|d| anyhow::anyhow!(d.message))?;
 
     let ir = codegen.module.print_to_string().to_string();
 

@@ -82,7 +82,7 @@ pub fn gen_ir_for_source(src: &str) -> Result<String> {
     let module = context.create_module("test_module");
     let triple = TargetMachine::get_default_triple();
     module.set_triple(&triple);
-    let codegen = create_codegen(&context, "test_module", symbols, &parsed_mod.source);
+    let codegen = create_codegen(&context, "test_module", symbols, &parsed_mod.source)?;
 
     // gen_function_ir returns Diagnostic on failures; convert to anyhow for `?` compatibility
     // Emit class methods/constructors for exported classes so tests can inspect
@@ -247,7 +247,7 @@ pub fn create_codegen<'a>(
     module_name: &str,
     mut symbols: SymbolTable,
     source: &'a str,
-) -> CodeGen<'a> {
+) -> anyhow::Result<CodeGen<'a>> {
     let module = context.create_module(module_name);
     let builder = context.create_builder();
 
@@ -255,8 +255,7 @@ pub fn create_codegen<'a>(
 
     // Simulate module resolution and symbol registration
     let mut modules = std::collections::HashMap::new();
-    let parsed_mod =
-        oatsc::parser::parse_oats_module(source, None).expect("Failed to parse module");
+    let parsed_mod = oatsc::parser::parse_oats_module(source, None)?;
     modules.insert(module_name.to_string(), parsed_mod);
 
     for (_, parsed_module) in modules.iter() {
@@ -282,9 +281,11 @@ pub fn create_codegen<'a>(
 
     // Suppress noisy debug printing in tests.
 
-    let parsed_mod_ref = modules.get(module_name).expect("parsed module missing");
+    let parsed_mod_ref = modules
+        .get(module_name)
+        .ok_or_else(|| anyhow::anyhow!("parsed module missing"))?;
 
-    CodeGen {
+    Ok(CodeGen {
         context,
         module,
         builder,
@@ -342,5 +343,5 @@ pub fn create_codegen<'a>(
         nested_generic_fns: RefCell::new(HashMap::new()),
         monomorphized_map: RefCell::new(HashMap::new()),
         rta_results: None,
-    }
+    })
 }

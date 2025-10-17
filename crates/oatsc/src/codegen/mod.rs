@@ -1193,6 +1193,76 @@ impl<'a> CodeGen<'a> {
             .into())
     }
 
+    /// Monomorphize a generic function with the given type arguments
+    pub fn monomorphize_function(
+        &self,
+        func_name: &str,
+        type_args: &[crate::types::OatsType],
+    ) -> Result<String, crate::diagnostics::Diagnostic> {
+        // Create a unique name for this monomorphization
+        let mut key_parts = vec![func_name.to_string()];
+        for arg in type_args {
+            key_parts.push(format!("{:?}", arg));
+        }
+        let key = key_parts.join("_");
+
+        // Check if we've already monomorphized this
+        if let Some(existing_name) = self.monomorphized_map.borrow().get(&key) {
+            return Ok(existing_name.clone());
+        }
+
+        // Get the generic function
+        let (_func_ast, fsig) = self
+            .nested_generic_fns
+            .borrow()
+            .get(func_name)
+            .cloned()
+            .ok_or_else(|| {
+                crate::diagnostics::Diagnostic::simple(format!(
+                    "Generic function '{}' not found",
+                    func_name
+                ))
+            })?;
+
+        // Verify type args match type params
+        if type_args.len() != fsig.type_params.len() {
+            return Err(crate::diagnostics::Diagnostic::simple(format!(
+                "Expected {} type arguments for generic function '{}', got {}",
+                fsig.type_params.len(),
+                func_name,
+                type_args.len()
+            )));
+        }
+
+        // Create substitution map
+        let mut subst = std::collections::HashMap::new();
+        for (param_name, arg_type) in fsig.type_params.iter().zip(type_args.iter()) {
+            subst.insert(param_name.clone(), arg_type.clone());
+        }
+
+        // Generate specialized function name
+        let mut specialized_name = func_name.to_string();
+        for arg in type_args {
+            specialized_name.push_str(
+                &format!("_{:?}", arg)
+                    .replace(" ", "")
+                    .replace("(", "")
+                    .replace(")", "")
+                    .replace(",", "_"),
+            );
+        }
+
+        // Store the mapping
+        self.monomorphized_map
+            .borrow_mut()
+            .insert(key, specialized_name.clone());
+
+        // TODO: Actually emit the specialized function
+        // For now, just return the name - the actual emission would need to be implemented
+
+        Ok(specialized_name)
+    }
+
     /// Infer return type from arrow function body
     pub fn infer_return_type_from_arrow_body(
         &self,

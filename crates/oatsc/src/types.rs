@@ -56,10 +56,16 @@ pub enum OatsType {
     Generic(Vec<OatsType>),
     // Enum type with name and variant names
     Enum(String, Vec<String>),
+    // Generic type instance with concrete type arguments
+    GenericInstance {
+        base_name: String,
+        type_args: Vec<OatsType>,
+    },
 }
 
 #[derive(Debug, Clone)]
 pub struct FunctionSig {
+    pub type_params: Vec<String>,
     pub params: Vec<OatsType>,
     pub ret: OatsType,
 }
@@ -527,7 +533,16 @@ pub fn check_function_strictness(
         }
     }
 
+    // Collect type parameters
+    let mut type_params = Vec::new();
+    if let Some(tp) = &func_decl.type_params {
+        for param in &tp.params {
+            type_params.push(param.name.sym.to_string());
+        }
+    }
+
     Ok(FunctionSig {
+        type_params,
         params: param_types,
         ret: ret_type,
     })
@@ -675,6 +690,16 @@ pub fn apply_inferred_subst(ty: &OatsType, inferred: &[OatsType]) -> OatsType {
                 .map(|(n, t)| (n.clone(), apply_inferred_subst(t, inferred)))
                 .collect(),
         ),
+        OatsType::GenericInstance {
+            base_name,
+            type_args,
+        } => OatsType::GenericInstance {
+            base_name: base_name.clone(),
+            type_args: type_args
+                .iter()
+                .map(|t| apply_inferred_subst(t, inferred))
+                .collect(),
+        },
         other => other.clone(),
     }
 }

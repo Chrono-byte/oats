@@ -36,6 +36,9 @@ fn typescript_conformance_parsing() -> Result<()> {
     let mut total_files = 0;
     let mut parsed_successfully = 0;
     let mut parse_failures = Vec::new();
+    let mut negative_tests = 0;
+    let mut negative_tests_passed = 0;
+    let mut negative_test_failures = Vec::new();
 
     // Walk through all .ts files in the conformance directory
     for entry in WalkDir::new(conformance_path)
@@ -68,23 +71,18 @@ fn typescript_conformance_parsing() -> Result<()> {
             continue;
         }
 
-        // Skip typings-related tests as Oats doesn't currently support .d.ts files
-        if path_str.contains("typings/") || path_str.ends_with(".d.ts") {
-            // mark as a failure
+        // Skip .d.ts files as they are type definition files
+        if path_str.ends_with(".d.ts") {
             parse_failures.push(format!("Skipped typings test {}", path.display()));
             continue;
         }
 
-        // Skip error recovery tests as Oats doesn't implement error recovery parsing
-        if path_str.contains("errorrecovery") {
-            // mark as a failure
-            parse_failures.push(format!("Skipped error recovery test {}", path.display()));
-            continue;
-        }
+        // Identify negative tests (tests that are designed to fail parsing)
+        // Only ErrorRecovery tests are actual parser errors that should fail
+        let is_negative_test = path_str.contains("ErrorRecovery");
 
-        // Skip invalid syntax tests (negative test cases that should fail)
-        if path_str.contains("invalid") || path_str.contains("error") {
-            continue;
+        if is_negative_test {
+            negative_tests += 1;
         }
 
         total_files += 1;
@@ -111,10 +109,23 @@ fn typescript_conformance_parsing() -> Result<()> {
         // Attempt to parse with Oats parser
         match oatsc::parser::parse_oats_module(&content, Some(&path.to_string_lossy())) {
             Ok(_) => {
-                parsed_successfully += 1;
+                if is_negative_test {
+                    // Negative test should have failed but succeeded - this is a failure
+                    negative_test_failures.push(format!(
+                        "Negative test unexpectedly passed: {}",
+                        path.display()
+                    ));
+                } else {
+                    parsed_successfully += 1;
+                }
             }
             Err(_e) => {
-                parse_failures.push(format!("Failed to parse {}", path.display()));
+                if is_negative_test {
+                    // Negative test failed as expected - this is a success
+                    negative_tests_passed += 1;
+                } else {
+                    parse_failures.push(format!("Failed to parse {}", path.display()));
+                }
             }
         }
     }
@@ -122,15 +133,23 @@ fn typescript_conformance_parsing() -> Result<()> {
     // Report results
     println!("TypeScript Conformance Parsing Results:");
     println!("  Total .ts files: {}", total_files);
-    println!("  Successfully parsed: {}", parsed_successfully);
-    println!("  Parse failures: {}", parse_failures.len());
+    println!("  Positive tests: {}", total_files - negative_tests);
+    println!("  Negative tests: {}", negative_tests);
+    println!("  Successfully parsed (positive): {}", parsed_successfully);
+    println!("  Successfully rejected (negative): {}", negative_tests_passed);
+    println!("  Parse failures (positive): {}", parse_failures.len());
+    println!("  Unexpected passes (negative): {}", negative_test_failures.len());
 
-    let success_rate = (parsed_successfully as f64 / total_files as f64) * 100.0;
+    let total_successes = parsed_successfully + negative_tests_passed;
+    let success_rate = (total_successes as f64 / total_files as f64) * 100.0;
     println!("Success rate: {:.2}%", success_rate);
 
-    if !parse_failures.is_empty() {
-        eprintln!("\nParse failures:");
+    if !parse_failures.is_empty() || !negative_test_failures.is_empty() {
+        eprintln!("\nUnexpected results:");
         for failure in &parse_failures {
+            eprintln!("  {}", failure);
+        }
+        for failure in &negative_test_failures {
             eprintln!("  {}", failure);
         }
 
@@ -141,12 +160,24 @@ fn typescript_conformance_parsing() -> Result<()> {
             );
         } else {
             eprintln!(
-                "Warning: {} parse failures detected. See output above.",
-                parse_failures.len()
+                "Warning: {} unexpected results detected. See output above.",
+                parse_failures.len() + negative_test_failures.len()
             );
         }
     } else {
-        println!("🎉 All TypeScript conformance tests parsed successfully!");
+        println!("🎉 All TypeScript conformance tests handled correctly!");
+    }
+
+    if !negative_test_failures.is_empty() {
+        eprintln!("\nNegative test failures:");
+        for failure in &negative_test_failures {
+            eprintln!("  {}", failure);
+        }
+
+        panic!(
+            "Some negative tests did not fail as expected: {} failures",
+            negative_test_failures.len()
+        );
     }
 
     Ok(())

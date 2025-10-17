@@ -137,6 +137,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             // has a TypeScript type annotation that maps to a union,
                             // allocate the ABI slot accordingly and box numeric
                             // payloads into union objects.
+                            eprintln!("[debug] Processing var decl: {} kind={:?}", name, var_decl.kind);
                             if let Some(init) = &decl.init {
                                 // If this is a `const` declaration, attempt compile-time evaluation
                                 if matches!(var_decl.kind, deno_ast::swc::ast::VarDeclKind::Const) {
@@ -257,26 +258,41 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             }
                                         };
                                     // Insert local early as uninitialized; we'll store to it below
-                                    self.insert_local_current_scope(
-                                        _locals_stack,
-                                        crate::codegen::helpers::LocalVarInfo {
-                                            name: name.clone(),
-                                            ptr: alloca,
-                                            ty: allocated_ty,
-                                            initialized: false,
-                                            // const declarations are immutable. For `let`, default
-                                            // to immutable unless `let mut` was used.
-                                            is_const: matches!(
-                                                var_decl.kind,
-                                                deno_ast::swc::ast::VarDeclKind::Const
-                                            ) || !is_mut_decl,
-                                            is_weak: declared_is_weak,
-                                            nominal: declared_nominal.clone(),
-                                            oats_type: declared_mapped
-                                                .clone()
-                                                .or(Some(init_inferred.clone())),
-                                        },
-                                    );
+                                    // For `var` declarations, insert into function scope (hoisted)
+                                    // For `let`/`const` declarations, insert into current scope (block-scoped)
+                                    if matches!(var_decl.kind, deno_ast::swc::ast::VarDeclKind::Var) {
+                                        self.insert_local_function_scope(
+                                            _locals_stack,
+                                            crate::codegen::helpers::LocalVarInfo {
+                                                name: name.clone(),
+                                                ptr: alloca,
+                                                ty: allocated_ty,
+                                                initialized: false,
+                                                // var declarations are mutable
+                                                is_const: false,
+                                                is_weak: declared_is_weak,
+                                                nominal: declared_nominal.clone(),
+                                                oats_type: declared_union.clone(),
+                                            },
+                                        );
+                                    } else {
+                                        self.insert_local_current_scope(
+                                            _locals_stack,
+                                            crate::codegen::helpers::LocalVarInfo {
+                                                name: name.clone(),
+                                                ptr: alloca,
+                                                ty: allocated_ty,
+                                                initialized: false,
+                                                is_const: matches!(
+                                                    var_decl.kind,
+                                                    deno_ast::swc::ast::VarDeclKind::Const
+                                                ) || !is_mut_decl,
+                                                is_weak: declared_is_weak,
+                                                nominal: declared_nominal.clone(),
+                                                oats_type: declared_union.clone(),
+                                            },
+                                        );
+                                    }
                                 }
                                 // `init` is an Option<Box<Expr>> (deno_ast wrapper); use `.as_ref()`
                                 // Special-case: if the declared type is a Tuple and the
@@ -495,7 +511,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         self.insert_local_current_scope(
                                             _locals_stack,
                                             crate::codegen::helpers::LocalVarInfo {
-                                                name,
+                                                name: name.clone(),
                                                 ptr: alloca,
                                                 ty: allocated_ty,
                                                 initialized: true,
@@ -889,25 +905,46 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         self.set_local_initialized(_locals_stack, &name, true);
                                     } else {
                                         // mark initialized in locals; is_const=false by default
-                                        self.insert_local_current_scope(
-                                            _locals_stack,
-                                            crate::codegen::helpers::LocalVarInfo {
-                                                name,
-                                                ptr: alloca,
-                                                ty: allocated_ty,
-                                                initialized: true,
-                                                // If this was a `let` without `mut`, treat as const/immutable
-                                                is_const: matches!(
-                                                    var_decl.kind,
-                                                    deno_ast::swc::ast::VarDeclKind::Const
-                                                ) || !is_mut_decl,
-                                                is_weak: declared_is_weak,
-                                                nominal: declared_nominal.clone(),
-                                                oats_type: declared_mapped
-                                                    .clone()
-                                                    .or(Some(init_inferred.clone())),
-                                            },
-                                        );
+                                        // For `var` declarations, insert into function scope (hoisted)
+                                        // For `let`/`const` declarations, insert into current scope (block-scoped)
+                                        if matches!(var_decl.kind, deno_ast::swc::ast::VarDeclKind::Var) {
+                                            self.insert_local_function_scope(
+                                                _locals_stack,
+                                                crate::codegen::helpers::LocalVarInfo {
+                                                    name: name.clone(),
+                                                    ptr: alloca,
+                                                    ty: allocated_ty,
+                                                    initialized: true,
+                                                    // var declarations are mutable
+                                                    is_const: false,
+                                                    is_weak: declared_is_weak,
+                                                    nominal: declared_nominal.clone(),
+                                                    oats_type: declared_mapped
+                                                        .clone()
+                                                        .or(Some(init_inferred.clone())),
+                                                },
+                                            );
+                                        } else {
+                                            self.insert_local_current_scope(
+                                                _locals_stack,
+                                                crate::codegen::helpers::LocalVarInfo {
+                                                    name: name.clone(),
+                                                    ptr: alloca,
+                                                    ty: allocated_ty,
+                                                    initialized: true,
+                                                    // If this was a `let` without `mut`, treat as const/immutable
+                                                    is_const: matches!(
+                                                        var_decl.kind,
+                                                        deno_ast::swc::ast::VarDeclKind::Const
+                                                    ) || !is_mut_decl,
+                                                    is_weak: declared_is_weak,
+                                                    nominal: declared_nominal.clone(),
+                                                    oats_type: declared_mapped
+                                                        .clone()
+                                                        .or(Some(init_inferred.clone())),
+                                                },
+                                            );
+                                        }
                                     }
                                 } else {
                                     // No initializer: create an uninitialized slot
@@ -1776,7 +1813,6 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 if let Some(init) = &forstmt.init {
                     match init {
                         deno_ast::swc::ast::VarDeclOrExpr::VarDecl(var_decl) => {
-                            // Handle var declaration (e.g., let i = 0)
                             let _ = self.lower_stmt(
                                 &deno_ast::swc::ast::Stmt::Decl(deno_ast::swc::ast::Decl::Var(
                                     Box::new((**var_decl).clone()),
@@ -1961,23 +1997,15 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     deno_ast::swc::ast::Stmt::Block(block) => {
                         self.lower_stmts(&block.stmts, _function, _param_map, _locals_stack)?
                     }
-                    _ => {
-                        self.lower_stmt(&dowhile_stmt.body, _function, _param_map, _locals_stack)?
-                    }
+                    _ => self.lower_stmt(&dowhile_stmt.body, _function, _param_map, _locals_stack)?,
                 };
 
-                // If body didn't terminate, branch to condition check
-                if !body_terminated {
-                    let _ = self.builder.build_unconditional_branch(loop_cond_bb);
-                }
-
-                // Build condition block
+                // Build condition block (executed after body)
                 self.builder.position_at_end(loop_cond_bb);
                 if let Ok(cond_val) =
                     self.lower_expr(&dowhile_stmt.test, _function, _param_map, _locals_stack)
                 {
                     // Coerce to i1 boolean
-
                     if let Some(cond_bool) = self.to_condition_i1(cond_val) {
                         let _ = self.builder.build_conditional_branch(
                             cond_bool,

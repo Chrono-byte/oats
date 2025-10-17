@@ -4,7 +4,7 @@ use clap::{Parser, Subcommand};
 use colored::Colorize;
 
 #[derive(Parser)]
-#[command(name = "toasty", about = "Oats: build and run AOT-compiled programs")]
+#[command(name = "toasty", about = "Experimental TypeScript Compiler", version = env!("CARGO_PKG_VERSION"))]
 struct Cli {
     /// Print verbose debug information even in release builds
     #[arg(long = "verbose")]
@@ -88,7 +88,7 @@ enum Commands {
 // Preflight dependency check so CLI users and CI get a clear error early.
 #[allow(dead_code)]
 fn preflight_check() -> anyhow::Result<()> {
-    // legacy: kept no-arg wrapper for compatibility, forwards to new fn
+    // Legacy: kept no-arg wrapper for compatibility, forwards to new function
     preflight_check_with_verbosity(false)
 }
 
@@ -146,7 +146,7 @@ fn preflight_check_with_verbosity(verbose: bool) -> anyhow::Result<()> {
                 // Found binary but it returned non-zero; continue looking
             }
             Err(_e) => {
-                // not found; try next
+                // Not found; try next
             }
         }
     }
@@ -330,7 +330,7 @@ fn main() -> Result<()> {
             }
             let status = cmd.status()?;
             if !status.success() {
-                anyhow::bail!("executed program returned non-zero exit code");
+                anyhow::bail!("Executed program returned non-zero exit code");
             }
             Ok(())
         }

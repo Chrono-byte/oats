@@ -3095,10 +3095,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 None
                             };
 
-                        let arr_alloca = arr_alloca_opt.ok_or_else(|| Diagnostic::simple_with_span(
-                            "array element assignment requires array stored in a variable",
-                            assign.span.lo.0 as usize,
-                        ))?;
+                        let arr_alloca = arr_alloca_opt.ok_or_else(|| {
+                            Diagnostic::simple_with_span(
+                                "array element assignment requires array stored in a variable",
+                                assign.span.lo.0 as usize,
+                            )
+                        })?;
 
                         // Lower the index expression
                         let idx_val =
@@ -3611,10 +3613,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             .build_phi(ptr_ty, "phi_tmp")
                             .map_err(|_| Diagnostic::simple("phi creation failed"))?;
                         if let (Some(then_val), Some(else_val)) = (then_incoming, else_incoming) {
-                            phi_node.add_incoming(&[
-                                (&then_val, then_bb),
-                                (&else_val, else_bb),
-                            ]);
+                            phi_node.add_incoming(&[(&then_val, then_bb), (&else_val, else_bb)]);
                             return Ok(phi_node.as_basic_value());
                         } else {
                             return Err(Diagnostic::simple("missing incoming values for phi"));
@@ -4772,7 +4771,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             let state_param = match poll_f.get_nth_param(0) {
                                 Some(param) => param,
                                 None => {
-                                    return Err(Diagnostic::simple("missing state parameter in async poll function"));
+                                    return Err(Diagnostic::simple(
+                                        "missing state parameter in async poll function",
+                                    ));
                                 }
                             };
                             let state_ptr = state_param.into_pointer_value();

@@ -389,7 +389,9 @@ impl<'a> CodeGen<'a> {
                 let mut field_vals: Vec<inkwell::values::BasicValueEnum> = Vec::new();
 
                 for k in &keys {
-                    let v = map.get(k).ok_or_else(|| crate::diagnostics::Diagnostic::simple("key not found in const map"))?;
+                    let v = map.get(k).ok_or_else(|| {
+                        crate::diagnostics::Diagnostic::simple("key not found in const map")
+                    })?;
                     match v {
                         ConstValue::Number(n) => {
                             field_types.push(self.f64_t.into());
@@ -1224,7 +1226,9 @@ impl<'a> CodeGen<'a> {
 
                     // If only one unique type, return it; otherwise create union
                     if unique_types.len() == 1 {
-                        unique_types.into_iter().next().ok_or_else(|| crate::diagnostics::Diagnostic::simple("expected one unique type"))
+                        unique_types.into_iter().next().ok_or_else(|| {
+                            crate::diagnostics::Diagnostic::simple("expected one unique type")
+                        })
                     } else {
                         Ok(crate::types::OatsType::Union(unique_types))
                     }

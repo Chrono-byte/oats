@@ -2,12 +2,12 @@ name: Run Toasty Tests
 
 on:
   push:
-    branches: [main]
+    branches: [master]
     paths:
       - "crates/toasty/**"
       - ".github/workflows/run-toasty-tests.yml"
   pull_request:
-    branches: [main]
+    branches: [master]
     paths:
       - "crates/toasty/**"
       - ".github/workflows/run-toasty-tests.yml"

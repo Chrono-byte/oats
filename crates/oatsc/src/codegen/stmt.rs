@@ -137,7 +137,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             // has a TypeScript type annotation that maps to a union,
                             // allocate the ABI slot accordingly and box numeric
                             // payloads into union objects.
-                            eprintln!("[debug] Processing var decl: {} kind={:?}", name, var_decl.kind);
+                            eprintln!(
+                                "[debug] Processing var decl: {} kind={:?}",
+                                name, var_decl.kind
+                            );
                             if let Some(init) = &decl.init {
                                 // If this is a `const` declaration, attempt compile-time evaluation
                                 if matches!(var_decl.kind, deno_ast::swc::ast::VarDeclKind::Const) {
@@ -260,7 +263,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     // Insert local early as uninitialized; we'll store to it below
                                     // For `var` declarations, insert into function scope (hoisted)
                                     // For `let`/`const` declarations, insert into current scope (block-scoped)
-                                    if matches!(var_decl.kind, deno_ast::swc::ast::VarDeclKind::Var) {
+                                    if matches!(var_decl.kind, deno_ast::swc::ast::VarDeclKind::Var)
+                                    {
                                         self.insert_local_function_scope(
                                             _locals_stack,
                                             crate::codegen::helpers::LocalVarInfo {
@@ -907,7 +911,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         // mark initialized in locals; is_const=false by default
                                         // For `var` declarations, insert into function scope (hoisted)
                                         // For `let`/`const` declarations, insert into current scope (block-scoped)
-                                        if matches!(var_decl.kind, deno_ast::swc::ast::VarDeclKind::Var) {
+                                        if matches!(
+                                            var_decl.kind,
+                                            deno_ast::swc::ast::VarDeclKind::Var
+                                        ) {
                                             self.insert_local_function_scope(
                                                 _locals_stack,
                                                 crate::codegen::helpers::LocalVarInfo {
@@ -1997,7 +2004,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     deno_ast::swc::ast::Stmt::Block(block) => {
                         self.lower_stmts(&block.stmts, _function, _param_map, _locals_stack)?
                     }
-                    _ => self.lower_stmt(&dowhile_stmt.body, _function, _param_map, _locals_stack)?,
+                    _ => {
+                        self.lower_stmt(&dowhile_stmt.body, _function, _param_map, _locals_stack)?
+                    }
                 };
 
                 // Build condition block (executed after body)

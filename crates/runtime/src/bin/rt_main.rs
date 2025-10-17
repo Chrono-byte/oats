@@ -49,7 +49,7 @@ unsafe extern "C" {
 /// resolved symbol matches the expected `extern "C" fn() -> i32` signature.
 #[cfg(not(feature = "link_entry"))]
 fn try_call_oats_entry() -> Option<i32> {
-    let name = std::ffi::CString::new("oats_entry").unwrap();
+    let name = std::ffi::CString::new("oats_entry").expect("failed to create C string");
     unsafe {
         use std::ffi::c_void;
         libc::dlerror();

@@ -75,10 +75,10 @@ impl Collector {
         let c = Arc::clone(self);
         thread::spawn(move || {
             while c.running.load(Ordering::SeqCst) {
-                let mut guard = c.queue.lock().unwrap();
+                let mut guard = c.queue.lock().expect("failed to lock collector queue");
                 let (g, _timeout) =
                     c.cv.wait_timeout(guard, Duration::from_millis(100))
-                        .unwrap();
+                        .expect("failed to wait on condition variable");
                 guard = g;
                 if !guard.is_empty() {
                     let roots: Vec<usize> = guard.drain(..).collect();
@@ -104,13 +104,13 @@ impl Collector {
     }
 
     pub fn push_root(&self, ptr: usize) {
-        let mut q = self.queue.lock().unwrap();
+        let mut q = self.queue.lock().expect("failed to lock collector queue");
         q.push(ptr);
         self.cv.notify_one();
     }
 
     pub fn drain_now(&self) -> Vec<usize> {
-        let mut q = self.queue.lock().unwrap();
+        let mut q = self.queue.lock().expect("failed to lock collector queue");
         let out = q.clone();
         q.clear();
         out

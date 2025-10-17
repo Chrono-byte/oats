@@ -192,10 +192,8 @@ pub fn try_fetch_runtime() -> Option<PathBuf> {
     }
 }
 
-// build a test that scans if we match a known platform and sees if we can fetch the runtime from GitHub
-// how would i run that test and just this one?
 #[test]
-fn test_fetch_runtime() {
+fn test_fetch_runtime() -> Result<(), Box<dyn std::error::Error>> {
     let artifact_name = get_runtime_artifact_name();
     let is_supported = artifact_name != "libruntime-unsupported.a";
     let has_no_remote = std::env::var("OATS_NO_REMOTE_RUNTIME").is_ok();
@@ -212,17 +210,18 @@ fn test_fetch_runtime() {
         if let Some(path) = result {
             assert!(path.exists(), "Fetched runtime should exist");
             assert!(path.is_file(), "Should be a file");
-            let metadata = fs::metadata(&path).unwrap();
+            let metadata = fs::metadata(&path)?;
             assert!(
                 metadata.len() > 1000,
                 "Runtime library should be reasonably sized"
             );
             // Check it's in cache dir
-            let cache_dir = get_cache_dir().unwrap();
+            let cache_dir = get_cache_dir()?;
             assert!(path.starts_with(cache_dir), "Should be in cache directory");
         } else {
             // Fetch failed (e.g., no releases, network issues), which is acceptable for this test
             println!("Fetch failed on supported platform, but that's ok");
         }
     }
+    Ok(())
 }

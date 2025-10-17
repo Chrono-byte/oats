@@ -28,7 +28,6 @@
 //!   (e.g., closure return types) without heavy analysis.
 
 use crate::diagnostics::Diagnostic;
-use inkwell::llvm_sys::object;
 use inkwell::values::BasicValueEnum;
 use inkwell::values::FunctionValue;
 use std::collections::HashMap;

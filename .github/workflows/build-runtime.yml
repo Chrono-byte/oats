@@ -1,0 +1,101 @@
+name: Build and Publish Runtime
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'crates/runtime/**'
+      - '.github/workflows/build-runtime.yml'
+  release:
+    types: [published]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-runtime:
+    name: Build Runtime
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            artifact: libruntime-linux-x86_64.a
+          - os: ubuntu-24.04
+            target: aarch64-unknown-linux-gnu
+            artifact: libruntime-linux-aarch64.a
+          - os: macos-14
+            target: aarch64-apple-darwin
+            artifact: libruntime-macos-aarch64.a
+          - os: macos-13
+            target: x86_64-apple-darwin
+            artifact: libruntime-macos-x86_64.a
+    runs-on: ${{ matrix.os }}
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          target: ${{ matrix.target }}
+
+      - name: Install cross-compilation tools (Linux ARM64)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Build runtime
+        run: |
+          cd crates/runtime
+          cargo build --release --target ${{ matrix.target }}
+
+      - name: Rename artifact
+        run: |
+          cp target/${{ matrix.target }}/release/libruntime.a ${{ matrix.artifact }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}
+          retention-days: 90
+
+  create-release:
+    name: Create Release
+    needs: build-runtime
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Generate version tag
+        id: version
+        run: |
+          # Use commit short SHA as version identifier for runtime builds
+          echo "tag=runtime-$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+          echo "date=$(date +%Y%m%d-%H%M%S)" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Create a release tag for the runtime
+          gh release create "${{ steps.version.outputs.tag }}" \
+            --title "Runtime Build ${{ steps.version.outputs.date }}" \
+            --notes "Automated runtime library build from commit $(git rev-parse --short HEAD)" \
+            artifacts/**/*.a

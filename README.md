@@ -33,6 +33,7 @@ manual memory management.
 
 - **Rust Toolchain**: Install via [rustup](https://rustup.rs/).
 - **LLVM 18**: Install development headers and tools for your platform.
+- **clang**: Required for linking (typically comes with LLVM).
 
 #### Installing LLVM 18
 
@@ -56,6 +57,37 @@ brew install llvm@18
 ```
 
 <!-- add instructions for other platforms here! -->
+
+### Standalone Toasty (Recommended)
+
+Toasty can work standalone by automatically fetching pre-built runtime libraries from GitHub releases:
+
+1. **Install toasty**:
+   ```bash
+   cargo install --git https://github.com/Chrono-byte/oats toasty
+   ```
+
+2. **Compile and run programs**:
+   ```bash
+   # Create a simple program
+   echo 'export function main(): number { return 5 + 3; }' > add.oats
+   
+   # Build it (automatically fetches runtime if not cached)
+   toasty build add.oats
+   
+   # Or build and run in one step
+   toasty run add.oats
+   ```
+
+The runtime is automatically cached in `~/.cache/oats/runtime/` for faster subsequent builds.
+
+**Environment variables**:
+- `OATS_NO_REMOTE_RUNTIME`: Force local runtime build instead of fetching
+- `OATS_RUNTIME_CACHE`: Override the cache directory
+
+### Full Repository Setup (For Development)
+
+If you want to develop Oats or work with the full repository:
 
 ### Compile Your First Program
 
@@ -99,11 +131,14 @@ cargo run -p toasty --release -- run examples/add.oats
 
 ## 📁 Project Structure
 
-- **`crates/oats`**: Core compiler for parsing, type checking, and LLVM IR
-  generation.
+- **`crates/oatsc`**: Core compiler for parsing, type checking, and LLVM IR
+  generation. Includes runtime fetcher for standalone operation.
 - **`crates/runtime`**: ARC helpers, allocators, logging, and cycle collector.
+  Built as a static library and published via GitHub Actions.
+- **`crates/toasty`**: CLI wrapper for the compiler with build/run commands.
 - **`docs/`**: Architecture, development, memory, and roadmap references.
 - **`examples/`**: Programs compiled as part of the test suites.
+- **`.github/workflows/`**: CI/CD workflows including automated runtime builds.
 
 See `docs/README.md` for a guided tour of the documentation set.
 

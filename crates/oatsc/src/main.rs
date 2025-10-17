@@ -138,6 +138,7 @@ fn main() -> Result<()> {
 
         // Discover and enqueue relative imports from this module
         for item_ref in parsed.parsed.program_ref().body() {
+            eprintln!("DEBUG: Processing item: {:?}", item_ref);
             if let deno_ast::ModuleItemRef::ModuleDecl(module_decl) = item_ref
                 && let deno_ast::swc::ast::ModuleDecl::Import(import_decl) = module_decl
             {
@@ -184,6 +185,7 @@ fn main() -> Result<()> {
             std::collections::HashMap::new();
         let pm = &parsed_module.parsed;
         for item_ref in pm.program_ref().body() {
+            eprintln!("DEBUG: Processing item: {:?}", item_ref);
             if let deno_ast::ModuleItemRef::ModuleDecl(module_decl) = item_ref
                 && let deno_ast::swc::ast::ModuleDecl::ExportDecl(decl) = module_decl
             {
@@ -202,6 +204,7 @@ fn main() -> Result<()> {
                         // present.
                     }
                     deno_ast::swc::ast::Decl::TsEnum(e) => {
+                        eprintln!("DEBUG: Processing exported enum");
                         let name = e.id.sym.to_string();
                         let variants: Vec<String> = e
                             .members
@@ -213,7 +216,9 @@ fn main() -> Result<()> {
                                 }
                             })
                             .collect();
-                        emap.insert(name.clone(), OatsType::Enum(name, variants));
+                        emap.insert(name.clone(), OatsType::Enum(name.clone(), variants.clone()));
+                        pre_symbols.insert(name.clone(), OatsType::Enum(name.clone(), variants));
+                        eprintln!("DEBUG: Added enum '{}' to symbol table", name);
                     }
                     deno_ast::swc::ast::Decl::TsInterface(iface) => {
                         let name = iface.id.sym.to_string();
@@ -336,6 +341,23 @@ fn main() -> Result<()> {
                 {
                     let name = interface_decl.id.sym.to_string();
                     pre_symbols.insert(name.clone(), OatsType::NominalStruct(name));
+                }
+                if let deno_ast::swc::ast::Stmt::Decl(deno_ast::swc::ast::Decl::TsEnum(
+                    enum_decl,
+                )) = stmt
+                {
+                    let name = enum_decl.id.sym.to_string();
+                    let variants: Vec<String> = enum_decl
+                        .members
+                        .iter()
+                        .map(|member| match &member.id {
+                            deno_ast::swc::ast::TsEnumMemberId::Ident(id) => id.sym.to_string(),
+                            deno_ast::swc::ast::TsEnumMemberId::Str(str) => {
+                                str.value.to_string()
+                            }
+                        })
+                        .collect();
+                    pre_symbols.insert(name.clone(), OatsType::Enum(name, variants));
                 }
                 if let deno_ast::swc::ast::Stmt::Decl(deno_ast::swc::ast::Decl::TsTypeAlias(
                     type_alias,

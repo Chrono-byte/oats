@@ -125,6 +125,10 @@ impl<'a> super::CodeGen<'a> {
                 // This should be resolved during specialization.
                 panic!("Generic types must be specialized before mapping to LLVM types");
             }
+            OatsType::GenericInstance { .. } => {
+                // Generic instances are specialized, so treat as pointer types
+                self.i8ptr_t.as_basic_type_enum()
+            }
         }
     }
 

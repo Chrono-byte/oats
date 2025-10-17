@@ -1429,6 +1429,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     // Generics should be resolved during specialization.
                     panic!("Generic types must be specialized before mapping to LLVM types");
                 }
+                OatsType::GenericInstance { .. } => {
+                    // Generic instances are specialized, so treat as pointer types
+                    self.i8ptr_t.into()
+                }
             };
             llvm_param_types.push(llvm_ty);
         }

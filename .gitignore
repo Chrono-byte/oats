@@ -55,6 +55,18 @@ test_out/**
 fuzz/artifacts/**
 fuzz/corpus/**
 
+# Ignore compiled oats binaries (named after source file stem)
+# These are the output of toasty build and should not be committed
+/add
+/fibonaci
+/test_*
+/class_*
+/cycle_*
+/escape_*
+/field_*
+/mem
+/object_*
+
 # Allow exceptions: keep README, scripts, source code tracked
 review.md
 docs/plans/*

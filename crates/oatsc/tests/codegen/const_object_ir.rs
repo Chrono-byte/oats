@@ -309,16 +309,32 @@ export function main(): number {
                     .insert(name.clone(), cv.clone());
                 // Check expected values
                 match name.as_str() {
-                    "logical_and" => assert!(matches!(cv, oatsc::codegen::const_eval::ConstValue::Bool(true))),
-                    "logical_or" => assert!(matches!(cv, oatsc::codegen::const_eval::ConstValue::Bool(true))),
-                    "conditional" => assert!(matches!(cv, oatsc::codegen::const_eval::ConstValue::Str(s) if s == "less")),
-                    "math_abs" => assert!(matches!(cv, oatsc::codegen::const_eval::ConstValue::Number(n) if (n - 3.14).abs() < 0.001)),
-                    "math_floor" => assert!(matches!(cv, oatsc::codegen::const_eval::ConstValue::Number(n) if n == 3.0)),
+                    "logical_and" => assert!(matches!(
+                        cv,
+                        oatsc::codegen::const_eval::ConstValue::Bool(true)
+                    )),
+                    "logical_or" => assert!(matches!(
+                        cv,
+                        oatsc::codegen::const_eval::ConstValue::Bool(true)
+                    )),
+                    "conditional" => assert!(
+                        matches!(cv, oatsc::codegen::const_eval::ConstValue::Str(s) if s == "less")
+                    ),
+                    "math_abs" => assert!(
+                        matches!(cv, oatsc::codegen::const_eval::ConstValue::Number(n) if (n - 3.14).abs() < 0.001)
+                    ),
+                    "math_floor" => assert!(
+                        matches!(cv, oatsc::codegen::const_eval::ConstValue::Number(n) if n == 3.0)
+                    ),
                     _ => {}
                 }
             }
             Err(d) => {
-                return Err(anyhow::anyhow!("Failed to evaluate {}: {}", name, d.message));
+                return Err(anyhow::anyhow!(
+                    "Failed to evaluate {}: {}",
+                    name,
+                    d.message
+                ));
             }
         }
     }

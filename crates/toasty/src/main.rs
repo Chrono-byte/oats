@@ -334,7 +334,7 @@ fn main() -> Result<()> {
             if !quiet && (verbose || cfg!(debug_assertions)) {
                 eprintln!(
                     "{}",
-                    format!("Dependency graph has {} module(s)", node_indices.len()).green()
+                    format!("Found {} module(s) to compile", node_indices.len()).green()
                 );
             }
 

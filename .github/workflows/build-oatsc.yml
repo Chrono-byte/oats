@@ -24,7 +24,7 @@ jobs:
           - target: x86_64-unknown-linux-gnu
             artifact: oatsc-linux-x86_64
           # - target: aarch64-unknown-linux-gnu
-            # artifact: oatsc-linux-aarch64
+          # artifact: oatsc-linux-aarch64
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
@@ -197,7 +197,9 @@ jobs:
 
   create-release:
     name: Create Compiler Release
-    needs: build-oatsc
+    needs:
+      - build-oatsc-linux
+      - build-oatsc-mac
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     permissions:

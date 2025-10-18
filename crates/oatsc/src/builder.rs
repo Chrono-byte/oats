@@ -386,9 +386,13 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
         // Check if we're in library mode (emitting object only)
         let emit_object_only = std::env::var("OATS_EMIT_OBJECT_ONLY").is_ok();
         if emit_object_only {
-            // For library modules, skip main function requirement
-            // This will be handled differently in Phase 2
-            return Ok(Some("library_compiled".to_string()));
+            let out_dir = std::env::var("OATS_OUT_DIR").unwrap_or_else(|_| ".".to_string());
+            let src_filename = std::path::Path::new(&src_path)
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("out");
+            let out_obj = format!("{}/{}.o", out_dir, src_filename);
+            return Ok(Some(out_obj));
         } else {
             return diagnostics::report_error_and_bail(
                 Some(&src_path),
@@ -568,7 +572,7 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
                             }
                         }
                     }
-                    deno_ast::swc::ast::ClassMember::Constructor(ctor) => {
+                    ClassMember::Constructor(ctor) => {
                         // Compute fields for this class from explicit props, constructor
                         // param properties, and `this.x = ...` assignments inside the ctor.
                         let mut fields: Vec<(String, crate::types::OatsType)> = Vec::new();
@@ -770,7 +774,7 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
                             }
                         }
                     }
-                    deno_ast::swc::ast::ClassMember::Constructor(ctor) => {
+                    ClassMember::Constructor(ctor) => {
                         // Compute fields for non-exported class similarly to exported case
                         let mut fields: Vec<(String, crate::types::OatsType)> = Vec::new();
                         use deno_ast::swc::ast::{
@@ -1184,8 +1188,6 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
 
     // determine output directory (optional)
     let out_dir = std::env::var("OATS_OUT_DIR").unwrap_or_else(|_| ".".to_string());
-
-    // Create output filename based on input filename
     let src_filename = std::path::Path::new(&src_path)
         .file_stem()
         .and_then(|s| s.to_str())
@@ -1213,6 +1215,8 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
         // Use the cached pre-built runtime
         cached_runtime.to_string_lossy().to_string()
     } else {
+        // check and see if we
+
         // Fall back to building runtime locally
         eprintln!("Building runtime locally...");
         // Build Rust runtime staticlib
@@ -1338,7 +1342,13 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
             "OATS_EMIT_OBJECT_ONLY set; emitted {} and skipping link",
             out_obj
         );
-        return Ok(None);
+        let out_dir = std::env::var("OATS_OUT_DIR").unwrap_or_else(|_| ".".to_string());
+        let src_filename = std::path::Path::new(&src_path)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("out");
+        let out_obj = format!("{}/{}.o", out_dir, src_filename);
+        return Ok(Some(out_obj));
     }
 
     // Locate or produce rt_main object. Prefer an existing top-level `rt_main.o` so

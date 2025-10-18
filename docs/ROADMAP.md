@@ -1,182 +1,70 @@
-# Project Roadmap (summary)
+# Roadmap: Evolving Oats into a Systems Language
 
-**Last Updated:** October 16, 2025
+The goal of transforming Oats into a true systems programming language is achievable by building upon its existing AOT compilation and deterministic memory model. The following areas represent the key features and design philosophies required to bridge the gap between its current TypeScript-inspired state and a language suitable for low-level systems development.
 
-This document tracks short- and mid-term priorities and records recent progress
-so the team and contributors can see what to work on next.
+## 1. Granular Memory Management & Control
 
-## Recent progress (highlights)
+Systems programming requires precise control over memory layout and lifetime. While ARC provides excellent determinism, introducing more explicit control is essential.
 
-- **Implemented union return type inference for arrow functions**: Arrow functions with block bodies now properly infer union types when multiple different return types are present, rather than defaulting to `Number`.
-- Stabilized `crates/oats/src/codegen/stmt.rs`: fixed malformed edits that
-  caused build failures and ensured initializer lowering stores the lowered
-  value into pre-allocated locals (with `rc_inc` for pointers).
-- Fixed monomorphization for generics: call-site inferred param types are now
-  used when creating specialization keys so `getFirstElement(numbers)` and
-  `getFirstElement(strings)` get distinct specializations.
-- Replaced incorrect `strlen`-based truthiness lowering with header-length loads
-  for object/array/string truthiness checks.
-- Fixed array-literal lowering and runtime ABI mismatch: pass pointer-to-
-  pointer (alloca address) into `array_set_ptr` so runtime can reallocate and
-  update caller pointer.
-- Implemented several RC fixes: template-literals/number->string lowering now
-  emits `rc_dec` for temporaries, binary `+` concat and `println` codepaths
-  materialize and decrement temporaries as appropriate.
-- Added an IR-level test for the generics example and found/fixed regressions
-  discovered by end-to-end tests (including cycle-reclaim).
+### Current State:
+- Automatic Reference Counting (ARC) for all heap objects.
+- A background cycle collector to handle reference cycles.
+- Escape analysis to eliminate some redundant RC operations.
 
-These changes brought the workspace to a green state for the critical examples
-and tests exercised during this session.
+### Next Steps:
+- **Introduce unowned References**: As planned in the language design, implement unowned references. These would be non-owning pointers that do not perform any RC operations, providing a zero-cost abstraction for performance-critical code where object lifetimes can be guaranteed by the programmer.
+- **Explicit Memory APIs**: Expose a low-level memory management API in the standard library (e.g., memory::alloc, memory::free, memory::copy). This would allow developers to bypass ARC entirely and manage memory manually for specific data structures or performance-sensitive algorithms.
+- **Stack Allocation for Objects (structs)**: Introduce a struct keyword for value types that are always allocated on the stack. This provides a way to create complex data types without incurring heap allocation and RC overhead, a cornerstone of systems languages like C++ and Rust.
 
-## Short-term priorities (next 2–4 weeks)
+## 2. Full-Fledged Foreign Function Interface (FFI)
 
-### 1.1 RC Memory Management Audit
+Direct interoperability with existing C and Rust libraries is non-negotiable for a systems language. The existing FFI plan is a critical first step.
 
-- **Audit all lowering sites that allocate heap temporaries**: template literals,
-  string concatenation, `number_to_string`, `union_box_*`,
-  `array`/`tuple`/object literal lowering, and `println`/printing helpers.
-- **Emit missing `rc_dec` where temporaries are created and ownership is not
-  transferred**.
-- **Add focused tests (IR string-contains or insta snapshots) for each pattern
-  to prevent regressions**.
+### Current State:
+- A detailed plan exists to implement a Deno-compliant FFI.
 
-### 1.2 Code Quality and Warnings
+### Next Steps:
+- **Execute the FFI Plan**: This is the highest-priority item. The ability to call C/Rust functions is the gateway to interacting with operating system APIs, hardware drivers, and high-performance native libraries.
+- **Advanced FFI Features**:
+  - Structs by Value: Support passing structs by value across the FFI boundary, allowing for seamless interaction with C APIs.
+  - Callbacks: Enable native code to call back into Oats functions, allowing for asynchronous operations and event handling.
+  - Unsafe Pointers: Introduce raw pointer types (*const T, *mut T) that can be used within unsafe blocks to perform raw memory manipulation, essential for FFI.
 
-- Clean up any remaining compiler warnings (unused assignments) found in `stmt.rs` and other files.
-- Run `cargo clippy --workspace` and fix critical lints.
-- ~~Remove dead code warnings (unused RTA functions: `collect_function_asts`, `run_worklist`, `find_method_calls`, etc.).~~ ✅ **DONE**: Added `#[allow(dead_code)]` attributes to unused RTA functions.
+## 3. Low-Level Primitive Types
 
-### 1.3 Testing and Integration
+Systems programming requires precise control over data representation. The current number (f64) type is insufficient for this.
 
-- Run `./scripts/run_fuzzing.sh` for fuzz targets and `./scripts/run_all_proper_tests.sh` to compile all proper_tests examples and catch regressions.
-- Implement performance benchmarks for codegen speed.
-- Expand snapshot tests for edge cases.
+### Current State:
+- A single number type, which maps to f64.
 
-## Mid-term priorities (1–3 months)
+### Next Steps:
+- **Introduce Explicit Integer and Float Types**:
+  - Integers: i8, u8, i16, u16, i32, u32, i64, u64.
+  - Floats: f32, f64.
+- **Introduce Architecture-Sized Types**: isize and usize for representing pointers and memory offsets.
+- **Character Type**: A char type for representing a single Unicode scalar value.
 
-### 2.1 Developer Experience & Tooling
+## 4. Advanced Concurrency Model
 
-- Create a language server for IDE support.
-- Add build scripts for easier setup.
-- Generate API docs and usage guides.
-- Improve error diagnostics with source spans and suggestions.
-- Add debugging/logging features for memory tracking.
+While async/await is excellent for I/O-bound tasks, systems programming often requires direct control over OS-level threads.
 
-### 2.2 Fix Critical Bugs
+### Current State:
+- An async/await implementation based on a poll-state machine.
 
-- **Fix control flow error reporting**: Currently `continue` outside of loop is ignored; should emit diagnostic (see TODO in `stmt.rs`).
+### Next Steps:
+- **OS Threading API**: Provide a standard library module (e.g., thread) for creating and managing OS threads (thread::spawn, thread::join).
+- **Synchronization Primitives**: Implement low-level synchronization primitives like Mutex, RwLock, Condvar, and atomic types (AtomicU32, etc.). This would allow for safe multi-threaded programming without relying on a garbage collector.
 
-### 2.3 Hardening and optimization of ARC & cycle collector
+## 5. Toolchain and Ecosystem (toasty as cargo)
 
-- Investigate redundant RC elimination and escape analysis opportunities.
-- Improve the cycle collector's coverage and add stress tests.
+A robust build system and package manager are critical for building large, multi-component systems like operating systems, databases, or game engines.
 
-### 2.4 Monomorphization & type-inference hardening
+### Current State:
+- A detailed plan exists to evolve toasty into a cargo-like tool.
 
-- Add tests to ensure caching/specialization keys are robust across different
-  call-site inference patterns and local variables.
+### Next Steps:
+- **Execute the Project Plan**: Implementing the phased plan to introduce Oats.toml, dependency management, and workspaces is a prerequisite for any serious systems development. The ability to build complex projects from multiple libraries is essential.
 
-### 2.5 Documentation and developer ergonomics
+## Conclusion
 
-- Update `docs/DEVELOPMENT.md` and `docs/ARCHITECTURE.md` with the
-  ownership/RC rules, object layout invariants, and the most important runtime
-  ABI contracts (e.g., `array_set_ptr` signature, header layout).
-- Add comprehensive documentation and examples.
-- Create more examples and tutorials.
-
-## Long-term priorities (3–6 months)
-
-### 3.1 Implement Missing Features
-
-- Extend generics support (e.g., constraints, multiple type parameters).
-- Add full interface implementation checking.
-
-### 3.2 Expand Language Support
-
-- Add more TypeScript features (e.g., decorators, namespaces, modules).
-- Support for concurrency primitives beyond async/await.
-- Add support for generators (`function*` / `yield`).
-- Add support for JSX/TSX.
-- Implement declaration merging and module augmentation.
-- Add support for advanced type-level features (conditional types, mapped types, etc.).
-
-### 3.3 Performance Optimization
-
-- Profile and optimize LLVM IR generation (e.g., reduce redundant allocations).
-- Implement generational GC with nursery and mature object spaces.
-
-### 3.4 Rapid Type Analysis (RTA) Implementation
-
-#### Phase 1: Analysis - Building the Foundation (Weeks 1-5)
-
-- **Milestone 1.2: Call Graph Construction and Worklist Algorithm (Weeks 4-5)**
-  - Implement call graph data structure to represent method calls.
-  - Implement iterative RTA worklist algorithm starting from main, processing method calls to find potential targets.
-
-#### Phase 2: Optimization - Applying the Analysis (Weeks 6-11)
-
-- **Milestone 2.1: Devirtualization of Method Calls (Weeks 6-9)**
-  - Modify codegen to query RTA results for devirtualization of method calls.
-  - Implement logic to emit direct static calls when only one possible method target.
-  - Create micro-benchmarks to measure virtual vs direct call performance.
-
-#### Phase 3: Validation and Refinement (Weeks 12-14)
-
-- **Milestone 3.1: Integration Testing (Weeks 12-13)**
-  - Apply RTA to existing test suite including deno_tests to ensure no regressions.
-  - Create larger test application with classes, inheritance, methods to validate optimizer.
-- **Milestone 3.2: Final Report and Documentation (Week 14)**
-  - Perform final performance and code size measurements on benchmarks.
-  - Write internal documentation for RTA module, design, integration, diagnostics.
-
-### 3.5 Code Maintenance and Security
-
-- Modularize large files (e.g., split `expr.rs` into submodules).
-- Update dependencies (e.g., bump `inkwell` for newer LLVM versions).
-- Audit for buffer overflows or unsafe operations.
-- Harden recursion limits and add more safety checks.
-
-### 3.6 Runtime Enhancements
-
-- Add more built-in functions (e.g., advanced string/array ops).
-
-### 3.7 Community and Ecosystem
-
-- Add package management for dependencies.
-- Integrate with existing TS tooling (e.g., via plugins).
-
-## Release candidate and stabilization
-
-- Once the rc_dec audit, snapshot tests, and lints are green, prepare a
-  release-candidate branch that includes:
-  - A summary of ownership/RC guarantees and codegen invariants
-  - Updated tests and any new snapshots
-  - Short smoke-test log showing proper_tests/examples pass
-
-## Completed Features (Historical Record)
-
-### Core Language Features ✅
-
-- ~~Basic enum support implemented with type checking and code generation.~~ ✅ **DONE**
-- ~~Generics implemented with monomorphization at call sites.~~ ✅ **DONE**
-- ~~Interface and type alias support implemented.~~ ✅ **DONE**
-- ~~Labeled statement support with break/continue resolution.~~ ✅ **DONE**
-- ~~Union return type inference for arrow functions with multiple return types.~~ ✅ **DONE**
-
-### Memory Management ✅
-
-- ~~Automatic Reference Counting (ARC) with escape analysis and cycle collection.~~ ✅ **DONE**
-- ~~Bacon's concurrent cycle collection algorithm as the default.~~ ✅ **DONE**
-- ~~Inter-procedural escape analysis with closure capture detection.~~ ✅ **DONE**
-- ~~RC protocol violations fixed in tuple initialization, variable declarations, and for-of loops.~~ ✅ **DONE**
-
-### Testing and Quality ✅
-
-- ~~Fuzzing targets for parser testing.~~ ✅ **DONE**
-- ~~Test package names and configurations updated.~~ ✅ **DONE**
-- ~~Basic RTA with class hierarchy analysis, instantiation tracking, and dead code elimination.~~ ✅ **DONE**
-
-### Design Decisions (Intentionally Restricted/Rejected)
-
-- ~~`const` declarations limited by design for AOT compilation requirements.~~ **INTENTIONALLY RESTRICTED**
-- ~~`var` declarations rejected by design; only `let` (and `let mut`) supported.~~ **INTENTIONALLY REJECTED**
+Oats is uniquely positioned to become a systems-level dialect of TypeScript. Its foundation is strong. By focusing on giving the programmer more explicit control over memory, types, and concurrency, and by executing the existing plans for FFI and the cargo-style toolchain, Oats can offer a compelling combination of high-level ergonomics and low-level power.

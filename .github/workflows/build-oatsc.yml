@@ -1,28 +1,26 @@
+---
 name: Build and Publish Oats Compiler
-
 on:
   push:
     branches:
       - master
     paths:
-      - "crates/oatsc/**"
-      - ".github/workflows/build-oatsc.yml"
+      - crates/oatsc/**
+      - .github/workflows/build-oatsc.yml
   pull_request:
     branches:
       - master
     paths:
-      - "crates/oatsc/**"
-      - ".github/workflows/build-oatsc.yml"
-
+      - crates/oatsc/**
+      - .github/workflows/build-oatsc.yml
 env:
-  CARGO_TERM_COLOR: always
-  SKIP_AARCH64_LINUX: true
-
+  CARGO_TERM_COLOR: "always"
+  SKIP_AARCH64_LINUX: "true"
 jobs:
   build-oatsc:
     name: Build Oats Compiler
-    # Skip the aarch64 linux matrix entry if SKIP_AARCH64_LINUX == 'true'
-    if: ${{ env.SKIP_AARCH64_LINUX != 'true' || matrix.target != 'aarch64-unknown-linux-gnu' }}
+    if: ${{ env.SKIP_AARCH64_LINUX != 'true' || matrix.target !=
+      'aarch64-unknown-linux-gnu' }}
     strategy:
       matrix:
         include:
@@ -42,7 +40,6 @@ jobs:
             target: x86_64-pc-windows-msvc
             artifact: oatsc-windows-x86_64.exe
     runs-on: ${{ matrix.os }}
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -79,7 +76,10 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y llvm-18-dev clang-18 libclang-18-dev
+          sudo apt-get install -y \
+            llvm-18-dev \
+            clang-18 \
+            libclang-18-dev
           echo "LLVM_SYS_181_PREFIX=/usr/lib/llvm-18" >> $GITHUB_ENV
           echo "/usr/lib/llvm-18/bin" >> $GITHUB_PATH
 
@@ -87,8 +87,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: powershell
         run: |
-          choco install llvm --version 18.1.8 --allow-downgrade -y
-          # Write env and add to PATH correctly on Windows
+          choco install llvm --version 18.1.8 --allow-downgrade
           Add-Content -Path $env:GITHUB_ENV -Value 'LLVM_SYS_181_PREFIX=C:\Program Files\LLVM'
           Add-Content -Path $env:GITHUB_PATH -Value 'C:\Program Files\LLVM\bin'
 
@@ -97,13 +96,21 @@ jobs:
         run: |
           sudo dpkg --add-architecture arm64
           sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu g++-aarch64-linux-gnu libffi-dev:arm64 llvm-18-dev:arm64
+          sudo apt-get install -y \
+            gcc-aarch64-linux-gnu \
+            binutils-aarch64-linux-gnu \
+            g++-aarch64-linux-gnu \
+            libffi-dev:arm64 \
+            llvm-18-dev:arm64
 
       - name: Create Cargo config for aarch64 linker
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: |
           mkdir -p .cargo
-          printf '%s\n' '[target.aarch64-unknown-linux-gnu]' 'linker = "aarch64-linux-gnu-gcc"' > .cargo/config.toml
+          printf '%s\n' \
+            '[target.aarch64-unknown-linux-gnu]' \
+            'linker = "aarch64-linux-gnu-gcc"' \
+            > .cargo/config.toml
 
       - name: Build oatsc
         run: |
@@ -112,13 +119,16 @@ jobs:
       - name: Rename artifact (Unix)
         if: runner.os != 'Windows'
         run: |
-          cp target/${{ matrix.target }}/release/oatsc${{ contains(matrix.target, 'windows') && '.exe' || '' }} ${{ matrix.artifact }}
+          SRC="target/${{ matrix.target }}/release/oatsc"
+          if [[ "${{ matrix.target }}" == *"windows"* ]]; then
+            SRC="${SRC}.exe"
+          fi
+          cp "$SRC" "${{ matrix.artifact }}"
 
       - name: Rename artifact (Windows)
         if: runner.os == 'Windows'
         shell: powershell
         run: |
-          # On Windows, use PowerShell Copy-Item
           $src = "target/${{ matrix.target }}/release/oatsc.exe"
           Copy-Item -Path $src -Destination "${{ matrix.artifact }}" -Force
 
@@ -140,7 +150,6 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     permissions:
       contents: write
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -153,7 +162,6 @@ jobs:
       - name: Generate version tag
         id: version
         run: |
-          # Use commit short SHA as version identifier for compiler builds
           echo "tag=compiler-$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
           echo "date=$(date +%Y%m%d-%H%M%S)" >> $GITHUB_OUTPUT
 
@@ -166,7 +174,6 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Create a release tag for the compiler and upload artifacts/*
           gh release create "${{ steps.version.outputs.tag }}" \
             --title "Compiler Build ${{ steps.version.outputs.date }}" \
             --notes "Automated oatsc compiler build from commit ${{ github.sha }}" \

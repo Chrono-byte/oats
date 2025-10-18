@@ -89,8 +89,9 @@ jobs:
       - name: Install cross-compilation tools (Linux ARM64)
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: |
+          sudo dpkg --add-architecture arm64
           sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
+          sudo apt-get install -y gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu g++-aarch64-linux-gnu libffi-dev:arm64 llvm-18-dev:arm64
 
       - name: Create Cargo config for aarch64 linker
         if: matrix.target == 'aarch64-unknown-linux-gnu'

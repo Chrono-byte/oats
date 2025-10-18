@@ -18,16 +18,12 @@ env:
 jobs:
   build-oatsc:
     name: Build Oats Compiler
-    if: ${{ vars.SKIP_AARCH64_LINUX != 'true' || matrix.target != 'aarch64-unknown-linux-gnu' }}
     strategy:
       matrix:
         include:
           - os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
             artifact: oatsc-linux-x86_64
-          - os: ubuntu-24.04
-            target: aarch64-unknown-linux-gnu
-            artifact: oatsc-linux-aarch64
           - os: macos-14
             target: aarch64-apple-darwin
             artifact: oatsc-macos-aarch64
@@ -47,6 +43,91 @@ jobs:
         with:
           toolchain: stable
           targets: ${{ matrix.target }}
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Install LLVM (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install llvm@18
+          if [ "$(uname -m)" = "arm64" ]; then
+            LLVM_PREFIX="/opt/homebrew/opt/llvm@18"
+          else
+            LLVM_PREFIX="/usr/local/opt/llvm@18"
+          fi
+          echo "LLVM_SYS_181_PREFIX=$LLVM_PREFIX" >> $GITHUB_ENV
+          echo "$LLVM_PREFIX/bin" >> $GITHUB_PATH
+
+      - name: Install LLVM (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            llvm-18-dev \
+            clang-18 \
+            libclang-18-dev
+          echo "LLVM_SYS_181_PREFIX=/usr/lib/llvm-18" >> $GITHUB_ENV
+          echo "/usr/lib/llvm-18/bin" >> $GITHUB_PATH
+
+      - name: Install LLVM (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          choco install llvm --version 18.1.8 --allow-downgrade
+          Add-Content -Path $env:GITHUB_ENV -Value 'LLVM_SYS_181_PREFIX=C:\Program Files\LLVM'
+          Add-Content -Path $env:GITHUB_PATH -Value 'C:\Program Files\LLVM\bin'
+
+      - name: Build oatsc
+        run: |
+          cargo build --release --bin oatsc --target ${{ matrix.target }}
+
+      - name: Rename artifact (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          SRC="target/${{ matrix.target }}/release/oatsc"
+          if [[ "${{ matrix.target }}" == *"windows"* ]]; then
+            SRC="${SRC}.exe"
+          fi
+          cp "$SRC" "${{ matrix.artifact }}"
+
+      - name: Rename artifact (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $src = "target/${{ matrix.target }}/release/oatsc.exe"
+          Copy-Item -Path $src -Destination "${{ matrix.artifact }}" -Force
+
+      - name: Make executable (Unix)
+        if: runner.os != 'Windows'
+        run: chmod +x ${{ matrix.artifact }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}
+          retention-days: 90
+
+  build-oatsc-arm64:
+    name: Build Oats Compiler for ARM64
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain and add target
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          targets: aarch64-unknown-linux-gnu
 
       - name: Cache Cargo dependencies
         uses: actions/cache@v4
@@ -112,12 +193,12 @@ jobs:
 
       - name: Build oatsc
         run: |
-          cargo build --release --bin oatsc --target ${{ matrix.target }}
+          cargo build --release --bin oatsc --target aarch64-unknown-linux-gnu
 
       - name: Rename artifact (Unix)
         if: runner.os != 'Windows'
         run: |
-          SRC="target/${{ matrix.target }}/release/oatsc"
+          SRC="target/aarch64-unknown-linux-gnu/release/oatsc"
           if [[ "${{ matrix.target }}" == *"windows"* ]]; then
             SRC="${SRC}.exe"
           fi
@@ -127,7 +208,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: powershell
         run: |
-          $src = "target/${{ matrix.target }}/release/oatsc.exe"
+          $src = "target/aarch64-unknown-linux-gnu/release/oatsc.exe"
           Copy-Item -Path $src -Destination "${{ matrix.artifact }}" -Force
 
       - name: Make executable (Unix)
@@ -176,3 +257,59 @@ jobs:
             --title "Compiler Build ${{ steps.version.outputs.date }}" \
             --notes "Automated oatsc compiler build from commit ${{ github.sha }}" \
             artifacts/*
+
+  build-oatsc-aarch64:
+    name: Build Oats Compiler (AArch64 Linux)
+    if: ${{ vars.SKIP_AARCH64_LINUX != 'true' }}
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          targets: aarch64-unknown-linux-gnu
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Install cross-compilation tools (Linux ARM64)
+        run: |
+          sudo dpkg --add-architecture arm64
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu g++-aarch64-linux-gnu libffi-dev:arm64 llvm-18-dev:arm64
+
+      - name: Install LLVM (Linux)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y llvm-18-dev clang-18 libclang-18-dev
+          echo "LLVM_SYS_181_PREFIX=/usr/lib/llvm-18" >> $GITHUB_ENV
+          echo "/usr/lib/llvm-18/bin" >> $GITHUB_PATH
+
+      - name: Build oatsc
+        run: |
+          cargo build --release --bin oatsc --target aarch64-unknown-linux-gnu
+
+      - name: Rename artifact
+        run: |
+          cp target/aarch64-unknown-linux-gnu/release/oatsc oatsc-linux-aarch64
+
+      - name: Make executable (Unix)
+        run: chmod +x oatsc-linux-aarch64
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: oatsc-linux-aarch64
+          path: oatsc-linux-aarch64
+          retention-days: 90

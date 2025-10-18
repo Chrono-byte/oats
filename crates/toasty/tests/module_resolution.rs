@@ -5,6 +5,19 @@ use std::process::Command;
 
 #[test]
 fn module_resolution_discovers_dependencies() -> Result<(), Box<dyn std::error::Error>> {
+    // Build runtime and oatsc first
+    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    
+    let mut runc = Command::new("cargo");
+    runc.current_dir(&workspace_root);
+    runc.arg("build").arg("-p").arg("runtime").arg("--release");
+    runc.status()?;
+
+    let mut oatsc_build = Command::new("cargo");
+    oatsc_build.current_dir(&workspace_root);
+    oatsc_build.arg("build").arg("-p").arg("oatsc").arg("--release");
+    oatsc_build.status()?;
+
     // Test that toasty discovers imported modules
     let mut cmd = Command::cargo_bin("toasty")?;
 
@@ -14,8 +27,13 @@ fn module_resolution_discovers_dependencies() -> Result<(), Box<dyn std::error::
     let example = example.canonicalize()?;
 
     // Run from workspace root
-    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
-    cmd.current_dir(workspace_root);
+    cmd.current_dir(&workspace_root);
+
+    // Set up environment variables for oatsc and runtime
+    let oatsc_path = workspace_root.join("target/release/oatsc");
+    let runtime_path = workspace_root.join("target/release/libruntime.a");
+    cmd.env("OATS_OATSC_PATH", oatsc_path);
+    cmd.env("OATS_RUNTIME_PATH", runtime_path);
 
     // Run with verbose to see module discovery
     cmd.arg("--verbose").arg("build").arg(example.as_os_str());
@@ -31,6 +49,19 @@ fn module_resolution_discovers_dependencies() -> Result<(), Box<dyn std::error::
 
 #[test]
 fn single_file_module_resolution() -> Result<(), Box<dyn std::error::Error>> {
+    // Ensure runtime and oatsc are built
+    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    
+    let mut runc = Command::new("cargo");
+    runc.current_dir(&workspace_root);
+    runc.arg("build").arg("-p").arg("runtime").arg("--release");
+    runc.status()?;
+
+    let mut oatsc_build = Command::new("cargo");
+    oatsc_build.current_dir(&workspace_root);
+    oatsc_build.arg("build").arg("-p").arg("oatsc").arg("--release");
+    oatsc_build.status()?;
+
     // Test that single files work correctly
     let mut cmd = Command::cargo_bin("toasty")?;
 
@@ -38,14 +69,13 @@ fn single_file_module_resolution() -> Result<(), Box<dyn std::error::Error>> {
     example = example.join("../../examples/add.oats");
     let example = example.canonicalize()?;
 
-    // Ensure runtime is built
-    let mut runc = Command::new("cargo");
-    runc.current_dir(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.."));
-    runc.arg("build").arg("-p").arg("runtime").arg("--release");
-    runc.status()?;
+    cmd.current_dir(&workspace_root);
 
-    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
-    cmd.current_dir(workspace_root);
+    // Set up environment variables for oatsc and runtime
+    let oatsc_path = workspace_root.join("target/release/oatsc");
+    let runtime_path = workspace_root.join("target/release/libruntime.a");
+    cmd.env("OATS_OATSC_PATH", oatsc_path);
+    cmd.env("OATS_RUNTIME_PATH", runtime_path);
 
     cmd.arg("--verbose").arg("build").arg(example.as_os_str());
 

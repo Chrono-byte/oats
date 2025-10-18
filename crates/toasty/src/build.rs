@@ -440,7 +440,17 @@ fn link_packages(
     let exe_path = PathBuf::from(out_dir).join(exe_name);
 
     // Ensure runtime is available
-    let runtime_lib = if let Some(cached_runtime) = crate::runtime_fetch::try_fetch_runtime() {
+    let runtime_lib = if let Ok(runtime_path) = std::env::var("OATS_RUNTIME_PATH") {
+        // Use explicitly specified runtime path
+        let runtime_lib = PathBuf::from(runtime_path);
+        if !runtime_lib.exists() {
+            anyhow::bail!(
+                "Runtime library not found at OATS_RUNTIME_PATH: {}",
+                runtime_lib.display()
+            );
+        }
+        runtime_lib
+    } else if let Some(cached_runtime) = crate::runtime_fetch::try_fetch_runtime() {
         // Use the cached pre-built runtime
         cached_runtime
     } else {
@@ -452,7 +462,7 @@ fn link_packages(
                 "Runtime library not found. Please either:\n\
                 1. Ensure pre-built runtimes can be downloaded from GitHub, or\n\
                 2. Place libruntime.a in the current directory, or\n\
-                3. Set OATS_RUNTIME_CACHE to a directory containing the runtime library"
+                3. Set OATS_RUNTIME_PATH to the path of libruntime.a"
             );
         }
         runtime_lib

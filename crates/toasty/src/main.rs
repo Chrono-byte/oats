@@ -284,14 +284,14 @@ fn invoke_oatsc(options: &CompileOptions) -> Result<Option<PathBuf>> {
         args.push(pkg_root.to_string_lossy().to_string());
     }
 
-    // Add output directory
-    if let Some(out_dir) = &options.out_dir {
-        args.push("--out-dir".to_string());
-        args.push(out_dir.clone());
-    }
-
-    // Add output name
-    if let Some(out_name) = &options.out_name {
+    // Handle output path: if both out_dir and out_name are specified,
+    // compute the full path and pass via -o flag
+    if let (Some(out_dir), Some(out_name)) = (&options.out_dir, &options.out_name) {
+        let output_path = std::path::Path::new(out_dir).join(format!("{}.o", out_name));
+        args.push("-o".to_string());
+        args.push(output_path.to_string_lossy().to_string());
+    } else if let Some(out_name) = &options.out_name {
+        // Only out_name specified, use --out-name
         args.push("--out-name".to_string());
         args.push(out_name.clone());
     }
@@ -500,6 +500,9 @@ fn main() -> Result<()> {
                 );
             };
 
+            // Read out_dir from environment variable if not provided
+            let out_dir = out_dir.or_else(|| std::env::var("OATS_OUT_DIR").ok());
+
             // Special case: if emit_object_only is requested and this is a single file with no dependencies,
             // compile it directly without the multi-module system
             if emit_object_only {
@@ -663,24 +666,33 @@ fn main() -> Result<()> {
 
             // Use clang to link all object files with the runtime
             // Ensure runtime is available
-            let runtime_lib =
-                if let Some(cached_runtime) = crate::runtime_fetch::try_fetch_runtime() {
-                    // Use the cached pre-built runtime
-                    cached_runtime
-                } else {
-                    // Look for runtime in current directory or standard locations
-                    let runtime_lib = std::path::PathBuf::from("libruntime.a");
+            let runtime_lib = if let Ok(runtime_path) = std::env::var("OATS_RUNTIME_PATH") {
+                // Use explicitly specified runtime path
+                let runtime_lib = std::path::PathBuf::from(runtime_path);
+                if !runtime_lib.exists() {
+                    anyhow::bail!(
+                        "Runtime library not found at OATS_RUNTIME_PATH: {}",
+                        runtime_lib.display()
+                    );
+                }
+                runtime_lib
+            } else if let Some(cached_runtime) = crate::runtime_fetch::try_fetch_runtime() {
+                // Use the cached pre-built runtime
+                cached_runtime
+            } else {
+                // Look for runtime in current directory or standard locations
+                let runtime_lib = std::path::PathBuf::from("libruntime.a");
 
-                    if !runtime_lib.exists() {
-                        anyhow::bail!(
-                            "Runtime library not found. Please either:\n\
+                if !runtime_lib.exists() {
+                    anyhow::bail!(
+                        "Runtime library not found. Please either:\n\
                         1. Ensure pre-built runtimes can be downloaded from GitHub, or\n\
                         2. Place libruntime.a in the current directory, or\n\
-                        3. Set OATS_RUNTIME_CACHE to a directory containing the runtime library"
-                        );
-                    }
-                    runtime_lib
-                };
+                        3. Set OATS_RUNTIME_PATH to the path of libruntime.a"
+                    );
+                }
+                runtime_lib
+            };
 
             let mut link_cmd = std::process::Command::new("clang");
             link_cmd.arg("-o").arg(&exe_path);

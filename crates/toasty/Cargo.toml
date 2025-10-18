@@ -8,6 +8,8 @@ description = "Toasty CLI for Oats compiler"
 anyhow = "1.0"
 clap = { version = "4.4", features = ["derive"] }
 colored = "2.0"
+serde = { version = "1.0", features = ["derive"] }
+toml = "0.8"
 
 atty = "0.2"
 deno_ast = "0.50.3"

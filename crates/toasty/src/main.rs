@@ -3,10 +3,11 @@ use atty::Stream as AtStream;
 use clap::{Parser, Subcommand};
 use colored::Colorize;
 
+mod manifest;
 mod module_resolution;
 
 #[derive(Parser)]
-#[command(name = "toasty", about = "Experimental TypeScript Compiler", version = env!("CARGO_PKG_VERSION"))]
+#[command(name = "toasty", about = "Oats Project Manager", version = env!("CARGO_PKG_VERSION"))]
 struct Cli {
     /// Print verbose debug information even in release builds
     #[arg(long = "verbose")]
@@ -208,9 +209,68 @@ fn main() -> Result<()> {
                 eprintln!("{}", "Building in debug mode...".yellow());
             }
 
+            // Try to discover and load manifest
+            let manifest_info = if src.is_none() {
+                // Only auto-discover manifest if no explicit source file provided
+                match manifest::Manifest::discover() {
+                    Ok(Some((manifest, manifest_path))) => {
+                        if !quiet && (verbose || cfg!(debug_assertions)) {
+                            eprintln!(
+                                "{}",
+                                format!("Found project manifest: {}", manifest_path.display())
+                                    .blue()
+                            );
+                        }
+                        Some((manifest, manifest_path))
+                    }
+                    Ok(None) => {
+                        if !quiet && (verbose || cfg!(debug_assertions)) {
+                            eprintln!("{}", "No Oats.toml found, using single-file mode".yellow());
+                        }
+                        None
+                    }
+                    Err(e) => {
+                        if !quiet {
+                            eprintln!(
+                                "{}",
+                                format!("Warning: Failed to load manifest: {}", e).yellow()
+                            );
+                        }
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+
             // Determine source file
             let src_file = if let Some(s) = src {
                 s
+            } else if let Some((_manifest, manifest_path)) = &manifest_info {
+                // Use manifest to determine entry point
+                // For now, assume src/main.oats relative to manifest
+                let manifest_dir = manifest_path.parent().unwrap_or(std::path::Path::new("."));
+                let default_entry = manifest_dir.join("src").join("main.oats");
+                if default_entry.exists() {
+                    default_entry.to_string_lossy().to_string()
+                } else {
+                    // Fallback to any .oats file in the directory
+                    let oats_files = std::fs::read_dir(manifest_dir)?
+                        .filter_map(|entry| entry.ok())
+                        .filter(|entry| {
+                            entry.path().extension() == Some(std::ffi::OsStr::new("oats"))
+                        })
+                        .map(|entry| entry.path().to_string_lossy().to_string())
+                        .collect::<Vec<_>>();
+
+                    if oats_files.len() == 1 {
+                        oats_files[0].clone()
+                    } else {
+                        anyhow::bail!(
+                            "Could not determine entry point. Please specify with --src or create src/main.oats"
+                        );
+                    }
+                }
             } else if let Ok(p) = std::env::var("OATS_SRC_FILE") {
                 p
             } else {

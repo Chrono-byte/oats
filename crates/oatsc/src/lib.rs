@@ -24,6 +24,13 @@ pub struct CompileOptions {
     /// Format: --extern-oats "./module.oats=/path/to/module.oats.meta"
     pub extern_oats: std::collections::HashMap<String, String>,
 
+    /// Package root directory (for package-based compilation)
+    pub package_root: Option<std::path::PathBuf>,
+
+    /// External package dependencies: maps package names to metadata file paths
+    /// Format: --extern-pkg "mylib=/path/to/mylib.oats.meta"
+    pub extern_pkg: std::collections::HashMap<String, String>,
+
     /// Output directory for compilation artifacts
     pub out_dir: Option<String>,
 
@@ -62,6 +69,8 @@ impl CompileOptions {
             src_file,
             additional_src_files: Vec::new(),
             extern_oats: std::collections::HashMap::new(),
+            package_root: None,
+            extern_pkg: std::collections::HashMap::new(),
             out_dir: None,
             out_name: None,
             linker: None,
@@ -81,10 +90,33 @@ impl CompileOptions {
             src_file,
             additional_src_files,
             extern_oats: std::collections::HashMap::new(),
+            package_root: None,
+            extern_pkg: std::collections::HashMap::new(),
             out_dir: None,
             out_name: None,
             linker: None,
             emit_object_only: false,
+            opt_level: None,
+            lto: None,
+            target_triple: None,
+            target_cpu: None,
+            target_features: None,
+            build_profile: None,
+        }
+    }
+
+    /// Create a new CompileOptions for package-based compilation
+    pub fn for_package(package_root: std::path::PathBuf) -> Self {
+        Self {
+            src_file: String::new(), // Will be determined from manifest
+            additional_src_files: Vec::new(),
+            extern_oats: std::collections::HashMap::new(),
+            package_root: Some(package_root),
+            extern_pkg: std::collections::HashMap::new(),
+            out_dir: None,
+            out_name: None,
+            linker: None,
+            emit_object_only: true, // Package mode always emits objects
             opt_level: None,
             lto: None,
             target_triple: None,

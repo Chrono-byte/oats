@@ -3,6 +3,7 @@ use atty::Stream as AtStream;
 use clap::{Parser, Subcommand};
 use colored::Colorize;
 
+mod build;
 mod manifest;
 mod module_resolution;
 mod package_graph;
@@ -222,11 +223,11 @@ fn main() -> Result<()> {
                 eprintln!("{}", "Building in debug mode...".yellow());
             }
 
-            // Try to discover and load manifest
-            let manifest_info = if src.is_none() {
+            // Try to discover and load manifest for package-based build
+            if src.is_none() {
                 // Only auto-discover manifest if no explicit source file provided
                 match manifest::Manifest::discover() {
-                    Ok(Some((manifest, manifest_path))) => {
+                    Ok(Some((_manifest, manifest_path))) => {
                         if !quiet && (verbose || cfg!(debug_assertions)) {
                             eprintln!(
                                 "{}",
@@ -234,13 +235,34 @@ fn main() -> Result<()> {
                                     .blue()
                             );
                         }
-                        Some((manifest, manifest_path))
+
+                        // Use package-based build
+                        let build_config = build::BuildConfig {
+                            verbose,
+                            quiet,
+                            release,
+                            out_dir,
+                            out_name,
+                            linker,
+                            opt_level,
+                            lto,
+                            target_triple,
+                            target_cpu,
+                            target_features,
+                        };
+
+                        let exe_path = build::build_package_project(&manifest_path, build_config)?;
+
+                        if !quiet && (verbose || cfg!(debug_assertions)) {
+                            eprintln!("{}", format!("Build complete: {}", exe_path.display()).green());
+                        }
+
+                        return Ok(());
                     }
                     Ok(None) => {
                         if !quiet && (verbose || cfg!(debug_assertions)) {
                             eprintln!("{}", "No Oats.toml found, using single-file mode".yellow());
                         }
-                        None
                     }
                     Err(e) => {
                         if !quiet {
@@ -249,46 +271,18 @@ fn main() -> Result<()> {
                                 format!("Warning: Failed to load manifest: {}", e).yellow()
                             );
                         }
-                        None
                     }
                 }
-            } else {
-                None
-            };
+            }
 
-            // Determine source file
+            // Determine source file for legacy single-file mode
             let src_file = if let Some(s) = src {
                 s
-            } else if let Some((_manifest, manifest_path)) = &manifest_info {
-                // Use manifest to determine entry point
-                // For now, assume src/main.oats relative to manifest
-                let manifest_dir = manifest_path.parent().unwrap_or(std::path::Path::new("."));
-                let default_entry = manifest_dir.join("src").join("main.oats");
-                if default_entry.exists() {
-                    default_entry.to_string_lossy().to_string()
-                } else {
-                    // Fallback to any .oats file in the directory
-                    let oats_files = std::fs::read_dir(manifest_dir)?
-                        .filter_map(|entry| entry.ok())
-                        .filter(|entry| {
-                            entry.path().extension() == Some(std::ffi::OsStr::new("oats"))
-                        })
-                        .map(|entry| entry.path().to_string_lossy().to_string())
-                        .collect::<Vec<_>>();
-
-                    if oats_files.len() == 1 {
-                        oats_files[0].clone()
-                    } else {
-                        anyhow::bail!(
-                            "Could not determine entry point. Please specify with --src or create src/main.oats"
-                        );
-                    }
-                }
             } else if let Ok(p) = std::env::var("OATS_SRC_FILE") {
                 p
             } else {
                 anyhow::bail!(
-                    "No source file provided. Pass path as argument or set OATS_SRC_FILE env var."
+                    "No source file provided. Pass path as argument, set OATS_SRC_FILE env var, or create Oats.toml"
                 );
             };
 

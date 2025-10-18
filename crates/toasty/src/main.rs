@@ -219,6 +219,37 @@ fn main() -> Result<()> {
                 );
             };
             
+            // Perform module resolution to discover all source files
+            if !quiet && (verbose || cfg!(debug_assertions)) {
+                eprintln!("{}", "Resolving module dependencies...".blue());
+            }
+            match module_resolution::load_modules(&src_file) {
+                Ok(modules) => {
+                    if !quiet && (verbose || cfg!(debug_assertions)) {
+                        eprintln!(
+                            "{}",
+                            format!("Found {} module(s) to compile", modules.len()).green()
+                        );
+                        if verbose {
+                            for (path, _) in &modules {
+                                eprintln!("  - {}", path);
+                            }
+                        }
+                    }
+                    // For now, we validate that all modules parse correctly
+                    // In future phases, we'll compile them all together
+                }
+                Err(e) => {
+                    if !quiet {
+                        eprintln!(
+                            "{}",
+                            format!("Module resolution warning: {}", e).yellow()
+                        );
+                        eprintln!("{}", "Continuing with single-file compilation...".yellow());
+                    }
+                }
+            }
+            
             if !quiet && (verbose || cfg!(debug_assertions)) {
                 eprintln!("{}", "Invoking compiler...".blue());
             }

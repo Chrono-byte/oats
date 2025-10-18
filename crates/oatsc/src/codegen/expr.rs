@@ -5202,8 +5202,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         return Err(Diagnostic::simple("Arrow return type not supported"));
                     }
                 } else {
-                    // If no return type annotation is present, infer from body.
-                    self.infer_return_type_from_arrow_body(&arrow.body)?
+                    return Err(Diagnostic::simple(
+                        "Arrow function return type annotation required - test",
+                    ));
                 };
 
                 // Build LLVM function type. If captures are present, the first

@@ -556,8 +556,9 @@ pub fn check_function_strictness(
             return Err(anyhow::anyhow!("Function return type not supported"));
         }
     } else {
-        // Assume Number if no annotation (for arrows)
-        crate::types::OatsType::Number
+        return Err(anyhow::anyhow!(
+            "Function return type annotation required"
+        ));
     };
 
     // Collect param types

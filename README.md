@@ -93,9 +93,6 @@ If you want to develop Oats or work with the full repository:
 2. **Compile and Run**:
 
     ```bash
-    # Prepare environment (sets LLVM paths)
-    source ./scripts/setup_env.sh
-
     # Build in release mode for better performance
     cargo build --workspace --release
 
@@ -151,4 +148,4 @@ Contributions are welcome\! Start by exploring the `docs/` directory:
 
 ## 📜 License
 
-Licensed under the **zlib/libpng License with Acknowledgement**. See the [LICENSE](https://www.google.com/search?q=LICENSE) file for details.
+Licensed under the **zlib/libpng License with Acknowledgement**. See the [LICENSE](LICENSE) file for details.

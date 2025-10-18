@@ -1,7 +1,6 @@
 use anyhow::Result;
 use std::fs::File;
 use std::io::Write;
-use std::path::Path;
 
 use std::cell::Cell;
 use std::cell::RefCell;
@@ -1289,10 +1288,7 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
         })?;
 
     // oatsc now always emits objects only - linking is handled by toasty
-    eprintln!(
-        "Emitted {} (linking delegated to toasty)",
-        out_obj
-    );
+    eprintln!("Emitted {} (linking delegated to toasty)", out_obj);
     let out_dir = std::env::var("OATS_OUT_DIR").unwrap_or_else(|_| ".".to_string());
     let src_filename = std::path::Path::new(&src_path)
         .file_stem()

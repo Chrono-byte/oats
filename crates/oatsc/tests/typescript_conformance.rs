@@ -23,10 +23,11 @@ use tempfile::TempDir;
 use walkdir::WalkDir;
 
 /// Path to the vendored TypeScript conformance tests
+#[allow(dead_code)]
 const CONFORMANCE_DIR: &str = "../../third_party/typescript_conformance_tests/conformance";
 
 // #[test]
-fn typescript_conformance_parsing() -> Result<()> {
+fn _typescript_conformance_parsing() -> Result<()> {
     let conformance_path = Path::new(CONFORMANCE_DIR);
 
     if !conformance_path.exists() {
@@ -134,7 +135,8 @@ fn typescript_conformance_parsing() -> Result<()> {
             }
         };
 
-        let options = oatsc::CompileOptions {
+        #[allow(dead_code)]
+        let _options = oatsc::CompileOptions {
             src_file: path.to_string_lossy().to_string(),
             out_dir: Some(temp_dir.path().to_string_lossy().to_string()),
             out_name: None,

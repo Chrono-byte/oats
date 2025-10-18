@@ -3,8 +3,10 @@ use atty::Stream as AtStream;
 use clap::{Parser, Subcommand};
 use colored::Colorize;
 
+mod build;
 mod manifest;
 mod module_resolution;
+mod package_graph;
 
 #[derive(Parser)]
 #[command(name = "toasty", about = "Oats Project Manager", version = env!("CARGO_PKG_VERSION"))]
@@ -186,7 +188,7 @@ fn main() -> Result<()> {
             out_dir,
             out_name,
             linker,
-            emit_object_only: _emit_object_only,
+            emit_object_only,
             opt_level,
             lto,
             target_triple,
@@ -221,11 +223,11 @@ fn main() -> Result<()> {
                 eprintln!("{}", "Building in debug mode...".yellow());
             }
 
-            // Try to discover and load manifest
-            let manifest_info = if src.is_none() {
+            // Try to discover and load manifest for package-based build
+            if src.is_none() {
                 // Only auto-discover manifest if no explicit source file provided
                 match manifest::Manifest::discover() {
-                    Ok(Some((manifest, manifest_path))) => {
+                    Ok(Some((_manifest, manifest_path))) => {
                         if !quiet && (verbose || cfg!(debug_assertions)) {
                             eprintln!(
                                 "{}",
@@ -233,13 +235,37 @@ fn main() -> Result<()> {
                                     .blue()
                             );
                         }
-                        Some((manifest, manifest_path))
+
+                        // Use package-based build
+                        let build_config = build::BuildConfig {
+                            verbose,
+                            quiet,
+                            release,
+                            out_dir,
+                            out_name,
+                            linker,
+                            opt_level,
+                            lto,
+                            target_triple,
+                            target_cpu,
+                            target_features,
+                        };
+
+                        let exe_path = build::build_package_project(&manifest_path, build_config)?;
+
+                        if !quiet && (verbose || cfg!(debug_assertions)) {
+                            eprintln!(
+                                "{}",
+                                format!("Build complete: {}", exe_path.display()).green()
+                            );
+                        }
+
+                        return Ok(());
                     }
                     Ok(None) => {
                         if !quiet && (verbose || cfg!(debug_assertions)) {
                             eprintln!("{}", "No Oats.toml found, using single-file mode".yellow());
                         }
-                        None
                     }
                     Err(e) => {
                         if !quiet {
@@ -248,48 +274,55 @@ fn main() -> Result<()> {
                                 format!("Warning: Failed to load manifest: {}", e).yellow()
                             );
                         }
-                        None
                     }
                 }
-            } else {
-                None
-            };
+            }
 
-            // Determine source file
+            // Determine source file for legacy single-file mode
             let src_file = if let Some(s) = src {
                 s
-            } else if let Some((_manifest, manifest_path)) = &manifest_info {
-                // Use manifest to determine entry point
-                // For now, assume src/main.oats relative to manifest
-                let manifest_dir = manifest_path.parent().unwrap_or(std::path::Path::new("."));
-                let default_entry = manifest_dir.join("src").join("main.oats");
-                if default_entry.exists() {
-                    default_entry.to_string_lossy().to_string()
-                } else {
-                    // Fallback to any .oats file in the directory
-                    let oats_files = std::fs::read_dir(manifest_dir)?
-                        .filter_map(|entry| entry.ok())
-                        .filter(|entry| {
-                            entry.path().extension() == Some(std::ffi::OsStr::new("oats"))
-                        })
-                        .map(|entry| entry.path().to_string_lossy().to_string())
-                        .collect::<Vec<_>>();
-
-                    if oats_files.len() == 1 {
-                        oats_files[0].clone()
-                    } else {
-                        anyhow::bail!(
-                            "Could not determine entry point. Please specify with --src or create src/main.oats"
-                        );
-                    }
-                }
             } else if let Ok(p) = std::env::var("OATS_SRC_FILE") {
                 p
             } else {
                 anyhow::bail!(
-                    "No source file provided. Pass path as argument or set OATS_SRC_FILE env var."
+                    "No source file provided. Pass path as argument, set OATS_SRC_FILE env var, or create Oats.toml"
                 );
             };
+
+            // Special case: if emit_object_only is requested and this is a single file with no dependencies,
+            // compile it directly without the multi-module system
+            if emit_object_only {
+                if !quiet && (verbose || cfg!(debug_assertions)) {
+                    eprintln!(
+                        "{}",
+                        "Compiling single file with emit-object-only...".blue()
+                    );
+                }
+
+                let mut options = oatsc::CompileOptions::new(src_file.clone());
+                options.out_dir = out_dir.clone();
+                options.out_name = out_name.clone();
+                options.linker = linker.clone();
+                options.emit_object_only = true;
+                options.opt_level = opt_level.clone();
+                options.lto = lto.clone();
+                options.target_triple = target_triple.clone();
+                options.target_cpu = target_cpu.clone();
+                options.target_features = target_features.clone();
+                options.build_profile = if release {
+                    Some("release".to_string())
+                } else {
+                    None
+                };
+
+                let build_out = oatsc::compile(options)?;
+                if let Some(out_path) = build_out {
+                    if !quiet && (verbose || cfg!(debug_assertions)) {
+                        eprintln!("{}", format!("Build finished: {}", out_path).green());
+                    }
+                }
+                return Ok(());
+            }
 
             // Build dependency graph starting from entry point
             if !quiet && (verbose || cfg!(debug_assertions)) {
@@ -301,7 +334,7 @@ fn main() -> Result<()> {
             if !quiet && (verbose || cfg!(debug_assertions)) {
                 eprintln!(
                     "{}",
-                    format!("Dependency graph has {} module(s)", node_indices.len()).green()
+                    format!("Found {} module(s) to compile", node_indices.len()).green()
                 );
             }
 
@@ -380,6 +413,20 @@ fn main() -> Result<()> {
 
             // Phase 1: Link all compiled modules together
             // In Phase 2, this will be done by toasty after all packages are compiled
+            if emit_object_only {
+                if !quiet && (verbose || cfg!(debug_assertions)) {
+                    eprintln!("{}", "Skipping linking due to emit-object-only...".blue());
+                }
+                // For multi-module builds with emit_object_only, just report the object files
+                if !quiet && (verbose || cfg!(debug_assertions)) {
+                    eprintln!("{}", "Compiled object files:".green());
+                    for (module_path, obj_file) in &compiled_modules {
+                        eprintln!("  {} -> {}", module_path, obj_file);
+                    }
+                }
+                return Ok(());
+            }
+
             if !quiet && (verbose || cfg!(debug_assertions)) {
                 eprintln!("{}", "Linking final executable...".blue());
             }

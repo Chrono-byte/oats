@@ -7,6 +7,7 @@ version = "0.1.0"
 authors = ["Your Name <your.email@example.com>"]
 description = "A description of your Oats project"
 license = "MIT"
+entry = "src/main.oats"  # Entry point for the package
 
 [dependencies]
 # Local dependencies (relative paths)

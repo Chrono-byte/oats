@@ -201,41 +201,43 @@ fn preflight_check() -> Result<()> {
     if std::env::var("OATS_OATSC_PATH").is_ok() {
         return Ok(());
     }
-    
+
     // Check for oatsc compiler (try selected version first, then downloaded latest, then local target, then system)
-    let oatsc_available = if let Some(oatsc_path) = crate::compiler_fetch::get_selected_compiler_path() {
-        // Use selected oatsc version
-        unsafe {
-            std::env::set_var("OATS_OATSC_PATH", oatsc_path);
-        }
-        true
-    } else if let Some(oatsc_path) = crate::compiler_fetch::try_fetch_compiler() {
-        // Use downloaded oatsc
-        unsafe {
-            std::env::set_var("OATS_OATSC_PATH", oatsc_path);
-        }
-        true
-    } else if let Ok(current_exe) = std::env::current_exe() {
-        let local_oatsc = current_exe.parent()
-            .and_then(|p| p.parent())
-            .map(|p| p.join("oatsc"))
-            .filter(|p| p.exists());
-        
-        if let Some(oatsc_path) = local_oatsc {
-            // Use local oatsc from target directory
+    let oatsc_available =
+        if let Some(oatsc_path) = crate::compiler_fetch::get_selected_compiler_path() {
+            // Use selected oatsc version
             unsafe {
                 std::env::set_var("OATS_OATSC_PATH", oatsc_path);
             }
             true
+        } else if let Some(oatsc_path) = crate::compiler_fetch::try_fetch_compiler() {
+            // Use downloaded oatsc
+            unsafe {
+                std::env::set_var("OATS_OATSC_PATH", oatsc_path);
+            }
+            true
+        } else if let Ok(current_exe) = std::env::current_exe() {
+            let local_oatsc = current_exe
+                .parent()
+                .and_then(|p| p.parent())
+                .map(|p| p.join("oatsc"))
+                .filter(|p| p.exists());
+
+            if let Some(oatsc_path) = local_oatsc {
+                // Use local oatsc from target directory
+                unsafe {
+                    std::env::set_var("OATS_OATSC_PATH", oatsc_path);
+                }
+                true
+            } else {
+                false
+            }
+        } else if is_command_available("oatsc") {
+            // Use system oatsc
+            true
         } else {
             false
-        }
-    } else if is_command_available("oatsc") {
-        // Use system oatsc
-        true
-    } else {
-        false
-    };
+        };
 
     if !oatsc_available {
         anyhow::bail!(
@@ -244,14 +246,11 @@ fn preflight_check() -> Result<()> {
     }
 
     // Check for linker (clang preferred, but accept others)
-    let linker_available = is_command_available("clang") || 
-                          is_command_available("gcc") || 
-                          is_command_available("ld");
+    let linker_available =
+        is_command_available("clang") || is_command_available("gcc") || is_command_available("ld");
 
     if !linker_available {
-        anyhow::bail!(
-            "No linker found in PATH. Please install clang, gcc, or another linker."
-        );
+        anyhow::bail!("No linker found in PATH. Please install clang, gcc, or another linker.");
     }
 
     Ok(())
@@ -271,81 +270,80 @@ fn is_command_available(cmd: &str) -> bool {
 /// Invoke oatsc compiler as external command
 fn invoke_oatsc(options: &CompileOptions) -> Result<Option<PathBuf>> {
     // Get oatsc path from environment (set by preflight check)
-    let oatsc_path = std::env::var("OATS_OATSC_PATH")
-        .unwrap_or_else(|_| "oatsc".to_string());
+    let oatsc_path = std::env::var("OATS_OATSC_PATH").unwrap_or_else(|_| "oatsc".to_string());
 
     // Build command arguments
     let mut args = vec![];
-    
+
     // Add source file
     args.push(options.src_file.clone());
-    
+
     // Add package root if specified
     if let Some(pkg_root) = &options.package_root {
         args.push("--package-root".to_string());
         args.push(pkg_root.to_string_lossy().to_string());
     }
-    
+
     // Add output directory
     if let Some(out_dir) = &options.out_dir {
         args.push("--out-dir".to_string());
         args.push(out_dir.clone());
     }
-    
+
     // Add output name
     if let Some(out_name) = &options.out_name {
         args.push("--out-name".to_string());
         args.push(out_name.clone());
     }
-    
+
     // Add linker
     if let Some(linker) = &options.linker {
         args.push("--linker".to_string());
         args.push(linker.clone());
     }
-    
+
     // Add external packages
     for (name, path) in &options.extern_pkg {
         args.push("--extern-pkg".to_string());
         args.push(format!("{}={}", name, path));
     }
-    
+
     // Add build profile
     if let Some(profile) = &options.build_profile {
         args.push("--profile".to_string());
         args.push(profile.clone());
     }
-    
+
     // Add optimization level
     if let Some(opt_level) = &options.opt_level {
         args.push("--opt-level".to_string());
         args.push(opt_level.clone());
     }
-    
+
     // Add LTO
     if let Some(lto) = &options.lto {
         args.push("--lto".to_string());
         args.push(lto.clone());
     }
-    
+
     // Add target triple
     if let Some(triple) = &options.target_triple {
         args.push("--target-triple".to_string());
         args.push(triple.clone());
     }
-    
+
     // Add target CPU
     if let Some(cpu) = &options.target_cpu {
         args.push("--target-cpu".to_string());
         args.push(cpu.clone());
     }
-    
+
     // Add target features
     if let Some(features) = &options.target_features {
         args.push("--target-features".to_string());
         args.push(features.clone());
     }
-    
+
     // Add flags
     if options.emit_object_only {
         args.push("--emit-object-only".to_string());
@@ -353,29 +351,33 @@ fn invoke_oatsc(options: &CompileOptions) -> Result<Option<PathBuf>> {
     if !options.link_runtime {
         args.push("--no-link-runtime".to_string());
     }
-    
+
     // Execute command
     let output = std::process::Command::new(&oatsc_path)
         .args(&args)
         .output()
         .with_context(|| format!("Failed to execute oatsc command: {} {:?}", oatsc_path, args))?;
-    
+
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stdout = String::from_utf8_lossy(&output.stdout);
         anyhow::bail!(
             "oatsc compilation failed:\nSTDOUT: {}\nSTDERR: {}",
-            stdout, stderr
+            stdout,
+            stderr
         );
     }
-    
+
     // Parse output to get object file path if any
     // oatsc may or may not print output depending on mode
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    
+
     if stdout.is_empty() {
         Ok(None)
-    } else if let Some(path_str) = stdout.strip_prefix("Emitted ").and_then(|s| s.split(" (linking delegated to toasty)").next()) {
+    } else if let Some(path_str) = stdout
+        .strip_prefix("Emitted ")
+        .and_then(|s| s.split(" (linking delegated to toasty)").next())
+    {
         Ok(Some(PathBuf::from(path_str)))
     } else {
         // Assume it's a direct path
@@ -530,7 +532,10 @@ fn main() -> Result<()> {
                     && !quiet
                     && (verbose || cfg!(debug_assertions))
                 {
-                    eprintln!("{}", format!("Build finished: {}", out_path.display()).green());
+                    eprintln!(
+                        "{}",
+                        format!("Build finished: {}", out_path.display()).green()
+                    );
                 }
                 return Ok(());
             }
@@ -658,23 +663,24 @@ fn main() -> Result<()> {
 
             // Use clang to link all object files with the runtime
             // Ensure runtime is available
-            let runtime_lib = if let Some(cached_runtime) = crate::runtime_fetch::try_fetch_runtime() {
-                // Use the cached pre-built runtime
-                cached_runtime
-            } else {
-                // Look for runtime in current directory or standard locations
-                let runtime_lib = std::path::PathBuf::from("libruntime.a");
+            let runtime_lib =
+                if let Some(cached_runtime) = crate::runtime_fetch::try_fetch_runtime() {
+                    // Use the cached pre-built runtime
+                    cached_runtime
+                } else {
+                    // Look for runtime in current directory or standard locations
+                    let runtime_lib = std::path::PathBuf::from("libruntime.a");
 
-                if !runtime_lib.exists() {
-                    anyhow::bail!(
-                        "Runtime library not found. Please either:\n\
+                    if !runtime_lib.exists() {
+                        anyhow::bail!(
+                            "Runtime library not found. Please either:\n\
                         1. Ensure pre-built runtimes can be downloaded from GitHub, or\n\
                         2. Place libruntime.a in the current directory, or\n\
                         3. Set OATS_RUNTIME_CACHE to a directory containing the runtime library"
-                    );
-                }
-                runtime_lib
-            };
+                        );
+                    }
+                    runtime_lib
+                };
 
             let mut link_cmd = std::process::Command::new("clang");
             link_cmd.arg("-o").arg(&exe_path);

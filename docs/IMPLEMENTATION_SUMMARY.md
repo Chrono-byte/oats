@@ -9,12 +9,14 @@ This implementation delivers a complete package-based module system for Oats, tr
 ### 1. Manifest System (`crates/toasty/src/manifest.rs`)
 
 **Enhancements:**
+
 - Added `entry` field to Package struct for specifying entry points
 - Implemented `entry_point()` helper to resolve absolute paths
 - Enhanced validation to check entry point is not empty
 - Updated example manifest (`Oats.toml.example`)
 
 **Manifest Schema:**
+
 ```toml
 [package]
 name = "package-name"
@@ -28,6 +30,7 @@ dep-name = { path = "../dep-path" }
 ### 2. Package Dependency Graph (`crates/toasty/src/package_graph.rs`)
 
 **New Module - Core Features:**
+
 - `PackageNode` struct representing a package in the graph
 - `build_package_graph()` - Recursive package discovery
 - `topological_sort_packages()` - Dependency-first build order
@@ -35,18 +38,21 @@ dep-name = { path = "../dep-path" }
 - Path-based dependency resolution
 
 **Graph Structure:**
+
 - Directed graph where edge A → B means "A depends on B"
 - Node data: package name, root directory, manifest
 - BFS traversal for dependency discovery
 - Validation of package names and paths
 
 **Tests:**
+
 - Simple two-package dependency graph
 - Circular dependency detection
 
 ### 3. Build Orchestration (`crates/toasty/src/build.rs`)
 
 **New Module - Compilation Pipeline:**
+
 - `BuildConfig` struct for build parameters
 - `build_package_project()` - Main orchestrator function
 - `compile_package()` - Per-package compilation
@@ -54,6 +60,7 @@ dep-name = { path = "../dep-path" }
 - `find_oats_root()` - Workspace root detection
 
 **Build Flow:**
+
 1. Discover and parse root manifest
 2. Build package dependency graph
 3. Topologically sort packages
@@ -61,6 +68,7 @@ dep-name = { path = "../dep-path" }
 5. Link all object files into executable
 
 **Features:**
+
 - Sequential compilation (parallel planned for future)
 - Dependency metadata passed via CLI flags
 - Generates `.oats.meta` files (placeholder)
@@ -69,6 +77,7 @@ dep-name = { path = "../dep-path" }
 ### 4. Compiler Integration (`crates/oatsc/src/`)
 
 **main.rs Enhancements:**
+
 - Refactored to use clap for better CLI parsing
 - Added `--package-root` flag for package mode
 - Added `--extern-pkg` flag for package dependencies
@@ -76,6 +85,7 @@ dep-name = { path = "../dep-path" }
 - Better error messages and help text
 
 **lib.rs Updates:**
+
 - Added `package_root` field to CompileOptions
 - Added `extern_pkg` HashMap for package dependencies
 - New `for_package()` constructor for package mode
@@ -84,6 +94,7 @@ dep-name = { path = "../dep-path" }
 ### 5. CLI Integration (`crates/toasty/src/main.rs`)
 
 **Build Command Enhancement:**
+
 - Automatic manifest discovery when no source file specified
 - Falls back to package-based build when Oats.toml found
 - Passes build configuration to orchestrator
@@ -91,6 +102,7 @@ dep-name = { path = "../dep-path" }
 - Maintains backward compatibility with single-file mode
 
 **User Experience:**
+
 ```bash
 # Package mode (automatic)
 cd my-package
@@ -103,10 +115,12 @@ toasty build main.oats
 ### 6. Examples and Documentation
 
 **Example Projects:**
+
 - `examples/pkg_test/mylib/` - Simple library package
 - `examples/pkg_test/myapp/` - Application with dependency
 
 **Documentation:**
+
 - `docs/PACKAGE_SYSTEM.md` - Comprehensive guide
   - Architecture overview
   - Manifest format specification
@@ -143,6 +157,7 @@ toasty build main.oats
 ### Dependency Resolution
 
 **Algorithm:**
+
 1. Start with root package
 2. Parse its dependencies
 3. For each dependency:
@@ -157,6 +172,7 @@ toasty build main.oats
 ### Error Handling
 
 All operations return `Result<T, anyhow::Error>` with context:
+
 - Clear error messages for common failures
 - Validation errors show which field/package
 - Dependency resolution errors include paths
@@ -192,19 +208,23 @@ Oats.toml.example         [Modified] - Added entry field
 ## Testing
 
 ### Unit Tests
+
 - `package_graph::tests::test_simple_package_graph` ✓
 - `package_graph::tests::test_circular_dependency_detection` ✓
 - `manifest::tests::test_parse_basic_manifest` ✓
 - `manifest::tests::test_validate_package_name` ✓
 
 ### Integration Tests
+
 - Package graph builds correctly for multi-package projects
 - Circular dependencies are detected and reported
 - Build order is correct (dependencies first)
 - Manifest parsing works with all field combinations
 
 ### Manual Testing
+
 Created test projects in `/tmp/test-packages/` and `examples/pkg_test/`:
+
 - Two-package dependency (myapp → mylib)
 - Manifest discovery works
 - Package graph construction succeeds
@@ -230,6 +250,7 @@ Legend: ✅ Complete | ⚠️ Partial | ❌ Not yet implemented
 ## Known Limitations
 
 ### 1. Runtime Location Resolution
+
 **Issue:** When building outside the workspace, oatsc can't locate the runtime library.
 
 **Impact:** Package builds fail if not run from within workspace.
@@ -239,6 +260,7 @@ Legend: ✅ Complete | ⚠️ Partial | ❌ Not yet implemented
 **Future Fix:** Improve runtime discovery to search parent directories or use absolute paths.
 
 ### 2. Package Metadata
+
 **Issue:** .oats.meta files contain placeholder text, not actual exports.
 
 **Impact:** Can't use package exports for import resolution yet.
@@ -246,6 +268,7 @@ Legend: ✅ Complete | ⚠️ Partial | ❌ Not yet implemented
 **Future Fix:** Extract exports during compilation, serialize to metadata.
 
 ### 3. Sequential Compilation
+
 **Issue:** Packages build one at a time, even when independent.
 
 **Impact:** Slower builds for large projects with parallel dependencies.
@@ -253,6 +276,7 @@ Legend: ✅ Complete | ⚠️ Partial | ❌ Not yet implemented
 **Future Fix:** Use rayon or tokio for parallel compilation of independent packages.
 
 ### 4. Path-Only Dependencies
+
 **Issue:** Only local path dependencies supported.
 
 **Impact:** Can't use Git or registry dependencies.
@@ -262,23 +286,27 @@ Legend: ✅ Complete | ⚠️ Partial | ❌ Not yet implemented
 ## Performance Characteristics
 
 ### Current Performance
+
 - **Graph building**: O(P + D) where P = packages, D = dependencies
-- **Topological sort**: O(P + D) 
+- **Topological sort**: O(P + D)
 - **Compilation**: O(P) sequential
 - **Memory**: O(P + D) for graph storage
 
 ### With Future Parallel Compilation
+
 - **Compilation**: O(depth) where depth = longest dependency chain
 - **Speedup**: Up to N× for N independent packages
 
 ## Migration Impact
 
 ### Existing Projects
+
 - **Single-file projects**: Continue to work without changes
 - **Multi-file projects**: Can migrate incrementally
 - **No breaking changes**: Old mode still available via CLI
 
 ### New Projects
+
 - Use `toasty new` to create package structure
 - Automatic package mode with Oats.toml
 - Better organization from start
@@ -286,18 +314,21 @@ Legend: ✅ Complete | ⚠️ Partial | ❌ Not yet implemented
 ## Future Enhancements
 
 ### Short Term
+
 1. Fix runtime location resolution
 2. Implement real metadata generation
 3. Add workspace support (shared Cargo.toml)
 4. Improve error messages with suggestions
 
 ### Medium Term
+
 1. Parallel compilation with rayon
 2. Build cache for incremental builds
 3. Git dependencies support
 4. Version resolution for conflicts
 
 ### Long Term
+
 1. Package registry (crates.io equivalent)
 2. Cross-compilation support
 3. Build scripts (build.oats)
@@ -309,12 +340,14 @@ Legend: ✅ Complete | ⚠️ Partial | ❌ Not yet implemented
 This implementation successfully delivers a production-ready package-based module system for Oats. The architecture is clean, extensible, and follows established patterns from Rust's cargo. All core functionality works correctly, with clear paths for future enhancements.
 
 The system provides immediate value:
+
 - Better project organization
 - Explicit dependency management
 - Automatic build order computation
 - Foundation for parallel builds
 
 Key wins:
+
 - ✅ Zero breaking changes to existing projects
 - ✅ Clean separation of concerns
 - ✅ Comprehensive documentation

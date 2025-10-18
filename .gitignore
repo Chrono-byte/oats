@@ -57,8 +57,10 @@ fuzz/corpus/**
 
 # Ignore compiled oats binaries (named after source file stem)
 # These are the output of toasty build and should not be committed
+# Common example names:
 /add
 /fibonaci
+/main
 /test_*
 /class_*
 /cycle_*
@@ -66,6 +68,18 @@ fuzz/corpus/**
 /field_*
 /mem
 /object_*
+
+# Also ignore any executable in the root that doesn't have an extension
+# (most compiled oats programs)
+/*
+!/*.*
+!/*/
+!.gitignore
+!.gitlab-ci.yml
+!Cargo.toml
+!LICENSE
+!README.md
+!TODO.md
 
 # Allow exceptions: keep README, scripts, source code tracked
 review.md

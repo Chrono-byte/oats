@@ -75,3 +75,7 @@ docs/plans/*
 
 # Ignore vendor directory if it exists
 third_party/*
+
+# Ignore object files & LLVM IR in source directories
+**/*.ll
+**/*.o

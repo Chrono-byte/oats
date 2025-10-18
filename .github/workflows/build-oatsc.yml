@@ -21,6 +21,7 @@ env:
 jobs:
   build-oatsc:
     name: Build Oats Compiler
+    # Skip the aarch64 linux matrix entry if SKIP_AARCH64_LINUX == 'true'
     if: ${{ env.SKIP_AARCH64_LINUX != 'true' || matrix.target != 'aarch64-unknown-linux-gnu' }}
     strategy:
       matrix:
@@ -46,11 +47,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Install Rust toolchain and add target
+        uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
-          target: ${{ matrix.target }}
+          targets: ${{ matrix.target }}
 
       - name: Cache Cargo dependencies
         uses: actions/cache@v4
@@ -77,15 +78,19 @@ jobs:
       - name: Install LLVM (Linux)
         if: runner.os == 'Linux'
         run: |
+          sudo apt-get update
           sudo apt-get install -y llvm-18-dev clang-18 libclang-18-dev
           echo "LLVM_SYS_181_PREFIX=/usr/lib/llvm-18" >> $GITHUB_ENV
           echo "/usr/lib/llvm-18/bin" >> $GITHUB_PATH
 
       - name: Install LLVM (Windows)
         if: runner.os == 'Windows'
+        shell: powershell
         run: |
-          choco install llvm --version 18.1.8 --allow-downgrade
-          echo "LLVM_SYS_181_PREFIX=C:\Program Files\LLVM" >> $env:GITHUB_ENV
+          choco install llvm --version 18.1.8 --allow-downgrade -y
+          # Write env and add to PATH correctly on Windows
+          Add-Content -Path $env:GITHUB_ENV -Value 'LLVM_SYS_181_PREFIX=C:\Program Files\LLVM'
+          Add-Content -Path $env:GITHUB_PATH -Value 'C:\Program Files\LLVM\bin'
 
       - name: Install cross-compilation tools (Linux ARM64)
         if: matrix.target == 'aarch64-unknown-linux-gnu'
@@ -98,18 +103,24 @@ jobs:
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: |
           mkdir -p .cargo
-          cat > .cargo/config.toml <<'EOF'
-          [target.aarch64-unknown-linux-gnu]
-          linker = "aarch64-linux-gnu-gcc"
-          EOF
+          printf '%s\n' '[target.aarch64-unknown-linux-gnu]' 'linker = "aarch64-linux-gnu-gcc"' > .cargo/config.toml
 
       - name: Build oatsc
         run: |
           cargo build --release --bin oatsc --target ${{ matrix.target }}
 
-      - name: Rename artifact
+      - name: Rename artifact (Unix)
+        if: runner.os != 'Windows'
         run: |
           cp target/${{ matrix.target }}/release/oatsc${{ contains(matrix.target, 'windows') && '.exe' || '' }} ${{ matrix.artifact }}
+
+      - name: Rename artifact (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          # On Windows, use PowerShell Copy-Item
+          $src = "target/${{ matrix.target }}/release/oatsc.exe"
+          Copy-Item -Path $src -Destination "${{ matrix.artifact }}" -Force
 
       - name: Make executable (Unix)
         if: runner.os != 'Windows'
@@ -146,12 +157,17 @@ jobs:
           echo "tag=compiler-$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
           echo "date=$(date +%Y%m%d-%H%M%S)" >> $GITHUB_OUTPUT
 
-      - name: Create Release
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Install GitHub CLI
         run: |
-          # Create a release tag for the compiler
+          sudo apt-get update
+          sudo apt-get install -y gh
+
+      - name: Create Release and upload assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Create a release tag for the compiler and upload artifacts/*
           gh release create "${{ steps.version.outputs.tag }}" \
             --title "Compiler Build ${{ steps.version.outputs.date }}" \
-            --notes "Automated oatsc compiler build from commit $(git rev-parse --short HEAD)" \
-            artifacts/**/*
+            --notes "Automated oatsc compiler build from commit ${{ github.sha }}" \
+            artifacts/*

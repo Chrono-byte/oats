@@ -65,6 +65,3 @@ stack-local.
   locals; stack-allocated boxes are a follow-up optimization.
 - Feature flag `OATS_ELIDE_ARC` is reserved for future experimentation but is
   not yet exposed as a user-facing toggle.
-
-Contributors extending the analysis should document new heuristics here and add
-targeted tests to keep ARC correctness verifiable.

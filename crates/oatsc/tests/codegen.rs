@@ -41,3 +41,5 @@ mod promise_type;
 mod generics_ir;
 #[path = "codegen/regress_cycle_reclaim.rs"]
 mod regress_cycle_reclaim;
+#[path = "codegen/unowned_refs.rs"]
+mod unowned_refs;

@@ -233,3 +233,95 @@ export function main(): number {
 
     Ok(())
 }
+
+#[test]
+fn const_extended_eval() -> Result<()> {
+    let src = r#"
+const a = 5;
+const b = 10;
+const logical_and = a > 0 && b > 5; // true
+const logical_or = a < 0 || b > 5;  // true
+const conditional = a > b ? "greater" : "less"; // "less"
+const math_abs = Math.abs(-3.14); // 3.14
+const math_floor = Math.floor(3.9); // 3
+
+export function main(): number {
+    return 0;
+}
+"#;
+
+    // Parse module and find exported main
+    let parsed_mod = parser::parse_oats_module(src, None)?;
+    let parsed = &parsed_mod.parsed;
+    let mut func_decl_opt: Option<deno_ast::swc::ast::Function> = None;
+    for item_ref in parsed.program_ref().body() {
+        if let deno_ast::ModuleItemRef::ModuleDecl(module_decl) = item_ref
+            && let deno_ast::swc::ast::ModuleDecl::ExportDecl(decl) = module_decl
+            && let deno_ast::swc::ast::Decl::Fn(f) = &decl.decl
+        {
+            let name = f.ident.sym.to_string();
+            if name == "main" {
+                func_decl_opt = Some((*f.function).clone());
+                break;
+            }
+        }
+    }
+    let func_decl = func_decl_opt.ok_or_else(|| anyhow::anyhow!("No exported `main` found"))?;
+
+    let mut symbols = SymbolTable::new();
+    let _func_sig = check_function_strictness(&func_decl, &mut symbols)?;
+
+    let context = Context::create();
+    let module = context.create_module("test_module");
+    let triple = TargetMachine::get_default_triple();
+    module.set_triple(&triple);
+    let codegen = create_codegen(&context, "test_module", symbols, &parsed_mod.source)?;
+
+    // Replicate the const evaluation process
+    use deno_ast::swc::ast;
+
+    let mut top_level_consts: Vec<(String, Box<ast::Expr>, usize)> = Vec::new();
+    for item in parsed.program_ref().body() {
+        if let deno_ast::ModuleItemRef::Stmt(ast::Stmt::Decl(ast::Decl::Var(vd))) = item
+            && matches!(vd.kind, ast::VarDeclKind::Const)
+        {
+            for decl in &vd.decls {
+                if let ast::Pat::Ident(binding) = &decl.name
+                    && let Some(init) = &decl.init
+                {
+                    let name = binding.id.sym.to_string();
+                    let span_start = vd.span.lo.0 as usize;
+                    top_level_consts.push((name, init.clone(), span_start));
+                }
+            }
+        }
+    }
+
+    // For simplicity, evaluate in order without dependency analysis
+    for (name, init_expr, span_start) in &top_level_consts {
+        let const_map = codegen.const_items.borrow();
+        match oatsc::codegen::const_eval::eval_const_expr(init_expr, *span_start, &const_map) {
+            Ok(cv) => {
+                drop(const_map);
+                codegen
+                    .const_items
+                    .borrow_mut()
+                    .insert(name.clone(), cv.clone());
+                // Check expected values
+                match name.as_str() {
+                    "logical_and" => assert!(matches!(cv, oatsc::codegen::const_eval::ConstValue::Bool(true))),
+                    "logical_or" => assert!(matches!(cv, oatsc::codegen::const_eval::ConstValue::Bool(true))),
+                    "conditional" => assert!(matches!(cv, oatsc::codegen::const_eval::ConstValue::Str(s) if s == "less")),
+                    "math_abs" => assert!(matches!(cv, oatsc::codegen::const_eval::ConstValue::Number(n) if (n - 3.14).abs() < 0.001)),
+                    "math_floor" => assert!(matches!(cv, oatsc::codegen::const_eval::ConstValue::Number(n) if n == 3.0)),
+                    _ => {}
+                }
+            }
+            Err(d) => {
+                return Err(anyhow::anyhow!("Failed to evaluate {}: {}", name, d.message));
+            }
+        }
+    }
+
+    Ok(())
+}

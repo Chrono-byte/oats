@@ -10,6 +10,7 @@ clap = { version = "4.4", features = ["derive"] }
 colored = "2.0"
 
 atty = "0.2"
+deno_ast = "0.50.3"
 [dependencies.oatsc]
 path = "../oatsc"
 

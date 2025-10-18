@@ -3,9 +3,12 @@ use anyhow::Result;
 #[test]
 fn test_unowned_reference_codegen() -> Result<()> {
     let source = r#"
+class TestObj {
+}
+
 export function main(): number {
-    let obj: any = { } as any;
-    let u: unowned<any> = obj;
+    let obj: TestObj = new TestObj();
+    let u: unowned<TestObj> = obj;
     return 0;
 }
 "#;

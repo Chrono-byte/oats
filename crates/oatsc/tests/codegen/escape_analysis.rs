@@ -128,7 +128,7 @@ class TestClass {
 }
 
 export function main(): number {
-    let obj = new TestClass();
+    let obj: TestClass = new TestClass();
     obj.setField(42);
     return obj.field;
 }

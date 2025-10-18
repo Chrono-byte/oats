@@ -47,7 +47,7 @@ fn field_write_with_pointer_type_uses_rc() -> Result<()> {
         }
         
         export function main(): number {
-            let c = new Container("hello");
+            let c: Container = new Container("hello");
             c.setData("world");
             return 0;
         }

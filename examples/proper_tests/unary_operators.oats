@@ -2,27 +2,27 @@ export function main(): void {
     println("Unary Operators Tests");
 
     // Test 1: Unary minus
-    let a = 5;
+    let a: number = 5;
     println(`Unary minus: ${-a}`);
 
     // Test 2: Unary plus
-    let b = "42";
+    let b: string = "42";
     println(`Unary plus: ${+b}`);
 
     // Test 3: Logical NOT
-    let c = true;
+    let c: boolean = true;
     println(`Logical NOT: ${!c}`);
 
     // Test 4: Bitwise NOT
-    let d = 5;
+    let d: number = 5;
     println(`Bitwise NOT: ${~d}`);
 
     // Test 5: Increment
-    let mut e = 1;
+    let mut e: number = 1;
     println(`Increment: ${++e}`);
 
     // Test 6: Decrement
-    let mut f = 10;
+    let mut f: number = 10;
     println(`Decrement: ${--f}`);
 
     println("Unary Operators Tests Completed");

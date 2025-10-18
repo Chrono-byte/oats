@@ -8,8 +8,8 @@ export class Point {
 }
 
 export function main(): number {
-    let p = new Point(1.0, 2.0);
-    let v = 0.0;
+    let p: Point = new Point(1.0, 2.0);
+    let v: number = 0.0;
 
     print_f64(p.sum());
 

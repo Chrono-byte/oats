@@ -1,7 +1,7 @@
 // Test object literal without shorthand
 
 export function main(): number {
-    let point = { x: 100, y: 200 };
+    let point: { x: number, y: number } = { x: 100, y: 200 };
     
     println("Object test:");
     println(point.x);

@@ -1,18 +1,17 @@
 export function main(): void {
-    // Explicit typing
-    let framework = "boop";
+    // All variables with explicit types
+    let framework: string = "boop";
     let version: number = 3.2;
     let isAwesome: boolean = true;
 
-    // Type inference
-    let inferredString = "This should be a string.";
-    let inferredNumber = 42;
+    let explicitString: string = "This should be a string.";
+    let explicitNumber: number = 42;
 
     println(`Framework: ${framework}`);
     println(`Version: ${version}`);
     println(`Is it awesome? ${isAwesome}`);
-    println(`Inferred String: ${inferredString}`);
-    println(`Inferred Number: ${inferredNumber}`);
+    println(`Explicit String: ${explicitString}`);
+    println(`Explicit Number: ${explicitNumber}`);
 
     return;
 }

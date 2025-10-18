@@ -251,10 +251,13 @@ pub fn eval_const_expr(
             // For now, support simple built-in functions
             if let ast::Callee::Expr(callee_expr) = &call.callee {
                 if let ast::Expr::Member(member) = &**callee_expr {
-                    if let (ast::Expr::Ident(obj), ast::MemberProp::Ident(prop)) = (&*member.obj, &member.prop) {
+                    if let (ast::Expr::Ident(obj), ast::MemberProp::Ident(prop)) =
+                        (&*member.obj, &member.prop)
+                    {
                         if obj.sym == "Math" {
                             if call.args.len() == 1 {
-                                let arg = eval_const_expr(&call.args[0].expr, span_start, const_items)?;
+                                let arg =
+                                    eval_const_expr(&call.args[0].expr, span_start, const_items)?;
                                 if let Some(n) = arg.as_f64() {
                                     match prop.sym.as_str() {
                                         "abs" => return Ok(ConstValue::Number(n.abs())),

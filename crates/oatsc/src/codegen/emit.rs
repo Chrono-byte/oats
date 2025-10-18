@@ -1296,7 +1296,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             )
                         })?;
                 }
-                crate::types::OatsType::I64 | crate::types::OatsType::U64 | crate::types::OatsType::Isize | crate::types::OatsType::Usize => {
+                crate::types::OatsType::I64
+                | crate::types::OatsType::U64
+                | crate::types::OatsType::Isize
+                | crate::types::OatsType::Usize => {
                     let zero = self.i64_t.const_int(0, false);
                     self.builder
                         .build_return(Some(&zero.as_basic_value_enum()))
@@ -1326,7 +1329,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             )
                         })?;
                 }
-                crate::types::OatsType::I8 | crate::types::OatsType::U8 | crate::types::OatsType::Char => {
+                crate::types::OatsType::I8
+                | crate::types::OatsType::U8
+                | crate::types::OatsType::Char => {
                     let zero = self.i8_t.const_int(0, false);
                     self.builder
                         .build_return(Some(&zero.as_basic_value_enum()))
@@ -1457,7 +1462,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
             let llvm_ty = match pty {
                 OatsType::Number | OatsType::F64 => self.f64_t.into(),
                 OatsType::F32 => self.f32_t.into(),
-                OatsType::I64 | OatsType::U64 | OatsType::Isize | OatsType::Usize => self.i64_t.into(),
+                OatsType::I64 | OatsType::U64 | OatsType::Isize | OatsType::Usize => {
+                    self.i64_t.into()
+                }
                 OatsType::I32 | OatsType::U32 => self.i32_t.into(),
                 OatsType::I16 | OatsType::U16 => self.i16_t.into(),
                 OatsType::I8 | OatsType::U8 | OatsType::Char => self.i8_t.into(),
@@ -1499,7 +1506,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 OatsType::GenericInstance { .. } => {
                     // Generic instances are specialized, so treat as pointer types
                     self.i8ptr_t.into()
-                },
+                }
             };
             llvm_param_types.push(llvm_ty);
         }

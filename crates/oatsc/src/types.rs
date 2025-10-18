@@ -44,11 +44,20 @@ pub enum OatsType {
     // Boolean type
     Boolean,
     // Integer types
-    I8, U8, I16, U16, I32, U32, I64, U64,
+    I8,
+    U8,
+    I16,
+    U16,
+    I32,
+    U32,
+    I64,
+    U64,
     // Architecture-sized types
-    Isize, Usize,
+    Isize,
+    Usize,
     // Floating point types
-    F32, F64,
+    F32,
+    F64,
     // Character type
     Char,
     // Union of multiple possible types (e.g. number | string)

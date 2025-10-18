@@ -256,6 +256,45 @@ pub fn install_compiler_version(version: &str) -> Result<()> {
     Ok(())
 }
 
+/// Uninstall a specific compiler version
+pub fn uninstall_compiler_version(version: &str) -> Result<()> {
+    let artifact_name = get_compiler_artifact_name();
+    if artifact_name == "oatsc-unsupported" {
+        anyhow::bail!("Unsupported platform for pre-built compiler");
+    }
+
+    let cache_dir = get_cache_dir()?;
+    let compiler_path = cache_dir.join(version).join(artifact_name);
+
+    // Check if installed
+    if !compiler_path.exists() {
+        eprintln!("Compiler version {} is not installed.", version);
+        return Ok(());
+    }
+
+    // Remove the compiler binary
+    fs::remove_file(&compiler_path)?;
+
+    // Remove the version directory if it's empty
+    let version_dir = compiler_path.parent().unwrap();
+    if version_dir.read_dir()?.next().is_none() {
+        fs::remove_dir(version_dir)?;
+    }
+
+    // If this was the currently selected version, clear the selection
+    let config_path = cache_dir.join("current_version");
+    if config_path.exists() {
+        let current = fs::read_to_string(&config_path)?;
+        if current.trim() == version {
+            fs::remove_file(&config_path)?;
+            eprintln!("Cleared current version selection since {} was uninstalled.", version);
+        }
+    }
+
+    eprintln!("Successfully uninstalled compiler version {}", version);
+    Ok(())
+}
+
 /// Switch to using a specific compiler version
 pub fn use_compiler_version(version: &str) -> Result<()> {
     let artifact_name = get_compiler_artifact_name();

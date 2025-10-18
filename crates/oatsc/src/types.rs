@@ -556,9 +556,7 @@ pub fn check_function_strictness(
             return Err(anyhow::anyhow!("Function return type not supported"));
         }
     } else {
-        return Err(anyhow::anyhow!(
-            "Function return type annotation required"
-        ));
+        return Err(anyhow::anyhow!("Function return type annotation required"));
     };
 
     // Collect param types

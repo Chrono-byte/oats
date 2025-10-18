@@ -207,7 +207,7 @@ fn main() -> Result<()> {
             } else if !quiet && (verbose || cfg!(debug_assertions)) {
                 eprintln!("{}", "Building in debug mode...".yellow());
             }
-            
+
             // Determine source file
             let src_file = if let Some(s) = src {
                 s
@@ -218,7 +218,7 @@ fn main() -> Result<()> {
                     "No source file provided. Pass path as argument or set OATS_SRC_FILE env var."
                 );
             };
-            
+
             // Perform module resolution to discover all source files
             if !quiet && (verbose || cfg!(debug_assertions)) {
                 eprintln!("{}", "Resolving module dependencies...".blue());
@@ -241,19 +241,16 @@ fn main() -> Result<()> {
                 }
                 Err(e) => {
                     if !quiet {
-                        eprintln!(
-                            "{}",
-                            format!("Module resolution warning: {}", e).yellow()
-                        );
+                        eprintln!("{}", format!("Module resolution warning: {}", e).yellow());
                         eprintln!("{}", "Continuing with single-file compilation...".yellow());
                     }
                 }
             }
-            
+
             if !quiet && (verbose || cfg!(debug_assertions)) {
                 eprintln!("{}", "Invoking compiler...".blue());
             }
-            
+
             // Build compile options
             let mut options = oatsc::CompileOptions::new(src_file);
             options.out_dir = out_dir;
@@ -270,10 +267,10 @@ fn main() -> Result<()> {
             } else {
                 None
             };
-            
+
             // Invoke the compiler
             let _build_out = oatsc::compile(options)?;
-            
+
             if !quiet && (verbose || cfg!(debug_assertions)) {
                 eprintln!("{}", "Build finished.".green());
             }
@@ -301,7 +298,7 @@ fn main() -> Result<()> {
                 _ => atty::is(AtStream::Stderr),
             };
             colored::control::set_override(enable_color);
-            
+
             // Determine source file
             let src_file = if let Some(s) = src {
                 s
@@ -312,16 +309,16 @@ fn main() -> Result<()> {
                     "No source file provided. Pass path as argument or set OATS_SRC_FILE env var."
                 );
             };
-            
+
             // Build first
             if !quiet && (verbose || cfg!(debug_assertions)) {
                 eprintln!("{}", "Building before run...".blue());
             }
-            
+
             // Build compile options
             let mut options = oatsc::CompileOptions::new(src_file.clone());
             options.out_name = out_name.clone();
-            
+
             let build_res = oatsc::compile(options)?;
 
             // Determine output exe path

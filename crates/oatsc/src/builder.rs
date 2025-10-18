@@ -36,48 +36,48 @@ pub fn compile_with_options(options: crate::CompileOptions) -> Result<Option<Str
     // TODO: In future, pass these through the call stack instead of env vars
     unsafe {
         std::env::set_var("OATS_SRC_FILE", &options.src_file);
-        
+
         if let Some(ref out_dir) = options.out_dir {
             std::env::set_var("OATS_OUT_DIR", out_dir);
         }
-        
+
         if let Some(ref out_name) = options.out_name {
             std::env::set_var("OATS_OUT_NAME", out_name);
         }
-        
+
         if let Some(ref linker) = options.linker {
             std::env::set_var("OATS_LINKER", linker);
         }
-        
+
         if options.emit_object_only {
             std::env::set_var("OATS_EMIT_OBJECT_ONLY", "1");
         }
-        
+
         if let Some(ref opt_level) = options.opt_level {
             std::env::set_var("OATS_OPT_LEVEL", opt_level);
         }
-        
+
         if let Some(ref lto) = options.lto {
             std::env::set_var("OATS_LTO", lto);
         }
-        
+
         if let Some(ref target_triple) = options.target_triple {
             std::env::set_var("OATS_TARGET_TRIPLE", target_triple);
         }
-        
+
         if let Some(ref target_cpu) = options.target_cpu {
             std::env::set_var("OATS_TARGET_CPU", target_cpu);
         }
-        
+
         if let Some(ref target_features) = options.target_features {
             std::env::set_var("OATS_TARGET_FEATURES", target_features);
         }
-        
+
         if let Some(ref build_profile) = options.build_profile {
             std::env::set_var("OATS_BUILD_PROFILE", build_profile);
         }
     }
-    
+
     // Delegate to existing compilation logic
     let args = vec!["oatsc".to_string(), options.src_file.clone()];
     run_from_args(&args)

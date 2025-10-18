@@ -619,9 +619,12 @@ pub fn infer_type_from_expr(expr: &ast::Expr) -> Option<OatsType> {
         ast::Expr::Bin(bin) => {
             // Binary operations: most return numbers, but some might return other types
             match bin.op {
-                ast::BinaryOp::EqEq | ast::BinaryOp::NotEq | 
-                ast::BinaryOp::Lt | ast::BinaryOp::LtEq | 
-                ast::BinaryOp::Gt | ast::BinaryOp::GtEq => {
+                ast::BinaryOp::EqEq
+                | ast::BinaryOp::NotEq
+                | ast::BinaryOp::Lt
+                | ast::BinaryOp::LtEq
+                | ast::BinaryOp::Gt
+                | ast::BinaryOp::GtEq => {
                     // Comparison operations return boolean
                     Some(OatsType::Boolean)
                 }
@@ -742,9 +745,15 @@ pub fn apply_inferred_subst(ty: &OatsType, inferred: &[OatsType]) -> OatsType {
                 .map(|(n, t)| (n.clone(), apply_inferred_subst(t, inferred)))
                 .collect(),
         ),
-        OatsType::GenericInstance { base_name, type_args } => OatsType::GenericInstance {
+        OatsType::GenericInstance {
+            base_name,
+            type_args,
+        } => OatsType::GenericInstance {
             base_name: base_name.clone(),
-            type_args: type_args.iter().map(|t| apply_inferred_subst(t, inferred)).collect(),
+            type_args: type_args
+                .iter()
+                .map(|t| apply_inferred_subst(t, inferred))
+                .collect(),
         },
         other => other.clone(),
     }

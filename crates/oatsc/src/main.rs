@@ -36,7 +36,10 @@ fn main() -> Result<()> {
     // Parse command-line arguments
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
-        anyhow::bail!("Usage: {} <source_file> [--extern-oats <import_path>=<meta_file>]...", args[0]);
+        anyhow::bail!(
+            "Usage: {} <source_file> [--extern-oats <import_path>=<meta_file>]...",
+            args[0]
+        );
     }
 
     let src_path = &args[1];
@@ -53,7 +56,9 @@ fn main() -> Result<()> {
             if let Some((import_path, meta_file)) = extern_arg.split_once('=') {
                 extern_oats.insert(import_path.to_string(), meta_file.to_string());
             } else {
-                anyhow::bail!("--extern-oats argument must be in format: <import_path>=<meta_file>");
+                anyhow::bail!(
+                    "--extern-oats argument must be in format: <import_path>=<meta_file>"
+                );
             }
             i += 2;
         } else {

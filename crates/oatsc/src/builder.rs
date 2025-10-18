@@ -139,11 +139,12 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
     let parsed = &parsed_mod.parsed;
 
     // Read extern_oats from environment if provided
-    let extern_oats: std::collections::HashMap<String, String> = if let Ok(extern_oats_json) = std::env::var("OATS_EXTERN_OATS") {
-        serde_json::from_str(&extern_oats_json).unwrap_or_default()
-    } else {
-        std::collections::HashMap::new()
-    };
+    let extern_oats: std::collections::HashMap<String, String> =
+        if let Ok(extern_oats_json) = std::env::var("OATS_EXTERN_OATS") {
+            serde_json::from_str(&extern_oats_json).unwrap_or_default()
+        } else {
+            std::collections::HashMap::new()
+        };
 
     /// Extracts top-level arrow function declarations from variable statements.
     ///

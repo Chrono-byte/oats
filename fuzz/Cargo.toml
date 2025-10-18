@@ -10,8 +10,8 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 
-[dependencies.oats]
-path = "../crates/oats"
+[dependencies.oatsc]
+path = "../crates/oatsc"
 
 # Fuzz target for parser - tests TypeScript/Oats source code parsing
 [[bin]]

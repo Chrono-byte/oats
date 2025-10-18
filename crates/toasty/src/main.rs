@@ -86,6 +86,18 @@ enum Commands {
         #[arg(long = "color")]
         color: Option<String>,
     },
+
+    /// Create a new Oats project (like `cargo new`)
+    New {
+        /// Name of the project to create
+        name: String,
+        /// Create a library project instead of executable
+        #[arg(long)]
+        lib: bool,
+        /// Suppress progress output
+        #[arg(long)]
+        quiet: bool,
+    },
 }
 
 // Preflight dependency check so CLI users and CI get a clear error early.
@@ -174,7 +186,7 @@ fn main() -> Result<()> {
             out_dir,
             out_name,
             linker,
-            emit_object_only,
+            emit_object_only: _emit_object_only,
             opt_level,
             lto,
             target_triple,
@@ -279,60 +291,140 @@ fn main() -> Result<()> {
                 );
             };
 
-            // Perform module resolution to discover all source files
+            // Build dependency graph starting from entry point
             if !quiet && (verbose || cfg!(debug_assertions)) {
-                eprintln!("{}", "Resolving module dependencies...".blue());
+                eprintln!("{}", "Building dependency graph...".blue());
             }
-            match module_resolution::load_modules(&src_file) {
-                Ok(modules) => {
-                    if !quiet && (verbose || cfg!(debug_assertions)) {
-                        eprintln!(
-                            "{}",
-                            format!("Found {} module(s) to compile", modules.len()).green()
-                        );
-                        if verbose {
-                            for (path, _) in &modules {
-                                eprintln!("  - {}", path);
-                            }
+            let (dep_graph, node_indices, _entry_node) = module_resolution::build_dependency_graph(&src_file, verbose)?;
+
+            if !quiet && (verbose || cfg!(debug_assertions)) {
+                eprintln!(
+                    "{}",
+                    format!("Dependency graph has {} module(s)", node_indices.len()).green()
+                );
+            }
+
+            // Perform topological sort to get compilation order
+            if !quiet && (verbose || cfg!(debug_assertions)) {
+                eprintln!("{}", "Computing compilation order...".blue());
+            }
+            let compilation_order = module_resolution::topological_sort(&dep_graph, &node_indices)?;
+
+            if verbose {
+                eprintln!("Compilation order:");
+                for (i, path) in compilation_order.iter().enumerate() {
+                    eprintln!("  {}. {}", i + 1, path);
+                }
+            }
+
+            if !quiet && (verbose || cfg!(debug_assertions)) {
+                eprintln!("{}", "Orchestrating compilation...".blue());
+            }
+
+            // Phase 1: Compile each module separately with extern_oats for dependencies
+            // In Phase 2, this will use separate oatsc processes for each package
+            let mut compiled_modules = std::collections::HashMap::new();
+
+            for (i, module_path) in compilation_order.iter().enumerate() {
+                if !quiet && (verbose || cfg!(debug_assertions)) {
+                    eprintln!(
+                        "{}",
+                        format!("Compiling module {}/{}: {}", i + 1, compilation_order.len(), module_path).blue()
+                    );
+                }
+
+                let mut options = oatsc::CompileOptions::new(module_path.clone());
+
+                // For Phase 1: if this is not the first module, add extern_oats for previous modules
+                // TODO: In Phase 2, this will be based on actual package metadata
+                if i > 0 {
+                    // Hardcode exported symbols for known modules (Phase 1 only)
+                    for prev_module in &compilation_order[0..i] {
+                        if prev_module.ends_with("math.oats") {
+                            options.extern_oats.insert("./math".to_string(), "add,multiply".to_string());
                         }
+                        // Add more hardcoded mappings as needed
                     }
-                    // For now, we validate that all modules parse correctly
-                    // In future phases, we'll compile them all together
                 }
-                Err(e) => {
-                    if !quiet {
-                        eprintln!("{}", format!("Module resolution warning: {}", e).yellow());
-                        eprintln!("{}", "Continuing with single-file compilation...".yellow());
-                    }
+
+                options.out_dir = out_dir.clone();
+                options.out_name = Some(format!("{}_module", i));
+                options.linker = linker.clone();
+                options.emit_object_only = true; // Emit objects for linking later
+                options.opt_level = opt_level.clone();
+                options.lto = lto.clone();
+                options.target_triple = target_triple.clone();
+                options.target_cpu = target_cpu.clone();
+                options.target_features = target_features.clone();
+                options.build_profile = if release {
+                    Some("release".to_string())
+                } else {
+                    None
+                };
+
+                // Compile this module
+                let build_out = oatsc::compile(options)?;
+                if let Some(out_path) = build_out {
+                    compiled_modules.insert(module_path.clone(), out_path);
                 }
             }
 
+            // Phase 1: Link all compiled modules together
+            // In Phase 2, this will be done by toasty after all packages are compiled
             if !quiet && (verbose || cfg!(debug_assertions)) {
-                eprintln!("{}", "Invoking compiler...".blue());
+                eprintln!("{}", "Linking final executable...".blue());
             }
 
-            // Build compile options
-            let mut options = oatsc::CompileOptions::new(src_file);
-            options.out_dir = out_dir;
-            options.out_name = out_name;
-            options.linker = linker;
-            options.emit_object_only = emit_object_only;
-            options.opt_level = opt_level;
-            options.lto = lto;
-            options.target_triple = target_triple;
-            options.target_cpu = target_cpu;
-            options.target_features = target_features;
-            options.build_profile = if release {
-                Some("release".to_string())
-            } else {
-                None
-            };
+            // Link all object files together
+            let exe_name = out_name.unwrap_or_else(|| "main".to_string());
+            let exe_path = out_dir
+                .as_ref()
+                .map(|d| std::path::Path::new(d).join(&exe_name))
+                .unwrap_or_else(|| std::path::Path::new(&exe_name).to_path_buf());
 
-            // Invoke the compiler
-            let _build_out = oatsc::compile(options)?;
+            // Use clang to link all object files with the runtime
+            // For now, hardcode the runtime path - TODO: make this more robust
+            let runtime_lib = "target/release/libruntime.a";
+            if !std::path::Path::new(runtime_lib).exists() {
+                // Try to build the runtime
+                eprintln!("Building runtime locally...");
+                let status = std::process::Command::new("cargo")
+                    .arg("build")
+                    .arg("-p")
+                    .arg("runtime")
+                    .arg("--release")
+                    .status()?;
+                if !status.success() {
+                    anyhow::bail!("building rust runtime failed");
+                }
+            }
+            let mut link_cmd = std::process::Command::new("clang");
+            link_cmd.arg("-o").arg(&exe_path);
+
+            // Add all object files
+            for obj_file in compiled_modules.values() {
+                link_cmd.arg(obj_file);
+            }
+
+            // Add runtime library
+            link_cmd.arg(runtime_lib);
+
+            // Add linker if specified
+            if let Some(linker) = linker {
+                link_cmd.arg(format!("-fuse-ld={}", linker));
+            }
+
+            if verbose {
+                eprintln!("Link command: {:?}", link_cmd);
+            }
+
+            let link_status = link_cmd.status()?;
+            if !link_status.success() {
+                anyhow::bail!("Linking failed");
+            }
 
             if !quiet && (verbose || cfg!(debug_assertions)) {
-                eprintln!("{}", "Build finished.".green());
+                eprintln!("{}", format!("Build finished: {}", exe_path.display()).green());
             }
             Ok(())
         }
@@ -370,13 +462,37 @@ fn main() -> Result<()> {
                 );
             };
 
+            // Perform module resolution to discover all source files
+            if !quiet && (verbose || cfg!(debug_assertions)) {
+                eprintln!("{}", "Resolving module dependencies...".blue());
+            }
+            let modules = module_resolution::load_modules(&src_file)?;
+
+            if !quiet && (verbose || cfg!(debug_assertions)) {
+                eprintln!(
+                    "{}",
+                    format!("Found {} module(s) to compile", modules.len()).green()
+                );
+            }
+
             // Build first
             if !quiet && (verbose || cfg!(debug_assertions)) {
                 eprintln!("{}", "Building before run...".blue());
             }
 
-            // Build compile options
-            let mut options = oatsc::CompileOptions::new(src_file.clone());
+            // Build compile options with all discovered modules
+            let mut all_src_files: Vec<String> = modules.keys().cloned().collect();
+            // Ensure the entry point is first
+            if let Some(pos) = all_src_files.iter().position(|p| p == &src_file) {
+                all_src_files.swap(0, pos);
+            }
+            let entry_point = all_src_files[0].clone();
+            let additional_files = if all_src_files.len() > 1 {
+                all_src_files[1..].to_vec()
+            } else {
+                Vec::new()
+            };
+            let mut options = oatsc::CompileOptions::with_modules(entry_point, additional_files);
             options.out_name = out_name.clone();
 
             let build_res = oatsc::compile(options)?;
@@ -408,6 +524,77 @@ fn main() -> Result<()> {
             if !status.success() {
                 anyhow::bail!("Executed program returned non-zero exit code");
             }
+            Ok(())
+        }
+        Commands::New { name, lib, quiet } => {
+            // Create a new Oats project
+            let project_path = std::path::Path::new(&name);
+
+            if project_path.exists() {
+                anyhow::bail!("Directory '{}' already exists", name);
+            }
+
+            // Create project directory
+            std::fs::create_dir_all(project_path)?;
+
+            // Create Oats.toml
+            let manifest_content = format!(
+                r#"[package]
+name = "{}"
+version = "0.1.0"
+authors = ["Your Name <your.email@example.com>"]
+description = "An Oats project"
+license = "MIT"
+
+[dependencies]
+"#,
+                name
+            );
+
+            std::fs::write(project_path.join("Oats.toml"), manifest_content)?;
+
+            // Create src directory
+            let src_dir = project_path.join("src");
+            std::fs::create_dir_all(&src_dir)?;
+
+            // Create main.oats or lib.oats
+            let main_content = if lib {
+                format!(
+                    r#"// {}/src/lib.oats
+// Library entry point
+
+export function hello(): string {{
+    return "Hello from {}!";
+}}
+"#,
+                    name, name
+                )
+            } else {
+                format!(
+                    r#"// {}/src/main.oats
+// Executable entry point
+
+export function main(): number {{
+    println("Hello, {}!");
+    return 0;
+}}
+"#,
+                    name, name
+                )
+            };
+
+            let main_file = if lib { "lib.oats" } else { "main.oats" };
+            std::fs::write(src_dir.join(main_file), main_content)?;
+
+            if !quiet {
+                eprintln!("{}", format!("Created new Oats project '{}'", name).green());
+                eprintln!("  {}", project_path.display());
+                eprintln!("Run 'cd {} && toasty build' to build", name);
+                if !lib {
+                    eprintln!("Run 'cd {} && toasty run' to run", name);
+                }
+            }
+
             Ok(())
         }
     }

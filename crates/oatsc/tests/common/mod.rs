@@ -346,5 +346,6 @@ pub fn create_codegen<'a>(
         nested_generic_fns: RefCell::new(HashMap::new()),
         monomorphized_map: RefCell::new(HashMap::new()),
         rta_results: None,
+        uses_async: Cell::new(false),
     })
 }

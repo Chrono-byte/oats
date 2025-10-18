@@ -13,6 +13,7 @@ toml = "0.8"
 
 atty = "0.2"
 deno_ast = "0.50.3"
+petgraph = "0.6"
 [dependencies.oatsc]
 path = "../oatsc"
 

@@ -300,6 +300,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
         // make the exported function a thin wrapper that calls the impl and
         // returns a resolved promise via `promise_resolve`.
         if func_decl.is_async {
+            // Track that this compilation uses async features
+            self.uses_async.set(true);
+
             use crate::types::OatsType;
 
             // Expect declared return to be `Promise(inner)`

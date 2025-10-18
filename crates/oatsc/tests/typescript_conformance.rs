@@ -148,6 +148,8 @@ fn _typescript_conformance_parsing() -> Result<()> {
             target_cpu: None,
             target_features: None,
             build_profile: Some("debug".to_string()),
+            additional_src_files: Vec::new(),
+            extern_oats: std::collections::HashMap::new(),
         };
 
         match oatsc::parser::parse_oats_module(&content, path.to_str()) {

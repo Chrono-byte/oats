@@ -14,8 +14,15 @@ pub mod types;
 /// rather than discovering project structure.
 #[derive(Debug, Clone)]
 pub struct CompileOptions {
-    /// Path to the root source file to compile
+    /// Path to the root source file to compile (for single-file mode)
     pub src_file: String,
+
+    /// Additional source files to compile together (for multi-module mode)
+    pub additional_src_files: Vec<String>,
+
+    /// External module dependencies: maps import paths to metadata file paths
+    /// Format: --extern-oats "./module.oats=/path/to/module.oats.meta"
+    pub extern_oats: std::collections::HashMap<String, String>,
 
     /// Output directory for compilation artifacts
     pub out_dir: Option<String>,
@@ -49,10 +56,31 @@ pub struct CompileOptions {
 }
 
 impl CompileOptions {
-    /// Create a new CompileOptions with default values
+    /// Create a new CompileOptions for single-file compilation
     pub fn new(src_file: String) -> Self {
         Self {
             src_file,
+            additional_src_files: Vec::new(),
+            extern_oats: std::collections::HashMap::new(),
+            out_dir: None,
+            out_name: None,
+            linker: None,
+            emit_object_only: false,
+            opt_level: None,
+            lto: None,
+            target_triple: None,
+            target_cpu: None,
+            target_features: None,
+            build_profile: None,
+        }
+    }
+
+    /// Create a new CompileOptions for multi-module compilation
+    pub fn with_modules(src_file: String, additional_src_files: Vec<String>) -> Self {
+        Self {
+            src_file,
+            additional_src_files,
+            extern_oats: std::collections::HashMap::new(),
             out_dir: None,
             out_name: None,
             linker: None,

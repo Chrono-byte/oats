@@ -58,6 +58,14 @@ struct Cli {
     /// Legacy extern-oats flags for file-based compilation
     #[arg(long = "extern-oats", value_name = "PATH=META")]
     extern_oats: Vec<String>,
+
+    /// Override the output executable/library name
+    #[arg(long = "out-name")]
+    out_name: Option<String>,
+
+    /// Emit object file only, do not link
+    #[arg(long = "emit-object-only")]
+    emit_object_only: bool,
 }
 
 fn main() -> Result<()> {
@@ -69,7 +77,7 @@ fn main() -> Result<()> {
         compile_package(package_root, cli.extern_pkg, cli.output)
     } else if let Some(src_file) = cli.src_file {
         // Legacy single-file compilation mode
-        compile_single_file(src_file, cli.extern_oats)
+        compile_single_file(src_file, cli.extern_oats, cli.emit_object_only, cli.out_name)
     } else {
         anyhow::bail!("Either <SRC_FILE> or --package-root must be specified");
     }
@@ -107,7 +115,7 @@ fn compile_package(
 }
 
 /// Compile a single file in legacy mode
-fn compile_single_file(src_file: String, extern_oats: Vec<String>) -> Result<()> {
+fn compile_single_file(src_file: String, extern_oats: Vec<String>, emit_object_only: bool, out_name: Option<String>) -> Result<()> {
     // Parse --extern-oats flags
     let mut extern_map = std::collections::HashMap::new();
     for extern_str in extern_oats {
@@ -120,6 +128,8 @@ fn compile_single_file(src_file: String, extern_oats: Vec<String>) -> Result<()>
 
     let mut options = oatsc::CompileOptions::new(src_file);
     options.extern_oats = extern_map;
+    options.emit_object_only = emit_object_only;
+    options.out_name = out_name;
 
     oatsc::compile(options)?;
     Ok(())

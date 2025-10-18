@@ -18,6 +18,8 @@ fn build_emits_object() -> Result<(), Box<dyn std::error::Error>> {
     runc.status()?;
     // Run from workspace root so builder's relative paths align
     let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let oatsc_path = workspace_root.join("target/release/oatsc");
+    cmd.env("OATS_OATSC_PATH", oatsc_path);
     cmd.current_dir(workspace_root);
     cmd.arg("build")
         .arg("--emit-object-only")

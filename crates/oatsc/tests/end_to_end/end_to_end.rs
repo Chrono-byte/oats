@@ -37,7 +37,10 @@ fn test_add_example_end_to_end() -> Result<()> {
     let status = Command::new(&bin_path)
         .args(["build", &example.to_string_lossy()])
         .env("OATS_OUT_DIR", out_dir)
-        .env("OATS_OATSC_PATH", workspace_root.join("target").join("release").join("oatsc"))
+        .env(
+            "OATS_OATSC_PATH",
+            workspace_root.join("target").join("release").join("oatsc"),
+        )
         .current_dir(workspace_root)
         .status()?;
     assert!(status.success(), "toasty failed to compile example");

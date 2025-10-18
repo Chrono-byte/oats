@@ -1255,7 +1255,8 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
             break;
         }
     }
-    let tm = tm.ok_or_else(|| anyhow::anyhow!("Failed to create TargetMachine with any CPU candidate"))?;
+    let tm =
+        tm.ok_or_else(|| anyhow::anyhow!("Failed to create TargetMachine with any CPU candidate"))?;
 
     // Emit object file directly from the in-memory module.
     let out_obj_path = std::path::Path::new(&out_obj);

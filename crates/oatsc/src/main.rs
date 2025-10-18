@@ -77,7 +77,12 @@ fn main() -> Result<()> {
         compile_package(package_root, cli.extern_pkg, cli.output)
     } else if let Some(src_file) = cli.src_file {
         // Legacy single-file compilation mode
-        compile_single_file(src_file, cli.extern_oats, cli.emit_object_only, cli.out_name)
+        compile_single_file(
+            src_file,
+            cli.extern_oats,
+            cli.emit_object_only,
+            cli.out_name,
+        )
     } else {
         anyhow::bail!("Either <SRC_FILE> or --package-root must be specified");
     }
@@ -115,7 +120,12 @@ fn compile_package(
 }
 
 /// Compile a single file in legacy mode
-fn compile_single_file(src_file: String, extern_oats: Vec<String>, emit_object_only: bool, out_name: Option<String>) -> Result<()> {
+fn compile_single_file(
+    src_file: String,
+    extern_oats: Vec<String>,
+    emit_object_only: bool,
+    out_name: Option<String>,
+) -> Result<()> {
     // Parse --extern-oats flags
     let mut extern_map = std::collections::HashMap::new();
     for extern_str in extern_oats {

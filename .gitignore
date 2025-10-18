@@ -1,9 +1,8 @@
 # Rust/Cargo
-/target/
+target/** 
 **/target/
 **/*.rlib
 **/*.rmeta
-Cargo.lock
 
 # Generated LLVM/IR and object files (AOT pipeline)
 *.ll
@@ -35,6 +34,8 @@ Thumbs.db
 *.temp
 *.swp
 *.swo
+*.bak
+*.orig
 *~
 
 # Environment files
@@ -54,6 +55,18 @@ aot_out/**
 test_out/**
 fuzz/artifacts/**
 fuzz/corpus/**
+# Ignore all files in the root except for those with extensions
+# Also ignore any executable in the root that doesn't have an extension
+# (most compiled oats programs)
+/*
+!/*.*
+!/*/
+!.gitignore
+!.gitlab-ci.yml
+!Cargo.toml
+!LICENSE
+!README.md
+!TODO.md
 
 # Allow exceptions: keep README, scripts, source code tracked
 review.md

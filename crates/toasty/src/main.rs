@@ -15,7 +15,6 @@ mod runtime_fetch;
 #[derive(Debug, Clone)]
 struct CompileOptions {
     pub src_file: String,
-    pub additional_src_files: Vec<String>,
     pub extern_oats: std::collections::HashMap<String, String>,
     pub package_root: Option<std::path::PathBuf>,
     pub extern_pkg: std::collections::HashMap<String, String>,
@@ -36,7 +35,6 @@ impl CompileOptions {
     fn new(src_file: String) -> Self {
         Self {
             src_file,
-            additional_src_files: Vec::new(),
             extern_oats: std::collections::HashMap::new(),
             package_root: None,
             extern_pkg: std::collections::HashMap::new(),
@@ -54,10 +52,9 @@ impl CompileOptions {
         }
     }
 
-    fn with_modules(entry_point: String, additional_files: Vec<String>) -> Self {
+    fn with_modules(entry_point: String) -> Self {
         Self {
             src_file: entry_point,
-            additional_src_files: additional_files,
             extern_oats: std::collections::HashMap::new(),
             package_root: None,
             extern_pkg: std::collections::HashMap::new(),
@@ -65,27 +62,6 @@ impl CompileOptions {
             out_name: None,
             linker: None,
             emit_object_only: false,
-            link_runtime: true,
-            opt_level: None,
-            lto: None,
-            target_triple: None,
-            target_cpu: None,
-            target_features: None,
-            build_profile: None,
-        }
-    }
-
-    fn for_package(package_root: std::path::PathBuf) -> Self {
-        Self {
-            src_file: String::new(), // Will be set later
-            additional_src_files: Vec::new(),
-            extern_oats: std::collections::HashMap::new(),
-            package_root: Some(package_root),
-            extern_pkg: std::collections::HashMap::new(),
-            out_dir: None,
-            out_name: None,
-            linker: None,
-            emit_object_only: true,
             link_runtime: true,
             opt_level: None,
             lto: None,
@@ -193,12 +169,47 @@ enum Commands {
         #[arg(long)]
         quiet: bool,
     },
+
+    /// Manage oatsc compiler versions
+    Compiler {
+        #[command(subcommand)]
+        action: CompilerCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum CompilerCommands {
+    /// List available compiler versions
+    List,
+    /// Install a specific compiler version
+    Install {
+        /// Version tag to install (e.g., stable, nightly, or compiler-v1.0.0)
+        version: String,
+    },
+    /// Switch to a specific compiler version
+    Use {
+        /// Version tag to use (e.g., stable, nightly, or compiler-v1.0.0)
+        version: String,
+    },
+    /// Show current compiler version
+    Current,
 }
 
 /// Perform preflight checks to ensure required tools are available
 fn preflight_check() -> Result<()> {
-    // Check for oatsc compiler (try downloaded first, then local target, then system)
-    let oatsc_available = if let Some(oatsc_path) = crate::compiler_fetch::try_fetch_compiler() {
+    // Check if OATS_OATSC_PATH is already set (e.g., by tests)
+    if std::env::var("OATS_OATSC_PATH").is_ok() {
+        return Ok(());
+    }
+    
+    // Check for oatsc compiler (try selected version first, then downloaded latest, then local target, then system)
+    let oatsc_available = if let Some(oatsc_path) = crate::compiler_fetch::get_selected_compiler_path() {
+        // Use selected oatsc version
+        unsafe {
+            std::env::set_var("OATS_OATSC_PATH", oatsc_path);
+        }
+        true
+    } else if let Some(oatsc_path) = crate::compiler_fetch::try_fetch_compiler() {
         // Use downloaded oatsc
         unsafe {
             std::env::set_var("OATS_OATSC_PATH", oatsc_path);
@@ -364,7 +375,10 @@ fn invoke_oatsc(options: &CompileOptions) -> Result<Option<PathBuf>> {
     
     if stdout.is_empty() {
         Ok(None)
+    } else if let Some(path_str) = stdout.strip_prefix("Emitted ").and_then(|s| s.split(" (linking delegated to toasty)").next()) {
+        Ok(Some(PathBuf::from(path_str)))
     } else {
+        // Assume it's a direct path
         Ok(Some(PathBuf::from(stdout)))
     }
 }
@@ -630,7 +644,13 @@ fn main() -> Result<()> {
             }
 
             // Link all object files together
-            let exe_name = out_name.unwrap_or_else(|| "main".to_string());
+            let exe_name = out_name.unwrap_or_else(|| {
+                std::path::Path::new(&src_file)
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("main")
+                    .to_string()
+            });
             let exe_path = out_dir
                 .as_ref()
                 .map(|d| std::path::Path::new(d).join(&exe_name))
@@ -750,12 +770,7 @@ fn main() -> Result<()> {
                 all_src_files.swap(0, pos);
             }
             let entry_point = all_src_files[0].clone();
-            let additional_files = if all_src_files.len() > 1 {
-                all_src_files[1..].to_vec()
-            } else {
-                Vec::new()
-            };
-            let mut options = CompileOptions::with_modules(entry_point, additional_files);
+            let mut options = CompileOptions::with_modules(entry_point);
             options.out_name = out_name.clone();
 
             let build_res = invoke_oatsc(&options)?;
@@ -867,5 +882,38 @@ export function main(): number {{
 
             Ok(())
         }
+        Commands::Compiler { action } => match action {
+            CompilerCommands::List => {
+                // List available compiler versions
+                let versions = crate::compiler_fetch::list_available_compilers()?;
+                if versions.is_empty() {
+                    println!("No compiler versions found.");
+                } else {
+                    println!("Available compiler versions:");
+                    for version in versions {
+                        println!("  - {}", version);
+                    }
+                }
+                Ok(())
+            }
+            CompilerCommands::Install { version } => {
+                // Install a specific compiler version
+                crate::compiler_fetch::install_compiler_version(&version)?;
+                println!("Compiler version {} installed successfully.", version);
+                Ok(())
+            }
+            CompilerCommands::Use { version } => {
+                // Switch to a specific compiler version
+                crate::compiler_fetch::use_compiler_version(&version)?;
+                println!("Switched to compiler version {}.", version);
+                Ok(())
+            }
+            CompilerCommands::Current => {
+                // Show current compiler version
+                let current_version = crate::compiler_fetch::current_compiler_version()?;
+                println!("Current compiler version: {}", current_version);
+                Ok(())
+            }
+        },
     }
 }

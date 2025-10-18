@@ -17,8 +17,6 @@ use crate::package_graph::{
 #[derive(Debug, Clone)]
 pub struct CompileOptions {
     pub src_file: String,
-    pub additional_src_files: Vec<String>,
-    pub extern_oats: std::collections::HashMap<String, String>,
     pub package_root: Option<std::path::PathBuf>,
     pub extern_pkg: std::collections::HashMap<String, String>,
     pub out_dir: Option<String>,
@@ -38,8 +36,6 @@ impl CompileOptions {
     pub fn for_package(package_root: std::path::PathBuf) -> Self {
         Self {
             src_file: String::new(), // Will be set later
-            additional_src_files: Vec::new(),
-            extern_oats: std::collections::HashMap::new(),
             package_root: Some(package_root),
             extern_pkg: std::collections::HashMap::new(),
             out_dir: None,

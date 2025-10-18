@@ -2,12 +2,12 @@ name: Run Runtime Tests
 
 on:
   push:
-    branches: [main, master]
+    branches: [master]
     paths:
       - "crates/runtime/**"
       - ".github/workflows/run-runtime-tests.yml"
   pull_request:
-    branches: [main, master]
+    branches: [master]
     paths:
       - "crates/runtime/**"
       - ".github/workflows/run-runtime-tests.yml"

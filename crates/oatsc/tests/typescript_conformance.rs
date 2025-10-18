@@ -125,7 +125,11 @@ fn typescript_conformance_parsing() -> Result<()> {
         let temp_dir = match TempDir::new() {
             Ok(dir) => dir,
             Err(e) => {
-                compile_failures.push(format!("Failed to create temp dir for {}: {}", path.display(), e));
+                compile_failures.push(format!(
+                    "Failed to create temp dir for {}: {}",
+                    path.display(),
+                    e
+                ));
                 continue;
             }
         };
@@ -172,7 +176,10 @@ fn typescript_conformance_parsing() -> Result<()> {
     println!("  Total .ts files: {}", total_files);
     println!("  Positive tests: {}", total_files - negative_tests);
     println!("  Negative tests: {}", negative_tests);
-    println!("  Successfully compiled (positive): {}", compiled_successfully);
+    println!(
+        "  Successfully compiled (positive): {}",
+        compiled_successfully
+    );
     println!(
         "  Successfully rejected (negative): {}",
         negative_tests_passed
@@ -201,7 +208,10 @@ fn typescript_conformance_parsing() -> Result<()> {
             success_rate
         );
     } else {
-        println!("🎉 All TypeScript conformance tests handled correctly! Success rate: {:.2}%", success_rate);
+        println!(
+            "🎉 All TypeScript conformance tests handled correctly! Success rate: {:.2}%",
+            success_rate
+        );
     }
 
     if !negative_test_failures.is_empty() {

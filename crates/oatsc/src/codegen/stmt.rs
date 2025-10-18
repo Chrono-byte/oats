@@ -2050,6 +2050,4 @@ impl<'a> crate::codegen::CodeGen<'a> {
             _ => Ok(false),
         }
     }
-
-
 }

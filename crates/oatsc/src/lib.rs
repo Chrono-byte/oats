@@ -16,34 +16,34 @@ pub mod types;
 pub struct CompileOptions {
     /// Path to the root source file to compile
     pub src_file: String,
-    
+
     /// Output directory for compilation artifacts
     pub out_dir: Option<String>,
-    
+
     /// Override the output executable/library name
     pub out_name: Option<String>,
-    
+
     /// Explicit linker to use for final binary
     pub linker: Option<String>,
-    
+
     /// Whether to emit object file only (skip linking)
     pub emit_object_only: bool,
-    
+
     /// Optimization level: none, default, aggressive
     pub opt_level: Option<String>,
-    
+
     /// LTO mode: none, thin, full
     pub lto: Option<String>,
-    
+
     /// Target triple for cross-compilation
     pub target_triple: Option<String>,
-    
+
     /// Target CPU for code generation
     pub target_cpu: Option<String>,
-    
+
     /// Target features to enable
     pub target_features: Option<String>,
-    
+
     /// Build profile: debug or release
     pub build_profile: Option<String>,
 }

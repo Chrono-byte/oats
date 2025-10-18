@@ -4023,17 +4023,17 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         // dot-member access like obj.prop
                         let field_name = prop_ident.sym.to_string();
                         eprintln!("DEBUG: field_name created");
-                        let ident_name = if let deno_ast::swc::ast::Expr::Ident(ident) = &*member.obj
-                        {
-                            ident.sym.to_string()
-                        } else if let deno_ast::swc::ast::Expr::This(_) = &*member.obj {
-                            "this".to_string()
-                        } else {
-                            return Err(Diagnostic::simple_with_span(
-                                "member access requires identifier or 'this' object",
-                                member.span.lo.0 as usize,
-                            ));
-                        };
+                        let ident_name =
+                            if let deno_ast::swc::ast::Expr::Ident(ident) = &*member.obj {
+                                ident.sym.to_string()
+                            } else if let deno_ast::swc::ast::Expr::This(_) = &*member.obj {
+                                "this".to_string()
+                            } else {
+                                return Err(Diagnostic::simple_with_span(
+                                    "member access requires identifier or 'this' object",
+                                    member.span.lo.0 as usize,
+                                ));
+                            };
                         // Check if the object is an enum type
                         if let Some(OatsType::Enum(_, variants)) =
                             self.symbol_table.borrow().get(&ident_name)

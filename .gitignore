@@ -55,6 +55,7 @@ aot_out/**
 test_out/**
 fuzz/artifacts/**
 fuzz/corpus/**
+
 # Ignore all files in the root except for those with extensions
 # Also ignore any executable in the root that doesn't have an extension
 # (most compiled oats programs)

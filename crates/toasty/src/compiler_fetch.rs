@@ -61,11 +61,11 @@ fn get_latest_compiler_tag() -> Result<String> {
 
     let releases: serde_json::Value = serde_json::from_reader(response.into_reader())?;
 
-    // Find the latest compiler release (tagged as compiler-*)
+    // Find the latest compiler release (tagged as nightly or stable-*)
     if let Some(releases_array) = releases.as_array() {
         for release in releases_array {
             if let Some(tag) = release["tag_name"].as_str()
-                && tag.starts_with("compiler-")
+                && (tag == "nightly" || tag.starts_with("stable-"))
             {
                 return Ok(tag.to_string());
             }
@@ -199,6 +199,129 @@ pub fn try_fetch_compiler() -> Option<PathBuf> {
             eprintln!("Warning: Failed to download compiler: {}", e);
             None
         }
+    }
+}
+
+/// List all available compiler versions from GitHub releases
+pub fn list_available_compilers() -> Result<Vec<String>> {
+    let url = format!(
+        "https://api.github.com/repos/{}/{}/releases",
+        GITHUB_OWNER, GITHUB_REPO
+    );
+
+    let response = ureq::get(&url)
+        .set("User-Agent", "oats-compiler")
+        .call()
+        .map_err(|e| anyhow::anyhow!("Failed to fetch releases: {}", e))?;
+
+    let releases: serde_json::Value = serde_json::from_reader(response.into_reader())?;
+
+    let mut versions = Vec::new();
+    if let Some(releases_array) = releases.as_array() {
+        for release in releases_array {
+            if let Some(tag) = release["tag_name"].as_str()
+                && (tag == "nightly" || tag.starts_with("stable-"))
+            {
+                versions.push(tag.to_string());
+            }
+        }
+    }
+
+    Ok(versions)
+}
+
+/// Install a specific compiler version
+pub fn install_compiler_version(version: &str) -> Result<()> {
+    let artifact_name = get_compiler_artifact_name();
+    if artifact_name == "oatsc-unsupported" {
+        anyhow::bail!("Unsupported platform for pre-built compiler");
+    }
+
+    let cache_dir = get_cache_dir()?;
+    let cached_path = cache_dir.join(version).join(artifact_name);
+
+    // Check if already installed
+    if cached_path.exists() {
+        eprintln!("Compiler version {} is already installed.", version);
+        return Ok(());
+    }
+
+    // Download the compiler
+    if let Some(parent) = cached_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    download_compiler(version, artifact_name, &cached_path)?;
+
+    eprintln!("Successfully installed compiler version {}", version);
+    Ok(())
+}
+
+/// Switch to using a specific compiler version
+pub fn use_compiler_version(version: &str) -> Result<()> {
+    let artifact_name = get_compiler_artifact_name();
+    if artifact_name == "oatsc-unsupported" {
+        anyhow::bail!("Unsupported platform for pre-built compiler");
+    }
+
+    let cache_dir = get_cache_dir()?;
+    let compiler_path = cache_dir.join(version).join(artifact_name);
+
+    if !compiler_path.exists() {
+        anyhow::bail!(
+            "Compiler version {} is not installed. Install it first with 'toasty compiler install {}'",
+            version,
+            version
+        );
+    }
+
+    // Store the selected version in a config file
+    let config_path = cache_dir.join("current_version");
+    fs::write(&config_path, version)?;
+
+    eprintln!("Switched to compiler version {}", version);
+    Ok(())
+}
+
+/// Get the currently selected compiler version
+pub fn current_compiler_version() -> Result<String> {
+    let cache_dir = get_cache_dir()?;
+    let config_path = cache_dir.join("current_version");
+
+    if config_path.exists() {
+        let version = fs::read_to_string(&config_path)?;
+        Ok(version.trim().to_string())
+    } else {
+        // If no version is selected, try to get the latest
+        match get_latest_compiler_tag() {
+            Ok(tag) => Ok(format!("{} (latest)", tag)),
+            Err(_) => Ok("none selected".to_string()),
+        }
+    }
+}
+
+/// Get the path to the currently selected compiler
+pub fn get_selected_compiler_path() -> Option<PathBuf> {
+    let cache_dir = match get_cache_dir() {
+        Ok(dir) => dir,
+        Err(_) => return None,
+    };
+
+    let config_path = cache_dir.join("current_version");
+    let version = match fs::read_to_string(&config_path) {
+        Ok(v) => v.trim().to_string(),
+        Err(_) => return None,
+    };
+
+    let artifact_name = get_compiler_artifact_name();
+    if artifact_name == "oatsc-unsupported" {
+        return None;
+    }
+
+    let compiler_path = cache_dir.join(version).join(artifact_name);
+    if compiler_path.exists() {
+        Some(compiler_path)
+    } else {
+        None
     }
 }
 

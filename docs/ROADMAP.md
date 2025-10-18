@@ -9,6 +9,7 @@
 **Goal:** Ensure the Oats parser and type system can understand 100% of valid TypeScript syntax and type definition files (.d.ts), even if it cannot yet fully type-check all advanced features.
 
 ### Currently Implemented ✅
+
 - **Core syntax**: Functions, classes, interfaces, enums, generics, unions
 - **Async/await**: Full `async`/`await` syntax and lowering
 - **Destructuring**: Array and object destructuring
@@ -18,6 +19,7 @@
 - **Modules**: `import`/`export` statements
 
 ### Remaining Tasks
+
 - **Integrate Official TypeScript Conformance Tests:**
   - Establish a process to regularly run the official TypeScript compiler test suite against the oatsc parser.
   - The remaining ~9.57% failures are primarily due to missing support for advanced ES6+ features.
@@ -40,6 +42,7 @@
 **Goal:** Evolve the Oats type checker to correctly handle the full spectrum of TypeScript's powerful and complex type system features, achieving semantic equivalence with tsc.
 
 ### Currently Implemented ✅
+
 - **Basic generics**: Generic functions and types
 - **Unions**: Tagged unions with runtime boxing
 - **Interfaces**: Interface declarations and basic checking

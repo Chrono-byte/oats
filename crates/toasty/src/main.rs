@@ -3,6 +3,8 @@ use atty::Stream as AtStream;
 use clap::{Parser, Subcommand};
 use colored::Colorize;
 
+mod module_resolution;
+
 #[derive(Parser)]
 #[command(name = "toasty", about = "Experimental TypeScript Compiler", version = env!("CARGO_PKG_VERSION"))]
 struct Cli {

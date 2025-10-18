@@ -1,7 +1,9 @@
-let add = (a: number, b: number) => {
+let add = (a: number, b: number): number => {
     return a + b;
 };
 
 export function main(): void {
     println(add(1, 2));
+
+    return;
 }

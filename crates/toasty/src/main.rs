@@ -193,6 +193,11 @@ enum CompilerCommands {
     },
     /// Show current compiler version
     Current,
+    /// Uninstall a specific compiler version
+    Uninstall {
+        /// Version tag to uninstall (e.g., stable, nightly, or compiler-v1.0.0)
+        version: String,
+    },
 }
 
 /// Perform preflight checks to ensure required tools are available
@@ -930,6 +935,12 @@ export function main(): number {{
                 // Show current compiler version
                 let current_version = crate::compiler_fetch::current_compiler_version()?;
                 println!("Current compiler version: {}", current_version);
+                Ok(())
+            }
+            CompilerCommands::Uninstall { version } => {
+                // Uninstall a specific compiler version
+                crate::compiler_fetch::uninstall_compiler_version(&version)?;
+                println!("Compiler version {} uninstalled successfully.", version);
                 Ok(())
             }
         },

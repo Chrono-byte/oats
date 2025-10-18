@@ -7,6 +7,16 @@ pub enum ConstValue {
     Number(f64),
     Bool(bool),
     Str(String),
+    I64(i64),
+    I32(i32),
+    I16(i16),
+    I8(i8),
+    U64(u64),
+    U32(u32),
+    U16(u16),
+    U8(u8),
+    F32(f32),
+    Char(char),
     Array(Vec<ConstValue>),
     Object(std::collections::HashMap<String, ConstValue>),
 }
@@ -17,6 +27,25 @@ impl ConstValue {
             Some(*n)
         } else {
             None
+        }
+    }
+
+    pub fn is_truthy(&self) -> bool {
+        match self {
+            ConstValue::Number(n) => *n != 0.0 && !n.is_nan(),
+            ConstValue::Bool(b) => *b,
+            ConstValue::Str(s) => !s.is_empty(),
+            ConstValue::I64(n) => *n != 0,
+            ConstValue::I32(n) => *n != 0,
+            ConstValue::I16(n) => *n != 0,
+            ConstValue::I8(n) => *n != 0,
+            ConstValue::U64(n) => *n != 0,
+            ConstValue::U32(n) => *n != 0,
+            ConstValue::U16(n) => *n != 0,
+            ConstValue::U8(n) => *n != 0,
+            ConstValue::F32(n) => *n != 0.0 && !n.is_nan(),
+            ConstValue::Char(c) => *c != '\0',
+            ConstValue::Array(_) | ConstValue::Object(_) => true,
         }
     }
 }
@@ -134,6 +163,20 @@ pub fn eval_const_expr(
                     };
                     Ok(ConstValue::Bool(res))
                 }
+                LogicalAnd => {
+                    if l.is_truthy() {
+                        Ok(r)
+                    } else {
+                        Ok(l)
+                    }
+                }
+                LogicalOr => {
+                    if l.is_truthy() {
+                        Ok(l)
+                    } else {
+                        Ok(r)
+                    }
+                }
                 _ => Err(Diagnostic::simple_with_span(
                     "unsupported binary op in const initializer",
                     span_start,
@@ -195,6 +238,42 @@ pub fn eval_const_expr(
                 }
             }
             Ok(ConstValue::Object(map))
+        }
+        Expr::Cond(cond) => {
+            let test = eval_const_expr(&cond.test, span_start, const_items)?;
+            if test.is_truthy() {
+                eval_const_expr(&cond.cons, span_start, const_items)
+            } else {
+                eval_const_expr(&cond.alt, span_start, const_items)
+            }
+        }
+        Expr::Call(call) => {
+            // For now, support simple built-in functions
+            if let ast::Callee::Expr(callee_expr) = &call.callee {
+                if let ast::Expr::Member(member) = &**callee_expr {
+                    if let (ast::Expr::Ident(obj), ast::MemberProp::Ident(prop)) = (&*member.obj, &member.prop) {
+                        if obj.sym == "Math" {
+                            if call.args.len() == 1 {
+                                let arg = eval_const_expr(&call.args[0].expr, span_start, const_items)?;
+                                if let Some(n) = arg.as_f64() {
+                                    match prop.sym.as_str() {
+                                        "abs" => return Ok(ConstValue::Number(n.abs())),
+                                        "floor" => return Ok(ConstValue::Number(n.floor())),
+                                        "ceil" => return Ok(ConstValue::Number(n.ceil())),
+                                        "round" => return Ok(ConstValue::Number(n.round())),
+                                        "sqrt" => return Ok(ConstValue::Number(n.sqrt())),
+                                        _ => {}
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Err(Diagnostic::simple_with_span(
+                "function calls not supported in const initializer (except Math.*)",
+                span_start,
+            ))
         }
         _ => Err(Diagnostic::simple_with_span(
             "expression not supported in const initializer",

@@ -1276,13 +1276,73 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         crate::diagnostics::Diagnostic::simple("Failed to build implicit return")
                     })?;
                 }
-                crate::types::OatsType::Number => {
+                crate::types::OatsType::Number | crate::types::OatsType::F64 => {
                     let zero = self.f64_t.const_float(0.0);
                     self.builder
                         .build_return(Some(&zero.as_basic_value_enum()))
                         .map_err(|_| {
                             crate::diagnostics::Diagnostic::simple(
                                 "Failed to build implicit return (number)",
+                            )
+                        })?;
+                }
+                crate::types::OatsType::F32 => {
+                    let zero = self.f32_t.const_float(0.0);
+                    self.builder
+                        .build_return(Some(&zero.as_basic_value_enum()))
+                        .map_err(|_| {
+                            crate::diagnostics::Diagnostic::simple(
+                                "Failed to build implicit return (f32)",
+                            )
+                        })?;
+                }
+                crate::types::OatsType::I64 | crate::types::OatsType::U64 | crate::types::OatsType::Isize | crate::types::OatsType::Usize => {
+                    let zero = self.i64_t.const_int(0, false);
+                    self.builder
+                        .build_return(Some(&zero.as_basic_value_enum()))
+                        .map_err(|_| {
+                            crate::diagnostics::Diagnostic::simple(
+                                "Failed to build implicit return (i64)",
+                            )
+                        })?;
+                }
+                crate::types::OatsType::I32 | crate::types::OatsType::U32 => {
+                    let zero = self.i32_t.const_int(0, false);
+                    self.builder
+                        .build_return(Some(&zero.as_basic_value_enum()))
+                        .map_err(|_| {
+                            crate::diagnostics::Diagnostic::simple(
+                                "Failed to build implicit return (i32)",
+                            )
+                        })?;
+                }
+                crate::types::OatsType::I16 | crate::types::OatsType::U16 => {
+                    let zero = self.i16_t.const_int(0, false);
+                    self.builder
+                        .build_return(Some(&zero.as_basic_value_enum()))
+                        .map_err(|_| {
+                            crate::diagnostics::Diagnostic::simple(
+                                "Failed to build implicit return (i16)",
+                            )
+                        })?;
+                }
+                crate::types::OatsType::I8 | crate::types::OatsType::U8 | crate::types::OatsType::Char => {
+                    let zero = self.i8_t.const_int(0, false);
+                    self.builder
+                        .build_return(Some(&zero.as_basic_value_enum()))
+                        .map_err(|_| {
+                            crate::diagnostics::Diagnostic::simple(
+                                "Failed to build implicit return (i8)",
+                            )
+                        })?;
+                }
+                crate::types::OatsType::Boolean => {
+                    let zero = self.bool_t.const_int(0, false);
+                    self.builder
+                        .build_return(Some(&zero.as_basic_value_enum()))
+                        .map_err(|_| {
+                            crate::diagnostics::Diagnostic::simple(
+                                "Failed to build implicit return (bool)",
                             )
                         })?;
                 }
@@ -1395,7 +1455,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
         let mut llvm_param_types: Vec<inkwell::types::BasicMetadataTypeEnum> = Vec::new();
         for pty in &param_types_vec {
             let llvm_ty = match pty {
-                OatsType::Number => self.f64_t.into(),
+                OatsType::Number | OatsType::F64 => self.f64_t.into(),
+                OatsType::F32 => self.f32_t.into(),
+                OatsType::I64 | OatsType::U64 | OatsType::Isize | OatsType::Usize => self.i64_t.into(),
+                OatsType::I32 | OatsType::U32 => self.i32_t.into(),
+                OatsType::I16 | OatsType::U16 => self.i16_t.into(),
+                OatsType::I8 | OatsType::U8 | OatsType::Char => self.i8_t.into(),
                 OatsType::String
                 | OatsType::NominalStruct(_)
                 | OatsType::StructLiteral(_)
@@ -1403,6 +1468,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 | OatsType::Tuple(_)
                 | OatsType::Promise(_)
                 | OatsType::Weak(_)
+                | OatsType::Unowned(_)
                 | OatsType::Option(_)
                 | OatsType::Enum(_, _) => self.i8ptr_t.into(),
                 OatsType::Boolean => self.bool_t.into(),
@@ -1415,6 +1481,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 | OatsType::Array(_)
                                 | OatsType::Promise(_)
                                 | OatsType::Weak(_)
+                                | OatsType::Unowned(_)
                                 | OatsType::Option(_)
                         )
                     });
@@ -1432,7 +1499,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 OatsType::GenericInstance { .. } => {
                     // Generic instances are specialized, so treat as pointer types
                     self.i8ptr_t.into()
-                }
+                },
             };
             llvm_param_types.push(llvm_ty);
         }

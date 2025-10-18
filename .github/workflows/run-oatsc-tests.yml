@@ -1,16 +1,16 @@
-name: Run Runtime Tests
+name: Run Oats Compiler Tests
 
 on:
   push:
-    branches: [main, master]
+    branches: [master]
     paths:
-      - "crates/runtime/**"
-      - ".github/workflows/run-runtime-tests.yml"
+      - "crates/oatsc/**"
+      - ".github/workflows/run-oatsc-tests.yml"
   pull_request:
-    branches: [main, master]
+    branches: [master]
     paths:
-      - "crates/runtime/**"
-      - ".github/workflows/run-runtime-tests.yml"
+      - "crates/oatsc/**"
+      - ".github/workflows/run-oatsc-tests.yml"
 
 jobs:
   test:
@@ -38,4 +38,9 @@ jobs:
         run: cargo build --workspace
 
       - name: Run tests
-        run: cargo test -p runtime
+        run: cargo test -p oatsc
+
+      - name: Run snapshot tests
+        run: |
+          cargo install cargo-insta
+          cargo insta test -p oatsc --review

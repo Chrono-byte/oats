@@ -1,43 +1,43 @@
-name: Build and Publish Runtime
+name: Build and Publish Oats Compiler
 
 on:
   push:
     branches:
       - master
     paths:
-      - "crates/runtime/**"
-      - ".github/workflows/build-runtime.yml"
+      - "crates/oatsc/**"
+      - ".github/workflows/build-oatsc.yml"
   pull_request:
     branches:
       - master
     paths:
-      - "crates/runtime/**"
-      - ".github/workflows/build-runtime.yml"
-  release:
-    types: [published]
-  workflow_dispatch:
+      - "crates/oatsc/**"
+      - ".github/workflows/build-oatsc.yml"
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build-runtime:
-    name: Build Runtime
+  build-oatsc:
+    name: Build Oats Compiler
     strategy:
       matrix:
         include:
           - os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
-            artifact: libruntime-linux-x86_64.a
+            artifact: oatsc-linux-x86_64
           - os: ubuntu-24.04
             target: aarch64-unknown-linux-gnu
-            artifact: libruntime-linux-aarch64.a
+            artifact: oatsc-linux-aarch64
           - os: macos-14
             target: aarch64-apple-darwin
-            artifact: libruntime-macos-aarch64.a
+            artifact: oatsc-macos-aarch64
           - os: macos-13
             target: x86_64-apple-darwin
-            artifact: libruntime-macos-x86_64.a
+            artifact: oatsc-macos-x86_64
+          - os: windows-2022
+            target: x86_64-pc-windows-msvc
+            artifact: oatsc-windows-x86_64.exe
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -65,14 +65,17 @@ jobs:
           linker = "aarch64-linux-gnu-gcc"
           EOF
 
-      - name: Build runtime
+      - name: Build oatsc
         run: |
-          cd crates/runtime
-          cargo build --release --target ${{ matrix.target }}
+          cargo build --release --bin oatsc --target ${{ matrix.target }}
 
       - name: Rename artifact
         run: |
-          cp target/${{ matrix.target }}/release/libruntime.a ${{ matrix.artifact }}
+          cp target/${{ matrix.target }}/release/oatsc${{ contains(matrix.target, 'windows') && '.exe' || '' }} ${{ matrix.artifact }}
+
+      - name: Make executable (Unix)
+        if: runner.os != 'Windows'
+        run: chmod +x ${{ matrix.artifact }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -82,8 +85,8 @@ jobs:
           retention-days: 90
 
   create-release:
-    name: Create Release
-    needs: build-runtime
+    name: Create Compiler Release
+    needs: build-oatsc
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     permissions:
@@ -101,16 +104,16 @@ jobs:
       - name: Generate version tag
         id: version
         run: |
-          # Use commit short SHA as version identifier for runtime builds
-          echo "tag=runtime-$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+          # Use commit short SHA as version identifier for compiler builds
+          echo "tag=compiler-$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
           echo "date=$(date +%Y%m%d-%H%M%S)" >> $GITHUB_OUTPUT
 
       - name: Create Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # Create a release tag for the runtime
+          # Create a release tag for the compiler
           gh release create "${{ steps.version.outputs.tag }}" \
-            --title "Runtime Build ${{ steps.version.outputs.date }}" \
-            --notes "Automated runtime library build from commit $(git rev-parse --short HEAD)" \
-            artifacts/**/*.a
+            --title "Compiler Build ${{ steps.version.outputs.date }}" \
+            --notes "Automated oatsc compiler build from commit $(git rev-parse --short HEAD)" \
+            artifacts/**/*

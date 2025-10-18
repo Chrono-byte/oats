@@ -393,8 +393,7 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
                 .unwrap_or("out");
             let out_obj = format!("{}/{}.o", out_dir, src_filename);
             return Ok(Some(out_obj));
-        }
-        if !emit_object_only {
+        } else {
             return diagnostics::report_error_and_bail(
                 Some(&src_path),
                 Some(&source),
@@ -570,6 +569,7 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
                                         );
                                         anyhow::anyhow!(d.message)
                                     })?;
+                            }
                         }
                     }
                     ClassMember::Constructor(ctor) => {
@@ -771,6 +771,7 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
                                         );
                                         anyhow::anyhow!(d.message)
                                     })?;
+                            }
                         }
                     }
                     ClassMember::Constructor(ctor) => {
@@ -1165,29 +1166,22 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
     // conflicting with the C runtime entrypoint. The script must export
     // `main`, but we generate `oats_main` as the emitted symbol the host
     // runtime will call.
-    if let Some(func_decl) = &func_decl_opt {
-        let func_sig = func_sig_opt.as_ref().unwrap();
-        codegen
-            .gen_function_ir(
-                "oats_main",
-                func_decl,
-                &func_sig.params,
-                &func_sig.ret,
-                None,
-            )
-            .map_err(|d| {
-                crate::diagnostics::emit_diagnostic(&d, Some(source.as_str()));
-                anyhow::anyhow!("{}", d.message)
-            })?;
-    }
+    codegen
+        .gen_function_ir(
+            "oats_main",
+            &func_decl,
+            &func_sig.params,
+            &func_sig.ret,
+            None,
+        )
+        .map_err(|d| {
+            crate::diagnostics::emit_diagnostic(&d, Some(source.as_str()));
+            anyhow::anyhow!("{}", d.message)
+        })?;
 
     // Try to emit a host `main` into the module so no external shim is
     // required. Recompute IR after emission.
-    let emitted_host_main = if let Some(func_sig) = &func_sig_opt {
-        codegen.emit_host_main(&func_sig.params, &func_sig.ret)
-    } else {
-        false
-    };
+    let emitted_host_main = codegen.emit_host_main(&func_sig.params, &func_sig.ret);
 
     // Note: LLVM optimizations (inlining, loop opts) are applied via clang -O3 during compilation
     let ir = codegen.module.print_to_string().to_string();

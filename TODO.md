@@ -1,10 +1,10 @@
 # Oats Compiler Enhancement TODO List
 
-**Last Updated:** October 17, 2025
+**Last Updated:** October 18, 2025
 
 This TODO list outlines potential improvements and tasks for the Oats compiler, prioritized for **full TypeScript compatibility**. Focus is on implementing missing language features and type system capabilities before performance optimizations and tooling.
 
-**TypeScript Conformance Status:** As of October 17, 2025, the parser achieves ~90.43% success rate on TypeScript conformance tests (4,547/5,028 files parsed successfully). The remaining failures are primarily due to missing support for advanced ES6+ features listed below.
+**Current Implementation Status:** As of October 18, 2025, Oats supports a substantial subset of TypeScript including classes, async/await, generics, unions, interfaces, enums, destructuring, and template literals. The parser achieves ~90.43% success rate on TypeScript conformance tests (4,547/5,028 files parsed successfully).
 
 ## 1. Complete TypeScript Feature Parity
 
@@ -12,11 +12,10 @@ This section tracks TypeScript features not yet implemented in Oats to achieve f
 
 ### 1.1 Advanced Type System Features
 
-- **Enums (partial)**: Enum declarations are parsed and type-checked, but enum member access and value emission in codegen is not implemented.
 - **Advanced generics**:
-  - Generic constraints (`T extends U`)
-  - Multiple type parameters (`<T, U>`)
-  - Generic classes and interfaces
+  - Generic constraints (`T extends U`) - NOT IMPLEMENTED
+  - Multiple type parameters (`<T, U>`) - NOT IMPLEMENTED
+  - Generic classes and interfaces - PARTIALLY IMPLEMENTED (basic generics work)
 - **Full interface implementation checking**: No enforcement of class implementation contracts.
 - **Mapped types**: No `keyof`, `in`, or mapped type syntax (e.g., `{ [K in keyof T]: ... }`).
 - **Conditional types**: No `T extends U ? X : Y` syntax.
@@ -48,9 +47,6 @@ This section tracks TypeScript features not yet implemented in Oats to achieve f
 - **Module augmentation**: No `declare module` for extending external modules.
 - **Ambient declarations**: No `declare` for describing external APIs.
 - **Triple-slash directives**: No `/// <reference />` for compiler hints.
-- **Async/await functions**: No `async` keyword on functions/methods or `await` expressions.
-- **Destructuring**: No array/object destructuring in variable declarations, function parameters, or assignments.
-- **Template literals**: No template strings with `${}` interpolation or tagged templates.
 - **Exponentiation operator**: No `**` or `**=` operators.
 - **For-await-of loops**: No `for await (const x of iterable)` syntax.
 - **Numeric separators**: No underscore separators in numeric literals (e.g., `1_000`).
@@ -75,19 +71,77 @@ This section tracks TypeScript features not yet implemented in Oats to achieve f
 - **TypeScript compiler options**: No `tsconfig.json` features like strict mode, path mapping, or advanced checks.
 - **IDE support**: No language server mentioned yet (planned for mid-term).
 
-## 2. Expand Language Support
+## 2. Currently Implemented Features (Updated Status)
 
-- Add more TypeScript features (e.g., decorators, namespaces, modules).
-- Support for concurrency primitives beyond async/await.
-- Add support for generators (`function*` / `yield`).
-- Add support for JSX/TSX.
-- Implement declaration merging and module augmentation.
-- Add support for advanced type-level features (conditional types, mapped types, etc.).
+### 2.1 Core Language Features ✅ IMPLEMENTED
 
-## 3. Implement Missing Features
+- **Async/await**: Full support for `async` functions and `await` expressions
+- **Classes**: Class declarations, inheritance, constructors, methods, fields
+- **Destructuring**: Array and object destructuring in variable declarations and assignments
+- **Template literals**: String interpolation with `${}` syntax
+- **Arrow functions**: Full support including captured variables
+- **Generics**: Basic generic functions and types
+- **Unions**: Tagged unions with runtime boxing/unboxing
+- **Interfaces**: Interface declarations and basic type checking
+- **Enums**: Enum declarations with type checking (codegen partial)
+- **Tuples**: Fixed-size tuple types
+- **Promises**: Promise type and async lowering to state machines
 
-- Extend generics support (e.g., constraints, multiple type parameters).
-- Add full interface implementation checking.
+### 2.2 Type System ✅ IMPLEMENTED
+
+- **Primitive types**: `number`, `boolean`, `string`, `void`
+- **Integer types**: `i8`, `u8`, `i16`, `u16`, `i32`, `u32`, `i64`, `u64`
+- **Float types**: `f32`, `f64`
+- **Architecture types**: `isize`, `usize`
+- **Character type**: `char`
+- **Reference types**: `Weak<T>`, `Unowned<T>` (planned)
+- **Optional types**: Nullable/undefined handling
+
+### 2.3 Control Flow ✅ IMPLEMENTED
+
+- **Conditionals**: `if`/`else` statements and ternary expressions
+- **Loops**: `for`, `while`, `do-while` loops
+- **Break/continue**: Loop control statements
+- **Return**: Function return statements
+- **Blocks**: Statement blocks and scoping
+
+### 2.4 Expressions ✅ IMPLEMENTED
+
+- **Binary operations**: All standard arithmetic, comparison, logical operators
+- **Unary operations**: `-`, `+`, `!`, `~`, `typeof`
+- **Update operations**: `++`, `--` (prefix and postfix)
+- **Assignment**: `=`, `+=`, `-=`, `*=`, `/=`, `%=`, etc.
+- **Member access**: Dot notation and computed member access
+- **Function calls**: Regular and method calls
+- **Literals**: Numbers, strings, booleans, arrays, objects
+- **New expressions**: Constructor calls
+- **Parenthesized expressions**: Grouping
+
+## 3. High-Priority Missing Features
+
+### 3.1 Immediate Priorities (Next 1-2 weeks)
+
+- **Enum codegen**: Complete enum member access and value emission
+- **Generic constraints**: Support for `T extends U` syntax
+- **Access modifiers**: `private`, `protected`, `#` private fields
+- **Static members**: Static properties and methods
+- **Abstract classes**: `abstract` keyword and abstract methods
+
+### 3.2 Short-term Goals (Next 1-3 months)
+
+- **Advanced generics**: Multiple type parameters, generic classes
+- **Mapped types**: `keyof`, `in`, mapped type syntax
+- **Conditional types**: `T extends U ? X : Y`
+- **Decorators**: `@decorator` syntax
+- **JSX/TSX**: XML-like syntax support
+
+### 3.3 Long-term Vision (6+ months)
+
+- **Full TypeScript compatibility**: 100% parser success rate
+- **Advanced type system**: All TypeScript type features
+- **Rich standard library**: Deno-compatible runtime APIs
+- **FFI integration**: Seamless C/Rust interop
+- **IDE support**: Language server and tooling
 
 ## 4. Critical Short-term Priorities (Next 2-4 Weeks)
 

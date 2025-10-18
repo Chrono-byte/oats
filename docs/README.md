@@ -1,6 +1,6 @@
 # Oats Documentation Guide
 
-**Last Updated:** October 16, 2025
+**Last Updated:** October 18, 2025
 
 Welcome to the Oats compiler documentation! This guide helps you navigate the
 documentation and find what you need.
@@ -19,6 +19,21 @@ documentation and find what you need.
 1. `CONTRIBUTING.md` (in repository root) - Contribution guidelines
 2. `DEVELOPMENT.md` - Development workflows and standards
 3. `ROADMAP.md` - Current priorities and future plans
+
+## Current Implementation Status
+
+**October 18, 2025:** Oats supports a substantial TypeScript subset including:
+
+- ✅ **Core language**: Functions, classes, interfaces, enums, generics, unions
+- ✅ **Async/await**: Full `async`/`await` syntax and state machine lowering
+- ✅ **Modern syntax**: Destructuring, template literals, arrow functions
+- ✅ **Type system**: Primitives, tuples, promises, weak/unowned references
+- ✅ **Memory management**: ARC with cycle collection, escape analysis
+- ✅ **Package system**: Multi-file compilation with dependency resolution
+
+**Parser coverage:** ~90.43% success rate on TypeScript conformance tests (4,547/5,028 files).
+
+**Missing features:** Advanced generics (constraints), decorators, JSX, mapped types, conditional types, full class modifiers.
 
 ## Documentation Structure
 
@@ -51,11 +66,13 @@ opportunities.
 
 ### Topics at a Glance
 
-- **Architecture & Memory:** `ARCHITECTURE.md`, `MEMORY_DESIGN.md`
-- **Workflow & Testing:** `DEVELOPMENT.md`, `FUZZING.md`
-- **Language Surface:** `LANGUAGE_DESIGN.md`
-- **Analysis & Optimization:** `ESCAPE_ANALYSIS.md`
-- **Direction:** `ROADMAP.md`
+- **Architecture & Language Design:** `ARCHITECTURE.md`
+- **Workflow & Testing:** `DEVELOPMENT.md`, `implementation/FUZZING.md`
+- **Analysis & Optimization:** `implementation/ESCAPE_ANALYSIS.md`
+- **Package System:** `implementation/PACKAGE_SYSTEM.md`
+- **FFI Design:** `implementation/ffi.md`
+- **Direction:** `ROADMAP.md`, `ROADMAP_SYSTEMS.md`
+- **Implementation Details:** `implementation/` directory
 
 ## Documentation by Use Case
 

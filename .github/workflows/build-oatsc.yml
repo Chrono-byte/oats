@@ -231,4 +231,4 @@ jobs:
           gh release create "${{ steps.version.outputs.tag }}" \
             --title "Compiler Build ${{ steps.version.outputs.date }}" \
             --notes "Automated oatsc compiler build from commit ${{ github.sha }}" \
-            artifacts/*
+            $(find artifacts -type f)

@@ -1,0 +1,202 @@
+//! Oats.toml project manifest parsing
+//!
+//! This module handles parsing and validation of Oats.toml project manifests,
+//! providing a structured representation of project configuration.
+
+use anyhow::Result;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::path::Path;
+
+/// Represents a complete Oats project manifest
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Manifest {
+    pub package: Package,
+    #[serde(default)]
+    pub dependencies: HashMap<String, Dependency>,
+    #[serde(default)]
+    pub build: BuildConfig,
+}
+
+/// Package metadata section
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Package {
+    pub name: String,
+    pub version: String,
+    #[serde(default)]
+    pub authors: Vec<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub license: Option<String>,
+}
+
+/// Dependency specification
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum Dependency {
+    /// Simple version string (for future external dependencies)
+    Version(String),
+    /// Detailed dependency specification
+    Detailed(DependencySpec),
+}
+
+/// Detailed dependency specification
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DependencySpec {
+    /// Local path dependency
+    pub path: Option<String>,
+    /// Version requirement (future use)
+    pub version: Option<String>,
+}
+
+/// Build configuration section
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct BuildConfig {
+    #[serde(rename = "target-dir")]
+    #[serde(default = "default_target_dir")]
+    pub target_dir: String,
+    #[serde(default = "default_profile")]
+    pub profile: String,
+    #[serde(default)]
+    pub profiles: HashMap<String, Profile>,
+}
+
+/// Build profile configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Profile {
+    #[serde(rename = "opt-level")]
+    #[serde(default)]
+    pub opt_level: String,
+    #[serde(default = "default_debug")]
+    pub debug: bool,
+    #[serde(default)]
+    pub lto: Option<String>,
+}
+
+fn default_target_dir() -> String {
+    "target".to_string()
+}
+
+fn default_profile() -> String {
+    "dev".to_string()
+}
+
+fn default_debug() -> bool {
+    true
+}
+
+impl Manifest {
+    /// Parse a manifest from a TOML string
+    pub fn from_toml(content: &str) -> Result<Self> {
+        toml::from_str(content).map_err(|e| anyhow::anyhow!("Failed to parse Oats.toml: {}", e))
+    }
+
+    /// Load manifest from a file path
+    pub fn from_file(path: &Path) -> Result<Self> {
+        let content = std::fs::read_to_string(path)
+            .map_err(|e| anyhow::anyhow!("Failed to read {}: {}", path.display(), e))?;
+        Self::from_toml(&content)
+    }
+
+    /// Find and load manifest from current directory or parent directories
+    pub fn discover() -> Result<Option<(Self, std::path::PathBuf)>> {
+        let mut current = std::env::current_dir()?;
+
+        loop {
+            let manifest_path = current.join("Oats.toml");
+            if manifest_path.exists() {
+                let manifest = Self::from_file(&manifest_path)?;
+                return Ok(Some((manifest, manifest_path)));
+            }
+
+            if !current.pop() {
+                break;
+            }
+        }
+
+        Ok(None)
+    }
+
+    /// Validate the manifest
+    pub fn validate(&self) -> Result<()> {
+        // Validate package name
+        if self.package.name.is_empty() {
+            anyhow::bail!("Package name cannot be empty");
+        }
+
+        if !self
+            .package
+            .name
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+        {
+            anyhow::bail!(
+                "Package name must contain only alphanumeric characters, hyphens, and underscores"
+            );
+        }
+
+        // Validate version (basic semver check)
+        if self.package.version.is_empty() {
+            anyhow::bail!("Package version cannot be empty");
+        }
+
+        // Validate dependencies
+        for (name, dep) in &self.dependencies {
+            match dep {
+                Dependency::Detailed(spec) => {
+                    if spec.path.is_none() && spec.version.is_none() {
+                        anyhow::bail!(
+                            "Dependency '{}' must specify either 'path' or 'version'",
+                            name
+                        );
+                    }
+                }
+                Dependency::Version(_) => {
+                    // Future: validate version format
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_basic_manifest() {
+        let toml = r#"
+            [package]
+            name = "test-project"
+            version = "0.1.0"
+
+            [dependencies]
+            my-lib = { path = "./lib" }
+        "#;
+
+        let manifest = Manifest::from_toml(toml).unwrap();
+        assert_eq!(manifest.package.name, "test-project");
+        assert_eq!(manifest.package.version, "0.1.0");
+        assert_eq!(manifest.dependencies.len(), 1);
+    }
+
+    #[test]
+    fn test_validate_package_name() {
+        let mut manifest = Manifest {
+            package: Package {
+                name: "invalid name!".to_string(),
+                version: "0.1.0".to_string(),
+                authors: vec![],
+                description: None,
+                license: None,
+            },
+            dependencies: HashMap::new(),
+            build: BuildConfig::default(),
+        };
+
+        assert!(manifest.validate().is_err());
+    }
+}

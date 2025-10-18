@@ -6,13 +6,14 @@
 
 > An Ahead-of-Time (AOT) Compiler for a TypeScript-Inspired Language
 
-Oats is an experimental ahead-of-time (AOT) compiler that converts a small, well-defined subset of TypeScript into native machine code using LLVM. It generates standalone executables and uses deterministic reference counting for predictable memory management.
+Oats is an experimental ahead-of-time (AOT) compiler that converts a small, well-defined subset of TypeScript into native machine code using LLVM. It supports multi-file compilation with a package system for dependency management, generates standalone executables, and uses deterministic reference counting for predictable memory management.
 
 -----
 
 ## ✨ Features
 
 - **TypeScript Subset**: Compiles a rich subset of TypeScript including numbers, booleans, strings, arrays, classes, and unions.
+- **Package System**: Supports multi-file compilation with dependency resolution, allowing complex applications to be built from modular components.
 - **Generics & Unions**: Supports generics via call-site monomorphization and handles complex union types with runtime boxing.
 - **Async (preview)**: `async` functions are lowered into efficient poll-state machines with resume blocks, enabling asynchronous operations.
 - **Memory Management**: Implements deterministic Automatic Reference Counting (ARC) with support for weak references and a background cycle collector.
@@ -114,9 +115,10 @@ If you want to develop Oats or work with the full repository:
 
 - **`crates/oatsc`**: Core compiler for parsing, type checking, and LLVM IR generation. Includes the runtime fetcher for standalone operation.
 - **`crates/runtime`**: The safe runtime library providing ARC helpers, allocators, logging, and the cycle collector. Built as a static library and published via GitHub Actions.
-- **`crates/toasty`**: The CLI wrapper for the compiler with `build` and `run` commands.
-- **`docs/`**: Architecture, development, memory, and roadmap documentation.
-- **`examples/`**: Programs compiled as part of the test suites.
+- **`crates/toasty`**: The CLI wrapper for the compiler with `build` and `run` commands, including package-based compilation support.
+- **`docs/`**: Comprehensive documentation including architecture, development guides, memory design, and roadmap.
+- **`examples/`**: Sample programs demonstrating language features, organized into basic examples and comprehensive test suites.
+- **`scripts/`**: Utility scripts for development, testing, and environment setup.
 - **`.github/workflows/`**: CI/CD workflows, including automated runtime builds and releases.
 
 See `docs/README.md` for a guided tour of the documentation set.

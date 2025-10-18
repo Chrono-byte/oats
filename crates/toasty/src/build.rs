@@ -183,11 +183,13 @@ fn compile_package(
 
     // Check for incremental build opportunity
     if let Ok(obj_metadata) = std::fs::metadata(&obj_path) {
-        let obj_mtime = obj_metadata.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-        
+        let obj_mtime = obj_metadata
+            .modified()
+            .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+
         // Check if source files are older than object file
         let mut needs_rebuild = false;
-        
+
         // Check entry point
         if let Ok(src_metadata) = std::fs::metadata(&pkg_node.entry_point()) {
             if let Ok(src_mtime) = src_metadata.modified() {
@@ -196,7 +198,7 @@ fn compile_package(
                 }
             }
         }
-        
+
         // Check manifest if it exists
         let manifest_path = pkg_root.join("Oats.toml");
         if let Ok(manifest_metadata) = std::fs::metadata(&manifest_path) {
@@ -206,7 +208,7 @@ fn compile_package(
                 }
             }
         }
-        
+
         // Check dependency metadata files
         for edge in graph.edges(pkg_idx) {
             let dep_idx = edge.target();
@@ -221,19 +223,19 @@ fn compile_package(
                 }
             }
         }
-        
+
         if !needs_rebuild {
             if config.verbose {
                 eprintln!("  Skipping compilation - {} is up to date", obj_filename);
             }
-            
+
             // Generate metadata file (may still need updating)
             let meta_file = PathBuf::from(format!(
                 "{}/{}_pkg.oats.meta",
                 out_dir,
                 pkg_name.replace('-', "_")
             ));
-            
+
             // Check if metadata needs updating
             let mut meta_needs_update = true;
             if let Ok(meta_metadata) = std::fs::metadata(&meta_file) {
@@ -243,30 +245,32 @@ fn compile_package(
                     }
                 }
             }
-            
+
             if meta_needs_update {
                 // Ensure output directory exists
                 if let Some(parent) = meta_file.parent() {
-                    std::fs::create_dir_all(parent)
-                        .with_context(|| format!("Failed to create output directory: {}", parent.display()))?;
+                    std::fs::create_dir_all(parent).with_context(|| {
+                        format!("Failed to create output directory: {}", parent.display())
+                    })?;
                 }
 
                 // Try to load manifest for package information
-                let manifest_info = if let Ok(manifest) = crate::manifest::Manifest::from_file(&pkg_root.join("Oats.toml")) {
+                let manifest_info = if let Ok(manifest) =
+                    crate::manifest::Manifest::from_file(&pkg_root.join("Oats.toml"))
+                {
                     format!(
                         "name = \"{}\"\nversion = \"{}\"\nentry = \"{}\"\n",
-                        manifest.package.name,
-                        manifest.package.version,
-                        manifest.package.entry
+                        manifest.package.name, manifest.package.version, manifest.package.entry
                     )
                 } else {
                     format!("name = \"{}\"\n", pkg_name)
                 };
 
-                std::fs::write(&meta_file, manifest_info)
-                    .with_context(|| format!("Failed to write metadata file: {}", meta_file.display()))?;
+                std::fs::write(&meta_file, manifest_info).with_context(|| {
+                    format!("Failed to write metadata file: {}", meta_file.display())
+                })?;
             }
-            
+
             return Ok(PackageBuildResult {
                 name: pkg_name.clone(),
                 object_file: obj_path,
@@ -307,16 +311,15 @@ fn compile_package(
     }
 
     // Try to load manifest for package information
-    let manifest_info = if let Ok(manifest) = crate::manifest::Manifest::from_file(&pkg_root.join("Oats.toml")) {
-        format!(
-            "name = \"{}\"\nversion = \"{}\"\nentry = \"{}\"\n",
-            manifest.package.name,
-            manifest.package.version,
-            manifest.package.entry
-        )
-    } else {
-        format!("name = \"{}\"\n", pkg_name)
-    };
+    let manifest_info =
+        if let Ok(manifest) = crate::manifest::Manifest::from_file(&pkg_root.join("Oats.toml")) {
+            format!(
+                "name = \"{}\"\nversion = \"{}\"\nentry = \"{}\"\n",
+                manifest.package.name, manifest.package.version, manifest.package.entry
+            )
+        } else {
+            format!("name = \"{}\"\n", pkg_name)
+        };
 
     std::fs::write(&meta_file, manifest_info)
         .with_context(|| format!("Failed to write metadata file: {}", meta_file.display()))?;
@@ -331,63 +334,62 @@ fn compile_package(
 /// Invoke oatsc compiler as external command
 fn invoke_oatsc(options: &CompileOptions) -> Result<PathBuf> {
     // Get oatsc path from environment (set by preflight check)
-    let oatsc_path = std::env::var("OATS_OATSC_PATH")
-        .unwrap_or_else(|_| "oatsc".to_string());
+    let oatsc_path = std::env::var("OATS_OATSC_PATH").unwrap_or_else(|_| "oatsc".to_string());
 
     // Build command arguments
     let mut args = vec![];
-    
+
     // Add source file
     args.push(options.src_file.clone());
-    
+
     // Add package root if specified
     if let Some(pkg_root) = &options.package_root {
         args.push("--package-root".to_string());
         args.push(pkg_root.to_string_lossy().to_string());
     }
-    
+
     // Add external packages
     for (name, path) in &options.extern_pkg {
         args.push("--extern-pkg".to_string());
         args.push(format!("{}={}", name, path));
     }
-    
+
     // Add build profile
     if let Some(profile) = &options.build_profile {
         args.push("--profile".to_string());
         args.push(profile.clone());
     }
-    
+
     // Add optimization level
     if let Some(opt_level) = &options.opt_level {
         args.push("--opt-level".to_string());
         args.push(opt_level.clone());
     }
-    
+
     // Add LTO
     if let Some(lto) = &options.lto {
         args.push("--lto".to_string());
         args.push(lto.clone());
     }
-    
+
     // Add target triple
     if let Some(triple) = &options.target_triple {
         args.push("--target-triple".to_string());
         args.push(triple.clone());
     }
-    
+
     // Add target CPU
     if let Some(cpu) = &options.target_cpu {
         args.push("--target-cpu".to_string());
         args.push(cpu.clone());
     }
-    
+
     // Add target features
     if let Some(features) = &options.target_features {
         args.push("--target-features".to_string());
         args.push(features.clone());
     }
-    
+
     // Add flags
     if options.emit_object_only {
         args.push("--emit-object-only".to_string());
@@ -395,31 +397,32 @@ fn invoke_oatsc(options: &CompileOptions) -> Result<PathBuf> {
     if !options.link_runtime {
         args.push("--no-link-runtime".to_string());
     }
-    
+
     // Execute command
     let output = Command::new(&oatsc_path)
         .args(&args)
         .output()
         .with_context(|| format!("Failed to execute oatsc command: {} {:?}", oatsc_path, args))?;
-    
+
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stdout = String::from_utf8_lossy(&output.stdout);
         anyhow::bail!(
             "oatsc compilation failed:\nSTDOUT: {}\nSTDERR: {}",
-            stdout, stderr
+            stdout,
+            stderr
         );
     }
-    
+
     // Parse output to get object file path
     // oatsc should print the output path on success
     let stdout = String::from_utf8_lossy(&output.stdout);
     let object_path = stdout.trim().to_string();
-    
+
     if object_path.is_empty() {
         anyhow::bail!("oatsc did not return output path");
     }
-    
+
     Ok(PathBuf::from(object_path))
 }
 

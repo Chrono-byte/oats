@@ -413,7 +413,7 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
     module.set_triple(&triple);
 
     // Declare external functions for imported symbols
-    for (_import_path, symbols_str) in &extern_oats {
+    for symbols_str in extern_oats.values() {
         let symbols: Vec<&str> = symbols_str.split(',').map(|s| s.trim()).collect();
         for symbol in symbols {
             // Declare external function with default signature (no args, returns f64)

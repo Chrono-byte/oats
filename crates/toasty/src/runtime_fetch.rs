@@ -48,6 +48,7 @@ fn get_runtime_artifact_name() -> &'static str {
 }
 
 /// Detect the current platform and return the appropriate oatsc binary name
+#[allow(dead_code)]
 fn get_oatsc_artifact_name() -> &'static str {
     let os = std::env::consts::OS;
     let arch = std::env::consts::ARCH;
@@ -217,6 +218,7 @@ pub fn try_fetch_runtime() -> Option<PathBuf> {
 ///
 /// Returns the path to the oatsc compiler if successful.
 /// If fetching fails, returns None and caller should fall back to system oatsc.
+#[allow(dead_code)]
 pub fn try_fetch_oatsc() -> Option<PathBuf> {
     let verbose = std::env::var("TOASTY_VERBOSE").is_ok();
 

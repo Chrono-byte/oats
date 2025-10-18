@@ -1,9 +1,8 @@
 # Rust/Cargo
-/target/
+target/** 
 **/target/
 **/*.rlib
 **/*.rmeta
-Cargo.lock
 
 # Generated LLVM/IR and object files (AOT pipeline)
 *.ll
@@ -35,6 +34,8 @@ Thumbs.db
 *.temp
 *.swp
 *.swo
+*.bak
+*.orig
 *~
 
 # Environment files
@@ -54,21 +55,7 @@ aot_out/**
 test_out/**
 fuzz/artifacts/**
 fuzz/corpus/**
-
-# Ignore compiled oats binaries (named after source file stem)
-# These are the output of toasty build and should not be committed
-# Common example names:
-/add
-/fibonaci
-/main
-/test_*
-/class_*
-/cycle_*
-/escape_*
-/field_*
-/mem
-/object_*
-
+# Ignore all files in the root except for those with extensions
 # Also ignore any executable in the root that doesn't have an extension
 # (most compiled oats programs)
 /*

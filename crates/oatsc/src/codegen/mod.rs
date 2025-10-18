@@ -450,7 +450,8 @@ impl<'a> CodeGen<'a> {
                         }
                         ConstValue::Bool(b) => {
                             field_types.push(self.bool_t.into());
-                            field_vals.push(self.bool_t.const_int(if *b { 1 } else { 0 }, false).into());
+                            field_vals
+                                .push(self.bool_t.const_int(if *b { 1 } else { 0 }, false).into());
                         }
                         ConstValue::Str(_) | ConstValue::Array(_) | ConstValue::Object(_) => {
                             // Recursively emit child globals for pointer-like fields
@@ -598,10 +599,29 @@ impl<'a> CodeGen<'a> {
         false
     }
 
-    pub fn is_unowned_local(&self, locals: &Vec<std::collections::HashMap<String, (inkwell::values::PointerValue<'a>, inkwell::types::BasicTypeEnum<'a>, bool, bool, bool, Option<String>, Option<crate::types::OatsType>)>>, local_name: &str) -> bool {
+    pub fn is_unowned_local(
+        &self,
+        locals: &Vec<
+            std::collections::HashMap<
+                String,
+                (
+                    inkwell::values::PointerValue<'a>,
+                    inkwell::types::BasicTypeEnum<'a>,
+                    bool,
+                    bool,
+                    bool,
+                    Option<String>,
+                    Option<crate::types::OatsType>,
+                ),
+            >,
+        >,
+        local_name: &str,
+    ) -> bool {
         // Check if the local is an unowned reference
         for scope in locals.iter().rev() {
-            if let Some((_ptr, _ty, _init, _is_const, _is_weak, _nominal, oats_type)) = scope.get(local_name) {
+            if let Some((_ptr, _ty, _init, _is_const, _is_weak, _nominal, oats_type)) =
+                scope.get(local_name)
+            {
                 return matches!(oats_type, Some(crate::types::OatsType::Unowned(_)));
             }
         }

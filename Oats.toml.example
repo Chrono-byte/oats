@@ -1,0 +1,31 @@
+# Oats.toml - Oats Project Manifest
+# This file defines an Oats project, similar to Cargo.toml for Rust projects.
+
+[package]
+name = "my-oats-project"
+version = "0.1.0"
+authors = ["Your Name <your.email@example.com>"]
+description = "A description of your Oats project"
+license = "MIT"
+
+[dependencies]
+# Local dependencies (relative paths)
+my-lib = { path = "./lib" }
+
+# External dependencies (future feature)
+# serde = "1.0"
+# rand = "0.8"
+
+[build]
+# Build configuration
+target-dir = "target"
+profile = "dev"  # dev, release
+
+[build.profiles.dev]
+opt-level = "none"
+debug = true
+
+[build.profiles.release]
+opt-level = "aggressive"
+lto = "full"
+debug = false

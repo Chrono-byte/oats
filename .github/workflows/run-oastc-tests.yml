@@ -38,9 +38,9 @@ jobs:
         run: cargo build --workspace
 
       - name: Run tests
-        run: cargo test --workspace
+        run: cargo test -p oatsc
 
       - name: Run snapshot tests
         run: |
           cargo install cargo-insta
-          cargo insta test --workspace --review
+          cargo insta test -p oatsc --review

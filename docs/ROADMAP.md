@@ -1,70 +1,88 @@
-# Roadmap: Evolving Oats into a Systems Language
+# Project Plan: Achieving Full TypeScript Compatibility in Oats
 
-The goal of transforming Oats into a true systems programming language is achievable by building upon its existing AOT compilation and deterministic memory model. The following areas represent the key features and design philosophies required to bridge the gap between its current TypeScript-inspired state and a language suitable for low-level systems development.
+**Objective:** To evolve Oats from a TypeScript-inspired language into a fully-compatible, high-performance TypeScript runtime. This plan aims to achieve parity with Deno's TypeScript implementation, covering the compiler, type system, runtime, and developer tooling.
 
-## 1. Granular Memory Management & Control
+**Current Status (October 18, 2025):** Oats currently supports a substantial TypeScript subset including classes, async/await, generics, unions, interfaces, enums, destructuring, and template literals. The parser achieves ~90.43% success rate on TypeScript conformance tests (4,547/5,028 files parsed successfully).
 
-Systems programming requires precise control over memory layout and lifetime. While ARC provides excellent determinism, introducing more explicit control is essential.
+## Phase 1: Complete Syntactic & Type Definition Parity ✅ MOSTLY COMPLETE
 
-### Current State:
-- Automatic Reference Counting (ARC) for all heap objects.
-- A background cycle collector to handle reference cycles.
-- Escape analysis to eliminate some redundant RC operations.
+**Goal:** Ensure the Oats parser and type system can understand 100% of valid TypeScript syntax and type definition files (.d.ts), even if it cannot yet fully type-check all advanced features.
 
-### Next Steps:
-- **Introduce unowned References**: As planned in the language design, implement unowned references. These would be non-owning pointers that do not perform any RC operations, providing a zero-cost abstraction for performance-critical code where object lifetimes can be guaranteed by the programmer.
-- **Explicit Memory APIs**: Expose a low-level memory management API in the standard library (e.g., memory::alloc, memory::free, memory::copy). This would allow developers to bypass ARC entirely and manage memory manually for specific data structures or performance-sensitive algorithms.
-- **Stack Allocation for Objects (structs)**: Introduce a struct keyword for value types that are always allocated on the stack. This provides a way to create complex data types without incurring heap allocation and RC overhead, a cornerstone of systems languages like C++ and Rust.
+### Currently Implemented ✅
+- **Core syntax**: Functions, classes, interfaces, enums, generics, unions
+- **Async/await**: Full `async`/`await` syntax and lowering
+- **Destructuring**: Array and object destructuring
+- **Template literals**: String interpolation
+- **Arrow functions**: Full support with closures
+- **Control flow**: `if`/`else`, loops, `try`/`catch` (basic)
+- **Modules**: `import`/`export` statements
 
-## 2. Full-Fledged Foreign Function Interface (FFI)
+### Remaining Tasks
+- **Integrate Official TypeScript Conformance Tests:**
+  - Establish a process to regularly run the official TypeScript compiler test suite against the oatsc parser.
+  - The remaining ~9.57% failures are primarily due to missing support for advanced ES6+ features.
 
-Direct interoperability with existing C and Rust libraries is non-negotiable for a systems language. The existing FFI plan is a critical first step.
+- **Implement Remaining Syntax Features:**
+  - Add robust parsing support for features not fully covered by the Deno test suite:
+    - Decorators (Stage 3 proposal).
+    - `namespace` and `module` blocks for organizing types.
+    - `const enum` and other enum variants.
+    - Full JSX/TSX parsing, including fragments and complex generic components.
 
-### Current State:
-- A detailed plan exists to implement a Deno-compliant FFI.
+- **Full .d.ts Support:**
+  - Enhance the type system to correctly parse and load type information from ambient declaration files (.d.ts).
+  - Implement support for declaration merging, allowing multiple interface declarations for the same object to be combined.
 
-### Next Steps:
-- **Execute the FFI Plan**: This is the highest-priority item. The ability to call C/Rust functions is the gateway to interacting with operating system APIs, hardware drivers, and high-performance native libraries.
-- **Advanced FFI Features**:
-  - Structs by Value: Support passing structs by value across the FFI boundary, allowing for seamless interaction with C APIs.
-  - Callbacks: Enable native code to call back into Oats functions, allowing for asynchronous operations and event handling.
-  - Unsafe Pointers: Introduce raw pointer types (*const T, *mut T) that can be used within unsafe blocks to perform raw memory manipulation, essential for FFI.
+**Outcome:** oatsc can reliably parse any TypeScript file or project without syntax errors and can correctly interpret the type signatures from external .d.ts files, setting the stage for advanced type checking.
 
-## 3. Low-Level Primitive Types
+## Phase 2: Advanced Type System Implementation
 
-Systems programming requires precise control over data representation. The current number (f64) type is insufficient for this.
+**Goal:** Evolve the Oats type checker to correctly handle the full spectrum of TypeScript's powerful and complex type system features, achieving semantic equivalence with tsc.
 
-### Current State:
-- A single number type, which maps to f64.
+### Currently Implemented ✅
+- **Basic generics**: Generic functions and types
+- **Unions**: Tagged unions with runtime boxing
+- **Interfaces**: Interface declarations and basic checking
+- **Enums**: Enum declarations (codegen partial)
+- **Primitive types**: Full set including integers, floats, architecture types
 
-### Next Steps:
-- **Introduce Explicit Integer and Float Types**:
-  - Integers: i8, u8, i16, u16, i32, u32, i64, u64.
-  - Floats: f32, f64.
-- **Introduce Architecture-Sized Types**: isize and usize for representing pointers and memory offsets.
-- **Character Type**: A char type for representing a single Unicode scalar value.
+### Key Tasks
 
-## 4. Advanced Concurrency Model
+- **Implement Control Flow Analysis (CFA):**
+  - This is the most critical feature for intelligent type narrowing.
+  - Implement analysis of `if`, `switch`, `try/catch` blocks, and other control flow statements to refine types within different code branches.
 
-While async/await is excellent for I/O-bound tasks, systems programming often requires direct control over OS-level threads.
+- **Support for Advanced Type Constructs:**
+  - **Conditional Types:** Implement logic for `T extends U ? X : Y`.
+  - **Mapped Types:** Implement support for creating new types by iterating over the keys of an existing type, e.g., `{ [K in keyof T]: T[K] }`.
+  - **Template Literal Types:** Parse and evaluate types based on string template literals.
+  - **infer Keyword:** Implement type inference within conditional types.
 
-### Current State:
-- An async/await implementation based on a poll-state machine.
+- **Refine Generic Type Inference:**
+  - Improve the type inference engine to correctly deduce generic type arguments from function calls and object instantiations, matching tsc's behavior.
 
-### Next Steps:
-- **OS Threading API**: Provide a standard library module (e.g., thread) for creating and managing OS threads (thread::spawn, thread::join).
-- **Synchronization Primitives**: Implement low-level synchronization primitives like Mutex, RwLock, Condvar, and atomic types (AtomicU32, etc.). This would allow for safe multi-threaded programming without relying on a garbage collector.
+**Outcome:** The Oats type checker will be as powerful and reliable as the official TypeScript compiler, catching the same subtle type errors and providing the same level of safety and developer assistance.
 
-## 5. Toolchain and Ecosystem (toasty as cargo)
+## Phase 3: Comprehensive Runtime & Standard Library
 
-A robust build system and package manager are critical for building large, multi-component systems like operating systems, databases, or game engines.
+**Goal:** Build out the Oats runtime to provide a complete, Deno-compatible environment, allowing existing TypeScript code to execute correctly.
 
-### Current State:
-- A detailed plan exists to evolve toasty into a cargo-like tool.
+### Key Tasks
 
-### Next Steps:
-- **Execute the Project Plan**: Implementing the phased plan to introduce Oats.toml, dependency management, and workspaces is a prerequisite for any serious systems development. The ability to build complex projects from multiple libraries is essential.
+- **Implement All JavaScript Built-in Objects:**
+  - Using the Rust runtime, provide complete and spec-compliant implementations for all standard global objects: `Object`, `Array`, `String`, `Promise`, `Map`, `Set`, `RegExp`, `JSON`, `Math`, etc., including all their prototype methods.
 
-## Conclusion
+- **Implement Web Platform APIs:**
+  - Provide native, performant implementations for the core Web APIs that Deno exposes: `console`, `fetch`, `setTimeout`, `setInterval`, `URL`, `TextEncoder`, `EventTarget`, `AbortController`, `WebSocket`, etc.
 
-Oats is uniquely positioned to become a systems-level dialect of TypeScript. Its foundation is strong. By focusing on giving the programmer more explicit control over memory, types, and concurrency, and by executing the existing plans for FFI and the cargo-style toolchain, Oats can offer a compelling combination of high-level ergonomics and low-level power.
+- **Implement the Full Deno Namespace:**
+  - Using the FFI system, build out the entire Deno namespace API, providing the file system, networking, and subprocess functionality that defines the Deno runtime.
+
+- **Garbage Collector Hardening:**
+  - Rigorously test the interaction between the GC and the new runtime objects, especially those that hold handles to native resources (like file descriptors or network sockets), to prevent memory leaks.
+
+**Outcome:** Oats will be able to run a vast majority of existing TypeScript and Deno programs correctly, with a complete and performant standard library.
+
+## Alternative Vision: Systems Language Evolution
+
+For reference, there is also a vision to evolve Oats into a systems programming language with granular memory control, FFI, low-level types, and advanced concurrency. This would position Oats as a high-level alternative to Rust/C++ for systems development. See the archived `ROADMAP_SYSTEMS.md` for details on this alternative direction.

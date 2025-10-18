@@ -1,9 +1,13 @@
 # Development Guide
 
-**Last Updated:** October 16, 2025
+**Last Updated:** October 18, 2025
 
 This is the concise development guide for contributors. It replaces the older,
 more fragmented development docs and points to deeper references when needed.
+
+## Current Status
+
+**October 18, 2025:** Oats is an actively developed AOT TypeScript compiler with substantial language support. The codebase includes comprehensive tests, snapshot testing for IR output, and fuzzing infrastructure. Parser achieves ~90.43% TypeScript conformance test success rate.
 
 ## Setup
 
@@ -360,5 +364,5 @@ suite easier to maintain.
 
 ---
 
-**Last Updated:** October 16, 2025\
+**Last Updated:** October 18, 2025\
 **For PR guidelines, see:** `CONTRIBUTING.md` at repository root

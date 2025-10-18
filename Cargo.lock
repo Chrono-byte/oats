@@ -1629,12 +1629,15 @@ dependencies = [
  "clap",
  "colored",
  "deno_ast",
+ "dirs",
  "oatsc",
  "petgraph",
  "predicates 2.1.5",
  "serde",
+ "serde_json",
  "tempfile",
  "toml",
+ "ureq",
 ]
 
 [[package]]

@@ -18,6 +18,10 @@ pub type LocalsStack = Vec<HashMap<String, OatsType>>;
 /// Key variants and their meaning:
 /// - `Number` -> numeric `f64` values.
 /// - `Boolean` -> boolean values (represented as i1/i64 in places).
+/// - `I8`, `U8`, `I16`, `U16`, `I32`, `U32`, `I64`, `U64` -> signed/unsigned integer types.
+/// - `F32`, `F64` -> floating point types.
+/// - `Isize`, `Usize` -> architecture-sized signed/unsigned integer types.
+/// - `Char` -> Unicode scalar value.
 /// - `Union(Vec<OatsType>)` -> tagged unions. Codegen represents unions as
 ///   either `f64` (numeric-only unions) or `i8*` pointer slots when any arm
 ///   is pointer-like. Numeric arms can be boxed into runtime union objects
@@ -26,6 +30,8 @@ pub type LocalsStack = Vec<HashMap<String, OatsType>>;
 ///   by helpers like `array_get_f64` / `array_get_ptr`.
 /// - `Weak(T)` -> non-owning references (affects whether `rc_inc` or
 ///   `rc_weak_inc` is used when storing values).
+/// - `Unowned(T)` -> non-owning, non-zeroing references that do not perform
+///   any RC operations (use only when lifetimes are guaranteed).
 /// - `Option(T)` -> nullable/optional values.
 /// - `NominalStruct(name)` -> nominal class/struct identified by name.
 /// - `StructLiteral(fields)` -> anonymous object shape inferred from an
@@ -33,14 +39,26 @@ pub type LocalsStack = Vec<HashMap<String, OatsType>>;
 ///   generated nominal name when needed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OatsType {
+    // Legacy number type (maps to f64 for backward compatibility)
     Number,
+    // Boolean type
     Boolean,
+    // Integer types
+    I8, U8, I16, U16, I32, U32, I64, U64,
+    // Architecture-sized types
+    Isize, Usize,
+    // Floating point types
+    F32, F64,
+    // Character type
+    Char,
     // Union of multiple possible types (e.g. number | string)
     Union(Vec<OatsType>),
     // Array of element type (e.g. number[])
     Array(Box<OatsType>),
     // Weak reference wrapper (non-owning)
     Weak(Box<OatsType>),
+    // Unowned reference wrapper (non-owning, no RC operations)
+    Unowned(Box<OatsType>),
     // Optional wrapper, represented as nullable/Option
     Option(Box<OatsType>),
     Void,
@@ -178,6 +196,23 @@ pub fn map_ts_type(ty: &ast::TsType) -> Option<OatsType> {
         },
         ast::TsType::TsTypeRef(type_ref) => {
             if let Some(ident) = type_ref.type_name.as_ident() {
+                // Check for primitive types
+                match ident.sym.as_ref() {
+                    "i8" => return Some(OatsType::I8),
+                    "u8" => return Some(OatsType::U8),
+                    "i16" => return Some(OatsType::I16),
+                    "u16" => return Some(OatsType::U16),
+                    "i32" => return Some(OatsType::I32),
+                    "u32" => return Some(OatsType::U32),
+                    "i64" => return Some(OatsType::I64),
+                    "u64" => return Some(OatsType::U64),
+                    "isize" => return Some(OatsType::Isize),
+                    "usize" => return Some(OatsType::Usize),
+                    "f32" => return Some(OatsType::F32),
+                    "f64" => return Some(OatsType::F64),
+                    "char" => return Some(OatsType::Char),
+                    _ => {}
+                }
                 // Check for generic classes or functions
                 if ident.sym.as_ref() == "Generic"
                     && let Some(type_params) = &type_ref.type_params
@@ -226,6 +261,15 @@ pub fn map_ts_type(ty: &ast::TsType) -> Option<OatsType> {
                     {
                         return map_ts_type(first_param)
                             .map(|inner| OatsType::Weak(Box::new(inner)));
+                    }
+                    return None;
+                }
+                if ident.sym.as_ref() == "Unowned" {
+                    if let Some(type_params) = &type_ref.type_params
+                        && let Some(first_param) = type_params.params.first()
+                    {
+                        return map_ts_type(first_param)
+                            .map(|inner| OatsType::Unowned(Box::new(inner)));
                     }
                     return None;
                 }

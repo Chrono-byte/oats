@@ -51,7 +51,12 @@ impl<'a> super::CodeGen<'a> {
     /// Panics for `Void` as it cannot be used as a parameter/alloca type.
     pub(crate) fn map_type_to_llvm(&self, t: &OatsType) -> BasicTypeEnum<'a> {
         match t {
-            OatsType::Number => self.f64_t.as_basic_type_enum(),
+            OatsType::Number | OatsType::F64 => self.f64_t.as_basic_type_enum(),
+            OatsType::F32 => self.f32_t.as_basic_type_enum(),
+            OatsType::I64 | OatsType::U64 | OatsType::Isize | OatsType::Usize => self.i64_t.as_basic_type_enum(),
+            OatsType::I32 | OatsType::U32 => self.i32_t.as_basic_type_enum(),
+            OatsType::I16 | OatsType::U16 => self.i16_t.as_basic_type_enum(),
+            OatsType::I8 | OatsType::U8 | OatsType::Char => self.i8_t.as_basic_type_enum(),
             OatsType::Boolean => self.bool_t.as_basic_type_enum(),
             OatsType::String
             | OatsType::NominalStruct(_)
@@ -60,6 +65,7 @@ impl<'a> super::CodeGen<'a> {
             | OatsType::Tuple(_)
             | OatsType::Promise(_)
             | OatsType::Weak(_)
+            | OatsType::Unowned(_)
             | OatsType::Enum(_, _) => self.i8ptr_t.as_basic_type_enum(),
             OatsType::Option(inner) => {
                 // If the inner type is numeric (or a union of numeric-only arms),
@@ -67,7 +73,7 @@ impl<'a> super::CodeGen<'a> {
                 // Option<number> be lowered efficiently and enables correct
                 // monomorphization for generics like T | undefined where T=number.
                 match &**inner {
-                    OatsType::Number => self.f64_t.as_basic_type_enum(),
+                    OatsType::Number | OatsType::F64 | OatsType::F32 | OatsType::I64 | OatsType::U64 | OatsType::I32 | OatsType::U32 | OatsType::I16 | OatsType::U16 | OatsType::I8 | OatsType::U8 | OatsType::Isize | OatsType::Usize | OatsType::Char => self.map_type_to_llvm(inner),
                     OatsType::Union(parts) => {
                         let any_ptr = parts.iter().any(|p| {
                             matches!(
@@ -78,6 +84,7 @@ impl<'a> super::CodeGen<'a> {
                                     | OatsType::Array(_)
                                     | OatsType::Promise(_)
                                     | OatsType::Weak(_)
+                                    | OatsType::Unowned(_)
                                     | OatsType::Option(_)
                                     | OatsType::Enum(_, _)
                             )
@@ -741,8 +748,12 @@ impl<'a> super::CodeGen<'a> {
         let rc_dec = self.get_rc_dec();
         let rc_weak_dec = self.get_rc_weak_dec();
         for scope in locals.iter().rev() {
-            for (_name, (ptr, ty, init, _is_const, is_weak, _nominal, _oats_type)) in scope.iter() {
+            for (_name, (ptr, ty, init, _is_const, is_weak, _nominal, oats_type)) in scope.iter() {
                 if *init && let inkwell::types::BasicTypeEnum::PointerType(_) = ty {
+                    // Skip RC operations for unowned references
+                    if let Some(crate::types::OatsType::Unowned(_)) = oats_type {
+                        continue;
+                    }
                     // load current pointer value
                     if let Ok(loaded) = self.builder.build_load(*ty, *ptr, "drop_load")
                         && let BasicValueEnum::PointerValue(pv) = loaded
@@ -781,12 +792,16 @@ impl<'a> super::CodeGen<'a> {
         // iterate from innermost scope down to start_index
         let rc_weak_dec = self.get_rc_weak_dec();
         for scope in locals.iter().rev().take(locals.len() - start_index) {
-            for (_name, (ptr, ty, init, _is_const, is_weak, _nominal, _oats_type)) in scope.iter() {
+            for (_name, (ptr, ty, init, _is_const, is_weak, _nominal, oats_type)) in scope.iter() {
                 if *init
                     && let inkwell::types::BasicTypeEnum::PointerType(_) = ty
                     && let Ok(loaded) = self.builder.build_load(*ty, *ptr, "drop_load")
                     && let BasicValueEnum::PointerValue(pv) = loaded
                 {
+                    // Skip RC operations for unowned references
+                    if let Some(crate::types::OatsType::Unowned(_)) = oats_type {
+                        continue;
+                    }
                     if *is_weak {
                         let _ =
                             self.builder

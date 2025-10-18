@@ -40,8 +40,6 @@ use crate::codegen::const_eval::ConstValue;
 // Locals are represented as a tuple (ptr, ty, initialized, is_const) in many
 // helper modules. Use the same alias here so different files agree on the
 // in-memory representation of the locals stack.
-// LocalEntry now includes an `is_weak` bool as the fifth element.
-// LocalEntry now carries an optional nominal type name as the sixth element.
 // LocalEntry now carries an optional OatsType as the seventh element for union tracking.
 type LocalEntry<'a> = (
     PointerValue<'a>,               // alloca ptr
@@ -76,8 +74,11 @@ pub struct CodeGen<'a> {
     pub next_str_id: Cell<u32>,
     pub string_literals: RefCell<HashMap<String, PointerValue<'a>>>,
     pub f64_t: inkwell::types::FloatType<'a>,
+    pub f32_t: inkwell::types::FloatType<'a>,
     pub i64_t: inkwell::types::IntType<'a>,
     pub i32_t: inkwell::types::IntType<'a>,
+    pub i16_t: inkwell::types::IntType<'a>,
+    pub i8_t: inkwell::types::IntType<'a>,
     pub bool_t: inkwell::types::IntType<'a>,
     pub i8ptr_t: inkwell::types::PointerType<'a>,
     pub fn_print_f64: RefCell<Option<FunctionValue<'a>>>,
@@ -181,6 +182,16 @@ impl<'a> CodeGen<'a> {
         fn const_value_key(v: &ConstValue) -> String {
             match v {
                 ConstValue::Number(n) => format!("N:{:.17}", n),
+                ConstValue::F32(n) => format!("F32:{:.17}", n),
+                ConstValue::I64(n) => format!("I64:{}", n),
+                ConstValue::I32(n) => format!("I32:{}", n),
+                ConstValue::I16(n) => format!("I16:{}", n),
+                ConstValue::I8(n) => format!("I8:{}", n),
+                ConstValue::U64(n) => format!("U64:{}", n),
+                ConstValue::U32(n) => format!("U32:{}", n),
+                ConstValue::U16(n) => format!("U16:{}", n),
+                ConstValue::U8(n) => format!("U8:{}", n),
+                ConstValue::Char(c) => format!("C:{}", *c as u32),
                 ConstValue::Bool(b) => format!("B:{}", if *b { 1 } else { 0 }),
                 ConstValue::Str(s) => {
                     let mut out = String::with_capacity(s.len() * 2 + 2);
@@ -397,6 +408,50 @@ impl<'a> CodeGen<'a> {
                             field_types.push(self.f64_t.into());
                             field_vals.push(self.f64_t.const_float(*n).into());
                         }
+                        ConstValue::F32(n) => {
+                            field_types.push(self.f32_t.into());
+                            field_vals.push(self.f32_t.const_float(*n as f64).into());
+                        }
+                        ConstValue::I64(n) => {
+                            field_types.push(self.i64_t.into());
+                            field_vals.push(self.i64_t.const_int(*n as u64, true).into());
+                        }
+                        ConstValue::I32(n) => {
+                            field_types.push(self.i32_t.into());
+                            field_vals.push(self.i32_t.const_int(*n as u64, true).into());
+                        }
+                        ConstValue::I16(n) => {
+                            field_types.push(self.i16_t.into());
+                            field_vals.push(self.i16_t.const_int(*n as u64, true).into());
+                        }
+                        ConstValue::I8(n) => {
+                            field_types.push(self.i8_t.into());
+                            field_vals.push(self.i8_t.const_int(*n as u64, true).into());
+                        }
+                        ConstValue::U64(n) => {
+                            field_types.push(self.i64_t.into());
+                            field_vals.push(self.i64_t.const_int(*n, false).into());
+                        }
+                        ConstValue::U32(n) => {
+                            field_types.push(self.i32_t.into());
+                            field_vals.push(self.i32_t.const_int(*n as u64, false).into());
+                        }
+                        ConstValue::U16(n) => {
+                            field_types.push(self.i16_t.into());
+                            field_vals.push(self.i16_t.const_int(*n as u64, false).into());
+                        }
+                        ConstValue::U8(n) => {
+                            field_types.push(self.i8_t.into());
+                            field_vals.push(self.i8_t.const_int(*n as u64, false).into());
+                        }
+                        ConstValue::Char(c) => {
+                            field_types.push(self.i8_t.into());
+                            field_vals.push(self.i8_t.const_int(*c as u64, false).into());
+                        }
+                        ConstValue::Bool(b) => {
+                            field_types.push(self.bool_t.into());
+                            field_vals.push(self.bool_t.const_int(if *b { 1 } else { 0 }, false).into());
+                        }
                         ConstValue::Str(_) | ConstValue::Array(_) | ConstValue::Object(_) => {
                             // Recursively emit child globals for pointer-like fields
                             let child_name = format!("{}_{}", name, k);
@@ -404,13 +459,6 @@ impl<'a> CodeGen<'a> {
                             field_types.push(self.i8ptr_t.into());
                             field_vals
                                 .push(inkwell::values::BasicValueEnum::PointerValue(child_ptr));
-                        }
-                        ConstValue::Bool(b) => {
-                            // Represent bools as i1/i8? Use i64 slot sized as f64 for simplicity
-                            // We'll store as i64 0/1 in an i64 slot to keep layout simple.
-                            field_types.push(self.i64_t.into());
-                            let iv = self.i64_t.const_int(if *b { 1 } else { 0 }, false);
-                            field_vals.push(iv.into());
                         }
                     }
                 }
@@ -547,6 +595,16 @@ impl<'a> CodeGen<'a> {
             return !info.escapes(local_name);
         }
         // If no escape info available, be conservative and don't elide
+        false
+    }
+
+    pub fn is_unowned_local(&self, locals: &Vec<std::collections::HashMap<String, (inkwell::values::PointerValue<'a>, inkwell::types::BasicTypeEnum<'a>, bool, bool, bool, Option<String>, Option<crate::types::OatsType>)>>, local_name: &str) -> bool {
+        // Check if the local is an unowned reference
+        for scope in locals.iter().rev() {
+            if let Some((_ptr, _ty, _init, _is_const, _is_weak, _nominal, oats_type)) = scope.get(local_name) {
+                return matches!(oats_type, Some(crate::types::OatsType::Unowned(_)));
+            }
+        }
         false
     }
 

@@ -473,6 +473,46 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             let fv = self.f64_t.const_float(*n);
                             return Ok(fv.as_basic_value_enum());
                         }
+                        crate::codegen::const_eval::ConstValue::F32(n) => {
+                            let fv = self.f32_t.const_float(*n as f64);
+                            return Ok(fv.as_basic_value_enum());
+                        }
+                        crate::codegen::const_eval::ConstValue::I64(n) => {
+                            let iv = self.i64_t.const_int(*n as u64, true);
+                            return Ok(iv.as_basic_value_enum());
+                        }
+                        crate::codegen::const_eval::ConstValue::I32(n) => {
+                            let iv = self.i32_t.const_int(*n as u64, true);
+                            return Ok(iv.as_basic_value_enum());
+                        }
+                        crate::codegen::const_eval::ConstValue::I16(n) => {
+                            let iv = self.i16_t.const_int(*n as u64, true);
+                            return Ok(iv.as_basic_value_enum());
+                        }
+                        crate::codegen::const_eval::ConstValue::I8(n) => {
+                            let iv = self.i8_t.const_int(*n as u64, true);
+                            return Ok(iv.as_basic_value_enum());
+                        }
+                        crate::codegen::const_eval::ConstValue::U64(n) => {
+                            let iv = self.i64_t.const_int(*n, false);
+                            return Ok(iv.as_basic_value_enum());
+                        }
+                        crate::codegen::const_eval::ConstValue::U32(n) => {
+                            let iv = self.i32_t.const_int(*n as u64, false);
+                            return Ok(iv.as_basic_value_enum());
+                        }
+                        crate::codegen::const_eval::ConstValue::U16(n) => {
+                            let iv = self.i16_t.const_int(*n as u64, false);
+                            return Ok(iv.as_basic_value_enum());
+                        }
+                        crate::codegen::const_eval::ConstValue::U8(n) => {
+                            let iv = self.i8_t.const_int(*n as u64, false);
+                            return Ok(iv.as_basic_value_enum());
+                        }
+                        crate::codegen::const_eval::ConstValue::Char(c) => {
+                            let iv = self.i8_t.const_int(*c as u64, false);
+                            return Ok(iv.as_basic_value_enum());
+                        }
                         crate::codegen::const_eval::ConstValue::Bool(b) => {
                             let iv = self.bool_t.const_int(if *b { 1 } else { 0 }, false);
                             return Ok(iv.as_basic_value_enum());
@@ -2632,6 +2672,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 // increment refcount of new value
                                 if let BasicValueEnum::PointerValue(newpv) = val
                                     && !self.should_elide_rc_for_local(&name)
+                                    && !self.is_unowned_local(locals, &name)
                                 {
                                     let rc_inc = self.get_rc_inc();
                                     let _ = match self.builder.build_call(

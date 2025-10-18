@@ -601,24 +601,7 @@ impl<'a> CodeGen<'a> {
         false
     }
 
-    pub fn is_unowned_local(
-        &self,
-        locals: &Vec<
-            std::collections::HashMap<
-                String,
-                (
-                    inkwell::values::PointerValue<'a>,
-                    inkwell::types::BasicTypeEnum<'a>,
-                    bool,
-                    bool,
-                    bool,
-                    Option<String>,
-                    Option<crate::types::OatsType>,
-                ),
-            >,
-        >,
-        local_name: &str,
-    ) -> bool {
+    pub fn is_unowned_local(&self, locals: &LocalsStackLocal<'a>, local_name: &str) -> bool {
         // Check if the local is an unowned reference
         for scope in locals.iter().rev() {
             if let Some((_ptr, _ty, _init, _is_const, _is_weak, _nominal, oats_type)) =

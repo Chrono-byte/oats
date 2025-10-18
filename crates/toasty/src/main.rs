@@ -204,54 +204,45 @@ fn main() -> Result<()> {
                 if !quiet && (verbose || cfg!(debug_assertions)) {
                     eprintln!("{}", "Building in release mode...".green());
                 }
-                unsafe { std::env::set_var("OATS_BUILD_PROFILE", "release") };
             } else if !quiet && (verbose || cfg!(debug_assertions)) {
                 eprintln!("{}", "Building in debug mode...".yellow());
             }
-            if let Some(s) = src.clone() {
-                unsafe { std::env::set_var("OATS_SRC_FILE", s) };
-            }
-            if let Some(o) = out_dir {
-                unsafe { std::env::set_var("OATS_OUT_DIR", o) };
-            }
-            if let Some(l) = linker {
-                unsafe { std::env::set_var("OATS_LINKER", l) };
-            }
-            if emit_object_only {
-                unsafe { std::env::set_var("OATS_EMIT_OBJECT_ONLY", "1") };
-            }
-            if let Some(opt) = opt_level {
-                unsafe { std::env::set_var("OATS_OPT_LEVEL", opt) };
-            }
-            if let Some(lm) = lto {
-                unsafe { std::env::set_var("OATS_LTO", lm) };
-            }
-            if let Some(t) = target_triple {
-                unsafe { std::env::set_var("OATS_TARGET_TRIPLE", t) };
-            }
-            if let Some(c) = target_cpu {
-                unsafe { std::env::set_var("OATS_TARGET_CPU", c) };
-            }
-            if let Some(f) = target_features {
-                unsafe { std::env::set_var("OATS_TARGET_FEATURES", f) };
-            }
-            if let Some(name) = out_name {
-                unsafe { std::env::set_var("OATS_OUT_NAME", name) };
-            }
-            // Delegate to builder. Construct argv so builder sees the source path as argv[1]
-            if !quiet && (verbose || cfg!(debug_assertions)) {
-                eprintln!("{}", "Invoking builder...".blue());
-            }
-            let prog = std::env::args()
-                .next()
-                .unwrap_or_else(|| "toasty".to_string());
-            let src_opt = std::env::var("OATS_SRC_FILE").ok().or_else(|| src.clone());
-            let argv: Vec<String> = if let Some(s) = src_opt {
-                vec![prog, s]
+            
+            // Determine source file
+            let src_file = if let Some(s) = src {
+                s
+            } else if let Ok(p) = std::env::var("OATS_SRC_FILE") {
+                p
             } else {
-                vec![prog]
+                anyhow::bail!(
+                    "No source file provided. Pass path as argument or set OATS_SRC_FILE env var."
+                );
             };
-            let _build_out = oatsc::builder::run_from_args(&argv)?;
+            
+            if !quiet && (verbose || cfg!(debug_assertions)) {
+                eprintln!("{}", "Invoking compiler...".blue());
+            }
+            
+            // Build compile options
+            let mut options = oatsc::CompileOptions::new(src_file);
+            options.out_dir = out_dir;
+            options.out_name = out_name;
+            options.linker = linker;
+            options.emit_object_only = emit_object_only;
+            options.opt_level = opt_level;
+            options.lto = lto;
+            options.target_triple = target_triple;
+            options.target_cpu = target_cpu;
+            options.target_features = target_features;
+            options.build_profile = if release {
+                Some("release".to_string())
+            } else {
+                None
+            };
+            
+            // Invoke the compiler
+            let _build_out = oatsc::compile(options)?;
+            
             if !quiet && (verbose || cfg!(debug_assertions)) {
                 eprintln!("{}", "Build finished.".green());
             }
@@ -279,37 +270,32 @@ fn main() -> Result<()> {
                 _ => atty::is(AtStream::Stderr),
             };
             colored::control::set_override(enable_color);
-            let src_clone = src.clone();
-            // For run, set src if provided then call build and execute produced binary
-            if let Some(s) = src {
-                unsafe { std::env::set_var("OATS_SRC_FILE", s) };
-            }
+            
+            // Determine source file
+            let src_file = if let Some(s) = src {
+                s
+            } else if let Ok(p) = std::env::var("OATS_SRC_FILE") {
+                p
+            } else {
+                anyhow::bail!(
+                    "No source file provided. Pass path as argument or set OATS_SRC_FILE env var."
+                );
+            };
+            
             // Build first
             if !quiet && (verbose || cfg!(debug_assertions)) {
                 eprintln!("{}", "Building before run...".blue());
             }
-            let prog = std::env::args()
-                .next()
-                .unwrap_or_else(|| "toasty".to_string());
-            let build_src = std::env::var("OATS_SRC_FILE")
-                .ok()
-                .or_else(|| src_clone.clone());
-            let build_argv: Vec<String> = if let Some(s) = build_src {
-                vec![prog.clone(), s]
-            } else {
-                vec![prog.clone()]
-            };
-            let build_res = oatsc::builder::run_from_args(&build_argv)?;
+            
+            // Build compile options
+            let mut options = oatsc::CompileOptions::new(src_file.clone());
+            options.out_name = out_name.clone();
+            
+            let build_res = oatsc::compile(options)?;
 
-            // Determine output exe path (builder uses OATS_OUT_DIR or current dir and input filename)
+            // Determine output exe path
             let out_dir = std::env::var("OATS_OUT_DIR").unwrap_or_else(|_| ".".to_string());
-            let src_path = std::env::var("OATS_SRC_FILE").unwrap_or_else(|_| {
-                // fallback: try argv[1]
-                std::env::args()
-                    .nth(1)
-                    .unwrap_or_else(|| "out.oats".to_string())
-            });
-            let src_filename = std::path::Path::new(&src_path)
+            let src_filename = std::path::Path::new(&src_file)
                 .file_stem()
                 .and_then(|s| s.to_str())
                 .unwrap_or("out");
@@ -318,7 +304,7 @@ fn main() -> Result<()> {
             } else {
                 src_filename.to_string()
             };
-            // Prefer the path returned by the builder if available
+            // Prefer the path returned by the compiler if available
             let out_exe = if let Some(p) = build_res {
                 p
             } else {

@@ -639,14 +639,12 @@ pub fn infer_type_from_expr(expr: &ast::Expr) -> Option<OatsType> {
             // Infer object literal type
             let mut fields = Vec::new();
             for prop in &obj.props {
-                if let ast::PropOrSpread::Prop(prop) = prop {
-                    if let ast::Prop::KeyValue(kv) = &**prop {
-                        if let ast::PropName::Ident(ident) = &kv.key {
-                            if let Some(field_type) = infer_type_from_expr(&kv.value) {
-                                fields.push((ident.sym.to_string(), field_type));
-                            }
-                        }
-                    }
+                if let ast::PropOrSpread::Prop(prop) = prop
+                    && let ast::Prop::KeyValue(kv) = &**prop
+                    && let ast::PropName::Ident(ident) = &kv.key
+                    && let Some(field_type) = infer_type_from_expr(&kv.value)
+                {
+                    fields.push((ident.sym.to_string(), field_type));
                 }
             }
             if !fields.is_empty() {

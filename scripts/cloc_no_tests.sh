@@ -34,6 +34,17 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# --- MODIFICATION: Add default languages to exclude ---
+DEFAULT_LANG_EXCLUDES="Markdown,TOML,YAML"
+
+# Append to EXTRA_ARGS, handling case where EXTRA_ARGS is already set
+if [[ -n "$EXTRA_ARGS" ]]; then
+  EXTRA_ARGS="$EXTRA_ARGS --exclude-lang=$DEFAULT_LANG_EXCLUDES"
+else
+  EXTRA_ARGS="--exclude-lang=$DEFAULT_LANG_EXCLUDES"
+fi
+# --- END MODIFICATION ---
+
 if ! command -v cloc >/dev/null 2>&1; then
   echo "Error: cloc not found. Install it (e.g. 'sudo apt install cloc' or 'brew install cloc')" >&2
   exit 1
@@ -51,7 +62,9 @@ EXCLUDE_DIRS=$(IFS=','; echo "${DEFAULT_EXCLUDES[*]}")
 echo "Excluding directories: $EXCLUDE_DIRS"
 if [[ -n "$EXCLUDE_FILES" ]]; then
   echo "Excluding files: $EXCLUDE_FILES"
+  # $EXTRA_ARGS now contains the --exclude-lang flags
   cloc --exclude-dir="$EXCLUDE_DIRS" --exclude-list-file=<(echo "$EXCLUDE_FILES" | tr ',' '\n') ${EXTRA_ARGS} .
 else
+  # $EXTRA_ARGS now contains the --exclude-lang flags
   cloc --exclude-dir="$EXCLUDE_DIRS" ${EXTRA_ARGS} .
 fi

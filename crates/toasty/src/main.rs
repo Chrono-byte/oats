@@ -316,10 +316,11 @@ fn main() -> Result<()> {
                 };
 
                 let build_out = oatsc::compile(options)?;
-                if let Some(out_path) = build_out {
-                    if !quiet && (verbose || cfg!(debug_assertions)) {
-                        eprintln!("{}", format!("Build finished: {}", out_path).green());
-                    }
+                if let Some(out_path) = build_out
+                    && !quiet
+                    && (verbose || cfg!(debug_assertions))
+                {
+                    eprintln!("{}", format!("Build finished: {}", out_path).green());
                 }
                 return Ok(());
             }

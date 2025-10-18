@@ -211,17 +211,18 @@ pub fn build_dependency_graph(
                     && let Some(imported_path) = resolve_relative_import(&current_path, &import_src)
                 {
                     // Add dependency edge: current -> imported (current depends on imported)
-                    let imported_node = if let Some(&existing_node) = node_indices.get(&imported_path) {
-                        existing_node
-                    } else {
-                        let new_node = graph.add_node(imported_path.clone());
-                        node_indices.insert(imported_path.clone(), new_node);
-                        queue.push_back(imported_path.clone());
-                        if verbose {
-                            eprintln!("  Discovered new dependency: {}", imported_path);
-                        }
-                        new_node
-                    };
+                    let imported_node =
+                        if let Some(&existing_node) = node_indices.get(&imported_path) {
+                            existing_node
+                        } else {
+                            let new_node = graph.add_node(imported_path.clone());
+                            node_indices.insert(imported_path.clone(), new_node);
+                            queue.push_back(imported_path.clone());
+                            if verbose {
+                                eprintln!("  Discovered new dependency: {}", imported_path);
+                            }
+                            new_node
+                        };
 
                     // Add edge: current depends on imported
                     graph.add_edge(current_node, imported_node, ());

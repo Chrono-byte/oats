@@ -290,7 +290,8 @@ fn main() -> Result<()> {
             if !quiet && (verbose || cfg!(debug_assertions)) {
                 eprintln!("{}", "Building dependency graph...".blue());
             }
-            let (dep_graph, node_indices, _entry_node) = module_resolution::build_dependency_graph(&src_file, verbose)?;
+            let (dep_graph, node_indices, _entry_node) =
+                module_resolution::build_dependency_graph(&src_file, verbose)?;
 
             if !quiet && (verbose || cfg!(debug_assertions)) {
                 eprintln!(
@@ -324,7 +325,13 @@ fn main() -> Result<()> {
                 if !quiet && (verbose || cfg!(debug_assertions)) {
                     eprintln!(
                         "{}",
-                        format!("Compiling module {}/{}: {}", i + 1, compilation_order.len(), module_path).blue()
+                        format!(
+                            "Compiling module {}/{}: {}",
+                            i + 1,
+                            compilation_order.len(),
+                            module_path
+                        )
+                        .blue()
                     );
                 }
 
@@ -336,7 +343,9 @@ fn main() -> Result<()> {
                     // Hardcode exported symbols for known modules (Phase 1 only)
                     for prev_module in &compilation_order[0..i] {
                         if prev_module.ends_with("math.oats") {
-                            options.extern_oats.insert("./math".to_string(), "add,multiply".to_string());
+                            options
+                                .extern_oats
+                                .insert("./math".to_string(), "add,multiply".to_string());
                         }
                         // Add more hardcoded mappings as needed
                     }
@@ -419,7 +428,10 @@ fn main() -> Result<()> {
             }
 
             if !quiet && (verbose || cfg!(debug_assertions)) {
-                eprintln!("{}", format!("Build finished: {}", exe_path.display()).green());
+                eprintln!(
+                    "{}",
+                    format!("Build finished: {}", exe_path.display()).green()
+                );
             }
             Ok(())
         }

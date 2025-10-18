@@ -12,6 +12,9 @@ on:
     branches:
       - main
       - master
+    paths:
+      - "crates/runtime/**"
+      - ".github/workflows/build-runtime.yml"
   release:
     types: [published]
   workflow_dispatch:

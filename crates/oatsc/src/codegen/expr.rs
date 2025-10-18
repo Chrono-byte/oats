@@ -243,6 +243,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 .map_err(|_| Diagnostic::simple("float div failed"))?;
                             Ok(v.as_basic_value_enum())
                         }
+                        BinaryOp::Mod => {
+                            let v = builder
+                                .build_float_rem(lf, rf, "rem")
+                                .map_err(|_| Diagnostic::simple("float rem failed"))?;
+                            Ok(v.as_basic_value_enum())
+                        }
                         _ => Err(Diagnostic::simple("unsupported binary operation")),
                     }
                 };
@@ -259,6 +265,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         BinaryOp::Gt => FloatPredicate::OGT,
                         BinaryOp::GtEq => FloatPredicate::OGE,
                         BinaryOp::EqEq => FloatPredicate::OEQ,
+                        BinaryOp::EqEqEq => FloatPredicate::OEQ,
                         BinaryOp::NotEq => FloatPredicate::ONE,
                         _ => return Err(Diagnostic::simple("unsupported comparison operation")),
                     };
@@ -3563,7 +3570,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         let ptr_ty = self.i8ptr_t.as_basic_type_enum();
 
                         // Prepare placeholders for incoming values produced in preds
+                        #[allow(unused_assignments)]
                         let mut then_incoming: Option<BasicValueEnum<'a>> = None;
+                        #[allow(unused_assignments)]
                         let mut else_incoming: Option<BasicValueEnum<'a>> = None;
 
                         if !matches!(tv_ty, BasicTypeEnum::PointerType(_))
@@ -4014,20 +4023,20 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         // dot-member access like obj.prop
                         let field_name = prop_ident.sym.to_string();
                         eprintln!("DEBUG: field_name created");
-                        let obj_ident = if let deno_ast::swc::ast::Expr::Ident(ident) = &*member.obj
+                        let ident_name = if let deno_ast::swc::ast::Expr::Ident(ident) = &*member.obj
                         {
-                            ident
+                            ident.sym.to_string()
+                        } else if let deno_ast::swc::ast::Expr::This(_) = &*member.obj {
+                            "this".to_string()
                         } else {
-                            // For now, only support enum member access on identifier objects
                             return Err(Diagnostic::simple_with_span(
-                                "enum member access requires identifier object",
+                                "member access requires identifier or 'this' object",
                                 member.span.lo.0 as usize,
                             ));
                         };
-                        let enum_name = obj_ident.sym.to_string();
                         // Check if the object is an enum type
                         if let Some(OatsType::Enum(_, variants)) =
-                            self.symbol_table.borrow().get(&enum_name)
+                            self.symbol_table.borrow().get(&ident_name)
                         {
                             // Find the index of the field in the enum variants
                             if let Some(member_index) =
@@ -4038,7 +4047,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 return Ok(enum_value.as_basic_value_enum());
                             } else {
                                 return Err(Diagnostic::simple_with_span(
-                                    format!("enum '{}' has no member '{}'", enum_name, field_name),
+                                    format!("enum '{}' has no member '{}'", ident_name, field_name),
                                     member.span.lo.0 as usize,
                                 ));
                             }

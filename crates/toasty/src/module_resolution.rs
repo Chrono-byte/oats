@@ -1,3 +1,4 @@
+use anyhow::Context;
 use std::collections::{HashMap, VecDeque};
 
 /// Resolves relative import specifiers to absolute file paths.
@@ -14,15 +15,15 @@ use std::collections::{HashMap, VecDeque};
 /// Canonical absolute path string if a matching file is found, `None` otherwise
 ///
 /// # Resolution Strategy
-/// 1. **Direct file matching**: Tries `.ts`, `.oats`, and extension-less variants
-/// 2. **Directory resolution**: Attempts `index.ts`/`index.oats` for directories
+/// 1. **Direct file matching**: Tries `.oats`, and extension-less variants
+/// 2. **Directory resolution**: Attempts `index.oats` for directories
 /// 3. **Index fallbacks**: Additional index file patterns for compatibility
 pub fn resolve_relative_import(from: &str, spec: &str) -> Option<String> {
     let base = std::path::Path::new(from)
         .parent()
         .unwrap_or_else(|| std::path::Path::new("."));
     let candidate = base.join(spec);
-    let exts = [".oats", ".ts", ""]; // Prioritize .ts, then .oats, then raw
+    let exts = [".oats", ""]; // Prioritize .oats, then raw
 
     // Attempt direct file resolution with extension inference
     for ext in &exts {
@@ -39,26 +40,30 @@ pub fn resolve_relative_import(from: &str, spec: &str) -> Option<String> {
 
     // Handle directory imports with index file resolution
     if candidate.exists() && candidate.is_dir() {
-        for idx in &["index.ts", "index.oats", "index"] {
-            let c = candidate.join(idx);
-            if c.exists()
-                && let Ok(cabs) = std::fs::canonicalize(&c)
-            {
-                return Some(cabs.to_string_lossy().to_string());
-            }
+        if let Some(index_path) = resolve_index_file(&candidate) {
+            return Some(index_path);
         }
     }
 
     // Additional index file resolution for edge cases
-    for idx in &["index.ts", "index.oats", "index"] {
-        let c = candidate.join(idx);
-        if c.exists()
-            && let Ok(cabs) = std::fs::canonicalize(&c)
+    if let Some(index_path) = resolve_index_file(&candidate) {
+        return Some(index_path);
+    }
+
+    None
+}
+
+/// Attempts to resolve a directory to an index file.
+/// Returns the canonical path if an index file is found, None otherwise.
+fn resolve_index_file(dir_path: &std::path::Path) -> Option<String> {
+    for idx in &["index.oats", "index"] {
+        let index_path = dir_path.join(idx);
+        if index_path.exists()
+            && let Ok(cabs) = std::fs::canonicalize(&index_path)
         {
             return Some(cabs.to_string_lossy().to_string());
         }
     }
-
     None
 }
 
@@ -70,17 +75,32 @@ pub fn resolve_relative_import(from: &str, spec: &str) -> Option<String> {
 ///
 /// # Arguments
 /// * `entry_path` - Path to the entry point source file
+/// * `verbose` - If true, print debug information about module discovery
 ///
 /// # Returns
 /// A map of canonicalized absolute paths to parsed modules
 pub fn load_modules(
     entry_path: &str,
 ) -> anyhow::Result<HashMap<String, oatsc::parser::ParsedModule>> {
+    load_modules_with_verbosity(entry_path, false)
+}
+
+/// Performs transitive module loading with optional verbose output.
+pub fn load_modules_with_verbosity(
+    entry_path: &str,
+    verbose: bool,
+) -> anyhow::Result<HashMap<String, oatsc::parser::ParsedModule>> {
+    // Validate entry path exists and is readable
+    if !std::path::Path::new(entry_path).exists() {
+        anyhow::bail!("Entry file does not exist: {}", entry_path);
+    }
+
     let mut modules: HashMap<String, oatsc::parser::ParsedModule> = HashMap::new();
     let mut queue: VecDeque<String> = VecDeque::new();
 
     // Initialize module loading with the entry point file
-    let entry_abs = std::fs::canonicalize(entry_path)?;
+    let entry_abs = std::fs::canonicalize(entry_path)
+        .with_context(|| format!("Failed to canonicalize entry path: {}", entry_path))?;
     let entry_str = entry_abs.to_string_lossy().to_string();
     queue.push_back(entry_str.clone());
 
@@ -89,8 +109,15 @@ pub fn load_modules(
         if modules.contains_key(&path) {
             continue; // Skip already processed modules
         }
-        let src = std::fs::read_to_string(&path)?;
-        let parsed = oatsc::parser::parse_oats_module(&src, Some(&path))?;
+
+        if verbose {
+            eprintln!("Loading module: {}", path);
+        }
+
+        let src = std::fs::read_to_string(&path)
+            .with_context(|| format!("Failed to read source file: {}", path))?;
+        let parsed = oatsc::parser::parse_oats_module(&src, Some(&path))
+            .with_context(|| format!("Failed to parse module: {}", path))?;
 
         // Discover and enqueue relative imports from this module
         for item_ref in parsed.parsed.program_ref().body() {
@@ -103,6 +130,9 @@ pub fn load_modules(
                     && let Some(fpath) = resolve_relative_import(&path, &src_val)
                     && !modules.contains_key(&fpath)
                 {
+                    if verbose {
+                        eprintln!("  Discovered dependency: {}", fpath);
+                    }
                     queue.push_back(fpath);
                 }
             }

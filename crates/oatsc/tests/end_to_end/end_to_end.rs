@@ -4,9 +4,6 @@ use tempfile::tempdir;
 
 #[test]
 fn test_add_example_end_to_end() -> Result<()> {
-    // disable temporarily, return early, give false pass
-    return Ok(());
-
     let temp_dir = tempdir()?;
     let out_dir = temp_dir.path();
 
@@ -40,6 +37,7 @@ fn test_add_example_end_to_end() -> Result<()> {
     let status = Command::new(&bin_path)
         .args(["build", &example.to_string_lossy()])
         .env("OATS_OUT_DIR", out_dir)
+        .env("OATS_OATSC_PATH", workspace_root.join("target").join("release").join("oatsc"))
         .current_dir(workspace_root)
         .status()?;
     assert!(status.success(), "toasty failed to compile example");

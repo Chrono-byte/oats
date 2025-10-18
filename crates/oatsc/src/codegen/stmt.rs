@@ -15,8 +15,6 @@ use inkwell::types::BasicType;
 use inkwell::values::{BasicValue, BasicValueEnum, FunctionValue};
 use std::collections::HashMap;
 
-use crate::diagnostics::Diagnostic;
-
 type LocalEntry<'a> = (
     inkwell::values::PointerValue<'a>,
     inkwell::types::BasicTypeEnum<'a>,
@@ -2013,6 +2011,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     }
                 };
 
+                // If body didn't terminate, branch to condition
+                if !_body_terminated {
+                    let _ = self.builder.build_unconditional_branch(loop_cond_bb);
+                }
+
                 // Build condition block (executed after body)
                 self.builder.position_at_end(loop_cond_bb);
                 if let Ok(cond_val) =
@@ -2048,25 +2051,5 @@ impl<'a> crate::codegen::CodeGen<'a> {
         }
     }
 
-    fn lower_var_decls(&self, var_decl: &deno_ast::swc::ast::VarDecl, function: FunctionValue<'a>, param_map: &HashMap<String, u32>, locals: &mut LocalsStackLocal<'a>) -> Result<(), Diagnostic> {
-        for decl in &var_decl.decls {
-            if let deno_ast::swc::ast::Pat::Ident(ident) = &decl.name {
-                let name = ident.id.sym.to_string();
-                let is_const = matches!(var_decl.kind, deno_ast::swc::ast::VarDeclKind::Const);
-                let ty = self.f64_t;
-                let ptr = self.builder.build_alloca(ty, &name).map_err(|_| Diagnostic::simple("alloca failed for var"))?;
-                let init_present = if let Some(init) = &decl.init {
-                    let val = self.lower_expr(init, function, param_map, locals)?;
-                    self.builder.build_store(ptr, val).map_err(|_| Diagnostic::simple("store failed for var"))?;
-                    true
-                } else {
-                    false
-                };
-                locals.last_mut().unwrap().insert(name, (ptr, ty.into(), init_present, is_const, false, None, None));
-            } else {
-                return Err(Diagnostic::simple("unsupported var decl pattern"));
-            }
-        }
-        Ok(())
-    }
+
 }

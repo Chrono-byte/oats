@@ -191,10 +191,10 @@ fn find_oats_root() -> Result<PathBuf> {
         let cargo_toml = dir.join("Cargo.toml");
         if cargo_toml.exists() {
             // Check if it's a workspace
-            if let Ok(content) = std::fs::read_to_string(&cargo_toml) {
-                if content.contains("[workspace]") {
-                    return Ok(dir.to_path_buf());
-                }
+            if let Ok(content) = std::fs::read_to_string(&cargo_toml)
+                && content.contains("[workspace]")
+            {
+                return Ok(dir.to_path_buf());
             }
         }
         current = dir.parent();
@@ -205,12 +205,11 @@ fn find_oats_root() -> Result<PathBuf> {
 
     while let Some(dir) = current {
         let cargo_toml = dir.join("Cargo.toml");
-        if cargo_toml.exists() {
-            if let Ok(content) = std::fs::read_to_string(&cargo_toml) {
-                if content.contains("[workspace]") {
-                    return Ok(dir);
-                }
-            }
+        if cargo_toml.exists()
+            && let Ok(content) = std::fs::read_to_string(&cargo_toml)
+            && content.contains("[workspace]")
+        {
+            return Ok(dir);
         }
         current = dir.parent().map(|p| p.to_path_buf());
     }
@@ -225,7 +224,10 @@ fn link_packages(
     config: &BuildConfig,
 ) -> Result<PathBuf> {
     let out_dir = config.out_dir.as_deref().unwrap_or(".");
-    let exe_name = config.out_name.as_deref().unwrap_or(root_pkg_name);
+    let exe_name = config
+        .out_name
+        .as_deref()
+        .unwrap_or(&build_results[root_pkg_name].name);
     let exe_path = PathBuf::from(out_dir).join(exe_name);
 
     // Ensure runtime is built

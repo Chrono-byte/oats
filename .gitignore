@@ -72,6 +72,7 @@ fuzz/corpus/**
 # Allow exceptions: keep README, scripts, source code tracked
 review.md
 docs/plans/*
+static.md
 
 # Ignore vendor directory if it exists
 third_party/*

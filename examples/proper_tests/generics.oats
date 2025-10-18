@@ -3,8 +3,8 @@ export function main(): void {
         return arr.length > 0 ? arr[0] : undefined;
     }
 
-    let numbers = [10, 20, 30];
-    let strings = ["a", "b", "c"];
+    let numbers: number[] = [10, 20, 30];
+    let strings: string[] = ["a", "b", "c"];
 
     println(`First number: ${getFirstElement(numbers)}`);
     println(`First string: ${getFirstElement(strings)}`);

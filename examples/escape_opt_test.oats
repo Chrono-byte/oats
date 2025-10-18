@@ -19,7 +19,7 @@ export class Counter {
 
 export function test_local_no_escape(): number {
     // Local counter doesn't escape - should skip RC ops
-    let c = new Counter();
+    let c: Counter = new Counter();
     c.increment();
     c.increment();
     return c.get();
@@ -27,15 +27,15 @@ export function test_local_no_escape(): number {
 
 export function test_local_with_escape(): Counter {
     // Local counter escapes via return - should NOT skip RC ops
-    let c = new Counter();
+    let c: Counter = new Counter();
     c.increment();
     return c;
 }
 
 export function test_multiple_locals(): void {
     // Multiple non-escaping locals - should skip all RC ops
-    let c1 = new Counter();
-    let c2 = new Counter();
+    let c1: Counter = new Counter();
+    let c2: Counter = new Counter();
     c1.increment();
     c2.increment();
     c2.increment();
@@ -44,7 +44,7 @@ export function test_multiple_locals(): void {
 
 export function test_reassignment(): number {
     // Reassigned local that doesn't escape
-    let mut c = new Counter();
+    let mut c: Counter = new Counter();
     c.increment();
     c = new Counter();
     c.increment();

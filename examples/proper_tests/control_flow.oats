@@ -2,14 +2,14 @@ export function main(): void {
     println("Control Flow Tests");
 
     // Test 1: While loop
-    let mut i = 0;
+    let mut i: number = 0;
     while (i < 5) {
         println("While loop iteration");
         i = i + 1;
     }
 
     // Test 2: For loop
-    for (let mut k = 0; k < 10; k = k + 1) {
+    for (let mut k: number = 0; k < 10; k = k + 1) {
         if (k == 3) {
             println("Breaking at k=3");
             break;

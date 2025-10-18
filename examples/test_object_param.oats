@@ -2,14 +2,14 @@
 
 export function main(): number {
     // Define a point
-    let point = { x: 100, y: 200 };
+    let point: { x: number, y: number } = { x: 100, y: 200 };
     
     // Pass to function with explicit nominal type
     function getX(p: { x: number, y: number }): number {
         return p.x;
     }
     
-    let result = getX(point);
+    let result: number = getX(point);
     println("Result:");
     println(result);
     

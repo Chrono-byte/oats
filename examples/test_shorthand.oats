@@ -1,9 +1,9 @@
 // Test shorthand properties separately
 
 export function main(): number {
-    let x = 5;
-    let y = 15;
-    let coords = { x, y };
+    let x: number = 5;
+    let y: number = 15;
+    let coords: { x: number, y: number } = { x, y };
     let sum2: number = coords.x + coords.y;
     
     println("Shorthand test:");

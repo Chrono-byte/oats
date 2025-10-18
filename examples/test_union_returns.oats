@@ -13,8 +13,8 @@ export function main(): void {
     // and then convert/cast as needed
     
     // For now, just test that functions compile and return
-    let x = getNumber();
-    let y = getString();
+    let x: number | string = getNumber();
+    let y: number | string = getString();
     
     // Direct assignment works because the functions already return boxed values
     println("Function returns test complete");

@@ -32,7 +32,7 @@ export class CyclicNode {
 
 export function test_acyclic(): number {
     // AcyclicCounter should have cycle bit set, skip GC
-    let c = new AcyclicCounter();
+    let c: AcyclicCounter = new AcyclicCounter();
     c.increment();
     c.increment();
     return c.get();
@@ -40,8 +40,8 @@ export function test_acyclic(): number {
 
 export function test_cyclic(): void {
     // CyclicNode should not have cycle bit set, go through GC
-    let n1 = new CyclicNode();
-    let n2 = new CyclicNode();
+    let n1: CyclicNode = new CyclicNode();
+    let n2: CyclicNode = new CyclicNode();
     n1.setNext(n2);
     // Both should be collected by GC when they go out of scope
 }

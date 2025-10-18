@@ -1,5 +1,5 @@
 export function main(): number {
-    let mut j = 0;
+    let mut j: number = 0;
     do {
         j = j + 1;
     } while (j < 5);

@@ -49,8 +49,8 @@ export function main(): void {
 
     print_str("Phase 1: Allocating 2 million objects...");
     print_newline();
-    for (let mut i = 0; i < iterations; i = i + 1) {
-        let newNode = new Node(i);
+    for (let mut i: number = 0; i < iterations; i = i + 1) {
+        let newNode: Node = new Node(i);
         
         // Keep a strong reference to the node in the array.
         allNodes.push(newNode);
@@ -76,8 +76,8 @@ export function main(): void {
 
     print_str("Phase 3: Performing work by traversing the list...");
     print_newline();
-    let mut currentNode = head;
-    let mut sum = 0;
+    let mut currentNode: Node | null = head;
+    let mut sum: number = 0;
     while (currentNode !== null) {
         sum = sum + currentNode.value;
         // Access the internal data array to make the work more realistic.

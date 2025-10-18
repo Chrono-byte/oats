@@ -1204,16 +1204,9 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
     // avoids shelling out to clang for the IR -> object step and is more
     // robust when used programmatically.
 
-    // Use the host default target triple (TargetTriple type) for LLVM
-    Target::initialize_all(&InitializationConfig::default());
-    let target_triple_struct = TargetMachine::get_default_triple();
-    let target_triple = target_triple_struct.to_string();
-    let target = Target::from_triple(&target_triple_struct).map_err(|_| {
-        anyhow::anyhow!(
-            "failed to find a matching LLVM target for triple {}",
-            target_triple
-        )
-    })?;
+    // Initialize native target and get the default target triple for LLVM
+    Target::initialize_native(&InitializationConfig::default()).map_err(|e| anyhow::anyhow!(e))?;
+    let triple = TargetMachine::get_default_triple();
 
     // Read overrides (optional) for CPU/features
     let env_cpu = std::env::var("OATS_TARGET_CPU").ok();
@@ -1244,37 +1237,25 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
     };
     let features = env_features.unwrap_or_default();
 
-    // Try to create a target machine from candidates
-    let mut tm_opt = None;
-    for cpu in cpu_candidates {
-        match target.create_target_machine(
-            &target_triple_struct,
-            &cpu,
+    // Get the target from the triple
+    let target = Target::from_triple(&triple).map_err(|e| anyhow::anyhow!("{}", e))?;
+
+    // Create TargetMachine, trying CPU candidates in order
+    let mut tm = None;
+    for cpu in &cpu_candidates {
+        if let Some(machine) = target.create_target_machine(
+            &triple,
+            cpu,
             &features,
             opt_level,
             RelocMode::Default,
             CodeModel::Default,
         ) {
-            Some(tm) => {
-                // optionally test by writing a small object or call tm.write_to_file on the actual module and handle errors
-                tm_opt = Some((tm, cpu));
-                break;
-            }
-            None => {
-                eprintln!(
-                    "warning: TargetMachine creation failed for cpu='{}', trying fallback",
-                    cpu
-                );
-            }
+            tm = Some(machine);
+            break;
         }
     }
-    let (tm, used_cpu) = tm_opt
-        .ok_or_else(|| anyhow::anyhow!("failed to create TargetMachine with any cpu candidate"))?;
-    if !used_cpu.is_empty() {
-        eprintln!("using target CPU: {}", used_cpu);
-    } else if cfg!(debug_assertions) {
-        eprintln!("using generic/default CPU for triple {}", target_triple);
-    }
+    let tm = tm.ok_or_else(|| anyhow::anyhow!("Failed to create TargetMachine with any CPU candidate"))?;
 
     // Emit object file directly from the in-memory module.
     let out_obj_path = std::path::Path::new(&out_obj);
@@ -1288,7 +1269,7 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
         })?;
 
     // oatsc now always emits objects only - linking is handled by toasty
-    eprintln!("Emitted {} (linking delegated to toasty)", out_obj);
+    println!("{}", out_obj);
     let out_dir = std::env::var("OATS_OUT_DIR").unwrap_or_else(|_| ".".to_string());
     let src_filename = std::path::Path::new(&src_path)
         .file_stem()

@@ -480,15 +480,15 @@ impl<'a> super::CodeGen<'a> {
         }
         // DEBUG: print locals stack keys for troubleshooting lookups
         {
-            let mut all_keys: Vec<Vec<String>> = Vec::new();
-            for scope in locals.iter() {
-                let keys: Vec<String> = scope.keys().cloned().collect();
-                all_keys.push(keys);
-            }
-            eprintln!(
-                "[debug find_local] name='{}' locals_scopes={:?}",
-                name, all_keys
-            );
+            // let mut all_keys: Vec<Vec<String>> = Vec::new();
+            // for scope in locals.iter() {
+            //     let keys: Vec<String> = scope.keys().cloned().collect();
+            //     all_keys.push(keys);
+            // }
+            // eprintln!(
+            //     "[debug find_local] name='{}' locals_scopes={:?}",
+            //     name, all_keys
+            // );
         }
         None
     }

@@ -103,9 +103,6 @@ jobs:
           - os: macos-14
             target: aarch64-apple-darwin
             artifact: oatsc-macos-aarch64
-          - os: macos-13
-            target: x86_64-apple-darwin
-            artifact: oatsc-macos-x86_64
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout repository

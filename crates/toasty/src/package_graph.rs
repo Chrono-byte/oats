@@ -51,10 +51,15 @@ pub fn build_package_graph(
     let mut path_to_node: HashMap<PathBuf, NodeIndex> = HashMap::new();
 
     // Load root manifest
-    let root_manifest = Manifest::from_file(root_manifest_path)
-        .with_context(|| format!("Failed to load root manifest: {}", root_manifest_path.display()))?;
-    
-    root_manifest.validate()
+    let root_manifest = Manifest::from_file(root_manifest_path).with_context(|| {
+        format!(
+            "Failed to load root manifest: {}",
+            root_manifest_path.display()
+        )
+    })?;
+
+    root_manifest
+        .validate()
         .with_context(|| "Root manifest validation failed")?;
 
     let root_dir = root_manifest_path
@@ -122,8 +127,9 @@ pub fn build_package_graph(
 
             // Canonicalize the dependency path
             let dep_dir = if dep_path.exists() {
-                std::fs::canonicalize(&dep_path)
-                    .with_context(|| format!("Failed to canonicalize path: {}", dep_path.display()))?
+                std::fs::canonicalize(&dep_path).with_context(|| {
+                    format!("Failed to canonicalize path: {}", dep_path.display())
+                })?
             } else {
                 anyhow::bail!(
                     "Dependency path does not exist: {} (from package '{}')",
@@ -157,10 +163,12 @@ pub fn build_package_graph(
                 existing_idx
             } else {
                 // Load and validate the dependency manifest
-                let dep_manifest = Manifest::from_file(&dep_manifest_path)
-                    .with_context(|| format!("Failed to load manifest: {}", dep_manifest_path.display()))?;
-                
-                dep_manifest.validate()
+                let dep_manifest = Manifest::from_file(&dep_manifest_path).with_context(|| {
+                    format!("Failed to load manifest: {}", dep_manifest_path.display())
+                })?;
+
+                dep_manifest
+                    .validate()
                     .with_context(|| format!("Manifest validation failed for '{}'", dep_name))?;
 
                 // Verify the package name matches
@@ -174,7 +182,11 @@ pub fn build_package_graph(
                 }
 
                 if verbose {
-                    eprintln!("    Added new package: {} at {}", dep_name, dep_dir.display());
+                    eprintln!(
+                        "    Added new package: {} at {}",
+                        dep_name,
+                        dep_dir.display()
+                    );
                 }
 
                 // Create new node
@@ -224,11 +236,9 @@ pub fn topological_sort_packages(
             // Convert to (name, index) pairs and reverse (dependencies first)
             let mut sorted: Vec<(String, NodeIndex)> = sorted_nodes
                 .into_iter()
-                .filter_map(|idx| {
-                    index_to_name.get(&idx).map(|name| (name.clone(), idx))
-                })
+                .filter_map(|idx| index_to_name.get(&idx).map(|name| (name.clone(), idx)))
                 .collect();
-            
+
             sorted.reverse(); // Dependencies come first
             Ok(sorted)
         }
@@ -320,23 +330,23 @@ version = "0.1.0"
         // Create circular dependency: a -> b -> a
         let a_dir = root.join("a");
         fs::create_dir(&a_dir)?;
-        
+
         let b_dir = root.join("b");
         fs::create_dir(&b_dir)?;
-        
+
         // Create b first (depends on nothing initially)
         create_test_package(&b_dir, "b", &[])?;
-        
+
         // Create a (depends on b)
         create_test_package(&a_dir, "a", &[("b", "../b")])?;
-        
+
         // Update b to depend on a (creating cycle)
         create_test_package(&b_dir, "b", &[("a", "../a")])?;
 
         // Try to build graph - should detect cycle
         let manifest_path = a_dir.join("Oats.toml");
         let result = build_package_graph(&manifest_path, false);
-        
+
         // The graph will build, but topological sort should fail
         if let Ok((graph, node_map, _)) = result {
             let sort_result = topological_sort_packages(&graph, &node_map);

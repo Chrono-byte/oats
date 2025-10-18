@@ -15,11 +15,13 @@ Phase 0 aimed to achieve a clean architectural separation between the build orch
 ✅ **Separated Concerns**: Updated toasty to construct `CompileOptions` objects rather than directly setting environment variables, establishing clear boundaries between build orchestration and compilation.
 
 ✅ **Module Resolution in Toasty**: Integrated the existing module resolution logic into toasty's build command, making toasty responsible for:
+
 - Discovering the entry point file
 - Walking the import graph to find all source files
 - Validating that all modules can be parsed
 
 ✅ **Testing**: Added comprehensive integration tests for:
+
 - Single-file module resolution
 - Multi-file module resolution with imports
 - Verified all existing tests still pass
@@ -29,6 +31,7 @@ Phase 0 aimed to achieve a clean architectural separation between the build orch
 ## Architecture
 
 ### Before Phase 0
+
 ```
 toasty (CLI) 
   └─> directly calls oatsc::builder::run_from_args()
@@ -37,6 +40,7 @@ toasty (CLI)
 ```
 
 ### After Phase 0
+
 ```
 toasty (Build Orchestrator)
   ├─> discovers all modules via import graph
@@ -78,6 +82,7 @@ Phase 0 establishes the foundation for:
 All existing tests pass (1 pre-existing failure in deno_compat unrelated to these changes).
 
 New tests verify:
+
 - Module resolution discovers all transitive dependencies
 - Single-file and multi-file scenarios both work
 - Import graph traversal functions correctly

@@ -172,7 +172,7 @@ impl Manifest {
 
         Ok(())
     }
-    
+
     /// Get the absolute path to the entry point for this package
     pub fn entry_point(&self, manifest_dir: &Path) -> std::path::PathBuf {
         manifest_dir.join(&self.package.entry)

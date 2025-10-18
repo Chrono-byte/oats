@@ -45,10 +45,11 @@ pub fn resolve_relative_import(from: &str, spec: &str) -> Option<String> {
     }
 
     // Handle directory imports with index file resolution
-    if candidate.exists() && candidate.is_dir() {
-        if let Some(index_path) = resolve_index_file(&candidate) {
-            return Some(index_path);
-        }
+    if candidate.exists()
+        && candidate.is_dir()
+        && let Some(index_path) = resolve_index_file(&candidate)
+    {
+        return Some(index_path);
     }
 
     // Additional index file resolution for edge cases

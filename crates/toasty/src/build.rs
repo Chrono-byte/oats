@@ -9,7 +9,9 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::package_graph::{build_package_graph, topological_sort_packages, PackageGraph, NodeIndex};
+use crate::package_graph::{
+    NodeIndex, PackageGraph, build_package_graph, topological_sort_packages,
+};
 
 /// Build result for a single package
 #[derive(Debug, Clone)]
@@ -38,10 +40,7 @@ pub struct BuildConfig {
 }
 
 /// Orchestrate a package-based build starting from a root manifest
-pub fn build_package_project(
-    manifest_path: &Path,
-    config: BuildConfig,
-) -> Result<PathBuf> {
+pub fn build_package_project(manifest_path: &Path, config: BuildConfig) -> Result<PathBuf> {
     // Build package dependency graph
     if !config.quiet && (config.verbose || cfg!(debug_assertions)) {
         eprintln!("Building package dependency graph...");
@@ -50,10 +49,7 @@ pub fn build_package_project(
     let (graph, node_map, root_idx) = build_package_graph(manifest_path, config.verbose)?;
 
     if !config.quiet && (config.verbose || cfg!(debug_assertions)) {
-        eprintln!(
-            "Package graph has {} package(s)",
-            graph.node_count()
-        );
+        eprintln!("Package graph has {} package(s)", graph.node_count());
     }
 
     // Perform topological sort to get build order
@@ -87,12 +83,7 @@ pub fn build_package_project(
             );
         }
 
-        let result = compile_package(
-            &graph,
-            *pkg_idx,
-            &build_results,
-            &config,
-        )?;
+        let result = compile_package(&graph, *pkg_idx, &build_results, &config)?;
 
         build_results.insert(pkg_name.clone(), result);
     }
@@ -103,11 +94,7 @@ pub fn build_package_project(
     }
 
     let root_pkg_name = &graph[root_idx].name;
-    link_packages(
-        root_pkg_name,
-        &build_results,
-        &config,
-    )
+    link_packages(root_pkg_name, &build_results, &config)
 }
 
 /// Compile a single package
@@ -171,14 +158,18 @@ fn compile_package(
         .ok_or_else(|| anyhow::anyhow!("Compiler did not return output path"))?;
 
     // Generate metadata file (placeholder for now)
-    let meta_file = PathBuf::from(format!("{}/{}_pkg.oats.meta", out_dir, pkg_name.replace('-', "_")));
-    
+    let meta_file = PathBuf::from(format!(
+        "{}/{}_pkg.oats.meta",
+        out_dir,
+        pkg_name.replace('-', "_")
+    ));
+
     // Ensure output directory exists
     if let Some(parent) = meta_file.parent() {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("Failed to create output directory: {}", parent.display()))?;
     }
-    
+
     std::fs::write(&meta_file, format!("# Package metadata for {}\n", pkg_name))
         .with_context(|| format!("Failed to write metadata file: {}", meta_file.display()))?;
 
@@ -192,11 +183,10 @@ fn compile_package(
 /// Find the Oats repository root by looking for workspace Cargo.toml
 fn find_oats_root() -> Result<PathBuf> {
     // Start from toasty binary location and search upwards
-    let exe_path = std::env::current_exe()
-        .context("Failed to get current executable path")?;
-    
+    let exe_path = std::env::current_exe().context("Failed to get current executable path")?;
+
     let mut current = exe_path.parent();
-    
+
     while let Some(dir) = current {
         let cargo_toml = dir.join("Cargo.toml");
         if cargo_toml.exists() {
@@ -209,10 +199,10 @@ fn find_oats_root() -> Result<PathBuf> {
         }
         current = dir.parent();
     }
-    
+
     // Fallback: try to find from current directory
     let mut current = std::env::current_dir().ok();
-    
+
     while let Some(dir) = current {
         let cargo_toml = dir.join("Cargo.toml");
         if cargo_toml.exists() {
@@ -224,7 +214,7 @@ fn find_oats_root() -> Result<PathBuf> {
         }
         current = dir.parent().map(|p| p.to_path_buf());
     }
-    
+
     anyhow::bail!("Could not find Oats workspace root (Cargo.toml with [workspace])")
 }
 
@@ -242,7 +232,7 @@ fn link_packages(
     // Find the oats repository root by looking for Cargo.toml with workspace
     let oats_root = find_oats_root().context("Failed to locate Oats repository root")?;
     let runtime_lib = oats_root.join("target/release/libruntime.a");
-    
+
     if !runtime_lib.exists() {
         if !config.quiet {
             eprintln!("Building Oats runtime...");
@@ -255,7 +245,7 @@ fn link_packages(
             .current_dir(&oats_root)
             .status()
             .context("Failed to run cargo to build runtime")?;
-        
+
         if !status.success() {
             anyhow::bail!("Failed to build runtime library");
         }
@@ -282,8 +272,7 @@ fn link_packages(
         eprintln!("Link command: {:?}", link_cmd);
     }
 
-    let link_status = link_cmd.status()
-        .context("Failed to run clang linker")?;
+    let link_status = link_cmd.status().context("Failed to run clang linker")?;
 
     if !link_status.success() {
         anyhow::bail!("Linking failed");

@@ -188,7 +188,7 @@ fn main() -> Result<()> {
             out_dir,
             out_name,
             linker,
-            emit_object_only: _emit_object_only,
+            emit_object_only,
             opt_level,
             lto,
             target_triple,
@@ -254,7 +254,10 @@ fn main() -> Result<()> {
                         let exe_path = build::build_package_project(&manifest_path, build_config)?;
 
                         if !quiet && (verbose || cfg!(debug_assertions)) {
-                            eprintln!("{}", format!("Build complete: {}", exe_path.display()).green());
+                            eprintln!(
+                                "{}",
+                                format!("Build complete: {}", exe_path.display()).green()
+                            );
                         }
 
                         return Ok(());
@@ -285,6 +288,41 @@ fn main() -> Result<()> {
                     "No source file provided. Pass path as argument, set OATS_SRC_FILE env var, or create Oats.toml"
                 );
             };
+
+            // Special case: if emit_object_only is requested and this is a single file with no dependencies,
+            // compile it directly without the multi-module system
+            if emit_object_only {
+                if !quiet && (verbose || cfg!(debug_assertions)) {
+                    eprintln!(
+                        "{}",
+                        "Compiling single file with emit-object-only...".blue()
+                    );
+                }
+
+                let mut options = oatsc::CompileOptions::new(src_file.clone());
+                options.out_dir = out_dir.clone();
+                options.out_name = out_name.clone();
+                options.linker = linker.clone();
+                options.emit_object_only = true;
+                options.opt_level = opt_level.clone();
+                options.lto = lto.clone();
+                options.target_triple = target_triple.clone();
+                options.target_cpu = target_cpu.clone();
+                options.target_features = target_features.clone();
+                options.build_profile = if release {
+                    Some("release".to_string())
+                } else {
+                    None
+                };
+
+                let build_out = oatsc::compile(options)?;
+                if let Some(out_path) = build_out {
+                    if !quiet && (verbose || cfg!(debug_assertions)) {
+                        eprintln!("{}", format!("Build finished: {}", out_path).green());
+                    }
+                }
+                return Ok(());
+            }
 
             // Build dependency graph starting from entry point
             if !quiet && (verbose || cfg!(debug_assertions)) {
@@ -375,6 +413,20 @@ fn main() -> Result<()> {
 
             // Phase 1: Link all compiled modules together
             // In Phase 2, this will be done by toasty after all packages are compiled
+            if emit_object_only {
+                if !quiet && (verbose || cfg!(debug_assertions)) {
+                    eprintln!("{}", "Skipping linking due to emit-object-only...".blue());
+                }
+                // For multi-module builds with emit_object_only, just report the object files
+                if !quiet && (verbose || cfg!(debug_assertions)) {
+                    eprintln!("{}", "Compiled object files:".green());
+                    for (module_path, obj_file) in &compiled_modules {
+                        eprintln!("  {} -> {}", module_path, obj_file);
+                    }
+                }
+                return Ok(());
+            }
+
             if !quiet && (verbose || cfg!(debug_assertions)) {
                 eprintln!("{}", "Linking final executable...".blue());
             }

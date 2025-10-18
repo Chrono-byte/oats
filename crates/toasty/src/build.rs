@@ -172,6 +172,13 @@ fn compile_package(
 
     // Generate metadata file (placeholder for now)
     let meta_file = PathBuf::from(format!("{}/{}_pkg.oats.meta", out_dir, pkg_name.replace('-', "_")));
+    
+    // Ensure output directory exists
+    if let Some(parent) = meta_file.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("Failed to create output directory: {}", parent.display()))?;
+    }
+    
     std::fs::write(&meta_file, format!("# Package metadata for {}\n", pkg_name))
         .with_context(|| format!("Failed to write metadata file: {}", meta_file.display()))?;
 
@@ -180,6 +187,45 @@ fn compile_package(
         object_file: PathBuf::from(object_path),
         meta_file,
     })
+}
+
+/// Find the Oats repository root by looking for workspace Cargo.toml
+fn find_oats_root() -> Result<PathBuf> {
+    // Start from toasty binary location and search upwards
+    let exe_path = std::env::current_exe()
+        .context("Failed to get current executable path")?;
+    
+    let mut current = exe_path.parent();
+    
+    while let Some(dir) = current {
+        let cargo_toml = dir.join("Cargo.toml");
+        if cargo_toml.exists() {
+            // Check if it's a workspace
+            if let Ok(content) = std::fs::read_to_string(&cargo_toml) {
+                if content.contains("[workspace]") {
+                    return Ok(dir.to_path_buf());
+                }
+            }
+        }
+        current = dir.parent();
+    }
+    
+    // Fallback: try to find from current directory
+    let mut current = std::env::current_dir().ok();
+    
+    while let Some(dir) = current {
+        let cargo_toml = dir.join("Cargo.toml");
+        if cargo_toml.exists() {
+            if let Ok(content) = std::fs::read_to_string(&cargo_toml) {
+                if content.contains("[workspace]") {
+                    return Ok(dir);
+                }
+            }
+        }
+        current = dir.parent().map(|p| p.to_path_buf());
+    }
+    
+    anyhow::bail!("Could not find Oats workspace root (Cargo.toml with [workspace])")
 }
 
 /// Link all compiled packages into final executable
@@ -193,8 +239,11 @@ fn link_packages(
     let exe_path = PathBuf::from(out_dir).join(exe_name);
 
     // Ensure runtime is built
-    let runtime_lib = "target/release/libruntime.a";
-    if !PathBuf::from(runtime_lib).exists() {
+    // Find the oats repository root by looking for Cargo.toml with workspace
+    let oats_root = find_oats_root().context("Failed to locate Oats repository root")?;
+    let runtime_lib = oats_root.join("target/release/libruntime.a");
+    
+    if !runtime_lib.exists() {
         if !config.quiet {
             eprintln!("Building Oats runtime...");
         }
@@ -203,6 +252,7 @@ fn link_packages(
             .arg("-p")
             .arg("runtime")
             .arg("--release")
+            .current_dir(&oats_root)
             .status()
             .context("Failed to run cargo to build runtime")?;
         
@@ -221,7 +271,7 @@ fn link_packages(
     }
 
     // Add runtime library
-    link_cmd.arg(runtime_lib);
+    link_cmd.arg(&runtime_lib);
 
     // Add linker if specified
     if let Some(linker) = &config.linker {

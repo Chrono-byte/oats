@@ -165,6 +165,8 @@ pub struct CodeGen<'a> {
     pub monomorphized_map: RefCell<HashMap<String, String>>,
     // RTA results for optimization
     pub rta_results: Option<crate::rta::RTAResults>,
+    // Track whether this compilation unit uses async/await features
+    pub uses_async: Cell<bool>,
 }
 
 impl<'a> CodeGen<'a> {
@@ -1174,10 +1176,12 @@ impl<'a> CodeGen<'a> {
         };
 
         // Run the async executor to process any enqueued promises
-        let executor_run_fn = self.get_executor_run();
-        let _ = self
-            .builder
-            .build_call(executor_run_fn, &[], "call_executor");
+        if self.uses_async.get() {
+            let executor_run_fn = self.get_executor_run();
+            let _ = self
+                .builder
+                .build_call(executor_run_fn, &[], "call_executor");
+        }
 
         // Interpret the result depending on its type. If the function returns an i64 or f64
         // we coerce/truncate to i32; if void, return 0.

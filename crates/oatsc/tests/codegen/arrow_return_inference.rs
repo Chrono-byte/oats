@@ -76,6 +76,7 @@ fn create_test_codegen<'a>(context: &'a Context, source: &'a str) -> CodeGen<'a>
         nested_generic_fns: std::cell::RefCell::new(std::collections::HashMap::new()),
         monomorphized_map: std::cell::RefCell::new(std::collections::HashMap::new()),
         rta_results: None,
+        uses_async: std::cell::Cell::new(false),
     }
 }
 

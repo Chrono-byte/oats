@@ -99,6 +99,7 @@ fn gen_add_function_ir_contains_fadd() -> Result<()> {
         nested_generic_fns: std::cell::RefCell::new(std::collections::HashMap::new()),
         monomorphized_map: std::cell::RefCell::new(std::collections::HashMap::new()),
         rta_results: None,
+        uses_async: std::cell::Cell::new(false),
     };
 
     codegen

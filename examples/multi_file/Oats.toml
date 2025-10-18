@@ -1,0 +1,6 @@
+[package]
+name = "multi-file-test"
+version = "0.1.0"
+
+[dependencies]
+# No external dependencies for this test

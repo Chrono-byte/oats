@@ -1,6 +1,12 @@
 use anyhow::Context;
 use std::collections::{HashMap, VecDeque};
 
+/// Dependency graph for Oats modules
+pub type DependencyGraph = petgraph::Graph<String, (), petgraph::Directed>;
+
+/// Node index in the dependency graph
+pub type NodeIndex = petgraph::graph::NodeIndex;
+
 /// Resolves relative import specifiers to absolute file paths.
 ///
 /// This function implements the module resolution algorithm for relative imports,
@@ -141,4 +147,122 @@ pub fn load_modules_with_verbosity(
     }
 
     Ok(modules)
+}
+
+/// Build a dependency graph starting from an entry point.
+///
+/// This function discovers all module dependencies and builds a directed graph
+/// where an edge A -> B means module A imports from module B (A depends on B).
+///
+/// # Arguments
+/// * `entry_path` - Path to the entry point source file
+/// * `verbose` - If true, print debug information about graph construction
+///
+/// # Returns
+/// A tuple of (dependency graph, node index map, entry node index)
+pub fn build_dependency_graph(
+    entry_path: &str,
+    verbose: bool,
+) -> anyhow::Result<(DependencyGraph, HashMap<String, NodeIndex>, NodeIndex)> {
+    let mut graph = DependencyGraph::new();
+    let mut node_indices = HashMap::new();
+
+    // Validate entry path exists
+    if !std::path::Path::new(entry_path).exists() {
+        anyhow::bail!("Entry file does not exist: {}", entry_path);
+    }
+
+    // Canonicalize entry path
+    let entry_abs = std::fs::canonicalize(entry_path)
+        .with_context(|| format!("Failed to canonicalize entry path: {}", entry_path))?;
+    let entry_str = entry_abs.to_string_lossy().to_string();
+
+    // Add entry node
+    let entry_node = graph.add_node(entry_str.clone());
+    node_indices.insert(entry_str.clone(), entry_node);
+
+    // Queue for BFS traversal
+    let mut queue = VecDeque::new();
+    queue.push_back(entry_str.clone());
+
+    // PHASE 1: Build dependency graph
+    while let Some(current_path) = queue.pop_front() {
+        if verbose {
+            eprintln!("Analyzing dependencies for: {}", current_path);
+        }
+
+        // Parse the current file to discover imports
+        let source = std::fs::read_to_string(&current_path)
+            .with_context(|| format!("Failed to read source file: {}", current_path))?;
+        let parsed = oatsc::parser::parse_oats_module(&source, Some(&current_path))
+            .with_context(|| format!("Failed to parse module: {}", current_path))?;
+
+        // Get current node
+        let current_node = *node_indices.get(&current_path).unwrap();
+
+        // Discover and enqueue relative imports from this module
+        for item_ref in parsed.parsed.program_ref().body() {
+            if let deno_ast::ModuleItemRef::ModuleDecl(module_decl) = item_ref
+                && let deno_ast::swc::ast::ModuleDecl::Import(import_decl) = module_decl
+            {
+                let import_src = import_decl.src.value.to_string();
+                // Process only relative import paths
+                if (import_src.starts_with("./") || import_src.starts_with("../"))
+                    && let Some(imported_path) = resolve_relative_import(&current_path, &import_src)
+                {
+                    // Add dependency edge: current -> imported (current depends on imported)
+                    let imported_node = if let Some(&existing_node) = node_indices.get(&imported_path) {
+                        existing_node
+                    } else {
+                        let new_node = graph.add_node(imported_path.clone());
+                        node_indices.insert(imported_path.clone(), new_node);
+                        queue.push_back(imported_path.clone());
+                        if verbose {
+                            eprintln!("  Discovered new dependency: {}", imported_path);
+                        }
+                        new_node
+                    };
+
+                    // Add edge: current depends on imported
+                    graph.add_edge(current_node, imported_node, ());
+                }
+            }
+        }
+    }
+
+    let entry_node_index = *node_indices.get(&entry_str).unwrap();
+    Ok((graph, node_indices, entry_node_index))
+}
+
+/// Perform topological sort on the dependency graph.
+///
+/// Returns a vector of module paths in compilation order (dependencies first).
+/// If there are cycles, returns an error with the cycle information.
+pub fn topological_sort(
+    graph: &DependencyGraph,
+    node_indices: &HashMap<String, NodeIndex>,
+) -> anyhow::Result<Vec<String>> {
+    // Create reverse mapping from node index to path
+    let mut index_to_path = HashMap::new();
+    for (path, &node) in node_indices {
+        index_to_path.insert(node, path.clone());
+    }
+
+    // Perform topological sort
+    match petgraph::algo::toposort(graph, None) {
+        Ok(sorted_nodes) => {
+            // Convert back to paths and reverse (we want dependencies first)
+            let mut sorted_paths: Vec<String> = sorted_nodes
+                .into_iter()
+                .filter_map(|node| index_to_path.get(&node).cloned())
+                .collect();
+            sorted_paths.reverse(); // Dependencies come first
+            Ok(sorted_paths)
+        }
+        Err(cycle) => {
+            // Try to extract cycle information
+            let cycle_info = format!("Cycle detected involving node {:?}", cycle.node_id());
+            anyhow::bail!("Dependency cycle detected: {}", cycle_info);
+        }
+    }
 }

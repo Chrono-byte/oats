@@ -76,6 +76,12 @@ pub fn compile_with_options(options: crate::CompileOptions) -> Result<Option<Str
         if let Some(ref build_profile) = options.build_profile {
             std::env::set_var("OATS_BUILD_PROFILE", build_profile);
         }
+
+        // Serialize extern_oats for the compilation pipeline
+        if !options.extern_oats.is_empty() {
+            let extern_oats_json = serde_json::to_string(&options.extern_oats)?;
+            std::env::set_var("OATS_EXTERN_OATS", extern_oats_json);
+        }
     }
 
     // Delegate to existing compilation logic
@@ -131,6 +137,13 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
     // Arrow function extraction happens during codegen traversal.
     let parsed_mod = initial_parsed_mod;
     let parsed = &parsed_mod.parsed;
+
+    // Read extern_oats from environment if provided
+    let extern_oats: std::collections::HashMap<String, String> = if let Ok(extern_oats_json) = std::env::var("OATS_EXTERN_OATS") {
+        serde_json::from_str(&extern_oats_json).unwrap_or_default()
+    } else {
+        std::collections::HashMap::new()
+    };
 
     /// Extracts top-level arrow function declarations from variable statements.
     ///
@@ -369,12 +382,20 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
     let func_decl = if let Some(f) = func_decl_opt {
         f
     } else {
-        return diagnostics::report_error_and_bail(
-            Some(&src_path),
-            Some(&source),
-            "No exported `main` function found in script. Please export `function main(...)`.",
-            Some("Scripts must export a `main` function to serve as the program entrypoint."),
-        );
+        // Check if we're in library mode (emitting object only)
+        let emit_object_only = std::env::var("OATS_EMIT_OBJECT_ONLY").is_ok();
+        if emit_object_only {
+            // For library modules, skip main function requirement
+            // This will be handled differently in Phase 2
+            return Ok(Some("library_compiled".to_string()));
+        } else {
+            return diagnostics::report_error_and_bail(
+                Some(&src_path),
+                Some(&source),
+                "No exported `main` function found in script. Please export `function main(...)`.",
+                Some("Scripts must export a `main` function to serve as the program entrypoint."),
+            );
+        }
     };
 
     let mut symbols = SymbolTable::new();
@@ -385,6 +406,18 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
     // Set the module target triple to the host default so clang doesn't warn
     let triple = TargetMachine::get_default_triple();
     module.set_triple(&triple);
+
+    // Declare external functions for imported symbols
+    for (_import_path, symbols_str) in &extern_oats {
+        let symbols: Vec<&str> = symbols_str.split(',').map(|s| s.trim()).collect();
+        for symbol in symbols {
+            // Declare external function with default signature (no args, returns f64)
+            // TODO: Use actual function signatures from metadata
+            let fn_type = context.f64_type().fn_type(&[], false);
+            module.add_function(symbol, fn_type, None);
+        }
+    }
+
     let builder = context.create_builder();
     let codegen = CodeGen {
         context: &context,
@@ -447,6 +480,7 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
         symbol_table: RefCell::new(symbols),
         current_label: RefCell::new(None),
         rta_results: None,
+        uses_async: Cell::new(false),
     };
 
     // Note: class field metadata is computed per-class when emitting

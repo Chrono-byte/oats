@@ -1,17 +1,3 @@
-//! Expression lowering helpers
-//!
-//! This module contains the primary expression lowering routine (`lower_expr`)
-//! which traverses the `deno_ast` expression AST and emits corresponding
-//! LLVM IR values via the shared `CodeGen` helpers. Expressions are the
-//! most complex part of lowering because they must handle type coercions,
-//! union boxing/unboxing, short-circuiting control flow (logical &&/||),
-//! and runtime helper interactions (array access, string concat, etc.).
-//!
-//! The implementation intentionally preserves explicit conversions and
-//! runtime calls rather than attempting aggressive optimizations. Inline
-//! comments explain important choices (for example, when boxing is used
-//! for unions and when `rc_inc` / `rc_dec` semantics apply).
-//!
 //! Design notes and conventions used throughout this module:
 //! - ABI/Return values: lowering returns a `BasicValueEnum` that represents
 //!   the ABI value for an expression: numeric results are `f64` (float),
@@ -27,6 +13,8 @@
 //!   subsequent lowering paths conservatively recover more static information
 //!   (e.g., closure return types) without heavy analysis.
 
+pub mod assignments;
+
 use crate::diagnostics::Diagnostic;
 use inkwell::values::BasicValueEnum;
 use inkwell::values::FunctionValue;
@@ -38,6 +26,19 @@ use inkwell::builder::Builder;
 use inkwell::types::BasicType;
 use inkwell::types::BasicTypeEnum;
 use inkwell::values::{BasicValue, PointerValue};
+
+pub mod async_expr;
+pub mod binary_ops;
+pub mod calls;
+pub mod closures;
+pub mod control_flow_expr;
+pub mod ident;
+pub mod literals;
+pub mod member_access;
+pub mod paren;
+pub mod this;
+pub mod unary_ops;
+
 // LocalEntry now includes an Option<String> for an optional nominal type name
 // LocalEntry now includes an Option<OatsType> for union tracking
 type LocalEntry<'a> = (
@@ -50,8 +51,6 @@ type LocalEntry<'a> = (
     Option<crate::types::OatsType>,
 );
 type LocalsStackLocal<'a> = Vec<HashMap<String, LocalEntry<'a>>>;
-
-pub mod literals;
 
 impl<'a> crate::codegen::CodeGen<'a> {
     /// Main expression lowering function.
@@ -612,21 +611,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     id.span.lo.0 as usize,
                 ))
             }
-            ast::Expr::This(this_expr) => {
-                // `this` is always the first parameter in method functions
-                if let Some(pv) = function.get_nth_param(0) {
-                    // Record that this expression originated from 'this'
-                    self.last_expr_origin_local
-                        .borrow_mut()
-                        .replace("this".to_string());
-                    Ok(pv)
-                } else {
-                    Err(Diagnostic::simple_with_span(
-                        "'this' used in function with no parameters",
-                        this_expr.span.lo.0 as usize,
-                    ))
-                }
-            }
+            ast::Expr::This(this_expr) => self.lower_this_expr(this_expr, function, param_map, locals),
             ast::Expr::Call(call) => {
                 // Support simple identifier callees and member-callee method calls.
                 //
@@ -3227,10 +3212,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     assign.span.lo.0 as usize,
                 ))
             }
-            ast::Expr::Paren(paren) => {
-                // Unwrap parenthesized expression
-                self.lower_expr(&paren.expr, function, param_map, locals)
-            }
+            ast::Expr::Paren(paren) => self.lower_paren_expr(paren, function, param_map, locals),
             ast::Expr::Cond(cond) => {
                 // Ternary expression: test ? cons : alt
                 // Lower test to an i1

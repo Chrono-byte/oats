@@ -5,6 +5,7 @@ use colored::Colorize;
 
 mod manifest;
 mod module_resolution;
+mod package_graph;
 
 #[derive(Parser)]
 #[command(name = "toasty", about = "Oats Project Manager", version = env!("CARGO_PKG_VERSION"))]

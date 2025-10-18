@@ -29,6 +29,13 @@ pub struct Package {
     pub description: Option<String>,
     #[serde(default)]
     pub license: Option<String>,
+    /// Entry point for the package (e.g., "src/main.oats" or "src/lib.oats")
+    #[serde(default = "default_entry_point")]
+    pub entry: String,
+}
+
+fn default_entry_point() -> String {
+    "src/main.oats".to_string()
 }
 
 /// Dependency specification
@@ -141,6 +148,11 @@ impl Manifest {
             anyhow::bail!("Package version cannot be empty");
         }
 
+        // Validate entry point is not empty
+        if self.package.entry.is_empty() {
+            anyhow::bail!("Package entry point cannot be empty");
+        }
+
         // Validate dependencies
         for (name, dep) in &self.dependencies {
             match dep {
@@ -159,6 +171,11 @@ impl Manifest {
         }
 
         Ok(())
+    }
+    
+    /// Get the absolute path to the entry point for this package
+    pub fn entry_point(&self, manifest_dir: &Path) -> std::path::PathBuf {
+        manifest_dir.join(&self.package.entry)
     }
 }
 
@@ -185,13 +202,14 @@ mod tests {
 
     #[test]
     fn test_validate_package_name() {
-        let mut manifest = Manifest {
+        let manifest = Manifest {
             package: Package {
                 name: "invalid name!".to_string(),
                 version: "0.1.0".to_string(),
                 authors: vec![],
                 description: None,
                 license: None,
+                entry: "src/main.oats".to_string(),
             },
             dependencies: HashMap::new(),
             build: BuildConfig::default(),

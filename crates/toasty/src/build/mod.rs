@@ -3,15 +3,12 @@
 //! This module implements the build orchestrator for package-based compilation,
 //! managing dependency resolution, parallel compilation, and final linking.
 
-use anyhow::{Context, Result};
+use crate::error::{Diagnostic, Result};
+use crate::project::{NodeIndex, PackageGraph, build_package_graph, topological_sort_packages};
 use petgraph::visit::EdgeRef;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-
-use crate::package_graph::{
-    NodeIndex, PackageGraph, build_package_graph, topological_sort_packages,
-};
 
 /// Compilation options for invoking oatsc
 #[derive(Debug, Clone)]
@@ -125,7 +122,6 @@ pub fn build_package_project(manifest_path: &Path, config: BuildConfig) -> Resul
         }
 
         let result = compile_package(&graph, *pkg_idx, &build_results, &config)?;
-
         build_results.insert(pkg_name.clone(), result);
     }
 
@@ -249,14 +245,14 @@ fn compile_package(
             if meta_needs_update {
                 // Ensure output directory exists
                 if let Some(parent) = meta_file.parent() {
-                    std::fs::create_dir_all(parent).with_context(|| {
-                        format!("Failed to create output directory: {}", parent.display())
+                    std::fs::create_dir_all(parent).map_err(|e| {
+                        Diagnostic::new(format!("Failed to create output directory: {}", e))
                     })?;
                 }
 
                 // Try to load manifest for package information
                 let manifest_info = if let Ok(manifest) =
-                    crate::manifest::Manifest::from_file(&pkg_root.join("Oats.toml"))
+                    crate::project::Manifest::from_file(&pkg_root.join("Oats.toml"))
                 {
                     format!(
                         "name = \"{}\"\nversion = \"{}\"\nentry = \"{}\"\n",
@@ -266,8 +262,8 @@ fn compile_package(
                     format!("name = \"{}\"\n", pkg_name)
                 };
 
-                std::fs::write(&meta_file, manifest_info).with_context(|| {
-                    format!("Failed to write metadata file: {}", meta_file.display())
+                std::fs::write(&meta_file, manifest_info).map_err(|e| {
+                    Diagnostic::new(format!("Failed to write metadata file: {}", e))
                 })?;
             }
 
@@ -294,8 +290,7 @@ fn compile_package(
     };
 
     // Compile the package
-    let object_path = invoke_oatsc(&options)
-        .with_context(|| format!("Failed to compile package '{}'", pkg_name))?;
+    let object_path = invoke_oatsc(&options)?;
 
     // Generate metadata file with package information
     let meta_file = PathBuf::from(format!(
@@ -307,12 +302,12 @@ fn compile_package(
     // Ensure output directory exists
     if let Some(parent) = meta_file.parent() {
         std::fs::create_dir_all(parent)
-            .with_context(|| format!("Failed to create output directory: {}", parent.display()))?;
+            .map_err(|e| Diagnostic::new(format!("Failed to create output directory: {}", e)))?;
     }
 
     // Try to load manifest for package information
     let manifest_info =
-        if let Ok(manifest) = crate::manifest::Manifest::from_file(&pkg_root.join("Oats.toml")) {
+        if let Ok(manifest) = crate::project::Manifest::from_file(&pkg_root.join("Oats.toml")) {
             format!(
                 "name = \"{}\"\nversion = \"{}\"\nentry = \"{}\"\n",
                 manifest.package.name, manifest.package.version, manifest.package.entry
@@ -322,7 +317,7 @@ fn compile_package(
         };
 
     std::fs::write(&meta_file, manifest_info)
-        .with_context(|| format!("Failed to write metadata file: {}", meta_file.display()))?;
+        .map_err(|e| Diagnostic::new(format!("Failed to write metadata file: {}", e)))?;
 
     Ok(PackageBuildResult {
         name: pkg_name.clone(),
@@ -402,16 +397,20 @@ fn invoke_oatsc(options: &CompileOptions) -> Result<PathBuf> {
     let output = Command::new(&oatsc_path)
         .args(&args)
         .output()
-        .with_context(|| format!("Failed to execute oatsc command: {} {:?}", oatsc_path, args))?;
+        .map_err(|e| {
+            Diagnostic::new(format!(
+                "Failed to execute oatsc command: {} {:?}",
+                oatsc_path, e
+            ))
+        })?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stdout = String::from_utf8_lossy(&output.stdout);
-        anyhow::bail!(
+        return Err(Diagnostic::new(format!(
             "oatsc compilation failed:\nSTDOUT: {}\nSTDERR: {}",
-            stdout,
-            stderr
-        );
+            stdout, stderr
+        )));
     }
 
     // Parse output to get object file path
@@ -420,7 +419,9 @@ fn invoke_oatsc(options: &CompileOptions) -> Result<PathBuf> {
     let object_path = stdout.trim().to_string();
 
     if object_path.is_empty() {
-        anyhow::bail!("oatsc did not return output path");
+        return Err(Diagnostic::new(
+            "oatsc did not return output path".to_string(),
+        ));
     }
 
     Ok(PathBuf::from(object_path))
@@ -444,26 +445,20 @@ fn link_packages(
         // Use explicitly specified runtime path
         let runtime_lib = PathBuf::from(runtime_path);
         if !runtime_lib.exists() {
-            anyhow::bail!(
-                "Runtime library not found at OATS_RUNTIME_PATH: {}",
+            return Err(Diagnostic::new(format!(
+                "Runtime library not found: {}",
                 runtime_lib.display()
-            );
+            )));
         }
         runtime_lib
-    } else if let Some(cached_runtime) = crate::runtime_fetch::try_fetch_runtime() {
-        // Use the cached pre-built runtime
-        cached_runtime
     } else {
         // Look for runtime in current directory or standard locations
         let runtime_lib = PathBuf::from("libruntime.a");
 
         if !runtime_lib.exists() {
-            anyhow::bail!(
-                "Runtime library not found. Please either:\n\
-                1. Ensure pre-built runtimes can be downloaded from GitHub, or\n\
-                2. Place libruntime.a in the current directory, or\n\
-                3. Set OATS_RUNTIME_PATH to the path of libruntime.a"
-            );
+            return Err(Diagnostic::new(
+                "Runtime library not found: libruntime.a".to_string(),
+            ));
         }
         runtime_lib
     };
@@ -484,17 +479,19 @@ fn link_packages(
 
     // Add linker if specified
     if let Some(linker) = &config.linker {
-        link_cmd.arg(format!("-fuse-ld={}", linker));
+        link_cmd.arg("-fuse-ld").arg(linker);
     }
 
     if config.verbose {
         eprintln!("Link command: {:?}", link_cmd);
     }
 
-    let link_status = link_cmd.status().context("Failed to run clang linker")?;
+    let link_status = link_cmd
+        .status()
+        .map_err(|e| Diagnostic::new(format!("Failed to run clang linker: {}", e)))?;
 
     if !link_status.success() {
-        anyhow::bail!("Linking failed");
+        return Err(Diagnostic::new("Linking failed".to_string()));
     }
 
     if !config.quiet && (config.verbose || cfg!(debug_assertions)) {

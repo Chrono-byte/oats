@@ -22,13 +22,14 @@ type LocalEntry<'a> = (
 type LocalsStackLocal<'a> = Vec<HashMap<String, LocalEntry<'a>>>;
 
 impl<'a> crate::codegen::CodeGen<'a> {
+    #[allow(clippy::result_large_err)]
     pub(super) fn lower_binary_expr(
         &self,
         bin: &deno_ast::swc::ast::BinExpr,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals: &mut LocalsStackLocal<'a>,
-    ) -> Result<BasicValueEnum<'a>, Diagnostic> {
+    ) -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
         use deno_ast::swc::ast::BinaryOp;
         use inkwell::FloatPredicate;
 
@@ -97,7 +98,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         .build_call(strcat, &[lp.into(), rp.into()], "concat")
                     {
                         Ok(cs) => cs,
-                        Err(_) => return Err(Diagnostic::simple("operation failed")),
+                        Err(_) => return Err(Diagnostic::simple_boxed("operation failed")),
                     };
                 let either = call_site.try_as_basic_value();
                 match either {
@@ -123,13 +124,13 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         return Ok(bv);
                     }
                     _ => {
-                        return Err(Diagnostic::simple(
+                        return Err(Diagnostic::simple_boxed(
                             "operation not supported (bin strcat result)",
                         ));
                     }
                 }
             } else {
-                return Err(Diagnostic::simple_with_span(
+                return Err(Diagnostic::simple_with_span_boxed(
                     "string concatenation helper `str_concat` not found",
                     bin.span.lo.0 as usize,
                 ));
@@ -150,7 +151,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                          lf: inkwell::values::FloatValue<'a>,
                          rf: inkwell::values::FloatValue<'a>,
                          op: &BinaryOp|
-         -> Result<BasicValueEnum<'a>, Diagnostic> {
+         -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
             match op {
                 BinaryOp::Add => {
                     let v = builder
@@ -182,7 +183,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         .map_err(|_| Diagnostic::simple("float rem failed"))?;
                     Ok(v.as_basic_value_enum())
                 }
-                _ => Err(Diagnostic::simple("unsupported binary operation")),
+                _ => Err(Diagnostic::simple_boxed("unsupported binary operation")),
             }
         };
 
@@ -191,7 +192,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                          lf: inkwell::values::FloatValue<'a>,
                          rf: inkwell::values::FloatValue<'a>,
                          op: &BinaryOp|
-         -> Result<BasicValueEnum<'a>, Diagnostic> {
+         -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
             let pred = match op {
                 BinaryOp::Lt => FloatPredicate::OLT,
                 BinaryOp::LtEq => FloatPredicate::OLE,
@@ -200,7 +201,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 BinaryOp::EqEq => FloatPredicate::OEQ,
                 BinaryOp::EqEqEq => FloatPredicate::OEQ,
                 BinaryOp::NotEq => FloatPredicate::ONE,
-                _ => return Err(Diagnostic::simple("unsupported comparison operation")),
+                _ => return Err(Diagnostic::simple_boxed("unsupported comparison operation")),
             };
             let iv = builder
                 .build_float_compare(pred, lf, rf, "cmp")
@@ -248,7 +249,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 .build_conditional_branch(cond, then_bb, else_bb)
                 .is_err()
             {
-                return Err(Diagnostic::simple("expression lowering failed"))?;
+                return Err(Diagnostic::simple_boxed("expression lowering failed"))?;
             }
             // then: evaluate right. Note: we don't eagerly `rc_inc` here;
             // any pointer ownership changes are performed by the
@@ -262,7 +263,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             if self.builder.get_insert_block().is_some() {
                 self.builder.position_at_end(then_bb);
                 if self.builder.build_unconditional_branch(merge_bb).is_err() {
-                    return Err(Diagnostic::simple("expression lowering failed"))?;
+                    return Err(Diagnostic::simple_boxed("expression lowering failed"))?;
                 }
             }
             // else: keep left (the left expression's value is the
@@ -283,7 +284,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             {
                 return Ok(phi);
             }
-            return Err(Diagnostic::simple("expression lowering failed"))?;
+            return Err(Diagnostic::simple_boxed("expression lowering failed"))?;
         }
         if let deno_ast::swc::ast::BinaryOp::LogicalOr = bin.op {
             // `||` mirrors `&&` but keeps the left value when truthy.
@@ -300,14 +301,14 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 .build_conditional_branch(cond, then_bb, else_bb)
                 .is_err()
             {
-                return Err(Diagnostic::simple("expression lowering failed"))?;
+                return Err(Diagnostic::simple_boxed("expression lowering failed"))?;
             }
             // then: keep left
             self.builder.position_at_end(then_bb);
             if self.builder.get_insert_block().is_some()
                 && self.builder.build_unconditional_branch(merge_bb).is_err()
             {
-                return Err(Diagnostic::simple("expression lowering failed"))?;
+                return Err(Diagnostic::simple_boxed("expression lowering failed"))?;
             }
             // else: evaluate right
             self.builder.position_at_end(else_bb);
@@ -324,7 +325,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             {
                 return Ok(phi);
             }
-            return Err(Diagnostic::simple("expression lowering failed"))?;
+            return Err(Diagnostic::simple_boxed("expression lowering failed"))?;
         }
 
         // Otherwise, handle pointer concat for Add and pointer equality
@@ -339,29 +340,29 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 .build_call(strcat, &[lp.into(), rp.into()], "concat")
                             {
                                 Ok(cs) => cs,
-                                Err(_) => return Err(Diagnostic::simple("operation failed")),
+                                Err(_) => return Err(Diagnostic::simple_boxed("operation failed")),
                             };
                         let either = call_site.try_as_basic_value();
                         match either {
                             inkwell::Either::Left(bv) => Ok(bv),
-                            _ => Err(Diagnostic::simple(
+                            _ => Err(Diagnostic::simple_boxed(
                                 "operation not supported (bin strcat result)",
                             )),
                         }
                     } else {
-                        Err(Diagnostic::simple_with_span(
+                        Err(Diagnostic::simple_with_span_boxed(
                             "string concatenation helper `str_concat` not found",
                             bin.span.lo.0 as usize,
                         ))
                     }
                 } else {
-                    Err(Diagnostic::simple_with_span(
+                    Err(Diagnostic::simple_with_span_boxed(
                         "pointer binary operation not supported",
                         bin.span.lo.0 as usize,
                     ))
                 }
             }
-            _ => Err(Diagnostic::simple("operation not supported (bin fallback)")),
+            _ => Err(Diagnostic::simple_boxed("operation not supported (bin fallback)")),
         }
     }
 }

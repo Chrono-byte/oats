@@ -20,13 +20,14 @@ type LocalEntry<'a> = (
 type LocalsStackLocal<'a> = Vec<HashMap<String, LocalEntry<'a>>>;
 
 impl<'a> crate::codegen::CodeGen<'a> {
+    #[allow(clippy::result_large_err)]
     pub(super) fn lower_await_expr(
         &self,
         await_expr: &deno_ast::swc::ast::AwaitExpr,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals: &mut LocalsStackLocal<'a>,
-    ) -> Result<BasicValueEnum<'a>, Diagnostic> {
+    ) -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
         // The full Await expression lowering code goes here
         // Phase 0+ improvement: call runtime `promise_poll_into(promise, out_ptr)`
         // and branch on the returned i32. If ready (1) load the resolved
@@ -47,10 +48,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
             self.async_await_counter.set(prev.wrapping_add(1));
             prev.wrapping_add(1)
         } else {
-            return Err(Diagnostic::simple_with_span(
+            return Err(Diagnostic::simple_with_span_boxed(
                 "`await` used outside of async lowering context",
                 await_expr.span.lo.0 as usize,
-            ))?;
+            ));
         };
 
         let v = self.lower_expr(&await_expr.arg, function, param_map, locals)?;
@@ -62,7 +63,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             {
                 Ok(a) => a,
                 Err(_) => {
-                    return Err(Diagnostic::simple("alloca failed for await out slot"));
+                    return Err(Diagnostic::simple_boxed("alloca failed for await out slot"));
                 }
             };
 
@@ -74,7 +75,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 "promise_poll",
             ) {
                 Ok(c) => c,
-                Err(_) => return Err(Diagnostic::simple("promise_poll_into call failed")),
+                Err(_) => return Err(Diagnostic::simple_boxed("promise_poll_into call failed")),
             };
 
             let either = cs.try_as_basic_value();
@@ -92,7 +93,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 "await_ready_cmp",
             ) {
                 Ok(iv) => iv,
-                Err(_) => return Err(Diagnostic::simple("int_compare failed")),
+                Err(_) => return Err(Diagnostic::simple_boxed("int_compare failed")),
             };
 
             let ready_bb = self.context.append_basic_block(function, "await_ready");
@@ -112,7 +113,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             {
                 Ok(_) => {}
                 Err(_) => {
-                    return Err(Diagnostic::simple("failed to build branch for await"));
+                    return Err(Diagnostic::simple_boxed("failed to build branch for await"));
                 }
             }
 
@@ -123,12 +124,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 .build_load(self.i8ptr_t, out_alloca, "await_loaded")
             {
                 Ok(l) => l,
-                Err(_) => return Err(Diagnostic::simple("await load failed")),
+                Err(_) => return Err(Diagnostic::simple_boxed("await load failed")),
             };
             match self.builder.build_unconditional_branch(cont_bb) {
                 Ok(_) => (),
                 Err(_) => {
-                    return Err(Diagnostic::simple("failed to branch to cont from ready"));
+                    return Err(Diagnostic::simple_boxed("failed to branch to cont from ready"));
                 }
             };
 
@@ -151,7 +152,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     let state_param = match poll_f.get_nth_param(0) {
                         Some(param) => param,
                         None => {
-                            return Err(Diagnostic::simple(
+                            return Err(Diagnostic::simple_boxed(
                                 "missing state parameter in async poll function",
                             ));
                         }
@@ -182,7 +183,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 ) {
                                     Ok(v) => v,
                                     Err(_) => {
-                                        return Err(Diagnostic::simple(
+                                        return Err(Diagnostic::simple_boxed(
                                             "failed to load local for save",
                                         ));
                                     }
@@ -196,7 +197,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 ) {
                                     Ok(v) => v,
                                     Err(_) => {
-                                        return Err(Diagnostic::simple(
+                                        return Err(Diagnostic::simple_boxed(
                                             "ptr_to_int failed when saving locals",
                                         ));
                                     }
@@ -210,7 +211,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 ) {
                                     Ok(v) => v,
                                     Err(_) => {
-                                        return Err(Diagnostic::simple(
+                                        return Err(Diagnostic::simple_boxed(
                                             "int_add failed when saving locals",
                                         ));
                                     }
@@ -222,7 +223,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 ) {
                                     Ok(p) => p,
                                     Err(_) => {
-                                        return Err(Diagnostic::simple(
+                                        return Err(Diagnostic::simple_boxed(
                                             "int_to_ptr failed when saving locals",
                                         ));
                                     }
@@ -238,7 +239,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         ) {
                                             Ok(cs) => cs,
                                             Err(_) => {
-                                                return Err(Diagnostic::simple(
+                                                return Err(Diagnostic::simple_boxed(
                                                     "union_box_f64 call failed when saving locals",
                                                 ));
                                             }
@@ -278,7 +279,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     ) {
                         Ok(v) => v,
                         Err(_) => {
-                            return Err(Diagnostic::simple(
+                            return Err(Diagnostic::simple_boxed(
                                 "ptr_to_int failed when saving awaited promise",
                             ));
                         }
@@ -291,7 +292,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     ) {
                         Ok(v) => v,
                         Err(_) => {
-                            return Err(Diagnostic::simple(
+                            return Err(Diagnostic::simple_boxed(
                                 "int_add failed when saving awaited promise",
                             ));
                         }
@@ -303,7 +304,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     ) {
                         Ok(p) => p,
                         Err(_) => {
-                            return Err(Diagnostic::simple(
+                            return Err(Diagnostic::simple_boxed(
                                 "int_to_ptr failed when saving awaited promise",
                             ));
                         }
@@ -319,7 +320,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     ) {
                         Ok(v) => v,
                         Err(_) => {
-                            return Err(Diagnostic::simple(
+                            return Err(Diagnostic::simple_boxed(
                                 "ptr_to_int failed when storing state index",
                             ));
                         }
@@ -332,7 +333,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     ) {
                         Ok(v) => v,
                         Err(_) => {
-                            return Err(Diagnostic::simple(
+                            return Err(Diagnostic::simple_boxed(
                                 "int_add failed when storing state index",
                             ));
                         }
@@ -344,7 +345,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     ) {
                         Ok(p) => p,
                         Err(_) => {
-                            return Err(Diagnostic::simple(
+                            return Err(Diagnostic::simple_boxed(
                                 "int_to_ptr failed when storing state index",
                             ));
                         }
@@ -364,7 +365,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             let phi_ty = self.i8ptr_t.as_basic_type_enum();
             let phi = match self.builder.build_phi(phi_ty, "await_phi") {
                 Ok(p) => p,
-                Err(_) => return Err(Diagnostic::simple("failed to create phi for await")),
+                Err(_) => return Err(Diagnostic::simple_boxed("failed to create phi for await")),
             };
             // Only add incoming from ready_bb - when we resume, the resume block
             // will provide the value by branching here with the promise pointer

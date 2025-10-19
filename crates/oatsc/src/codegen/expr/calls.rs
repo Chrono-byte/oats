@@ -19,13 +19,14 @@ type LocalEntry<'a> = (
 
 impl<'a> CodeGen<'a> {
     /// Lower Call expression (function calls, method calls, super calls, closures).
+    #[allow(clippy::result_large_err)]
     pub(super) fn lower_call_expr(
         &self,
         call: &deno_ast::swc::ast::CallExpr,
         function: inkwell::values::FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals: &mut Vec<HashMap<String, LocalEntry<'a>>>,
-    ) -> Result<inkwell::values::BasicValueEnum<'a>, crate::diagnostics::Diagnostic> {
+    ) -> crate::diagnostics::DiagnosticResult<inkwell::values::BasicValueEnum<'a>> {
         // Support simple identifier callees and member-callee method calls.
         //
         // We intentionally support a small set of call shapes in the
@@ -40,7 +41,7 @@ impl<'a> CodeGen<'a> {
             let parent = if let Some(p) = parent_opt {
                 p
             } else {
-                return Err(Diagnostic::simple_with_span(
+                return Err(Diagnostic::simple_with_span_boxed(
                     "super used outside of constructor or no parent",
                     call.span.lo.0 as usize,
                 ));
@@ -52,7 +53,7 @@ impl<'a> CodeGen<'a> {
             {
                 let this_loaded = match self.builder.build_load(this_ty, this_ptr, "this_loaded") {
                     Ok(v) => v,
-                    Err(_) => return Err(Diagnostic::simple("operation failed")),
+                    Err(_) => return Err(Diagnostic::simple_boxed("operation failed")),
                 };
 
                 let mut args: Vec<inkwell::values::BasicMetadataValueEnum> = Vec::new();
@@ -61,7 +62,7 @@ impl<'a> CodeGen<'a> {
                     if let Ok(v) = self.lower_expr(&a.expr, function, param_map, locals) {
                         args.push(v.into());
                     } else {
-                        return Err(Diagnostic::simple("expression lowering failed"))?;
+                        return Err(Diagnostic::simple_boxed("expression lowering failed"))?;
                     }
                 }
 
@@ -69,7 +70,7 @@ impl<'a> CodeGen<'a> {
                 if let Some(init_f) = self.module.get_function(&init_name) {
                     let cs = match self.builder.build_call(init_f, &args, "call_super_init") {
                         Ok(cs) => cs,
-                        Err(_) => return Err(Diagnostic::simple("operation failed")),
+                        Err(_) => return Err(Diagnostic::simple_boxed("operation failed")),
                     };
                     let either = cs.try_as_basic_value();
                     if let inkwell::Either::Left(bv) = either {
@@ -79,13 +80,13 @@ impl<'a> CodeGen<'a> {
                         Ok(zero.as_basic_value_enum())
                     }
                 } else {
-                    Err(Diagnostic::simple_with_span(
+                    Err(Diagnostic::simple_with_span_boxed(
                         format!("super target '{}' not found", init_name),
                         call.span.lo.0 as usize,
                     ))
                 }
             } else {
-                Err(Diagnostic::simple_with_span(
+                Err(Diagnostic::simple_with_span_boxed(
                     "super used but `this` not found",
                     call.span.lo.0 as usize,
                 ))
@@ -137,7 +138,7 @@ impl<'a> CodeGen<'a> {
                                 {
                                     bv.into_int_value()
                                 } else {
-                                    return Err(Diagnostic::simple("discriminant call failed"));
+                                    return Err(Diagnostic::simple_boxed("discriminant call failed"));
                                 };
 
                                 // Create blocks for number and string cases
@@ -429,7 +430,7 @@ impl<'a> CodeGen<'a> {
                                             {
                                                 Ok(a) => a,
                                                 Err(_) => {
-                                                    return Err(Diagnostic::simple(
+                                                    return Err(Diagnostic::simple_boxed(
                                                         "operation failed",
                                                     ))?;
                                                 }
@@ -443,7 +444,7 @@ impl<'a> CodeGen<'a> {
                                             ) {
                                                 Ok(v) => v,
                                                 Err(_) => {
-                                                    return Err(Diagnostic::simple(
+                                                    return Err(Diagnostic::simple_boxed(
                                                         "operation failed",
                                                     ))?;
                                                 }
@@ -483,7 +484,7 @@ impl<'a> CodeGen<'a> {
                                     }
                                 }
                                 _ => {
-                                    return Err(Diagnostic::simple_with_span(
+                                    return Err(Diagnostic::simple_with_span_boxed(
                                         "operation failed",
                                         call.span.lo.0 as usize,
                                     ));
@@ -926,12 +927,12 @@ impl<'a> CodeGen<'a> {
                             if let Ok(val) = self.lower_expr(&a.expr, function, param_map, locals) {
                                 lowered_args.push(val.into());
                             } else {
-                                return Err(Diagnostic::simple("expression lowering failed"))?;
+                                return Err(Diagnostic::simple_boxed("expression lowering failed"))?;
                             }
                         }
                         let cs = match self.builder.build_call(fv, &lowered_args, "call_internal") {
                             Ok(cs) => cs,
-                            Err(_) => return Err(Diagnostic::simple("operation failed")),
+                            Err(_) => return Err(Diagnostic::simple_boxed("operation failed")),
                         };
                         let either = cs.try_as_basic_value();
                         if let inkwell::Either::Left(bv) = either {
@@ -965,7 +966,7 @@ impl<'a> CodeGen<'a> {
                             Ok(zero.as_basic_value_enum())
                         }
                     } else {
-                        Err(Diagnostic::simple(format!(
+                        Err(Diagnostic::simple_boxed(format!(
                             "unknown or missing function '{}'",
                             fname
                         )))
@@ -997,7 +998,7 @@ impl<'a> CodeGen<'a> {
                             ) {
                                 Ok(v) => v,
                                 Err(_) => {
-                                    return Err(Diagnostic::simple("expression lowering failed"))?;
+                                    return Err(Diagnostic::simple_boxed("expression lowering failed"))?;
                                 }
                             };
 
@@ -1014,7 +1015,7 @@ impl<'a> CodeGen<'a> {
                                     ) {
                                         Ok(cs) => cs,
                                         Err(_) => {
-                                            return Err(Diagnostic::simple(
+                                            return Err(Diagnostic::simple_boxed(
                                                 "union_box_f64 call failed",
                                             ))?;
                                         }
@@ -1022,7 +1023,7 @@ impl<'a> CodeGen<'a> {
                                     match cs.try_as_basic_value() {
                                         inkwell::Either::Left(bv) => bv,
                                         _ => {
-                                            return Err(Diagnostic::simple(
+                                            return Err(Diagnostic::simple_boxed(
                                                 "union_box_f64 returned non-value",
                                             ))?;
                                         }
@@ -1043,13 +1044,13 @@ impl<'a> CodeGen<'a> {
                             ) {
                                 Ok(cs) => cs,
                                 Err(_) => {
-                                    return Err(Diagnostic::simple("promise_resolve call failed"))?;
+                                    return Err(Diagnostic::simple_boxed("promise_resolve call failed"))?;
                                 }
                             };
                             match cs.try_as_basic_value() {
                                 inkwell::Either::Left(bv) => return Ok(bv),
                                 _ => {
-                                    return Err(Diagnostic::simple(
+                                    return Err(Diagnostic::simple_boxed(
                                         "promise_resolve returned non-value",
                                     ))?;
                                 }
@@ -1067,14 +1068,14 @@ impl<'a> CodeGen<'a> {
                                 let cs = match self.builder.build_call(f, &[], "math_random_call") {
                                     Ok(cs) => cs,
                                     Err(_) => {
-                                        return Err(Diagnostic::simple("operation failed"));
+                                        return Err(Diagnostic::simple_boxed("operation failed"));
                                     }
                                 };
                                 let either = cs.try_as_basic_value();
                                 if let inkwell::Either::Left(bv) = either {
                                     return Ok(bv);
                                 } else {
-                                    return Err(Diagnostic::simple("operation failed"));
+                                    return Err(Diagnostic::simple_boxed("operation failed"));
                                 }
                             }
                         }
@@ -1086,7 +1087,7 @@ impl<'a> CodeGen<'a> {
                             if method_name == "downgrade" {
                                 // Expect no args
                                 if !call.args.is_empty() {
-                                    return Err(Diagnostic::simple("expression lowering failed"))?;
+                                    return Err(Diagnostic::simple_boxed("expression lowering failed"))?;
                                 }
                                 if let BasicValueEnum::PointerValue(pv) = obj_val {
                                     let f = self.get_rc_weak_inc();
@@ -1097,13 +1098,13 @@ impl<'a> CodeGen<'a> {
                                     );
                                     return Ok(pv.as_basic_value_enum());
                                 } else {
-                                    return Err(Diagnostic::simple("downgrade on non-pointer"))?;
+                                    return Err(Diagnostic::simple_boxed("downgrade on non-pointer"))?;
                                 }
                             }
                             if method_name == "upgrade" {
                                 // Expect no args
                                 if !call.args.is_empty() {
-                                    return Err(Diagnostic::simple("expression lowering failed"))?;
+                                    return Err(Diagnostic::simple_boxed("expression lowering failed"))?;
                                 }
                                 if let BasicValueEnum::PointerValue(pv) = obj_val {
                                     let f = self.get_rc_weak_upgrade();
@@ -1114,17 +1115,17 @@ impl<'a> CodeGen<'a> {
                                     ) {
                                         Ok(cs) => cs,
                                         Err(_) => {
-                                            return Err(Diagnostic::simple("operation failed"));
+                                            return Err(Diagnostic::simple_boxed("operation failed"));
                                         }
                                     };
                                     let either = cs.try_as_basic_value();
                                     if let inkwell::Either::Left(bv) = either {
                                         return Ok(bv);
                                     } else {
-                                        return Err(Diagnostic::simple("operation not supported"));
+                                        return Err(Diagnostic::simple_boxed("operation not supported"));
                                     }
                                 } else {
-                                    return Err(Diagnostic::simple("upgrade on non-pointer"))?;
+                                    return Err(Diagnostic::simple_boxed("upgrade on non-pointer"))?;
                                 }
                             }
                             // Special-case: arr.push(x) / arr.pop()
@@ -1164,7 +1165,7 @@ impl<'a> CodeGen<'a> {
                                                     .as_basic_value_enum());
                                             }
                                             _ => {
-                                                return Err(Diagnostic::simple(
+                                                return Err(Diagnostic::simple_boxed(
                                                     "unsupported argument type for push",
                                                 ));
                                             }
@@ -1185,7 +1186,7 @@ impl<'a> CodeGen<'a> {
                                     ) {
                                         Ok(cs) => cs,
                                         Err(_) => {
-                                            return Err(Diagnostic::simple("operation failed"));
+                                            return Err(Diagnostic::simple_boxed("operation failed"));
                                         }
                                     };
                                     let either = cs.try_as_basic_value();
@@ -1201,14 +1202,14 @@ impl<'a> CodeGen<'a> {
                                     ) {
                                         Ok(cs2) => cs2,
                                         Err(_) => {
-                                            return Err(Diagnostic::simple("operation failed"));
+                                            return Err(Diagnostic::simple_boxed("operation failed"));
                                         }
                                     };
                                     let either2 = cs2.try_as_basic_value();
                                     if let inkwell::Either::Left(bv2) = either2 {
                                         return Ok(bv2);
                                     }
-                                    return Err(Diagnostic::simple("operation failed"));
+                                    return Err(Diagnostic::simple_boxed("operation failed"));
                                 }
                             }
                             // Resolve the nominal class name for the receiver and
@@ -1306,7 +1307,7 @@ impl<'a> CodeGen<'a> {
                                             self.class_fields.borrow().keys().cloned().collect();
                                         eprintln!("[debug member_call] known_nominals={:?}", keys);
                                     }
-                                    return Err(Diagnostic::simple(
+                                    return Err(Diagnostic::simple_boxed(
                                         "unsupported member call: could not infer receiver nominal type",
                                     ));
                                 }
@@ -1326,7 +1327,7 @@ impl<'a> CodeGen<'a> {
                                     {
                                         user_args.push(v.into());
                                     } else {
-                                        return Err(Diagnostic::simple(
+                                        return Err(Diagnostic::simple_boxed(
                                             "expression lowering failed",
                                         ))?;
                                     }
@@ -1347,7 +1348,7 @@ impl<'a> CodeGen<'a> {
                                     match self.builder.build_call(method_f, &args, "call_method") {
                                         Ok(cs) => cs,
                                         Err(_) => {
-                                            return Err(Diagnostic::simple("operation failed"));
+                                            return Err(Diagnostic::simple_boxed("operation failed"));
                                         }
                                     };
                                 let either = cs.try_as_basic_value();
@@ -1391,7 +1392,7 @@ impl<'a> CodeGen<'a> {
                                         {
                                             user_args.push(v.into());
                                         } else {
-                                            return Err(Diagnostic::simple(
+                                            return Err(Diagnostic::simple_boxed(
                                                 "expression lowering failed",
                                             ))?;
                                         }
@@ -1415,7 +1416,7 @@ impl<'a> CodeGen<'a> {
                                     ) {
                                         Ok(cs) => cs,
                                         Err(_) => {
-                                            return Err(Diagnostic::simple("operation failed"));
+                                            return Err(Diagnostic::simple_boxed("operation failed"));
                                         }
                                     };
                                     let either = cs.try_as_basic_value();
@@ -1469,7 +1470,7 @@ impl<'a> CodeGen<'a> {
                             ) {
                                 Ok(v) => v,
                                 Err(_) => {
-                                    return Err(Diagnostic::simple("operation failed"));
+                                    return Err(Diagnostic::simple_boxed("operation failed"));
                                 }
                             };
 
@@ -1485,7 +1486,7 @@ impl<'a> CodeGen<'a> {
                             ) {
                                 Ok(v) => v,
                                 Err(_) => {
-                                    return Err(Diagnostic::simple("operation failed"));
+                                    return Err(Diagnostic::simple_boxed("operation failed"));
                                 }
                             };
 
@@ -1498,7 +1499,7 @@ impl<'a> CodeGen<'a> {
                                 {
                                     lowered_args.push(val.into());
                                 } else {
-                                    return Err(Diagnostic::simple("expression lowering failed"))?;
+                                    return Err(Diagnostic::simple_boxed("expression lowering failed"))?;
                                 }
                             }
 
@@ -1524,7 +1525,7 @@ impl<'a> CodeGen<'a> {
                                 ) {
                                     Ok(cs) => cs,
                                     Err(_) => {
-                                        return Err(Diagnostic::simple("operation failed"));
+                                        return Err(Diagnostic::simple_boxed("operation failed"));
                                     }
                                 };
                                 let either = cs.try_as_basic_value();
@@ -1549,7 +1550,7 @@ impl<'a> CodeGen<'a> {
                                 call.span.lo.0 as usize,
                             );
                             crate::diagnostics::emit_diagnostic(&d, Some(self.source));
-                            Err(d)
+                            Err(Box::new(d))
                         }
                     }
                 }
@@ -1593,7 +1594,7 @@ impl<'a> CodeGen<'a> {
                             ) {
                                 Ok(v) => v,
                                 Err(_) => {
-                                    return Err(Diagnostic::simple("operation failed"));
+                                    return Err(Diagnostic::simple_boxed("operation failed"));
                                 }
                             };
 
@@ -1610,7 +1611,7 @@ impl<'a> CodeGen<'a> {
                             ) {
                                 Ok(v) => v,
                                 Err(_) => {
-                                    return Err(Diagnostic::simple("operation failed"));
+                                    return Err(Diagnostic::simple_boxed("operation failed"));
                                 }
                             };
 
@@ -1623,7 +1624,7 @@ impl<'a> CodeGen<'a> {
                                 {
                                     lowered_args.push(val.into());
                                 } else {
-                                    return Err(Diagnostic::simple("expression lowering failed"))?;
+                                    return Err(Diagnostic::simple_boxed("expression lowering failed"))?;
                                 }
                             }
 
@@ -1684,7 +1685,7 @@ impl<'a> CodeGen<'a> {
                                     ) {
                                         Ok(v) => v,
                                         Err(_) => {
-                                            return Err(Diagnostic::simple("operation failed"));
+                                            return Err(Diagnostic::simple_boxed("operation failed"));
                                         }
                                     };
                                     if let BasicValueEnum::IntValue(ret_iv) = ret_bv {
@@ -1752,7 +1753,7 @@ impl<'a> CodeGen<'a> {
                                 ) {
                                     Ok(cs) => cs,
                                     Err(_) => {
-                                        return Err(Diagnostic::simple("operation failed"));
+                                        return Err(Diagnostic::simple_boxed("operation failed"));
                                     }
                                 };
                                 let either = cs.try_as_basic_value();
@@ -1766,18 +1767,18 @@ impl<'a> CodeGen<'a> {
                                 self.last_expr_origin_local.borrow_mut().take();
                                 return Ok(zero.as_basic_value_enum());
                             }
-                            Err(Diagnostic::simple_with_span(
+                            Err(Diagnostic::simple_with_span_boxed(
                                 "unsupported closure call (indirect call lowering failed)",
                                 call.span.lo.0 as usize,
                             ))
                         } else {
-                            Err(Diagnostic::simple_with_span(
+                            Err(Diagnostic::simple_with_span_boxed(
                                 "unsupported callee expression",
                                 call.span.lo.0 as usize,
                             ))
                         }
                     } else {
-                        Err(Diagnostic::simple_with_span(
+                        Err(Diagnostic::simple_with_span_boxed(
                             "expression lowering failed",
                             call.span.lo.0 as usize,
                         ))
@@ -1785,7 +1786,7 @@ impl<'a> CodeGen<'a> {
                 }
             }
         } else {
-            Err(Diagnostic::simple_with_span(
+            Err(Diagnostic::simple_with_span_boxed(
                 "unsupported call expression: callee form not supported",
                 call.span.lo.0 as usize,
             ))

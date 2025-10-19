@@ -20,13 +20,14 @@ type LocalEntry<'a> = (
 type LocalsStackLocal<'a> = Vec<HashMap<String, LocalEntry<'a>>>;
 
 impl<'a> CodeGen<'a> {
+    #[allow(clippy::result_large_err)]
     pub(super) fn lower_arrow_expr(
         &self,
         arrow: &deno_ast::swc::ast::ArrowExpr,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals: &mut LocalsStackLocal<'a>,
-    ) -> Result<BasicValueEnum<'a>, Diagnostic> {
+    ) -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
         // Detect captured variables in the arrow body by scanning for
         // identifier usages that are not parameters and that resolve to
         // names in the surrounding `locals` stack. We return a helpful
@@ -155,18 +156,18 @@ impl<'a> CodeGen<'a> {
                         if let Some(mapped) = crate::types::map_ts_type(&type_ann.type_ann) {
                             param_types.push(mapped);
                         } else {
-                            return Err(Diagnostic::simple(
+                            return Err(Diagnostic::simple_boxed(
                                 "Arrow parameter has unsupported type annotation",
                             ));
                         }
                     } else {
-                        return Err(Diagnostic::simple(
+                        return Err(Diagnostic::simple_boxed(
                             "Arrow parameter missing type annotation",
                         ));
                     }
                 }
                 _ => {
-                    return Err(Diagnostic::simple(
+                    return Err(Diagnostic::simple_boxed(
                         "Arrow function parameter pattern not supported",
                     ));
                 }
@@ -178,10 +179,10 @@ impl<'a> CodeGen<'a> {
             if let Some(mapped) = crate::types::map_ts_type(&return_type.type_ann) {
                 mapped
             } else {
-                return Err(Diagnostic::simple("Arrow return type not supported"));
+                return Err(Diagnostic::simple_boxed("Arrow return type not supported"));
             }
         } else {
-            return Err(Diagnostic::simple(
+            return Err(Diagnostic::simple_boxed(
                 "Arrow function return type annotation required - test",
             ));
         };
@@ -342,7 +343,7 @@ impl<'a> CodeGen<'a> {
                             let boxed_ptr = bv.into_pointer_value();
                             captured_vals.push((boxed_ptr.as_basic_value_enum(), is_weak));
                         } else {
-                            return Err(Diagnostic::simple("failed to box numeric capture"));
+                            return Err(Diagnostic::simple_boxed("failed to box numeric capture"));
                         }
                     } else if pv.get_type().is_int_type() {
                         // convert int->f64 then box
@@ -361,10 +362,10 @@ impl<'a> CodeGen<'a> {
                             let boxed_ptr = bv.into_pointer_value();
                             captured_vals.push((boxed_ptr.as_basic_value_enum(), is_weak));
                         } else {
-                            return Err(Diagnostic::simple("failed to box numeric capture"));
+                            return Err(Diagnostic::simple_boxed("failed to box numeric capture"));
                         }
                     } else {
-                        return Err(Diagnostic::simple(
+                        return Err(Diagnostic::simple_boxed(
                             "unsupported capture type: non-pointer parameter",
                         ));
                     }
@@ -383,7 +384,7 @@ impl<'a> CodeGen<'a> {
                 )) = self.find_local(locals, cname)
                 {
                     if !initialized {
-                        return Err(Diagnostic::simple("cannot capture uninitialized local"));
+                        return Err(Diagnostic::simple_boxed("cannot capture uninitialized local"));
                     }
                     // load current value
                     let loaded = match self.builder.build_load(
@@ -393,7 +394,7 @@ impl<'a> CodeGen<'a> {
                     ) {
                         Ok(v) => v,
                         Err(_) => {
-                            return Err(Diagnostic::simple("failed to load captured local"));
+                            return Err(Diagnostic::simple_boxed("failed to load captured local"));
                         }
                     };
                     // If pointer, use directly. If float/int, box into union object.
@@ -412,7 +413,7 @@ impl<'a> CodeGen<'a> {
                                 let boxed_ptr = bv.into_pointer_value();
                                 captured_vals.push((boxed_ptr.as_basic_value_enum(), is_weak_flag));
                             } else {
-                                return Err(Diagnostic::simple("failed to box numeric capture"));
+                                return Err(Diagnostic::simple_boxed("failed to box numeric capture"));
                             }
                         }
                         BasicValueEnum::IntValue(iv) => {
@@ -432,17 +433,17 @@ impl<'a> CodeGen<'a> {
                                 let boxed_ptr = bv.into_pointer_value();
                                 captured_vals.push((boxed_ptr.as_basic_value_enum(), is_weak_flag));
                             } else {
-                                return Err(Diagnostic::simple("failed to box numeric capture"));
+                                return Err(Diagnostic::simple_boxed("failed to box numeric capture"));
                             }
                         }
                         _ => {
-                            return Err(Diagnostic::simple(
+                            return Err(Diagnostic::simple_boxed(
                                 "unsupported capture type: non-pointer local",
                             ));
                         }
                     }
                 } else {
-                    return Err(Diagnostic::simple("capture not found in outer scope"));
+                    return Err(Diagnostic::simple_boxed("capture not found in outer scope"));
                 }
             }
 
@@ -581,9 +582,7 @@ impl<'a> CodeGen<'a> {
             // Block body: { statements }
             if let ast::BlockStmtOrExpr::BlockStmt(block) = &*arrow.body {
                 let terminated =
-                    self.lower_stmts(&block.stmts, arrow_fn, &arrow_param_map, &mut arrow_locals);
-
-                let terminated = terminated?;
+                    self.lower_stmts(&block.stmts, arrow_fn, &arrow_param_map, &mut arrow_locals)?;
 
                 // If not terminated, add default return
                 if !terminated {
@@ -596,14 +595,14 @@ impl<'a> CodeGen<'a> {
                             let _ = self.builder.build_return(Some(&zero));
                         }
                         _ => {
-                            return Err(Diagnostic::simple(
+                            return Err(Diagnostic::simple_boxed(
                                 "Cannot generate default return for arrow function",
                             ));
                         }
                     }
                 }
             } else {
-                return Err(Diagnostic::simple("Arrow body type mismatch"));
+                return Err(Diagnostic::simple_boxed("Arrow body type mismatch"));
             }
         } else {
             // Expression body: => expr (implicit return)
@@ -616,7 +615,7 @@ impl<'a> CodeGen<'a> {
 
                 let _ = self.builder.build_return(Some(&result));
             } else {
-                return Err(Diagnostic::simple("Arrow body type mismatch"));
+                return Err(Diagnostic::simple_boxed("Arrow body type mismatch"));
             }
         }
 
@@ -632,7 +631,7 @@ impl<'a> CodeGen<'a> {
                 self.find_local(locals, "__closure_tmp")
             {
                 if !init {
-                    return Err(Diagnostic::simple("closure tmp uninitialized"));
+                    return Err(Diagnostic::simple_boxed("closure tmp uninitialized"));
                 }
                 let loaded = match self
                     .builder
@@ -640,12 +639,12 @@ impl<'a> CodeGen<'a> {
                 {
                     Ok(v) => v,
                     Err(_) => {
-                        return Err(Diagnostic::simple("failed to load closure tmp"));
+                        return Err(Diagnostic::simple_boxed("failed to load closure tmp"));
                     }
                 };
                 return Ok(loaded);
             } else {
-                return Err(Diagnostic::simple("closure tmp missing"));
+                return Err(Diagnostic::simple_boxed("closure tmp missing"));
             }
         }
 

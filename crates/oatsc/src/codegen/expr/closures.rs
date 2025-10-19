@@ -20,14 +20,15 @@ type LocalEntry<'a> = (
 type LocalsStackLocal<'a> = Vec<HashMap<String, LocalEntry<'a>>>;
 
 impl<'a> crate::codegen::CodeGen<'a> {
+    #[allow(clippy::result_large_err)]
     pub(super) fn lower_arrow_expr(
         &self,
         _arrow: &deno_ast::swc::ast::ArrowExpr,
         _function: FunctionValue<'a>,
         _param_map: &HashMap<String, u32>,
         _locals: &mut LocalsStackLocal<'a>,
-    ) -> Result<BasicValueEnum<'a>, Diagnostic> {
+    ) -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
         // The full Arrow expression lowering code goes here
-        Err(Diagnostic::simple("arrow expression not implemented yet"))
+        Err(Diagnostic::simple_boxed("arrow expression not implemented yet"))
     }
 }

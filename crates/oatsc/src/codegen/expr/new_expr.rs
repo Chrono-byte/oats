@@ -20,13 +20,14 @@ type LocalEntry<'a> = (
 type LocalsStackLocal<'a> = Vec<HashMap<String, LocalEntry<'a>>>;
 
 impl<'a> CodeGen<'a> {
+    #[allow(clippy::result_large_err)]
     pub(super) fn lower_new_expr(
         &self,
         new_expr: &ast::NewExpr,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals: &mut LocalsStackLocal<'a>,
-    ) -> Result<BasicValueEnum<'a>, Diagnostic> {
+    ) -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
         if let ast::Expr::Ident(ident) = &*new_expr.callee {
             let ctor_name = format!("{}_ctor", ident.sym);
             if let Some(fv) = self.module.get_function(&ctor_name) {
@@ -36,7 +37,7 @@ impl<'a> CodeGen<'a> {
                         if let Ok(val) = self.lower_expr(&a.expr, function, param_map, locals) {
                             lowered_args.push(val.into());
                         } else {
-                            return Err(Diagnostic::simple("expression lowering failed"))?;
+                            return Err(Diagnostic::simple_boxed("expression lowering failed"))?;
                         }
                     }
                 }
@@ -63,16 +64,16 @@ impl<'a> CodeGen<'a> {
                 let either = cs.try_as_basic_value();
                 match either {
                     inkwell::Either::Left(bv) => Ok(bv),
-                    _ => Err(Diagnostic::simple("operation not supported")),
+                    _ => Err(Diagnostic::simple_boxed("operation not supported")),
                 }
             } else {
-                Err(Diagnostic::simple_with_span(
+                Err(Diagnostic::simple_with_span_boxed(
                     "unknown constructor or missing `<Name>_ctor` function",
                     new_expr.span.lo.0 as usize,
                 ))
             }
         } else {
-            Err(Diagnostic::simple_with_span(
+            Err(Diagnostic::simple_with_span_boxed(
                 "unsupported `new` callee: only identifier constructors are supported",
                 new_expr.span.lo.0 as usize,
             ))

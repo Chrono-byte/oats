@@ -84,7 +84,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals: &mut LocalsStackLocal<'a>,
-    ) -> Result<BasicValueEnum<'a>, Diagnostic> {
+    ) -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
         use deno_ast::swc::ast;
 
         match expr {
@@ -132,7 +132,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             ast::Expr::Update(update) => {
                 self.lower_update_expr(update, function, param_map, locals)
             }
-            _ => Err(Diagnostic::simple("operation not supported")),
+            _ => Err(Diagnostic::simple_boxed("operation not supported")),
         }
     }
 

@@ -23,13 +23,14 @@ type LocalEntry<'a> = (
 type LocalsStackLocal<'a> = Vec<HashMap<String, LocalEntry<'a>>>;
 
 impl<'a> crate::codegen::CodeGen<'a> {
+    #[allow(clippy::result_large_err)]
     pub(super) fn lower_assign_expr(
         &self,
         assign: &deno_ast::swc::ast::AssignExpr,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals: &mut LocalsStackLocal<'a>,
-    ) -> Result<BasicValueEnum<'a>, Diagnostic> {
+    ) -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
         use deno_ast::swc::ast::{AssignTarget, SimpleAssignTarget};
 
         // support simple assignments `ident = expr` where the left side is an identifier
@@ -51,7 +52,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             "This variable was not declared mutable (use `let mut` to make it mutable).",
                         ),
                     );
-                    return Err(Diagnostic::simple("expression lowering failed"))?;
+                    return Err(Diagnostic::simple_boxed("expression lowering failed"))?;
                 }
                 if let Ok(mut val) = self.lower_expr(&assign.right, function, param_map, locals) {
                     // If the target variable is a union type, box the value
@@ -68,7 +69,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 if let inkwell::Either::Left(bv) = boxed_call.try_as_basic_value() {
                                     bv
                                 } else {
-                                    return Err(Diagnostic::simple("union box failed"));
+                                    return Err(Diagnostic::simple_boxed("union box failed"));
                                 }
                             }
                             BasicValueEnum::PointerValue(pv) => {
@@ -82,7 +83,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 if let inkwell::Either::Left(bv) = boxed_call.try_as_basic_value() {
                                     bv
                                 } else {
-                                    return Err(Diagnostic::simple("union box failed"));
+                                    return Err(Diagnostic::simple_boxed("union box failed"));
                                 }
                             }
                             _ => val, // Keep other types as-is
@@ -104,7 +105,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 {
                                     Ok(cs) => cs,
                                     Err(_) => {
-                                        return Err(Diagnostic::simple("operation failed"));
+                                        return Err(Diagnostic::simple_boxed("operation failed"));
                                     }
                                 };
                         }
@@ -113,7 +114,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         let old = match self.builder.build_load(self.i8ptr_t, ptr, "old_val") {
                             Ok(v) => v,
                             Err(_) => {
-                                return Err(Diagnostic::simple("operation failed"));
+                                return Err(Diagnostic::simple_boxed("operation failed"));
                             }
                         };
 
@@ -131,7 +132,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             ) {
                                 Ok(cs) => cs,
                                 Err(_) => {
-                                    return Err(Diagnostic::simple("operation failed"));
+                                    return Err(Diagnostic::simple_boxed("operation failed"));
                                 }
                             };
                         }
@@ -249,7 +250,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             c
                         } else {
                             let fname = function.get_name().to_str().unwrap_or("<unknown>");
-                            return Err(Diagnostic::simple(format!(
+                            return Err(Diagnostic::simple_boxed(format!(
                                 "unsupported member assignment: could not infer class for field '{}' in function '{}'",
                                 field_name, fname
                             )));
@@ -313,7 +314,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                 .build_store(f64_ptr, fv.as_basic_value_enum());
                                             return Ok(fv.as_basic_value_enum());
                                         } else {
-                                            return Err(Diagnostic::simple(
+                                            return Err(Diagnostic::simple_boxed(
                                                 "expected numeric value for number field",
                                             ));
                                         }
@@ -332,7 +333,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         ) {
                                             Ok(p) => p,
                                             Err(_) => {
-                                                return Err(Diagnostic::simple("operation failed"));
+                                                return Err(Diagnostic::simple_boxed("operation failed"));
                                             }
                                         };
 
@@ -348,7 +349,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             ) {
                                                 Ok(cs) => cs,
                                                 Err(_) => {
-                                                    return Err(Diagnostic::simple(
+                                                    return Err(Diagnostic::simple_boxed(
                                                         "operation failed",
                                                     ));
                                                 }
@@ -356,7 +357,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             match cs.try_as_basic_value() {
                                                 inkwell::Either::Left(bv) => bv,
                                                 _ => {
-                                                    return Err(Diagnostic::simple(
+                                                    return Err(Diagnostic::simple_boxed(
                                                         "operation failed",
                                                     ));
                                                 }
@@ -370,7 +371,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             ) {
                                                 Ok(cs) => cs,
                                                 Err(_) => {
-                                                    return Err(Diagnostic::simple(
+                                                    return Err(Diagnostic::simple_boxed(
                                                         "operation failed",
                                                     ));
                                                 }
@@ -378,13 +379,13 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             match cs.try_as_basic_value() {
                                                 inkwell::Either::Left(bv) => bv,
                                                 _ => {
-                                                    return Err(Diagnostic::simple(
+                                                    return Err(Diagnostic::simple_boxed(
                                                         "operation failed",
                                                     ));
                                                 }
                                             }
                                         } else {
-                                            return Err(Diagnostic::simple(
+                                            return Err(Diagnostic::simple_boxed(
                                                 "unsupported union payload type",
                                             ));
                                         };
@@ -397,7 +398,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         ) {
                                             Ok(v) => v,
                                             Err(_) => {
-                                                return Err(Diagnostic::simple("operation failed"));
+                                                return Err(Diagnostic::simple_boxed("operation failed"));
                                             }
                                         };
 
@@ -414,7 +415,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             ) {
                                                 Ok(cs) => cs,
                                                 Err(_) => {
-                                                    return Err(Diagnostic::simple(
+                                                    return Err(Diagnostic::simple_boxed(
                                                         "operation failed",
                                                     ));
                                                 }
@@ -431,7 +432,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             ) {
                                                 Ok(cs) => cs,
                                                 Err(_) => {
-                                                    return Err(Diagnostic::simple(
+                                                    return Err(Diagnostic::simple_boxed(
                                                         "operation failed",
                                                     ));
                                                 }
@@ -457,7 +458,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         ) {
                                             Ok(p) => p,
                                             Err(_) => {
-                                                return Err(Diagnostic::simple("operation failed"));
+                                                return Err(Diagnostic::simple_boxed("operation failed"));
                                             }
                                         };
 
@@ -469,7 +470,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         ) {
                                             Ok(v) => v,
                                             Err(_) => {
-                                                return Err(Diagnostic::simple("operation failed"));
+                                                return Err(Diagnostic::simple_boxed("operation failed"));
                                             }
                                         };
 
@@ -483,7 +484,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             ) {
                                                 Ok(cs) => cs,
                                                 Err(_) => {
-                                                    return Err(Diagnostic::simple(
+                                                    return Err(Diagnostic::simple_boxed(
                                                         "operation failed",
                                                     ));
                                                 }
@@ -503,21 +504,21 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             ) {
                                                 Ok(cs) => cs,
                                                 Err(_) => {
-                                                    return Err(Diagnostic::simple(
+                                                    return Err(Diagnostic::simple_boxed(
                                                         "operation failed",
                                                     ));
                                                 }
                                             };
                                             return Ok(new_val);
                                         } else {
-                                            return Err(Diagnostic::simple(
+                                            return Err(Diagnostic::simple_boxed(
                                                 "expected pointer value for reference field",
                                             ));
                                         }
                                     }
                                     _ => {
                                         // Unsupported field type
-                                        return Err(Diagnostic::simple(
+                                        return Err(Diagnostic::simple_boxed(
                                             "expression lowering failed",
                                         ))?;
                                     }
@@ -527,13 +528,13 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     }
                 } else {
                     // member.obj did not lower to a pointer value — emit a generic diagnostic
-                    return Err(Diagnostic::simple(
+                    return Err(Diagnostic::simple_boxed(
                         "unsupported member assignment: member object did not lower to a pointer",
                     ));
                 }
             } else {
                 // member.obj did not lower to a pointer value — emit a generic diagnostic
-                return Err(Diagnostic::simple(
+                return Err(Diagnostic::simple_boxed(
                     "unsupported member assignment: member object did not lower to a pointer",
                 ));
             }
@@ -574,7 +575,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     {
                         Ok(v) => v,
                         Err(_) => {
-                            return Err(Diagnostic::simple("failed to convert index to i64"));
+                            return Err(Diagnostic::simple_boxed("failed to convert index to i64"));
                         }
                     }
                 } else if let BasicValueEnum::IntValue(iv) = idx_val {
@@ -583,14 +584,14 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         match self.builder.build_int_s_extend(iv, self.i64_t, "idx_i64") {
                             Ok(v) => v,
                             Err(_) => {
-                                return Err(Diagnostic::simple("failed to extend index to i64"));
+                                return Err(Diagnostic::simple_boxed("failed to extend index to i64"));
                             }
                         }
                     } else {
                         iv
                     }
                 } else {
-                    return Err(Diagnostic::simple("array index must be a number"));
+                    return Err(Diagnostic::simple_boxed("array index must be a number"));
                 };
 
                 // Lower the value to assign
@@ -607,7 +608,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     ) {
                         Ok(cs) => cs,
                         Err(_) => {
-                            return Err(Diagnostic::simple("failed to call array_set_ptr"));
+                            return Err(Diagnostic::simple_boxed("failed to call array_set_ptr"));
                         }
                     };
                 } else if let BasicValueEnum::FloatValue(fv) = val {
@@ -620,18 +621,18 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     ) {
                         Ok(cs) => cs,
                         Err(_) => {
-                            return Err(Diagnostic::simple("failed to call array_set_f64"));
+                            return Err(Diagnostic::simple_boxed("failed to call array_set_f64"));
                         }
                     };
                 } else {
-                    return Err(Diagnostic::simple("unsupported array element value type"));
+                    return Err(Diagnostic::simple_boxed("unsupported array element value type"));
                 }
 
                 return Ok(val);
             }
         }
 
-        Err(Diagnostic::simple_with_span(
+        Err(Diagnostic::simple_with_span_boxed(
             "unsupported assignment target or pattern",
             assign.span.lo.0 as usize,
         ))

@@ -14,10 +14,11 @@ use inkwell::values::BasicValueEnum;
 use crate::codegen::utils;
 
 /// Lower a literal expression (number, boolean, string, null)
+#[allow(clippy::result_large_err)]
 pub fn lower_lit<'a>(
     codegen: &crate::codegen::CodeGen<'a>,
     lit: &deno_ast::swc::ast::Lit,
-) -> Result<BasicValueEnum<'a>, Diagnostic> {
+) -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
     use deno_ast::swc::ast::Lit;
     match lit {
         Lit::Num(n) => {
@@ -89,23 +90,24 @@ pub fn lower_lit<'a>(
                 codegen.string_literals.borrow_mut().insert(key, ptr);
                 return Ok(ptr.as_basic_value_enum());
             }
-            Err(Diagnostic::simple_with_span(
+            Err(Diagnostic::simple_with_span_boxed(
                 "failed to lower string literal",
                 s.span.lo.0 as usize,
             ))
         }
-        _ => Err(Diagnostic::simple("operation not supported")),
+        _ => Err(Diagnostic::simple_boxed("operation not supported")),
     }
 }
 
 /// Lower an array literal expression
+#[allow(clippy::result_large_err)]
 pub fn lower_array<'a>(
     codegen: &crate::codegen::CodeGen<'a>,
     arr: &deno_ast::swc::ast::ArrayLit,
     function: inkwell::values::FunctionValue<'a>,
     param_map: &std::collections::HashMap<String, u32>,
     locals: &mut crate::codegen::LocalsStackLocal<'a>,
-) -> Result<BasicValueEnum<'a>, Diagnostic> {
+) -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
     // Lower array literal: determine element kinds by lowering each elt
     let mut lowered_elems: Vec<BasicValueEnum> = Vec::new();
     for opt in &arr.elems {
@@ -115,17 +117,17 @@ pub fn lower_array<'a>(
                 lowered_elems.push(ev);
             } else {
                 // unsupported element lowering
-                Err(Diagnostic::simple_with_span(
+                return Err(Diagnostic::simple_with_span_boxed(
                     "expression lowering failed",
                     arr.span.lo.0 as usize,
-                ))?;
+                ));
             }
         } else {
             // elided element like [ , ] -> treat as undefined -> unsupported
-            Err(Diagnostic::simple_with_span(
+            return Err(Diagnostic::simple_with_span_boxed(
                 "expression lowering failed",
                 arr.span.lo.0 as usize,
-            ))?;
+            ));
         }
     }
 
@@ -162,12 +164,12 @@ pub fn lower_array<'a>(
         "array_alloc_call",
     ) {
         Ok(cs) => cs,
-        Err(_) => return Err(Diagnostic::simple("operation failed")),
+        Err(_) => return Err(Diagnostic::simple_boxed("operation failed")),
     };
     let either = call_site.try_as_basic_value();
     let arr_ptr = match either {
         inkwell::Either::Left(bv) => bv.into_pointer_value(),
-        _ => return Err(Diagnostic::simple("operation failed")),
+        _ => return Err(Diagnostic::simple_boxed("operation failed")),
     };
 
     // compute data pointer: arr_ptr points at header start; data starts after header+len
@@ -186,7 +188,7 @@ pub fn lower_array<'a>(
     let data_ptr_i8 = if let Ok(p) = data_ptr_i8_res {
         p
     } else {
-        return Err(Diagnostic::simple_with_span(
+        return Err(Diagnostic::simple_with_span_boxed(
             "expression lowering failed",
             arr.span.lo.0 as usize,
         ));
@@ -199,7 +201,7 @@ pub fn lower_array<'a>(
     // pointer and return it.
     let arr_ptr_tmp = match codegen.builder.build_alloca(codegen.i8ptr_t, "arr_ptr_tmp") {
         Ok(a) => a,
-        Err(_) => return Err(Diagnostic::simple("alloca failed")),
+        Err(_) => return Err(Diagnostic::simple_boxed("alloca failed")),
     };
     let _ = codegen.builder.build_store(arr_ptr_tmp, arr_ptr);
     let array_set_ptr_fn = codegen.get_array_set_ptr();
@@ -221,10 +223,10 @@ pub fn lower_array<'a>(
                 let elem_i8 = if let Ok(p) = elem_i8_res {
                     p
                 } else {
-                    return Err(Diagnostic::simple_with_span(
+                    return Err(Diagnostic::simple_with_span_boxed(
                         "expression lowering failed",
                         arr.span.lo.0 as usize,
-                    ))?;
+                    ));
                 };
                 // bitcast to f64* (unwrap Result returned by pointer cast)
                 let elem_ptr = match codegen.builder.build_pointer_cast(
@@ -233,11 +235,11 @@ pub fn lower_array<'a>(
                     "elem_f64_ptr",
                 ) {
                     Ok(p) => p,
-                    Err(_) => return Err(Diagnostic::simple("operation failed")),
+                    Err(_) => return Err(Diagnostic::simple_boxed("operation failed")),
                 };
                 let _ = codegen.builder.build_store(elem_ptr, fv);
             } else {
-                Err(Diagnostic::simple("expression lowering failed"))?;
+                Err(Diagnostic::simple_boxed("expression lowering failed"))?;
             }
         }
         Ok(arr_ptr.as_basic_value_enum())
@@ -252,7 +254,7 @@ pub fn lower_array<'a>(
                 .map_err(|_| Diagnostic::simple("failed to load arr ptr"))?;
             let cur_arr = match cur_arr_bv {
                 BasicValueEnum::PointerValue(p) => p,
-                _ => return Err(Diagnostic::simple("failed to load arr ptr")),
+                _ => return Err(Diagnostic::simple_boxed("failed to load arr ptr")),
             };
 
             // Compute data start from current array pointer
@@ -268,10 +270,10 @@ pub fn lower_array<'a>(
             let data_ptr_i8 = if let Ok(p) = data_i8_res {
                 p
             } else {
-                return Err(Diagnostic::simple_with_span(
+                return Err(Diagnostic::simple_with_span_boxed(
                     "expression lowering failed",
                     arr.span.lo.0 as usize,
-                ))?;
+                ));
             };
 
             let byte_off = (i as u64) * ptr_size;
@@ -287,10 +289,10 @@ pub fn lower_array<'a>(
             let elem_i8 = if let Ok(p) = elem_i8_res {
                 p
             } else {
-                return Err(Diagnostic::simple_with_span(
+                return Err(Diagnostic::simple_with_span_boxed(
                     "expression lowering failed",
                     arr.span.lo.0 as usize,
-                ))?;
+                ));
             };
             // bitcast to i8** (pointer-to-pointer)
             let elem_ptr = match codegen.builder.build_pointer_cast(
@@ -299,7 +301,7 @@ pub fn lower_array<'a>(
                 "elem_ptrptr",
             ) {
                 Ok(p) => p,
-                Err(_) => return Err(Diagnostic::simple("operation failed")),
+                Err(_) => return Err(Diagnostic::simple_boxed("operation failed")),
             };
             match v {
                 BasicValueEnum::PointerValue(pv) => {
@@ -312,7 +314,7 @@ pub fn lower_array<'a>(
                         "array_set_ptr_call",
                     ) {
                         Ok(_cs) => (),
-                        Err(_) => return Err(Diagnostic::simple("operation failed")),
+                        Err(_) => return Err(Diagnostic::simple_boxed("operation failed")),
                     };
                 }
                 BasicValueEnum::IntValue(iv) => {
@@ -328,11 +330,11 @@ pub fn lower_array<'a>(
                             .build_call(box_fn, &[fv.into()], "union_box_f64_call")
                         {
                             Ok(cs) => cs,
-                            Err(_) => return Err(Diagnostic::simple("operation failed")),
+                            Err(_) => return Err(Diagnostic::simple_boxed("operation failed")),
                         };
                     let boxed_ptr = match cs.try_as_basic_value() {
                         inkwell::Either::Left(bv) => bv.into_pointer_value(),
-                        _ => return Err(Diagnostic::simple("operation failed")),
+                        _ => return Err(Diagnostic::simple_boxed("operation failed")),
                     };
                     let idx_const = codegen.i64_t.const_int(i as u64, false);
                     match codegen.builder.build_call(
@@ -341,7 +343,7 @@ pub fn lower_array<'a>(
                         "array_set_ptr_call",
                     ) {
                         Ok(_cs) => (),
-                        Err(_) => return Err(Diagnostic::simple("operation failed")),
+                        Err(_) => return Err(Diagnostic::simple_boxed("operation failed")),
                     };
                     // The runtime increments the stored pointer. We must
                     // release our temporary ownership returned by
@@ -349,7 +351,7 @@ pub fn lower_array<'a>(
                     utils::rc::rc_dec_value(codegen, boxed_ptr, "rc_dec_boxed_tmp");
                 }
                 _ => {
-                    return Err(Diagnostic::simple_with_span(
+                    return Err(Diagnostic::simple_with_span_boxed(
                         "operation failed",
                         arr.span.lo.0 as usize,
                     ));
@@ -361,13 +363,14 @@ pub fn lower_array<'a>(
 }
 
 /// Lower an object literal expression
+#[allow(clippy::result_large_err)]
 pub fn lower_object<'a>(
     codegen: &crate::codegen::CodeGen<'a>,
     obj_lit: &deno_ast::swc::ast::ObjectLit,
     function: inkwell::values::FunctionValue<'a>,
     param_map: &std::collections::HashMap<String, u32>,
     locals: &mut crate::codegen::LocalsStackLocal<'a>,
-) -> Result<BasicValueEnum<'a>, Diagnostic> {
+) -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
     // Lower an object literal to a simple heap-allocated struct.
     // We'll allocate header + N fields (8 bytes each) and store
     // each property value in order. Property names are not
@@ -386,7 +389,7 @@ pub fn lower_object<'a>(
                         let val = codegen.lower_expr(&kv.value, function, param_map, locals)?;
                         field_values.push(val);
                     } else {
-                        return Err(Diagnostic::simple("unsupported object literal key"));
+                        return Err(Diagnostic::simple_boxed("unsupported object literal key"));
                     }
                 }
                 deno_ast::swc::ast::Prop::Assign(assign) => {
@@ -398,7 +401,7 @@ pub fn lower_object<'a>(
                             let bv = pv.as_basic_value_enum();
                             field_values.push(bv);
                         } else {
-                            return Err(Diagnostic::simple("failed to find shorthand param"));
+                            return Err(Diagnostic::simple_boxed("failed to find shorthand param"));
                         }
                     } else if let Some((ptr, ty, _init, _is_const, _extra, _nominal, _oats_type)) =
                         codegen.find_local(locals, &name)
@@ -411,14 +414,14 @@ pub fn lower_object<'a>(
                         ) {
                             Ok(v) => v,
                             Err(_) => {
-                                return Err(Diagnostic::simple(
+                                return Err(Diagnostic::simple_boxed(
                                     "failed to load shorthand local value",
                                 ));
                             }
                         };
                         field_values.push(loaded);
                     } else {
-                        return Err(Diagnostic::simple(
+                        return Err(Diagnostic::simple_boxed(
                             "shorthand property not found in params or locals",
                         ));
                     }
@@ -432,7 +435,7 @@ pub fn lower_object<'a>(
                             let bv = pv.as_basic_value_enum();
                             field_values.push(bv);
                         } else {
-                            return Err(Diagnostic::simple("failed to find shorthand param"));
+                            return Err(Diagnostic::simple_boxed("failed to find shorthand param"));
                         }
                     } else if let Some((ptr, ty, _init, _is_const, _extra, _nominal, _oats_type)) =
                         codegen.find_local(locals, &name)
@@ -445,24 +448,24 @@ pub fn lower_object<'a>(
                         ) {
                             Ok(v) => v,
                             Err(_) => {
-                                return Err(Diagnostic::simple(
+                                return Err(Diagnostic::simple_boxed(
                                     "failed to load shorthand local value",
                                 ));
                             }
                         };
                         field_values.push(loaded);
                     } else {
-                        return Err(Diagnostic::simple(
+                        return Err(Diagnostic::simple_boxed(
                             "shorthand property not found in params or locals",
                         ));
                     }
                 }
                 _ => {
-                    return Err(Diagnostic::simple("unsupported object literal property"));
+                    return Err(Diagnostic::simple_boxed("unsupported object literal property"));
                 }
             },
             deno_ast::swc::ast::PropOrSpread::Spread(_) => {
-                return Err(Diagnostic::simple(
+                return Err(Diagnostic::simple_boxed(
                     "spread properties not supported in object literal",
                 ));
             }
@@ -556,13 +559,14 @@ pub fn lower_object<'a>(
 }
 
 /// Lower a template literal expression
+#[allow(clippy::result_large_err)]
 pub fn lower_template<'a>(
     codegen: &crate::codegen::CodeGen<'a>,
     tpl: &deno_ast::swc::ast::Tpl,
     function: inkwell::values::FunctionValue<'a>,
     param_map: &std::collections::HashMap<String, u32>,
     locals: &mut crate::codegen::LocalsStackLocal<'a>,
-) -> Result<BasicValueEnum<'a>, Diagnostic> {
+) -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
     // Template literal: `hello ${name}!`
     // Structure: quasis (string parts) and exprs (interpolated expressions)
     // Build result by concatenating: quasis[0] + str(exprs[0]) + quasis[1] + str(exprs[1]) + ...
@@ -577,7 +581,7 @@ pub fn lower_template<'a>(
     // Helper to create a string literal (with header, same as Lit::Str)
     let create_string_literal = |codegen: &crate::codegen::CodeGen<'a>,
                                  s: &str|
-     -> Result<inkwell::values::PointerValue<'a>, Diagnostic> {
+     -> crate::diagnostics::DiagnosticResult<inkwell::values::PointerValue<'a>> {
         let bytes = s.as_bytes();
         let key = s.to_string();
 
@@ -626,7 +630,7 @@ pub fn lower_template<'a>(
             codegen.string_literals.borrow_mut().insert(key, ptr);
             Ok(ptr)
         } else {
-            Err(Diagnostic::simple("failed to create string literal"))
+            Err(Diagnostic::simple_boxed("failed to create string literal"))
         }
     };
 
@@ -736,7 +740,7 @@ pub fn lower_template<'a>(
                     })?
                     .into_pointer_value()
             } else {
-                return Err(Diagnostic::simple_with_span(
+                return Err(Diagnostic::simple_with_span_boxed(
                     "unsupported value type in template literal",
                     tpl.span.lo.0 as usize,
                 ));

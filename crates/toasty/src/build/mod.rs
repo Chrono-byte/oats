@@ -187,37 +187,30 @@ fn compile_package(
         let mut needs_rebuild = false;
 
         // Check entry point
-        if let Ok(src_metadata) = std::fs::metadata(&pkg_node.entry_point()) {
-            if let Ok(src_mtime) = src_metadata.modified() {
-                if src_mtime > obj_mtime {
+        if let Ok(src_metadata) = std::fs::metadata(pkg_node.entry_point())
+            && let Ok(src_mtime) = src_metadata.modified()
+                && src_mtime > obj_mtime {
                     needs_rebuild = true;
                 }
-            }
-        }
 
         // Check manifest if it exists
         let manifest_path = pkg_root.join("Oats.toml");
-        if let Ok(manifest_metadata) = std::fs::metadata(&manifest_path) {
-            if let Ok(manifest_mtime) = manifest_metadata.modified() {
-                if manifest_mtime > obj_mtime {
+        if let Ok(manifest_metadata) = std::fs::metadata(&manifest_path)
+            && let Ok(manifest_mtime) = manifest_metadata.modified()
+                && manifest_mtime > obj_mtime {
                     needs_rebuild = true;
                 }
-            }
-        }
 
         // Check dependency metadata files
         for edge in graph.edges(pkg_idx) {
             let dep_idx = edge.target();
             let dep_node = &graph[dep_idx];
-            if let Some(dep_result) = built_deps.get(&dep_node.name) {
-                if let Ok(dep_metadata) = std::fs::metadata(&dep_result.meta_file) {
-                    if let Ok(dep_mtime) = dep_metadata.modified() {
-                        if dep_mtime > obj_mtime {
+            if let Some(dep_result) = built_deps.get(&dep_node.name)
+                && let Ok(dep_metadata) = std::fs::metadata(&dep_result.meta_file)
+                    && let Ok(dep_mtime) = dep_metadata.modified()
+                        && dep_mtime > obj_mtime {
                             needs_rebuild = true;
                         }
-                    }
-                }
-            }
         }
 
         if !needs_rebuild {
@@ -234,13 +227,11 @@ fn compile_package(
 
             // Check if metadata needs updating
             let mut meta_needs_update = true;
-            if let Ok(meta_metadata) = std::fs::metadata(&meta_file) {
-                if let Ok(meta_mtime) = meta_metadata.modified() {
-                    if meta_mtime >= obj_mtime {
+            if let Ok(meta_metadata) = std::fs::metadata(&meta_file)
+                && let Ok(meta_mtime) = meta_metadata.modified()
+                    && meta_mtime >= obj_mtime {
                         meta_needs_update = false;
                     }
-                }
-            }
 
             if meta_needs_update {
                 // Ensure output directory exists
@@ -270,7 +261,7 @@ fn compile_package(
             return Ok(PackageBuildResult {
                 name: pkg_name.clone(),
                 object_file: obj_path,
-                meta_file: meta_file,
+                meta_file,
             });
         }
     }
@@ -321,7 +312,7 @@ fn compile_package(
 
     Ok(PackageBuildResult {
         name: pkg_name.clone(),
-        object_file: PathBuf::from(object_path),
+        object_file: object_path,
         meta_file,
     })
 }

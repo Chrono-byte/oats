@@ -248,10 +248,8 @@ impl AstDepthChecker {
                 }
             }
             ast::Expr::Array(array) => {
-                for elem in &array.elems {
-                    if let Some(elem_expr) = elem {
-                        self.check_expr(&elem_expr.expr, depth)?;
-                    }
+                for elem_expr in array.elems.iter().flatten() {
+                    self.check_expr(&elem_expr.expr, depth)?;
                 }
             }
             ast::Expr::Object(_obj) => {
@@ -484,7 +482,7 @@ pub fn parse_oats_module_with_options(
     // SECURITY: Check AST nesting depth to prevent stack overflow attacks
     let max_depth = MAX_AST_DEPTH.load(Ordering::Relaxed);
     let depth_checker = AstDepthChecker { max_depth };
-    if let Err(_) = depth_checker.check_program(&parsed) {
+    if depth_checker.check_program(&parsed).is_err() {
         anyhow::bail!(
             "AST nesting depth exceeds limit: {} levels. \
              Set OATS_MAX_AST_DEPTH to increase.",

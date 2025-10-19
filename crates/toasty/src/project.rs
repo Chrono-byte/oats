@@ -106,7 +106,7 @@ fn default_debug() -> bool {
 /// Basic semver validation (major.minor.patch with optional pre-release and build)
 fn is_valid_semver(version: &str) -> bool {
     // Split into core version and optional pre-release/build
-    let mut parts = version.splitn(2, |c| c == '-' || c == '+');
+    let mut parts = version.splitn(2, ['-', '+']);
     let core = parts.next().unwrap();
     let suffix = parts.next();
 
@@ -125,15 +125,14 @@ fn is_valid_semver(version: &str) -> bool {
     }
 
     // Suffix must be alphanumeric with dots, dashes, plus
-    if let Some(suf) = suffix {
-        if suf.is_empty()
+    if let Some(suf) = suffix
+        && (suf.is_empty()
             || !suf
                 .chars()
-                .all(|c| c.is_alphanumeric() || c == '.' || c == '-' || c == '+')
+                .all(|c| c.is_alphanumeric() || c == '.' || c == '-' || c == '+'))
         {
             return false;
         }
-    }
 
     true
 }
@@ -233,14 +232,13 @@ impl Manifest {
                             name
                         )));
                     }
-                    if let Some(version) = &spec.version {
-                        if !is_valid_semver(version) {
+                    if let Some(version) = &spec.version
+                        && !is_valid_semver(version) {
                             return Err(Diagnostic::new(format!(
                                 "Dependency '{}' version '{}' is not a valid semantic version",
                                 name, version
                             )));
                         }
-                    }
                 }
                 Dependency::Version(version) => {
                     if !is_valid_semver(version) {

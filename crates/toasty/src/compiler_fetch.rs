@@ -287,7 +287,10 @@ pub fn uninstall_compiler_version(version: &str) -> Result<()> {
         let current = fs::read_to_string(&config_path)?;
         if current.trim() == version {
             fs::remove_file(&config_path)?;
-            eprintln!("Cleared current version selection since {} was uninstalled.", version);
+            eprintln!(
+                "Cleared current version selection since {} was uninstalled.",
+                version
+            );
         }
     }
 

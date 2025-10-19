@@ -13,7 +13,7 @@ fn build_emits_object() -> Result<(), Box<dyn std::error::Error>> {
     let example = example.canonicalize()?;
     // Build runtime and oatsc first
     let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
-    
+
     let mut runc = Command::new("cargo");
     runc.current_dir(&workspace_root);
     runc.arg("build").arg("-p").arg("runtime").arg("--release");
@@ -21,7 +21,11 @@ fn build_emits_object() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut oatsc_build = Command::new("cargo");
     oatsc_build.current_dir(&workspace_root);
-    oatsc_build.arg("build").arg("-p").arg("oatsc").arg("--release");
+    oatsc_build
+        .arg("build")
+        .arg("-p")
+        .arg("oatsc")
+        .arg("--release");
     oatsc_build.status()?;
 
     // Run from workspace root so builder's relative paths align

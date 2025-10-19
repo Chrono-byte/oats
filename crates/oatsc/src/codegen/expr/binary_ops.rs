@@ -4,14 +4,12 @@ use inkwell::values::FunctionValue;
 use std::collections::HashMap;
 
 use deno_ast::swc::ast::BinaryOp;
-
-use crate::types::OatsType;
-use inkwell::AddressSpace;
 use inkwell::builder::Builder;
-use inkwell::types::BasicType;
 use inkwell::types::BasicTypeEnum;
 use inkwell::values::{BasicValue, PointerValue};
 use inkwell::FloatPredicate;
+use inkwell::IntPredicate;
+use deno_ast::swc::ast;
 
 // LocalEntry now includes an Option<String> for an optional nominal type name
 // LocalEntry now includes an Option<OatsType> for union tracking
@@ -34,9 +32,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
         param_map: &HashMap<String, u32>,
         locals: &mut LocalsStackLocal<'a>,
     ) -> Result<BasicValueEnum<'a>, Diagnostic> {
-        use deno_ast::swc::ast;
-
-        let bin = bin; // to match the variable name
+        use deno_ast::swc::ast::BinaryOp;
+        use inkwell::FloatPredicate;
 
         // Special-case: typeof <expr> === "string"/"number" patterns
         //
@@ -93,7 +90,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
         // Handle string concatenation BEFORE numeric coercion
         // If both operands are pointers and op is Add, treat as string concat
-        if let deno_ast::swc::ast::BinaryOp::Add = bin.op
+        if let BinaryOp::Add = bin.op
             && let (BasicValueEnum::PointerValue(lp), BasicValueEnum::PointerValue(rp)) =
                 (l, r)
         {
@@ -156,34 +153,34 @@ impl<'a> crate::codegen::CodeGen<'a> {
         let float_bin = |builder: &Builder<'a>,
                          lf: inkwell::values::FloatValue<'a>,
                          rf: inkwell::values::FloatValue<'a>,
-                         op: &deno_ast::swc::ast::BinaryOp|
-             -> Result<BasicValueEnum<'a>, Diagnostic> {
+                         op: &BinaryOp|
+         -> Result<BasicValueEnum<'a>, Diagnostic> {
             match op {
-                deno_ast::swc::ast::BinaryOp::Add => {
+                BinaryOp::Add => {
                     let v = builder
                         .build_float_add(lf, rf, "sum")
                         .map_err(|_| Diagnostic::simple("float add failed"))?;
                     Ok(v.as_basic_value_enum())
                 }
-                deno_ast::swc::ast::BinaryOp::Sub => {
+                BinaryOp::Sub => {
                     let v = builder
                         .build_float_sub(lf, rf, "sub")
                         .map_err(|_| Diagnostic::simple("float sub failed"))?;
                     Ok(v.as_basic_value_enum())
                 }
-                deno_ast::swc::ast::BinaryOp::Mul => {
+                BinaryOp::Mul => {
                     let v = builder
                         .build_float_mul(lf, rf, "mul")
                         .map_err(|_| Diagnostic::simple("float mul failed"))?;
                     Ok(v.as_basic_value_enum())
                 }
-                deno_ast::swc::ast::BinaryOp::Div => {
+                BinaryOp::Div => {
                     let v = builder
                         .build_float_div(lf, rf, "div")
                         .map_err(|_| Diagnostic::simple("float div failed"))?;
                     Ok(v.as_basic_value_enum())
                 }
-                deno_ast::swc::ast::BinaryOp::Mod => {
+                BinaryOp::Mod => {
                     let v = builder
                         .build_float_rem(lf, rf, "rem")
                         .map_err(|_| Diagnostic::simple("float rem failed"))?;
@@ -197,16 +194,16 @@ impl<'a> crate::codegen::CodeGen<'a> {
         let float_cmp = |builder: &Builder<'a>,
                          lf: inkwell::values::FloatValue<'a>,
                          rf: inkwell::values::FloatValue<'a>,
-                         op: &deno_ast::swc::ast::BinaryOp|
-             -> Result<BasicValueEnum<'a>, Diagnostic> {
+                         op: &BinaryOp|
+         -> Result<BasicValueEnum<'a>, Diagnostic> {
             let pred = match op {
-                deno_ast::swc::ast::BinaryOp::Lt => FloatPredicate::OLT,
-                deno_ast::swc::ast::BinaryOp::LtEq => FloatPredicate::OLE,
-                deno_ast::swc::ast::BinaryOp::Gt => FloatPredicate::OGT,
-                deno_ast::swc::ast::BinaryOp::GtEq => FloatPredicate::OGE,
-                deno_ast::swc::ast::BinaryOp::EqEq => FloatPredicate::OEQ,
-                deno_ast::swc::ast::BinaryOp::EqEqEq => FloatPredicate::OEQ,
-                deno_ast::swc::ast::BinaryOp::NotEq => FloatPredicate::ONE,
+                BinaryOp::Lt => FloatPredicate::OLT,
+                BinaryOp::LtEq => FloatPredicate::OLE,
+                BinaryOp::Gt => FloatPredicate::OGT,
+                BinaryOp::GtEq => FloatPredicate::OGE,
+                BinaryOp::EqEq => FloatPredicate::OEQ,
+                BinaryOp::EqEqEq => FloatPredicate::OEQ,
+                BinaryOp::NotEq => FloatPredicate::ONE,
                 _ => return Err(Diagnostic::simple("unsupported comparison operation")),
             };
             let iv = builder
@@ -338,7 +335,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         match (l, r) {
             (BasicValueEnum::PointerValue(lp), BasicValueEnum::PointerValue(rp)) => {
                 // Keep string concat behavior for Add
-                if let deno_ast::swc::ast::BinaryOp::Add = bin.op {
+                if let BinaryOp::Add = bin.op {
                     if let Some(strcat) = self.module.get_function("str_concat") {
                         let call_site = match self.builder.build_call(
                             strcat,

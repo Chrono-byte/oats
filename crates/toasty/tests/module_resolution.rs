@@ -7,7 +7,7 @@ use std::process::Command;
 fn module_resolution_discovers_dependencies() -> Result<(), Box<dyn std::error::Error>> {
     // Build runtime and oatsc first
     let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
-    
+
     let mut runc = Command::new("cargo");
     runc.current_dir(&workspace_root);
     runc.arg("build").arg("-p").arg("runtime").arg("--release");
@@ -15,7 +15,11 @@ fn module_resolution_discovers_dependencies() -> Result<(), Box<dyn std::error::
 
     let mut oatsc_build = Command::new("cargo");
     oatsc_build.current_dir(&workspace_root);
-    oatsc_build.arg("build").arg("-p").arg("oatsc").arg("--release");
+    oatsc_build
+        .arg("build")
+        .arg("-p")
+        .arg("oatsc")
+        .arg("--release");
     oatsc_build.status()?;
 
     // Test that toasty discovers imported modules
@@ -51,7 +55,7 @@ fn module_resolution_discovers_dependencies() -> Result<(), Box<dyn std::error::
 fn single_file_module_resolution() -> Result<(), Box<dyn std::error::Error>> {
     // Ensure runtime and oatsc are built
     let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
-    
+
     let mut runc = Command::new("cargo");
     runc.current_dir(&workspace_root);
     runc.arg("build").arg("-p").arg("runtime").arg("--release");
@@ -59,7 +63,11 @@ fn single_file_module_resolution() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut oatsc_build = Command::new("cargo");
     oatsc_build.current_dir(&workspace_root);
-    oatsc_build.arg("build").arg("-p").arg("oatsc").arg("--release");
+    oatsc_build
+        .arg("build")
+        .arg("-p")
+        .arg("oatsc")
+        .arg("--release");
     oatsc_build.status()?;
 
     // Test that single files work correctly

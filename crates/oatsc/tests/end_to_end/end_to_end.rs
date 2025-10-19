@@ -40,7 +40,10 @@ fn test_add_example_end_to_end() -> Result<()> {
         bin_path.display()
     );
 
-    let runtime_path = workspace_root.join("target").join("release").join("libruntime.a");
+    let runtime_path = workspace_root
+        .join("target")
+        .join("release")
+        .join("libruntime.a");
     let status = Command::new(&bin_path)
         .args(["build", &example.to_string_lossy()])
         .env("OATS_OUT_DIR", out_dir)

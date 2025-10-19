@@ -53,7 +53,17 @@ pub fn runtime_malloc(size: size_t) -> *mut c_void {
         if size == 0 {
             return std::ptr::null_mut();
         }
-        let total = size.checked_add(std::mem::size_of::<u64>()).unwrap_or(0);
+        let total = match size.checked_add(std::mem::size_of::<u64>()) {
+            Some(total) => total,
+            None => {
+                if RUNTIME_LOG.load(Ordering::Relaxed) {
+                    let _ = io::stderr().write_all(
+                        b"[oats runtime] runtime_malloc: integer overflow in allocation size\n",
+                    );
+                }
+                return std::ptr::null_mut();
+            }
+        };
         if total == 0 {
             return std::ptr::null_mut();
         }

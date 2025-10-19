@@ -12,22 +12,8 @@ use crate::{RUNTIME_LOG, rc_dec, rc_inc};
 #[unsafe(no_mangle)]
 pub extern "C" fn heap_str_alloc(str_len: size_t) -> *mut c_void {
     unsafe {
-        let total_size = match 16usize.checked_add(str_len) {
-            Some(s) => match s.checked_add(1) {
-                Some(total) => total,
-                None => {
-                    if RUNTIME_LOG.load(Ordering::Relaxed) {
-                        let _ = io::stderr().write_all(
-                            format!(
-                                "[oats runtime] heap_str_alloc: integer overflow (str_len={})\n",
-                                str_len
-                            )
-                            .as_bytes(),
-                        );
-                    }
-                    return ptr::null_mut();
-                }
-            },
+        let total_size = match 16usize.checked_add(str_len).and_then(|s| s.checked_add(1)) {
+            Some(total) => total,
             None => {
                 if RUNTIME_LOG.load(Ordering::Relaxed) {
                     let _ = io::stderr().write_all(

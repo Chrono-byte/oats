@@ -9,8 +9,8 @@
 Oats is an experimental ahead-of-time (AOT) compiler that converts a small,
 well-defined subset of TypeScript into native machine code using LLVM. It
 supports multi-file compilation with a package system for dependency management,
-generates standalone executables, and uses deterministic reference counting for
-predictable memory management.
+generates standalone executables, and uses reference counting for memory
+management.
 
 ---
 
@@ -84,7 +84,7 @@ runtime libraries from GitHub releases.
    toasty run add.oats
    ```
 
-The runtime is automatically cached in `~/.cache/oats/runtime/` for faster
+The runtime is automatically cached in `~/.oats/runtime/` for faster
 subsequent builds.
 
 **Environment variables**:
@@ -169,4 +169,5 @@ Contributions are welcome\! Start by exploring the `docs/` directory:
 
 ## 📜 License
 
-Licensed under the **zlib/libpng License with Acknowledgement**. See the [LICENSE](LICENSE) file for details.
+Licensed under the **zlib/libpng License with Acknowledgement**. See the
+[LICENSE](LICENSE) file for details.

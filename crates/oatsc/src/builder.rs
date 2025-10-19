@@ -123,11 +123,23 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
     // This eliminates redundant parsing passes and improves compilation performance.
 
     // Parse source into AST representation (single pass, no transformations)
-    let initial_parsed_mod = parser::parse_oats_module(&source, Some(&src_path))?;
+    let (parsed_mod_opt, parse_diags) = parser::parse_oats_module(&source, Some(&src_path))?;
+
+    // Emit any parsing diagnostics
+    for diag in &parse_diags {
+        diagnostics::emit_diagnostic(diag, Some(&source));
+    }
+
+    // Unpack the parsed module or bail if parsing failed
+    let parsed_mod = match parsed_mod_opt {
+        Some(pm) => pm,
+        None => {
+            anyhow::bail!("Parsing failed: module could not be parsed");
+        }
+    };
 
     // Use original parsed AST for all subsequent processing phases.
     // Arrow function extraction happens during codegen traversal.
-    let parsed_mod = initial_parsed_mod;
     let parsed = &parsed_mod.parsed;
 
     // Read extern_oats from environment if provided
@@ -395,7 +407,11 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
 
     let mut symbols = SymbolTable::new();
     let func_sig = if let Some(ref func) = func_decl {
-        Some(check_function_strictness(func, &mut symbols)?)
+        let (sig_opt, type_diags) = check_function_strictness(func, &mut symbols)?;
+        for diag in &type_diags {
+            diagnostics::emit_diagnostic(diag, Some(&source));
+        }
+        sig_opt
     } else {
         None
     };
@@ -522,8 +538,14 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
                         };
                         // Try to type-check the method function
                         let mut method_symbols = SymbolTable::new();
-                        if let Ok(sig) = check_function_strictness(&m.function, &mut method_symbols)
-                        {
+                        let (sig_opt, type_diags) = check_function_strictness(&m.function, &mut method_symbols)?;
+                        
+                        // Emit type checking diagnostics
+                        for diag in &type_diags {
+                            diagnostics::emit_diagnostic(diag, Some(&parsed_mod.source));
+                        }
+
+                        if let Some(sig) = sig_opt {
                             // Prepend `this` as the first param (nominal struct pointer)
                             let mut params = Vec::new();
                             params.push(crate::types::OatsType::NominalStruct(class_name.clone()));
@@ -533,15 +555,19 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
                             codegen
                                 .gen_function_ir(&fname, &m.function, &params, &ret, Some("this"))
                                 .map_err(|d| {
-                                    diagnostics::emit_diagnostic(&d, Some(source.as_str()));
+                                    diagnostics::emit_diagnostic(&d, Some(&parsed_mod.source));
                                     anyhow::anyhow!(d.message)
                                 })?;
                         } else {
                             // If strict check failed (e.g., missing return annotation), try to emit with Void return
                             let mut method_symbols = SymbolTable::new();
-                            if let Ok(sig2) =
-                                check_function_strictness(&m.function, &mut method_symbols)
-                            {
+                            let (sig2_opt, type_diags2) = check_function_strictness(&m.function, &mut method_symbols)?;
+                            
+                            for diag in &type_diags2 {
+                                diagnostics::emit_diagnostic(diag, Some(&parsed_mod.source));
+                            }
+                            
+                            if let Some(sig2) = sig2_opt {
                                 let mut params = Vec::new();
                                 params.push(crate::types::OatsType::NominalStruct(
                                     class_name.clone(),
@@ -724,8 +750,14 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
                         };
                         // Try to type-check the method function
                         let mut method_symbols = SymbolTable::new();
-                        if let Ok(sig) = check_function_strictness(&m.function, &mut method_symbols)
-                        {
+                        let (sig_opt, type_diags) = check_function_strictness(&m.function, &mut method_symbols)?;
+                        
+                        // Emit type checking diagnostics
+                        for diag in &type_diags {
+                            diagnostics::emit_diagnostic(diag, Some(&parsed_mod.source));
+                        }
+
+                        if let Some(sig) = sig_opt {
                             // Prepend `this` as the first param (nominal struct pointer)
                             let mut params = Vec::new();
                             params.push(crate::types::OatsType::NominalStruct(class_name.clone()));
@@ -735,15 +767,19 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
                             codegen
                                 .gen_function_ir(&fname, &m.function, &params, &ret, Some("this"))
                                 .map_err(|d| {
-                                    crate::diagnostics::emit_diagnostic(&d, Some(source.as_str()));
+                                    crate::diagnostics::emit_diagnostic(&d, Some(&parsed_mod.source));
                                     anyhow::anyhow!(d.message)
                                 })?;
                         } else {
                             // If strict check failed (e.g., missing return annotation), try to emit with Void return
                             let mut method_symbols = SymbolTable::new();
-                            if let Ok(sig2) =
-                                check_function_strictness(&m.function, &mut method_symbols)
-                            {
+                            let (sig2_opt, type_diags2) = check_function_strictness(&m.function, &mut method_symbols)?;
+                            
+                            for diag in &type_diags2 {
+                                diagnostics::emit_diagnostic(diag, Some(&parsed_mod.source));
+                            }
+                            
+                            if let Some(sig2) = sig2_opt {
                                 let mut params = Vec::new();
                                 params.push(crate::types::OatsType::NominalStruct(
                                     class_name.clone(),
@@ -1058,15 +1094,22 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
             let fname = fdecl.ident.sym.to_string();
             let inner_func = (*fdecl.function).clone();
             let mut inner_symbols = SymbolTable::new();
-            let fsig = check_function_strictness(&inner_func, &mut inner_symbols)?;
-            // skip exported `main` (we handle exported main separately)
-            if fname != "main" {
-                codegen
-                    .gen_function_ir(&fname, &inner_func, &fsig.params, &fsig.ret, None)
-                    .map_err(|d| {
-                        crate::diagnostics::emit_diagnostic(&d, Some(source.as_str()));
-                        anyhow::anyhow!("{}", d.message)
-                    })?;
+            let (sig_opt, type_diags) = check_function_strictness(&inner_func, &mut inner_symbols)?;
+            
+            for diag in &type_diags {
+                diagnostics::emit_diagnostic(diag, Some(&parsed_mod.source));
+            }
+            
+            if let Some(fsig) = sig_opt {
+                // skip exported `main` (we handle exported main separately)
+                if fname != "main" {
+                    codegen
+                        .gen_function_ir(&fname, &inner_func, &fsig.params, &fsig.ret, None)
+                        .map_err(|d| {
+                            crate::diagnostics::emit_diagnostic(&d, Some(&parsed_mod.source));
+                            anyhow::anyhow!("{}", d.message)
+                        })?;
+                }
             }
         }
 
@@ -1078,12 +1121,19 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
             let fname = fdecl.ident.sym.to_string();
             let inner_func = (*fdecl.function).clone();
             let mut inner_symbols = SymbolTable::new();
-            let fsig = check_function_strictness(&inner_func, &mut inner_symbols)?;
-            if fname != "main" {
+            let (sig_opt, type_diags) = check_function_strictness(&inner_func, &mut inner_symbols)?;
+            
+            for diag in &type_diags {
+                diagnostics::emit_diagnostic(diag, Some(&parsed_mod.source));
+            }
+            
+            if let Some(fsig) = sig_opt
+                && fname != "main"
+            {
                 codegen
                     .gen_function_ir(&fname, &inner_func, &fsig.params, &fsig.ret, None)
                     .map_err(|d| {
-                        crate::diagnostics::emit_diagnostic(&d, Some(source.as_str()));
+                        crate::diagnostics::emit_diagnostic(&d, Some(&parsed_mod.source));
                         anyhow::anyhow!("{}", d.message)
                     })?;
             }
@@ -1147,13 +1197,20 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
         };
 
         let mut inner_symbols = SymbolTable::new();
-        let fsig = check_function_strictness(&func, &mut inner_symbols)?;
-        codegen
-            .gen_function_ir(fname, &func, &fsig.params, &fsig.ret, None)
-            .map_err(|d| {
-                crate::diagnostics::emit_diagnostic(&d, Some(source.as_str()));
-                anyhow::anyhow!("{}", d.message)
-            })?;
+        let (sig_opt, type_diags) = check_function_strictness(&func, &mut inner_symbols)?;
+        
+        for diag in &type_diags {
+            diagnostics::emit_diagnostic(diag, Some(&parsed_mod.source));
+        }
+        
+        if let Some(fsig) = sig_opt {
+            codegen
+                .gen_function_ir(fname, &func, &fsig.params, &fsig.ret, None)
+                .map_err(|d| {
+                    crate::diagnostics::emit_diagnostic(&d, Some(&parsed_mod.source));
+                    anyhow::anyhow!("{}", d.message)
+                })?;
+        }
     }
 
     // Emit the user's exported `main` under an internal symbol name to avoid

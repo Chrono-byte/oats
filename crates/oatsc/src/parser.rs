@@ -27,9 +27,279 @@ use deno_ast::{MediaType, ParseParams, ParsedSource, SourceTextInfo, parse_modul
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use url::Url;
 
+/// AST depth checker to prevent deeply nested structures that could cause stack overflow
+struct AstDepthChecker {
+    max_depth: usize,
+}
+
+impl AstDepthChecker {
+    fn check_program(&self, program: &deno_ast::ParsedSource) -> Result<()> {
+        let mut depth = 0;
+        for item in program.program_ref().body() {
+            self.check_module_item(&item, &mut depth)?;
+        }
+        Ok(())
+    }
+
+    fn check_module_item(&self, item: &deno_ast::ModuleItemRef, depth: &mut usize) -> Result<()> {
+        match item {
+            deno_ast::ModuleItemRef::Stmt(stmt) => self.check_stmt(stmt, depth),
+            deno_ast::ModuleItemRef::ModuleDecl(decl) => self.check_module_decl(decl, depth),
+        }
+    }
+
+    fn check_module_decl(&self, decl: &ast::ModuleDecl, depth: &mut usize) -> Result<()> {
+        match decl {
+            ast::ModuleDecl::Import(_)
+            | ast::ModuleDecl::ExportAll(_)
+            | ast::ModuleDecl::ExportNamed(_)
+            | ast::ModuleDecl::ExportDefaultDecl(_)
+            | ast::ModuleDecl::ExportDefaultExpr(_) => Ok(()),
+            ast::ModuleDecl::ExportDecl(export) => self.check_decl(&export.decl, depth),
+            ast::ModuleDecl::TsImportEquals(_)
+            | ast::ModuleDecl::TsExportAssignment(_)
+            | ast::ModuleDecl::TsNamespaceExport(_) => Ok(()),
+        }
+    }
+
+    fn check_decl(&self, decl: &ast::Decl, depth: &mut usize) -> Result<()> {
+        match decl {
+            ast::Decl::Class(class) => self.check_class(&class.class, depth),
+            ast::Decl::Fn(func) => self.check_function(&func.function, depth),
+            ast::Decl::Var(_)
+            | ast::Decl::TsInterface(_)
+            | ast::Decl::TsTypeAlias(_)
+            | ast::Decl::TsEnum(_)
+            | ast::Decl::TsModule(_)
+            | ast::Decl::Using(_) => Ok(()),
+        }
+    }
+
+    fn check_stmt(&self, stmt: &ast::Stmt, depth: &mut usize) -> Result<()> {
+        *depth += 1;
+        if *depth > self.max_depth {
+            anyhow::bail!("AST nesting depth exceeded");
+        }
+
+        match stmt {
+            ast::Stmt::Block(block) => {
+                for stmt in &block.stmts {
+                    self.check_stmt(stmt, depth)?;
+                }
+            }
+            ast::Stmt::If(if_stmt) => {
+                self.check_expr(&if_stmt.test, depth)?;
+                self.check_stmt(&if_stmt.cons, depth)?;
+                if let Some(alt) = &if_stmt.alt {
+                    self.check_stmt(alt, depth)?;
+                }
+            }
+            ast::Stmt::For(for_stmt) => {
+                if let Some(init) = &for_stmt.init {
+                    match init {
+                        ast::VarDeclOrExpr::VarDecl(vd) => {
+                            self.check_decl(&ast::Decl::Var(vd.clone()), depth)?
+                        }
+                        ast::VarDeclOrExpr::Expr(e) => self.check_expr(e, depth)?,
+                    }
+                }
+                if let Some(test) = &for_stmt.test {
+                    self.check_expr(test, depth)?;
+                }
+                if let Some(update) = &for_stmt.update {
+                    self.check_expr(update, depth)?;
+                }
+                self.check_stmt(&for_stmt.body, depth)?;
+            }
+            ast::Stmt::ForIn(for_in) => {
+                self.check_expr(&for_in.right, depth)?;
+                self.check_stmt(&for_in.body, depth)?;
+            }
+            ast::Stmt::ForOf(for_of) => {
+                self.check_expr(&for_of.right, depth)?;
+                self.check_stmt(&for_of.body, depth)?;
+            }
+            ast::Stmt::While(while_stmt) => {
+                self.check_expr(&while_stmt.test, depth)?;
+                self.check_stmt(&while_stmt.body, depth)?;
+            }
+            ast::Stmt::DoWhile(do_while) => {
+                self.check_stmt(&do_while.body, depth)?;
+                self.check_expr(&do_while.test, depth)?;
+            }
+            ast::Stmt::Switch(switch) => {
+                self.check_expr(&switch.discriminant, depth)?;
+                for case in &switch.cases {
+                    if let Some(test) = &case.test {
+                        self.check_expr(test, depth)?;
+                    }
+                    for stmt in &case.cons {
+                        self.check_stmt(stmt, depth)?;
+                    }
+                }
+            }
+            ast::Stmt::Try(try_stmt) => {
+                for stmt in &try_stmt.block.stmts {
+                    self.check_stmt(stmt, depth)?;
+                }
+                if let Some(handler) = &try_stmt.handler {
+                    for stmt in &handler.body.stmts {
+                        self.check_stmt(stmt, depth)?;
+                    }
+                }
+                if let Some(finalizer) = &try_stmt.finalizer {
+                    for stmt in &finalizer.stmts {
+                        self.check_stmt(stmt, depth)?;
+                    }
+                }
+            }
+            ast::Stmt::Decl(decl) => {
+                self.check_decl(decl, depth)?;
+            }
+            ast::Stmt::Expr(_) => {
+                // Expression depth not checked to avoid recursion issues
+            }
+            _ => {} // Other statements don't increase depth significantly
+        }
+
+        *depth -= 1;
+        Ok(())
+    }
+
+    fn check_class(&self, class: &ast::Class, depth: &mut usize) -> Result<()> {
+        *depth += 1;
+        if *depth > self.max_depth {
+            anyhow::bail!("AST nesting depth exceeded");
+        }
+
+        for member in &class.body {
+            match member {
+                ast::ClassMember::Method(method) => {
+                    if let Some(body) = &method.function.body {
+                        for stmt in &body.stmts {
+                            self.check_stmt(stmt, depth)?;
+                        }
+                    }
+                }
+                ast::ClassMember::PrivateMethod(method) => {
+                    if let Some(body) = &method.function.body {
+                        for stmt in &body.stmts {
+                            self.check_stmt(stmt, depth)?;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        *depth -= 1;
+        Ok(())
+    }
+
+    fn check_function(&self, func: &ast::Function, depth: &mut usize) -> Result<()> {
+        *depth += 1;
+
+        if *depth > self.max_depth {
+            anyhow::bail!("AST nesting depth exceeded");
+        }
+
+        if let Some(body) = &func.body {
+            for stmt in &body.stmts {
+                self.check_stmt(stmt, depth)?;
+            }
+        }
+
+        *depth -= 1;
+
+        Ok(())
+    }
+
+    fn check_expr(&self, expr: &ast::Expr, depth: &mut usize) -> Result<()> {
+        *depth += 1;
+        if *depth > self.max_depth {
+            anyhow::bail!("AST nesting depth exceeded");
+        }
+
+        match expr {
+            ast::Expr::Lit(_) => {}
+            ast::Expr::Ident(_) => {}
+            ast::Expr::Unary(unary) => self.check_expr(&unary.arg, depth)?,
+            ast::Expr::Bin(bin) => {
+                self.check_expr(&bin.left, depth)?;
+                self.check_expr(&bin.right, depth)?;
+            }
+            ast::Expr::Cond(cond) => {
+                self.check_expr(&cond.test, depth)?;
+                self.check_expr(&cond.cons, depth)?;
+                self.check_expr(&cond.alt, depth)?;
+            }
+            ast::Expr::Call(call) => {
+                if let ast::Callee::Expr(callee_expr) = &call.callee {
+                    self.check_expr(callee_expr, depth)?;
+                }
+                for arg in &call.args {
+                    self.check_expr(&arg.expr, depth)?;
+                }
+            }
+            ast::Expr::Member(member) => {
+                self.check_expr(&member.obj, depth)?;
+                if let ast::MemberProp::Computed(computed) = &member.prop {
+                    self.check_expr(&computed.expr, depth)?;
+                }
+            }
+            ast::Expr::Array(array) => {
+                for elem in &array.elems {
+                    if let Some(elem_expr) = elem {
+                        self.check_expr(&elem_expr.expr, depth)?;
+                    }
+                }
+            }
+            ast::Expr::Object(_obj) => {
+                // Skip deep checking of object properties for now
+            }
+            ast::Expr::Fn(func) => self.check_function(&func.function, depth)?,
+            ast::Expr::Arrow(arrow) => {
+                for _ in &arrow.params {
+                    // Params are patterns, but for depth, perhaps check if they have expr
+                }
+                match &*arrow.body {
+                    ast::BlockStmtOrExpr::BlockStmt(block) => {
+                        for stmt in &block.stmts {
+                            self.check_stmt(stmt, depth)?;
+                        }
+                    }
+                    ast::BlockStmtOrExpr::Expr(e) => self.check_expr(e, depth)?,
+                }
+            }
+            ast::Expr::Tpl(tpl) => {
+                for elem in &tpl.exprs {
+                    self.check_expr(elem, depth)?;
+                }
+            }
+            ast::Expr::Paren(paren) => self.check_expr(&paren.expr, depth)?,
+            ast::Expr::Assign(assign) => {
+                self.check_expr(&assign.right, depth)?;
+            }
+            ast::Expr::Seq(seq) => {
+                for expr in &seq.exprs {
+                    self.check_expr(expr, depth)?;
+                }
+            }
+            _ => {} // Other expressions don't increase depth significantly
+        }
+
+        *depth -= 1;
+        Ok(())
+    }
+}
+
 /// Maximum source file size in bytes (default: 10 MB)
 /// Override with OATS_MAX_SOURCE_BYTES environment variable
 static MAX_SOURCE_SIZE: AtomicUsize = AtomicUsize::new(10 * 1024 * 1024);
+
+/// Maximum AST nesting depth to prevent stack overflow attacks
+/// Override with OATS_MAX_AST_DEPTH environment variable
+static MAX_AST_DEPTH: AtomicUsize = AtomicUsize::new(100);
 
 /// Flag indicating limits have been initialized
 static LIMITS_INITIALIZED: AtomicBool = AtomicBool::new(false);
@@ -45,6 +315,13 @@ fn init_parser_limits() {
         && let Ok(limit) = val.parse::<usize>()
     {
         MAX_SOURCE_SIZE.store(limit, Ordering::Relaxed);
+    }
+
+    // Parse OATS_MAX_AST_DEPTH (default: 100)
+    if let Ok(val) = std::env::var("OATS_MAX_AST_DEPTH")
+        && let Ok(limit) = val.parse::<usize>()
+    {
+        MAX_AST_DEPTH.store(limit, Ordering::Relaxed);
     }
 
     LIMITS_INITIALIZED.store(true, Ordering::Relaxed);
@@ -168,8 +445,8 @@ pub fn parse_oats_module_with_options(
         }
         i += 1;
     }
-    let source_for_parse =
-        String::from_utf8(parse_source_chars).unwrap_or_else(|_| source_without_bom.to_string());
+    let source_for_parse = String::from_utf8(parse_source_chars)
+        .map_err(|_| anyhow::anyhow!("Invalid UTF-8 sequence in source code"))?;
 
     let sti = SourceTextInfo::from_string(source_for_parse.clone());
     // Use the provided file_path (if any) to create a proper file:// URL so
@@ -203,6 +480,17 @@ pub fn parse_oats_module_with_options(
     };
 
     let parsed = parse_module(params)?;
+
+    // SECURITY: Check AST nesting depth to prevent stack overflow attacks
+    let max_depth = MAX_AST_DEPTH.load(Ordering::Relaxed);
+    let depth_checker = AstDepthChecker { max_depth };
+    if let Err(_) = depth_checker.check_program(&parsed) {
+        anyhow::bail!(
+            "AST nesting depth exceeds limit: {} levels. \
+             Set OATS_MAX_AST_DEPTH to increase.",
+            max_depth
+        );
+    }
 
     if enforce_semicolons {
         // Enforce semicolons for statement-terminated constructs (conservative)

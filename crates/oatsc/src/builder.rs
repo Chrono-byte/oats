@@ -133,7 +133,8 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
     // Read extern_oats from environment if provided
     let extern_oats: std::collections::HashMap<String, String> =
         if let Ok(extern_oats_json) = std::env::var("OATS_EXTERN_OATS") {
-            serde_json::from_str(&extern_oats_json).unwrap_or_default()
+            serde_json::from_str(&extern_oats_json)
+                .map_err(|e| anyhow::anyhow!("Failed to parse OATS_EXTERN_OATS JSON: {}", e))?
         } else {
             std::collections::HashMap::new()
         };
@@ -1160,13 +1161,14 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
     // `main`, but we generate `oats_main` as the emitted symbol the host
     // runtime will call.
     if let Some(ref func) = func_decl
-        && let Some(ref sig) = func_sig {
-            codegen
-                .gen_function_ir("oats_main", func, &sig.params, &sig.ret, None)
-                .map_err(|d| {
-                    crate::diagnostics::emit_diagnostic(&d, Some(source.as_str()));
-                    anyhow::anyhow!("{}", d.message)
-                })?;
+        && let Some(ref sig) = func_sig
+    {
+        codegen
+            .gen_function_ir("oats_main", func, &sig.params, &sig.ret, None)
+            .map_err(|d| {
+                crate::diagnostics::emit_diagnostic(&d, Some(source.as_str()));
+                anyhow::anyhow!("{}", d.message)
+            })?;
     }
 
     // Try to emit a host `main` into the module so no external shim is
@@ -1279,6 +1281,7 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
             "OATS_EMIT_OBJECT_ONLY set; emitted {} and skipping link",
             out_obj
         );
+        println!("{}", out_obj);
         return Ok(Some(out_obj));
     }
 
@@ -1501,5 +1504,6 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
         }
     }
 
+    println!("{}", out_exe);
     Ok(Some(out_exe))
 }

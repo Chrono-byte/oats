@@ -514,18 +514,49 @@ fn link_packages(
         runtime_lib
     };
 
+    // Ensure std is available
+    let std_lib = if let Ok(std_path) = std::env::var("OATS_STD_PATH") {
+        // Use explicitly specified std path
+        let std_lib = PathBuf::from(std_path);
+        if !std_lib.exists() {
+            return Err(ToastyError::io(
+                &std_lib,
+                std::io::Error::new(std::io::ErrorKind::NotFound, "Std library not found"),
+            ));
+        }
+        std_lib
+    } else {
+        // Look for std in current directory or standard locations
+        let std_lib = PathBuf::from("liboats_std.a");
+        if !std_lib.exists() {
+            let std_lib = PathBuf::from("target/release/liboats_std.a");
+            if !std_lib.exists() {
+                return Err(ToastyError::io(
+                    &std_lib,
+                    std::io::Error::new(std::io::ErrorKind::NotFound, "Std library not found"),
+                ));
+            }
+            std_lib
+        } else {
+            std_lib
+        }
+    };
+
     // Build link command
     let mut link_cmd = Command::new("clang");
     link_cmd.arg("-o").arg(&exe_path);
 
+    // Add runtime library if requested
+    if !config.no_link_runtime && std::env::var("OATS_STD_PATH").is_err() {
+        link_cmd.arg(&runtime_lib);
+    }
+
+    // Add std library
+    link_cmd.arg(&std_lib);
+
     // Add all object files in dependency order
     for result in build_results.values() {
         link_cmd.arg(&result.object_file);
-    }
-
-    // Add runtime library if requested
-    if !config.no_link_runtime {
-        link_cmd.arg(&runtime_lib);
     }
 
     // Add linker if specified

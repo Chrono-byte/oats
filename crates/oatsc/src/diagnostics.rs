@@ -46,8 +46,9 @@ pub fn report_error(file: Option<&str>, source: Option<&str>, message: &str, not
     let reset = "\x1b[0m";
 
     if let Some(path) = file {
+        let sanitized_path = sanitize_file_path(path);
         eprintln!("{}error{}: {}", red, reset, message);
-        eprintln!("  --> {}", path);
+        eprintln!("  --> {}", sanitized_path);
     } else {
         eprintln!("{}error{}: {}", red, reset, message);
     }
@@ -151,8 +152,9 @@ pub fn report_error_span(
     }
 
     if let Some(path) = file {
+        let sanitized_path = sanitize_file_path(path);
         eprintln!("{}error{}: {}", red, reset, message);
-        eprintln!("  --> {}:{}:{}", path, line_no, col + 1);
+        eprintln!("  --> {}:{}:{}", sanitized_path, line_no, col + 1);
     } else {
         eprintln!("{}error{}: {}", red, reset, message);
     }
@@ -315,6 +317,26 @@ pub fn emit_diagnostic(d: &Diagnostic, source: Option<&str>) {
 use std::sync::atomic::{AtomicBool, Ordering};
 
 static DIAGNOSTICS_ENABLED: AtomicBool = AtomicBool::new(true);
+
+/// Sanitizes file paths to prevent information disclosure.
+///
+/// This function removes potentially sensitive path components such as
+/// absolute paths, home directory references, or system-specific information.
+/// Only the filename is preserved to prevent leaking system structure.
+///
+/// # Arguments
+/// * `path` - The file path to sanitize
+///
+/// # Returns
+/// A sanitized version of the path safe for diagnostic output
+fn sanitize_file_path(path: &str) -> String {
+    // Extract only the filename to prevent path disclosure
+    std::path::Path::new(path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("file")
+        .to_string()
+}
 
 /// Temporarily suppresses diagnostic output for testing scenarios.
 ///

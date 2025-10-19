@@ -1,0 +1,127 @@
+name: Build and Publish Toasty CLI
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - "crates/toasty/**"
+      - ".github/workflows/build-toasty.yml"
+  pull_request:
+    branches:
+      - master
+    paths:
+      - "crates/toasty/**"
+      - ".github/workflows/build-toasty.yml"
+  release:
+    types: [published]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-toasty:
+    name: Build Toasty CLI
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            artifact: toasty-linux-x86_64
+          - os: macos-14
+            target: aarch64-apple-darwin
+            artifact: toasty-macos-aarch64
+          - os: macos-13
+            target: x86_64-apple-darwin
+            artifact: toasty-macos-x86_64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          target: ${{ matrix.target }}
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Install cross-compilation tools (Linux ARM64)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
+
+      - name: Create Cargo config for aarch64 linker
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          mkdir -p .cargo
+          cat > .cargo/config.toml <<'EOF'
+          [target.aarch64-unknown-linux-gnu]
+          linker = "aarch64-linux-gnu-gcc"
+          EOF
+
+      - name: Build toasty
+        run: |
+          cd crates/toasty
+          cargo build --release --target ${{ matrix.target }}
+
+      - name: Rename artifact
+        run: |
+          cp crates/toasty/target/${{ matrix.target }}/release/toasty ${{ matrix.artifact }}
+
+      - name: Make executable (Unix)
+        run: chmod +x ${{ matrix.artifact }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}
+          retention-days: 90
+
+  create-release:
+    name: Create Toasty Release
+    needs: build-toasty
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Generate version tag
+        id: version
+        run: |
+          echo "tag=toasty-$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+          echo "date=$(date +%Y%m%d-%H%M%S)" >> $GITHUB_OUTPUT
+
+      - name: Install GitHub CLI
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gh
+
+      - name: Create Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ steps.version.outputs.tag }}" \
+            --title "Toasty Build ${{ steps.version.outputs.date }}" \
+            --notes "Automated Toasty CLI build from commit $(git rev-parse --short HEAD)" \
+            artifacts/**/*

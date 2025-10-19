@@ -6,6 +6,7 @@
 //! information to decide on boxing/unboxing, union representation, and
 //! reference-counting behavior.
 
+use crate::diagnostics::{Diagnostic, Label, Span};
 use anyhow::Result;
 use deno_ast::swc::ast;
 use std::collections::HashMap;
@@ -547,16 +548,40 @@ pub fn map_ts_type_with_subst(
 pub fn check_function_strictness(
     func_decl: &ast::Function,
     _symbols: &mut SymbolTable,
-) -> Result<FunctionSig> {
+) -> Result<(Option<FunctionSig>, Vec<Diagnostic>)> {
+    let mut diagnostics = Vec::new();
+
     // Return type annotation required for regular functions, but for arrows, we infer
     let ret_type = if let Some(return_type) = &func_decl.return_type {
         if let Some(mapped) = map_ts_type(&return_type.type_ann) {
             mapped
         } else {
-            return Err(anyhow::anyhow!("Function return type not supported"));
+            diagnostics.push(
+                Diagnostic::simple("Unsupported return type")
+                    .with_code("E1001")
+                    .with_label(Label {
+                        span: Span {
+                            start: return_type.span.lo.0 as usize,
+                            end: return_type.span.hi.0 as usize,
+                        },
+                        message: "This return type is not supported".into(),
+                    }),
+            );
+            return Ok((None, diagnostics));
         }
     } else {
-        return Err(anyhow::anyhow!("Function return type annotation required"));
+        diagnostics.push(
+            Diagnostic::simple("Missing return type annotation")
+                .with_code("E1002")
+                .with_label(Label {
+                    span: Span {
+                        start: func_decl.span.lo.0 as usize,
+                        end: func_decl.span.hi.0 as usize,
+                    },
+                    message: "Function return type annotation is required".into(),
+                }),
+        );
+        return Ok((None, diagnostics));
     };
 
     // Collect param types
@@ -573,31 +598,42 @@ pub fn check_function_strictness(
                         continue;
                     }
                 }
-                return Err(anyhow::anyhow!(
-                    "Function parameter missing or unsupported type annotation"
-                ));
+                diagnostics.push(
+                    Diagnostic::simple("Unsupported parameter type")
+                        .with_code("E1003")
+                        .with_label(Label {
+                            span: Span {
+                                start: param.span.lo.0 as usize,
+                                end: param.span.hi.0 as usize,
+                            },
+                            message: "This parameter type is not supported".into(),
+                        }),
+                );
             }
             _ => {
-                return Err(anyhow::anyhow!(
-                    "Unsupported parameter pattern; only simple idents supported"
-                ));
+                diagnostics.push(
+                    Diagnostic::simple("Unsupported parameter pattern")
+                        .with_code("E1004")
+                        .with_label(Label {
+                            span: Span {
+                                start: param.span.lo.0 as usize,
+                                end: param.span.hi.0 as usize,
+                            },
+                            message: "This parameter pattern is not supported".into(),
+                        }),
+                );
             }
         }
     }
 
-    // Collect type parameters
-    let mut type_params = Vec::new();
-    if let Some(tp) = &func_decl.type_params {
-        for param in &tp.params {
-            type_params.push(param.name.sym.to_string());
-        }
-    }
-
-    Ok(FunctionSig {
-        type_params,
-        params: param_types,
-        ret: ret_type,
-    })
+    Ok((
+        Some(FunctionSig {
+            ret: ret_type,
+            params: param_types,
+            type_params: Vec::new(),
+        }),
+        diagnostics,
+    ))
 }
 
 /// Infers an Oats type from AST expression patterns and literal values.

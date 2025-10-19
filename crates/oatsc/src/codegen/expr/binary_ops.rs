@@ -4,9 +4,6 @@ use inkwell::values::FunctionValue;
 use std::collections::HashMap;
 
 use deno_ast::swc::ast;
-use deno_ast::swc::ast::BinaryOp;
-use inkwell::FloatPredicate;
-use inkwell::IntPredicate;
 use inkwell::builder::Builder;
 use inkwell::types::BasicTypeEnum;
 use inkwell::values::{BasicValue, PointerValue};

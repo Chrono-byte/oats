@@ -47,12 +47,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 // helper to distinguish number/string/boolean/object at runtime.
                 // This keeps `typeof` semantics consistent for boxed union values.
                 let disc_fn = self.get_union_get_discriminant();
-                let call_site =
-                    self.builder
-                        .build_call(disc_fn, &[pv.into()], "union_get_disc");
-                let cs = call_site.map_err(|_| {
-                    Diagnostic::simple("failed to call union_get_discriminant")
-                })?;
+                let call_site = self
+                    .builder
+                    .build_call(disc_fn, &[pv.into()], "union_get_disc");
+                let cs = call_site
+                    .map_err(|_| Diagnostic::simple("failed to call union_get_discriminant"))?;
                 if let inkwell::Either::Left(bv) = cs.try_as_basic_value() {
                     let disc = bv.into_int_value();
                     // Compare disc to constants: 0 -> number, 1 -> string, 2 -> boolean
@@ -62,34 +61,19 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
                     let cmp_num = self
                         .builder
-                        .build_int_compare(
-                            inkwell::IntPredicate::EQ,
-                            disc,
-                            zero,
-                            "disc_eq_num",
-                        )
+                        .build_int_compare(inkwell::IntPredicate::EQ, disc, zero, "disc_eq_num")
                         .map_err(|_| {
                             Diagnostic::simple("failed to build int compare for typeof")
                         })?;
                     let cmp_str = self
                         .builder
-                        .build_int_compare(
-                            inkwell::IntPredicate::EQ,
-                            disc,
-                            one,
-                            "disc_eq_str",
-                        )
+                        .build_int_compare(inkwell::IntPredicate::EQ, disc, one, "disc_eq_str")
                         .map_err(|_| {
                             Diagnostic::simple("failed to build int compare for typeof")
                         })?;
                     let cmp_bool = self
                         .builder
-                        .build_int_compare(
-                            inkwell::IntPredicate::EQ,
-                            disc,
-                            two,
-                            "disc_eq_bool",
-                        )
+                        .build_int_compare(inkwell::IntPredicate::EQ, disc, two, "disc_eq_bool")
                         .map_err(|_| {
                             Diagnostic::simple("failed to build int compare for typeof")
                         })?;
@@ -108,9 +92,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             s_str.as_basic_value_enum(),
                             "sel_num_str",
                         )
-                        .map_err(|_| {
-                            Diagnostic::simple("failed to build select for typeof")
-                        })?;
+                        .map_err(|_| Diagnostic::simple("failed to build select for typeof"))?;
                     let sel2 = self
                         .builder
                         .build_select(
@@ -119,15 +101,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             s_obj.as_basic_value_enum(),
                             "sel_bool_obj",
                         )
-                        .map_err(|_| {
-                            Diagnostic::simple("failed to build select for typeof")
-                        })?;
+                        .map_err(|_| Diagnostic::simple("failed to build select for typeof"))?;
                     let final_sel = self
                         .builder
                         .build_select(cmp_str, sel1, sel2, "sel_final")
-                        .map_err(|_| {
-                            Diagnostic::simple("failed to build select for typeof")
-                        })?;
+                        .map_err(|_| Diagnostic::simple("failed to build select for typeof"))?;
                     return Ok(final_sel);
                 }
                 // If the discriminant call failed, fall back to "string"
@@ -229,15 +207,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 return Err(Diagnostic::simple(
                     "cannot update function parameter directly",
                 ));
-            } else if let Some((
-                ptr,
-                ty,
-                initialized,
-                is_const,
-                _extra,
-                _nominal,
-                _oats_type,
-            )) = self.find_local(locals, &name)
+            } else if let Some((ptr, ty, initialized, is_const, _extra, _nominal, _oats_type)) =
+                self.find_local(locals, &name)
             {
                 if is_const {
                     return Err(Diagnostic::simple("cannot update immutable variable"));

@@ -3,10 +3,9 @@ use inkwell::values::BasicValueEnum;
 use inkwell::values::FunctionValue;
 use std::collections::HashMap;
 
-use inkwell::types::{BasicTypeEnum, BasicType};
-use inkwell::values::{PointerValue, BasicValue};
-use inkwell::IntPredicate;
 use deno_ast::swc::ast;
+use inkwell::types::{BasicType, BasicTypeEnum};
+use inkwell::values::{BasicValue, PointerValue};
 
 // LocalEntry now includes an Option<String> for an optional nominal type name
 // LocalEntry now includes an Option<OatsType> for union tracking
@@ -63,11 +62,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     Ok(v) => v,
                     Err(_) => return Err(Diagnostic::simple("operation failed")),
                 };
-                let cond =
-                    match self.builder.build_and(is_not_zero, is_not_nan, "num_truth") {
-                        Ok(v) => v,
-                        Err(_) => return Err(Diagnostic::simple("operation failed")),
-                    };
+                let cond = match self.builder.build_and(is_not_zero, is_not_nan, "num_truth") {
+                    Ok(v) => v,
+                    Err(_) => return Err(Diagnostic::simple("operation failed")),
+                };
                 cond.as_basic_value_enum()
             }
             BasicValueEnum::PointerValue(pv) => {
@@ -82,11 +80,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 };
                 // call strlen(ptr) and check != 0
                 if let Some(strlen_fn) = self.module.get_function("strlen") {
-                    let cs = match self.builder.build_call(
-                        strlen_fn,
-                        &[pv.into()],
-                        "strlen_call",
-                    ) {
+                    let cs = match self
+                        .builder
+                        .build_call(strlen_fn, &[pv.into()], "strlen_call")
+                    {
                         Ok(cs) => cs,
                         Err(_) => return Err(Diagnostic::simple("operation failed")),
                     };
@@ -103,14 +100,14 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             Ok(v) => v,
                             Err(_) => return Err(Diagnostic::simple("operation failed")),
                         };
-                        let cond = match self.builder.build_and(
-                            is_not_null,
-                            len_nonzero,
-                            "ptr_truth",
-                        ) {
-                            Ok(v) => v,
-                            Err(_) => return Err(Diagnostic::simple("operation failed")),
-                        };
+                        let cond =
+                            match self
+                                .builder
+                                .build_and(is_not_null, len_nonzero, "ptr_truth")
+                            {
+                                Ok(v) => v,
+                                Err(_) => return Err(Diagnostic::simple("operation failed")),
+                            };
                         return Ok(cond.as_basic_value_enum());
                     }
                 }
@@ -217,47 +214,41 @@ impl<'a> crate::codegen::CodeGen<'a> {
             let ev_ty = ev.get_type();
 
             // Helper to box numeric/int values into an i8* union pointer
-            let box_to_ptr =
-                |codegen: &crate::codegen::CodeGen<'a>,
-                 bv: BasicValueEnum<'a>|
-                 -> Result<BasicValueEnum<'a>, Diagnostic> {
-                    match bv {
-                        BasicValueEnum::PointerValue(pv) => Ok(pv.as_basic_value_enum()),
-                        BasicValueEnum::FloatValue(fv) => {
-                            let box_fn = codegen.get_union_box_f64();
-                            let cs =
-                                codegen.builder.build_call(box_fn, &[fv.into()], "box_phi");
-                            if let Ok(cs) = cs
-                                && let inkwell::Either::Left(bv2) = cs.try_as_basic_value()
-                            {
-                                return Ok(bv2);
-                            }
-                            Err(Diagnostic::simple("boxing failed for phi"))
+            let box_to_ptr = |codegen: &crate::codegen::CodeGen<'a>,
+                              bv: BasicValueEnum<'a>|
+             -> Result<BasicValueEnum<'a>, Diagnostic> {
+                match bv {
+                    BasicValueEnum::PointerValue(pv) => Ok(pv.as_basic_value_enum()),
+                    BasicValueEnum::FloatValue(fv) => {
+                        let box_fn = codegen.get_union_box_f64();
+                        let cs = codegen.builder.build_call(box_fn, &[fv.into()], "box_phi");
+                        if let Ok(cs) = cs
+                            && let inkwell::Either::Left(bv2) = cs.try_as_basic_value()
+                        {
+                            return Ok(bv2);
                         }
-                        BasicValueEnum::IntValue(iv) => {
-                            // convert to f64 then box
-                            let as_f64 = codegen
-                                .builder
-                                .build_signed_int_to_float(iv, codegen.f64_t, "i2f_phi")
-                                .map_err(|_| {
-                                    Diagnostic::simple("int->float cast failed")
-                                })?;
-                            let box_fn = codegen.get_union_box_f64();
-                            let cs = codegen.builder.build_call(
-                                box_fn,
-                                &[as_f64.into()],
-                                "box_phi",
-                            );
-                            if let Ok(cs) = cs
-                                && let inkwell::Either::Left(bv2) = cs.try_as_basic_value()
-                            {
-                                return Ok(bv2);
-                            }
-                            Err(Diagnostic::simple("boxing failed for phi"))
-                        }
-                        _ => Err(Diagnostic::simple("unsupported phi arm type")),
+                        Err(Diagnostic::simple("boxing failed for phi"))
                     }
-                };
+                    BasicValueEnum::IntValue(iv) => {
+                        // convert to f64 then box
+                        let as_f64 = codegen
+                            .builder
+                            .build_signed_int_to_float(iv, codegen.f64_t, "i2f_phi")
+                            .map_err(|_| Diagnostic::simple("int->float cast failed"))?;
+                        let box_fn = codegen.get_union_box_f64();
+                        let cs = codegen
+                            .builder
+                            .build_call(box_fn, &[as_f64.into()], "box_phi");
+                        if let Ok(cs) = cs
+                            && let inkwell::Either::Left(bv2) = cs.try_as_basic_value()
+                        {
+                            return Ok(bv2);
+                        }
+                        Err(Diagnostic::simple("boxing failed for phi"))
+                    }
+                    _ => Err(Diagnostic::simple("unsupported phi arm type")),
+                }
+            };
 
             // If either side is a pointer and the other is numeric, prefer a
             // simple fast-path: if the `then` arm is numeric (f64/int) and the
@@ -304,11 +295,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     let boxed_else = box_to_ptr(self, ev)
                         .map_err(|_| Diagnostic::simple("phi boxing failed"))?;
                     let unbox_fn = self.get_union_unbox_f64();
-                    let cs = self.builder.build_call(
-                        unbox_fn,
-                        &[boxed_else.into()],
-                        "unbox_else",
-                    );
+                    let cs = self
+                        .builder
+                        .build_call(unbox_fn, &[boxed_else.into()], "unbox_else");
                     if let Ok(cs) = cs
                         && let inkwell::Either::Left(bv) = cs.try_as_basic_value()
                     {

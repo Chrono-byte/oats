@@ -3,9 +3,8 @@ use inkwell::values::BasicValueEnum;
 use inkwell::values::FunctionValue;
 use std::collections::HashMap;
 
-use inkwell::types::{BasicTypeEnum, BasicType};
-use inkwell::values::{PointerValue, BasicValue};
-use deno_ast::swc::ast;
+use inkwell::types::{BasicType, BasicTypeEnum};
+use inkwell::values::{BasicValue, PointerValue};
 
 // LocalEntry now includes an Option<String> for an optional nominal type name
 // LocalEntry now includes an Option<OatsType> for union tracking
@@ -119,14 +118,13 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
             // ready: load out slot and branch to cont
             self.builder.position_at_end(ready_bb);
-            let loaded =
-                match self
-                    .builder
-                    .build_load(self.i8ptr_t, out_alloca, "await_loaded")
-                {
-                    Ok(l) => l,
-                    Err(_) => return Err(Diagnostic::simple("await load failed")),
-                };
+            let loaded = match self
+                .builder
+                .build_load(self.i8ptr_t, out_alloca, "await_loaded")
+            {
+                Ok(l) => l,
+                Err(_) => return Err(Diagnostic::simple("await load failed")),
+            };
             match self.builder.build_unconditional_branch(cont_bb) {
                 Ok(_) => (),
                 Err(_) => {
@@ -203,9 +201,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         ));
                                     }
                                 };
-                                let off_const = self
-                                    .i64_t
-                                    .const_int(16 + (*slot_idx as u64 * 8), false);
+                                let off_const =
+                                    self.i64_t.const_int(16 + (*slot_idx as u64 * 8), false);
                                 let slot_addr_int = match self.builder.build_int_add(
                                     base_int,
                                     off_const,
@@ -246,11 +243,18 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                 ));
                                             }
                                         };
-                                        let boxed_ptr = cs.try_as_basic_value().left().ok_or_else(|| Diagnostic::simple("boxing returned no value when saving locals"))?.into_pointer_value();
-                                        let _ = self.builder.build_store(
-                                            slot_ptr,
-                                            boxed_ptr.as_basic_value_enum(),
-                                        );
+                                        let boxed_ptr = cs
+                                            .try_as_basic_value()
+                                            .left()
+                                            .ok_or_else(|| {
+                                                Diagnostic::simple(
+                                                    "boxing returned no value when saving locals",
+                                                )
+                                            })?
+                                            .into_pointer_value();
+                                        let _ = self
+                                            .builder
+                                            .build_store(slot_ptr, boxed_ptr.as_basic_value_enum());
                                     }
                                     _ => {
                                         let _ = self.builder.build_store(slot_ptr, loaded);

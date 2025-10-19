@@ -178,7 +178,7 @@ pub enum Commands {
     },
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Clone)]
 pub enum CompilerCommands {
     /// List available compiler versions
     List,
@@ -201,7 +201,7 @@ pub enum CompilerCommands {
     },
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Clone)]
 pub enum RuntimeCommands {
     /// List available runtime versions
     List,

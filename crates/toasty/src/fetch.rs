@@ -4,7 +4,7 @@
 //! and runtime libraries from GitHub releases, enabling toasty to work
 //! standalone without requiring the full oats repository or Rust toolchain.
 
-use crate::error::{Result, ToastyError};
+use crate::diagnostics::{Result, ToastyError};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};

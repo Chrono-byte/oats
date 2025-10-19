@@ -89,51 +89,45 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         };
                     }
 
-                    // Propagate closure-local return type mapping when RHS
-                    // expression originated from a known local that holds a
-                    // freshly-created closure (e.g., __closure_tmp).
-                    if let Some(orig) = self.last_expr_origin_local.borrow().clone()
-                        && let Some(rt) = self.closure_local_rettype.borrow().get(&orig)
-                    {
-                        self.closure_local_rettype
-                            .borrow_mut()
-                            .insert(name.clone(), rt.clone());
-                    }
-                    // If the local is a pointer type, and previously initialized, decrement old refcount
+                    // RC PROTOCOL: Increment refcount of new value BEFORE storing it.
+                    // This ensures the new reference is tracked even if an error occurs later.
                     if _ty == self.i8ptr_t.as_basic_type_enum() {
-                        // load old value
+                        if let BasicValueEnum::PointerValue(newpv) = val
+                            && !self.should_elide_rc_for_local(&name)
+                            && !self.is_unowned_local(locals, &name)
+                        {
+                            let rc_inc = self.get_rc_inc();
+                            let _ =
+                                match self
+                                    .builder
+                                    .build_call(rc_inc, &[newpv.into()], "rc_inc_new")
+                                {
+                                    Ok(cs) => cs,
+                                    Err(_) => {
+                                        return Err(Diagnostic::simple("operation failed"));
+                                    }
+                                };
+                        }
+
+                        // Load old value for RC decrement
                         let old = match self.builder.build_load(self.i8ptr_t, ptr, "old_val") {
                             Ok(v) => v,
                             Err(_) => {
                                 return Err(Diagnostic::simple("operation failed"));
                             }
                         };
-                        // check initialized flag
+
+                        // Store new value
+                        let _ = self.builder.build_store(ptr, val);
+
+                        // RC PROTOCOL: Decrement refcount of old value AFTER storing the new one.
+                        // This ensures proper cleanup of the previous reference.
                         if _init && !self.should_elide_rc_for_local(&name) {
                             let rc_dec = self.get_rc_dec();
                             let _ = match self.builder.build_call(
                                 rc_dec,
                                 &[old.into()],
                                 "rc_dec_old",
-                            ) {
-                                Ok(cs) => cs,
-                                Err(_) => {
-                                    return Err(Diagnostic::simple("operation failed"));
-                                }
-                            };
-                        }
-                        // store new value
-                        let _ = self.builder.build_store(ptr, val);
-                        // increment refcount of new value
-                        if let BasicValueEnum::PointerValue(newpv) = val
-                            && !self.should_elide_rc_for_local(&name)
-                            && !self.is_unowned_local(locals, &name)
-                        {
-                            let rc_inc = self.get_rc_inc();
-                            let _ = match self.builder.build_call(
-                                rc_inc,
-                                &[newpv.into()],
-                                "rc_inc_assign",
                             ) {
                                 Ok(cs) => cs,
                                 Err(_) => {
@@ -342,33 +336,6 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             }
                                         };
 
-                                        // Load old boxed union pointer and rc_dec if present
-                                        let old_val = match self.builder.build_load(
-                                            self.i8ptr_t,
-                                            slot_ptr,
-                                            "old_field_val",
-                                        ) {
-                                            Ok(v) => v,
-                                            Err(_) => {
-                                                return Err(Diagnostic::simple("operation failed"));
-                                            }
-                                        };
-                                        if let BasicValueEnum::PointerValue(old_pv) = old_val {
-                                            let rc_dec = self.get_rc_dec();
-                                            let _ = match self.builder.build_call(
-                                                rc_dec,
-                                                &[old_pv.into()],
-                                                "rc_dec_old_field",
-                                            ) {
-                                                Ok(cs) => cs,
-                                                Err(_) => {
-                                                    return Err(Diagnostic::simple(
-                                                        "operation failed",
-                                                    ));
-                                                }
-                                            };
-                                        }
-
                                         // If new_val is a number, box it with union_box_f64; if pointer, box with union_box_ptr.
                                         let boxed_new = if let BasicValueEnum::FloatValue(fv) =
                                             new_val
@@ -422,9 +389,39 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             ));
                                         };
 
-                                        // Store the boxed pointer into the field slot
+                                        // Load old value for RC decrement AFTER incrementing new value
+                                        let old_val = match self.builder.build_load(
+                                            self.i8ptr_t,
+                                            slot_ptr,
+                                            "old_field_val",
+                                        ) {
+                                            Ok(v) => v,
+                                            Err(_) => {
+                                                return Err(Diagnostic::simple("operation failed"));
+                                            }
+                                        };
+
+                                        // Store new value
                                         let _ = self.builder.build_store(slot_ptr, boxed_new);
-                                        // Increment refcount of the boxed union object
+
+                                        // RC PROTOCOL: Decrement refcount of old field value AFTER storing the new one.
+                                        if let BasicValueEnum::PointerValue(old_pv) = old_val {
+                                            let rc_dec = self.get_rc_dec();
+                                            let _ = match self.builder.build_call(
+                                                rc_dec,
+                                                &[old_pv.into()],
+                                                "rc_dec_old_field",
+                                            ) {
+                                                Ok(cs) => cs,
+                                                Err(_) => {
+                                                    return Err(Diagnostic::simple(
+                                                        "operation failed",
+                                                    ));
+                                                }
+                                            };
+                                        }
+
+                                        // RC PROTOCOL: Increment refcount of new field value after storing.
                                         if let BasicValueEnum::PointerValue(new_pv) = boxed_new {
                                             let rc_inc = self.get_rc_inc();
                                             let _ = match self.builder.build_call(
@@ -476,7 +473,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             }
                                         };
 
-                                        // Decrement old value's refcount
+                                        // RC PROTOCOL: Decrement refcount of old field value before overwriting.
                                         if let BasicValueEnum::PointerValue(old_pv) = old_val {
                                             let rc_dec = self.get_rc_dec();
                                             let _ = match self.builder.build_call(
@@ -497,7 +494,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         // Ensure new_val is a pointer before storing
                                         if let BasicValueEnum::PointerValue(new_pv) = new_val {
                                             let _ = self.builder.build_store(slot_ptr, new_val);
-                                            // Increment new value's refcount
+                                            // RC PROTOCOL: Increment refcount of new field value after storing.
                                             let rc_inc = self.get_rc_inc();
                                             let _ = match self.builder.build_call(
                                                 rc_inc,

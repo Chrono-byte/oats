@@ -132,7 +132,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
             ast::Expr::Update(update) => {
                 self.lower_update_expr(update, function, param_map, locals)
             }
-            _ => Err(Diagnostic::simple_boxed(Severity::Error, "operation not supported")),
+            _ => Err(Diagnostic::simple_boxed(
+                Severity::Error,
+                "operation not supported",
+            )),
         }
     }
 

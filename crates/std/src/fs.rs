@@ -29,7 +29,10 @@ pub extern "C" fn oats_std_fs_read_file(path: *const c_char) -> *mut c_char {
 /// Write string to file
 /// #[oats_export]
 #[no_mangle]
-pub extern "C" fn oats_std_fs_write_file(path: *const c_char, content: *const c_char) -> libc::c_int {
+pub extern "C" fn oats_std_fs_write_file(
+    path: *const c_char,
+    content: *const c_char,
+) -> libc::c_int {
     if path.is_null() || content.is_null() {
         return -1;
     }
@@ -64,7 +67,11 @@ pub extern "C" fn oats_std_fs_file_exists(path: *const c_char) -> libc::c_int {
         Err(_) => return 0,
     };
 
-    if std::path::Path::new(path_str).exists() { 1 } else { 0 }
+    if std::path::Path::new(path_str).exists() {
+        1
+    } else {
+        0
+    }
 }
 
 /// Create directory recursively

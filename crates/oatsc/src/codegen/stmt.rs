@@ -134,7 +134,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             }
 
                             if declared_mapped.is_none() {
-                                return Err(crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "Variable declaration requires explicit type annotation",
+                                return Err(crate::diagnostics::Diagnostic::simple_boxed(
+                                    Severity::Error,
+                                    "Variable declaration requires explicit type annotation",
                                 ));
                             }
 
@@ -210,7 +212,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     let nominal_name = if let Some(n) = declared_nominal.clone() {
                                         n
                                     } else {
-                                        return Err(crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "internal error: nominal name missing",
+                                        return Err(crate::diagnostics::Diagnostic::simple_boxed(
+                                            Severity::Error,
+                                            "internal error: nominal name missing",
                                         ));
                                     };
                                     let mut fields: Vec<(String, crate::types::OatsType)> =
@@ -257,7 +261,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             Ok(a) => a,
                                             Err(_) => {
                                                 crate::diagnostics::emit_diagnostic(
-                                                    &crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "alloca failed for local variable",
+                                                    &crate::diagnostics::Diagnostic::simple_boxed(
+                                                        Severity::Error,
+                                                        "alloca failed for local variable",
                                                     ),
                                                     Some(self.source),
                                                 );
@@ -347,7 +353,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             .builder
                                             .build_pointer_cast(malloc_ret, self.i8ptr_t, "hdr_ptr")
                                             .map_err(|_| {
-                                                crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "pointer cast failed",
+                                                crate::diagnostics::Diagnostic::simple_boxed(
+                                                    Severity::Error,
+                                                    "pointer cast failed",
                                                 )
                                             })?;
                                         let header_val = self.i64_t.const_int(1u64, false);
@@ -476,7 +484,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                         }
                                             } else {
                                                 return Err(
-                                                    crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "elided tuple element not supported",
+                                                    crate::diagnostics::Diagnostic::simple_boxed(
+                                                        Severity::Error,
+                                                        "elided tuple element not supported",
                                                     ),
                                                 );
                                             }
@@ -484,18 +494,22 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
                                         // Create an alloca for the local and store the tuple pointer
                                         let allocated_ty = self.i8ptr_t.as_basic_type_enum();
-                                        let alloca =
-                                            match self.builder.build_alloca(allocated_ty, &name) {
-                                                Ok(a) => a,
-                                                Err(_) => {
-                                                    crate::diagnostics::emit_diagnostic(
-                                                    &crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "alloca failed for local variable",
+                                        let alloca = match self
+                                            .builder
+                                            .build_alloca(allocated_ty, &name)
+                                        {
+                                            Ok(a) => a,
+                                            Err(_) => {
+                                                crate::diagnostics::emit_diagnostic(
+                                                    &crate::diagnostics::Diagnostic::simple_boxed(
+                                                        Severity::Error,
+                                                        "alloca failed for local variable",
                                                     ),
                                                     Some(self.source),
                                                 );
-                                                    return Ok(false);
-                                                }
-                                            };
+                                                return Ok(false);
+                                            }
+                                        };
                                         // increment rc for stored pointer (unless elided)
                                         if !self.should_elide_rc_for_local(&name) {
                                             let rc_inc = self.get_rc_inc();
@@ -530,7 +544,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         continue;
                                     } else {
                                         crate::diagnostics::emit_diagnostic(
-                                            &crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "malloc failed for tuple allocation",
+                                            &crate::diagnostics::Diagnostic::simple_boxed(
+                                                Severity::Error,
+                                                "malloc failed for tuple allocation",
                                             ),
                                             Some(self.source),
                                         );
@@ -664,7 +680,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             Ok(a) => a,
                                             Err(_) => {
                                                 crate::diagnostics::emit_diagnostic(
-                                                    &crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "alloca failed for local variable",
+                                                    &crate::diagnostics::Diagnostic::simple_boxed(
+                                                        Severity::Error,
+                                                        "alloca failed for local variable",
                                                     ),
                                                     Some(self.source),
                                                 );
@@ -751,7 +769,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         Ok(a) => a,
                                         Err(_) => {
                                             crate::diagnostics::emit_diagnostic(
-                                                &crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "alloca failed for uninitialized var",
+                                                &crate::diagnostics::Diagnostic::simple_boxed(
+                                                    Severity::Error,
+                                                    "alloca failed for uninitialized var",
                                                 ),
                                                 Some(self.source),
                                             );
@@ -852,7 +872,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 fname
                             );
                             crate::diagnostics::emit_diagnostic(
-                                &crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, &msg),
+                                &crate::diagnostics::Diagnostic::simple_boxed(
+                                    Severity::Error,
+                                    &msg,
+                                ),
                                 Some(self.source),
                             );
                         }
@@ -865,7 +888,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 fname, e
                             );
                             crate::diagnostics::emit_diagnostic(
-                                &crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, &msg),
+                                &crate::diagnostics::Diagnostic::simple_boxed(
+                                    Severity::Error,
+                                    &msg,
+                                ),
                                 Some(self.source),
                             );
                         }
@@ -1136,13 +1162,17 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         self.builder
                                             .build_call(box_fn, &[fv.into()], "union_box")
                                             .map_err(|_| {
-                                                crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "Failed to box f64 as union in return",
+                                                crate::diagnostics::Diagnostic::simple_boxed(
+                                                    Severity::Error,
+                                                    "Failed to box f64 as union in return",
                                                 )
                                             })?
                                             .try_as_basic_value()
                                             .left()
                                             .ok_or_else(|| {
-                                                crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "union_box_f64 did not return value",
+                                                crate::diagnostics::Diagnostic::simple_boxed(
+                                                    Severity::Error,
+                                                    "union_box_f64 did not return value",
                                                 )
                                             })?
                                     }
@@ -1152,13 +1182,17 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         self.builder
                                             .build_call(box_fn, &[pv.into()], "union_box")
                                             .map_err(|_| {
-                                                crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "Failed to box ptr as union in return",
+                                                crate::diagnostics::Diagnostic::simple_boxed(
+                                                    Severity::Error,
+                                                    "Failed to box ptr as union in return",
                                                 )
                                             })?
                                             .try_as_basic_value()
                                             .left()
                                             .ok_or_else(|| {
-                                                crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "union_box_ptr did not return value",
+                                                crate::diagnostics::Diagnostic::simple_boxed(
+                                                    Severity::Error,
+                                                    "union_box_ptr did not return value",
                                                 )
                                             })?
                                     }
@@ -1174,7 +1208,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                 "bool_to_f64",
                                             )
                                             .map_err(|_| {
-                                                crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "Failed to convert bool to f64 in union return",
+                                                crate::diagnostics::Diagnostic::simple_boxed(
+                                                    Severity::Error,
+                                                    "Failed to convert bool to f64 in union return",
                                                 )
                                             })?;
                                         let box_fn = self.get_union_box_f64();
@@ -1182,13 +1218,17 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         self.builder
                                             .build_call(box_fn, &[as_f64.into()], "union_box")
                                             .map_err(|_| {
-                                                crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "Failed to box bool as union in return",
+                                                crate::diagnostics::Diagnostic::simple_boxed(
+                                                    Severity::Error,
+                                                    "Failed to box bool as union in return",
                                                 )
                                             })?
                                             .try_as_basic_value()
                                             .left()
                                             .ok_or_else(|| {
-                                                crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "union_box_f64 did not return value",
+                                                crate::diagnostics::Diagnostic::simple_boxed(
+                                                    Severity::Error,
+                                                    "union_box_f64 did not return value",
                                                 )
                                             })?
                                     }
@@ -1238,7 +1278,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         .builder
                         .build_unconditional_branch(loop_ctx.break_block);
                 } else {
-                    return Err(crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "break statement outside of loop",
+                    return Err(crate::diagnostics::Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "break statement outside of loop",
                     ));
                 }
                 Ok(true)
@@ -1394,7 +1436,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 Ok(a) => a,
                                 Err(_) => {
                                     crate::diagnostics::emit_diagnostic(
-                                        &crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "alloca failed for for-loop index",
+                                        &crate::diagnostics::Diagnostic::simple_boxed(
+                                            Severity::Error,
+                                            "alloca failed for for-loop index",
                                         ),
                                         Some(self.source),
                                     );
@@ -1503,7 +1547,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         Ok(a) => a,
                                         Err(_) => {
                                             crate::diagnostics::emit_diagnostic(
-                                                &crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "alloca failed for loop variable",
+                                                &crate::diagnostics::Diagnostic::simple_boxed(
+                                                    Severity::Error,
+                                                    "alloca failed for loop variable",
                                                 ),
                                                 Some(self.source),
                                             );
@@ -1544,7 +1590,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         Ok(a) => a,
                                         Err(_) => {
                                             crate::diagnostics::emit_diagnostic(
-                                                &crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "alloca failed for loop variable (ptr)",
+                                                &crate::diagnostics::Diagnostic::simple_boxed(
+                                                    Severity::Error,
+                                                    "alloca failed for loop variable (ptr)",
                                                 ),
                                                 Some(self.source),
                                             );

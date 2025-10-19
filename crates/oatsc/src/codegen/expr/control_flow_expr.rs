@@ -51,7 +51,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     "neq0",
                 ) {
                     Ok(v) => v,
-                    Err(_) => return Err(Diagnostic::simple_boxed(Severity::Error, "operation failed")),
+                    Err(_) => {
+                        return Err(Diagnostic::simple_boxed(
+                            Severity::Error,
+                            "operation failed",
+                        ));
+                    }
                 };
                 // check not NaN: fv == fv
                 let is_not_nan = match self.builder.build_float_compare(
@@ -61,11 +66,21 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     "not_nan",
                 ) {
                     Ok(v) => v,
-                    Err(_) => return Err(Diagnostic::simple_boxed(Severity::Error, "operation failed")),
+                    Err(_) => {
+                        return Err(Diagnostic::simple_boxed(
+                            Severity::Error,
+                            "operation failed",
+                        ));
+                    }
                 };
                 let cond = match self.builder.build_and(is_not_zero, is_not_nan, "num_truth") {
                     Ok(v) => v,
-                    Err(_) => return Err(Diagnostic::simple_boxed(Severity::Error, "operation failed")),
+                    Err(_) => {
+                        return Err(Diagnostic::simple_boxed(
+                            Severity::Error,
+                            "operation failed",
+                        ));
+                    }
                 };
                 cond.as_basic_value_enum()
             }
@@ -73,11 +88,21 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 // pointer truthiness: non-null and non-empty string are truthy
                 let is_null = match self.builder.build_is_null(pv, "is_null") {
                     Ok(v) => v,
-                    Err(_) => return Err(Diagnostic::simple_boxed(Severity::Error, "operation failed")),
+                    Err(_) => {
+                        return Err(Diagnostic::simple_boxed(
+                            Severity::Error,
+                            "operation failed",
+                        ));
+                    }
                 };
                 let is_not_null = match self.builder.build_not(is_null, "not_null") {
                     Ok(v) => v,
-                    Err(_) => return Err(Diagnostic::simple_boxed(Severity::Error, "operation failed")),
+                    Err(_) => {
+                        return Err(Diagnostic::simple_boxed(
+                            Severity::Error,
+                            "operation failed",
+                        ));
+                    }
                 };
                 // call strlen(ptr) and check != 0
                 if let Some(strlen_fn) = self.module.get_function("strlen") {
@@ -86,7 +111,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         .build_call(strlen_fn, &[pv.into()], "strlen_call")
                     {
                         Ok(cs) => cs,
-                        Err(_) => return Err(Diagnostic::simple_boxed(Severity::Error, "operation failed")),
+                        Err(_) => {
+                            return Err(Diagnostic::simple_boxed(
+                                Severity::Error,
+                                "operation failed",
+                            ));
+                        }
                     };
                     let either = cs.try_as_basic_value();
                     if let inkwell::Either::Left(bv) = either {
@@ -99,7 +129,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             "len_nonzero",
                         ) {
                             Ok(v) => v,
-                            Err(_) => return Err(Diagnostic::simple_boxed(Severity::Error, "operation failed")),
+                            Err(_) => {
+                                return Err(Diagnostic::simple_boxed(
+                                    Severity::Error,
+                                    "operation failed",
+                                ));
+                            }
                         };
                         let cond =
                             match self
@@ -107,7 +142,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 .build_and(is_not_null, len_nonzero, "ptr_truth")
                             {
                                 Ok(v) => v,
-                                Err(_) => return Err(Diagnostic::simple_boxed(Severity::Error, "operation failed")),
+                                Err(_) => {
+                                    return Err(Diagnostic::simple_boxed(
+                                        Severity::Error,
+                                        "operation failed",
+                                    ));
+                                }
                             };
                         return Ok(cond.as_basic_value_enum());
                     }
@@ -115,7 +155,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 // fallback: non-null
                 is_not_null.as_basic_value_enum()
             }
-            _ => return Err(Diagnostic::simple_boxed(Severity::Error, "operation failed")),
+            _ => {
+                return Err(Diagnostic::simple_boxed(
+                    Severity::Error,
+                    "operation failed",
+                ));
+            }
         };
 
         // Create basic blocks
@@ -178,10 +223,16 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         );
                         Ok(null_ptr.as_basic_value_enum())
                     } else {
-                        Err(Diagnostic::simple_boxed(Severity::Error, "expression lowering failed"))
+                        Err(Diagnostic::simple_boxed(
+                            Severity::Error,
+                            "expression lowering failed",
+                        ))
                     }
                 } else {
-                    Err(Diagnostic::simple_boxed(Severity::Error, "expression lowering failed"))
+                    Err(Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "expression lowering failed",
+                    ))
                 }
             }
         };
@@ -229,7 +280,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             {
                                 return Ok(bv2);
                             }
-                            Err(Diagnostic::simple_boxed(Severity::Error, "boxing failed for phi"))
+                            Err(Diagnostic::simple_boxed(
+                                Severity::Error,
+                                "boxing failed for phi",
+                            ))
                         }
                         BasicValueEnum::IntValue(iv) => {
                             // convert to f64 then box
@@ -247,9 +301,15 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             {
                                 return Ok(bv2);
                             }
-                            Err(Diagnostic::simple_boxed(Severity::Error, "boxing failed for phi"))
+                            Err(Diagnostic::simple_boxed(
+                                Severity::Error,
+                                "boxing failed for phi",
+                            ))
                         }
-                        _ => Err(Diagnostic::simple_boxed(Severity::Error, "unsupported phi arm type")),
+                        _ => Err(Diagnostic::simple_boxed(
+                            Severity::Error,
+                            "unsupported phi arm type",
+                        )),
                     }
                 };
 
@@ -289,14 +349,17 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             as_f64.as_basic_value_enum()
                         }
                         _ => {
-                            return Err(Diagnostic::simple_boxed(Severity::Error, "expected numeric in then arm"));
+                            return Err(Diagnostic::simple_boxed(
+                                Severity::Error,
+                                "expected numeric in then arm",
+                            ));
                         }
                     };
                     self.ensure_unconditional_branch(merge_bb);
 
                     self.builder.position_at_end(else_bb);
-                    let boxed_else = box_to_ptr(self, ev)
-                        .map_err(|_| Diagnostic::error("phi boxing failed"))?;
+                    let boxed_else =
+                        box_to_ptr(self, ev).map_err(|_| Diagnostic::error("phi boxing failed"))?;
                     let unbox_fn = self.get_union_unbox_f64();
                     let cs = self
                         .builder
@@ -317,22 +380,28 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         phi_node.add_incoming(&[(&then_f64, then_bb), (&else_f64, else_bb)]);
                         return Ok(phi_node.as_basic_value());
                     } else {
-                        return Err(Diagnostic::simple_boxed(Severity::Error, "unboxing failed for phi"));
+                        return Err(Diagnostic::simple_boxed(
+                            Severity::Error,
+                            "unboxing failed for phi",
+                        ));
                     }
                 } else {
                     // The function expects a pointer return (i8*). Prefer a pointer phi:
                     // box the numeric `then` arm into a union pointer, keep the
                     // pointer `else` arm as-is, then build an i8* phi.
                     self.builder.position_at_end(then_bb);
-                    let boxed_then = box_to_ptr(self, tv)
-                        .map_err(|_| Diagnostic::error("phi boxing failed"))?;
+                    let boxed_then =
+                        box_to_ptr(self, tv).map_err(|_| Diagnostic::error("phi boxing failed"))?;
                     self.ensure_unconditional_branch(merge_bb);
 
                     self.builder.position_at_end(else_bb);
                     let else_ptr = match ev {
                         BasicValueEnum::PointerValue(p) => p.as_basic_value_enum(),
                         _ => {
-                            return Err(Diagnostic::simple_boxed(Severity::Error, "expected pointer in else arm"));
+                            return Err(Diagnostic::simple_boxed(
+                                Severity::Error,
+                                "expected pointer in else arm",
+                            ));
                         }
                     };
                     self.ensure_unconditional_branch(merge_bb);
@@ -368,8 +437,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 {
                     // then needs boxing
                     self.builder.position_at_end(then_bb);
-                    let boxed_then = box_to_ptr(self, tv)
-                        .map_err(|_| Diagnostic::error("phi boxing failed"))?;
+                    let boxed_then =
+                        box_to_ptr(self, tv).map_err(|_| Diagnostic::error("phi boxing failed"))?;
                     // ensure then block branches to merge
                     self.ensure_unconditional_branch(merge_bb);
                     then_incoming = Some(boxed_then);
@@ -379,7 +448,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     let else_ptr = match ev {
                         BasicValueEnum::PointerValue(p) => p.as_basic_value_enum(),
                         _ => {
-                            return Err(Diagnostic::simple_boxed(Severity::Error, "expected pointer in else arm"));
+                            return Err(Diagnostic::simple_boxed(
+                                Severity::Error,
+                                "expected pointer in else arm",
+                            ));
                         }
                     };
                     self.ensure_unconditional_branch(merge_bb);
@@ -390,15 +462,18 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     let then_ptr = match tv {
                         BasicValueEnum::PointerValue(p) => p.as_basic_value_enum(),
                         _ => {
-                            return Err(Diagnostic::simple_boxed(Severity::Error, "expected pointer in then arm"));
+                            return Err(Diagnostic::simple_boxed(
+                                Severity::Error,
+                                "expected pointer in then arm",
+                            ));
                         }
                     };
                     self.ensure_unconditional_branch(merge_bb);
                     then_incoming = Some(then_ptr);
 
                     self.builder.position_at_end(else_bb);
-                    let boxed_else = box_to_ptr(self, ev)
-                        .map_err(|_| Diagnostic::error("phi boxing failed"))?;
+                    let boxed_else =
+                        box_to_ptr(self, ev).map_err(|_| Diagnostic::error("phi boxing failed"))?;
                     self.ensure_unconditional_branch(merge_bb);
                     else_incoming = Some(boxed_else);
                 }
@@ -413,7 +488,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     phi_node.add_incoming(&[(&then_val, then_bb), (&else_val, else_bb)]);
                     return Ok(phi_node.as_basic_value());
                 } else {
-                    return Err(Diagnostic::simple_boxed(Severity::Error, "missing incoming values for phi"));
+                    return Err(Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "missing incoming values for phi",
+                    ));
                 }
             }
 
@@ -423,7 +501,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
             }
         }
 
-        Err(Diagnostic::simple_with_span_boxed(Severity::Error, "unsupported conditional expression (ternary) form", cond.span.lo.0 as usize,
+        Err(Diagnostic::simple_with_span_boxed(
+            Severity::Error,
+            "unsupported conditional expression (ternary) form",
+            cond.span.lo.0 as usize,
         ))
     }
 }

@@ -60,7 +60,14 @@ fn sanitize_file_path(path: &str) -> String {
 ///      |           ^
 /// note: try adding ';' after this expression
 /// ```
-pub fn report_error(title: &str, color: &str, file: Option<&str>, source: Option<&str>, message: &str, note: Option<&str>) {
+pub fn report_error(
+    title: &str,
+    color: &str,
+    file: Option<&str>,
+    source: Option<&str>,
+    message: &str,
+    note: Option<&str>,
+) {
     // Use ANSI red escape sequence for error highlighting
     let reset = "\x1b[0m";
 
@@ -351,7 +358,11 @@ impl Diagnostic {
     }
 
     /// Creates a boxed span-aware diagnostic (suitable for Result error types).
-    pub fn simple_with_span_boxed(severity: Severity, msg: impl Into<String>, span_start: usize) -> Box<Self> {
+    pub fn simple_with_span_boxed(
+        severity: Severity,
+        msg: impl Into<String>,
+        span_start: usize,
+    ) -> Box<Self> {
         Box::new(Self::simple_with_span(severity, msg, span_start))
     }
 
@@ -452,9 +463,9 @@ pub fn emit_diagnostic(d: &Diagnostic, source: Option<&str>) {
 
     // Select color and title based on severity
     let (title, color) = match d.severity {
-        Severity::Error => ("error", "\x1b[31m"), // Red
+        Severity::Error => ("error", "\x1b[31m"),     // Red
         Severity::Warning => ("warning", "\x1b[33m"), // Yellow
-        Severity::Note => ("note", "\x1b[34m"), // Blue
+        Severity::Note => ("note", "\x1b[34m"),       // Blue
     };
 
     // For now, use the first label if available
@@ -517,4 +528,3 @@ pub fn suppress() -> DiagnosticsGuard {
         _prev_state: prev_state,
     }
 }
-

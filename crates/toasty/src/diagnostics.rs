@@ -217,7 +217,11 @@ pub enum ToastyWarn {
 impl fmt::Display for ToastyWarn {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ToastyWarn::Deprecated { feature, removal_version, alternative } => {
+            ToastyWarn::Deprecated {
+                feature,
+                removal_version,
+                alternative,
+            } => {
                 write!(f, "Warning: Feature '{}' is deprecated", feature)?;
                 if let Some(version) = removal_version {
                     write!(f, " and will be removed in version {}", version)?;
@@ -227,7 +231,11 @@ impl fmt::Display for ToastyWarn {
                 }
                 Ok(())
             }
-            ToastyWarn::MissingOptionalTool { tool, impact, install_hint } => {
+            ToastyWarn::MissingOptionalTool {
+                tool,
+                impact,
+                install_hint,
+            } => {
                 write!(f, "Warning: Optional tool '{}' is not available", tool)?;
                 write!(f, ". This affects: {}", impact)?;
                 if let Some(hint) = install_hint {
@@ -235,8 +243,17 @@ impl fmt::Display for ToastyWarn {
                 }
                 Ok(())
             }
-            ToastyWarn::ConfigWarning { key, value, issue, suggestion } => {
-                write!(f, "Warning: Configuration '{}' has value '{}' - {}", key, value, issue)?;
+            ToastyWarn::ConfigWarning {
+                key,
+                value,
+                issue,
+                suggestion,
+            } => {
+                write!(
+                    f,
+                    "Warning: Configuration '{}' has value '{}' - {}",
+                    key, value, issue
+                )?;
                 if let Some(sugg) = suggestion {
                     write!(f, ". Suggestion: {}", sugg)?;
                 }
@@ -261,7 +278,10 @@ impl fmt::Display for ToastyWarn {
                 if let Some(hint) = install_hint {
                     write!(f, ". To install: {}", hint)?;
                 } else {
-                    write!(f, ". Please install oatsc or use 'toasty compiler install' to install a pre-built version")?;
+                    write!(
+                        f,
+                        ". Please install oatsc or use 'toasty compiler install' to install a pre-built version"
+                    )?;
                 }
                 write!(f, ". Use 'toasty compiler list' to see available versions")?;
                 Ok(())

@@ -38,5 +38,9 @@ pub extern "C" fn oats_std_net_url_reachable(url: *const c_char) -> libc::c_int 
     };
 
     // Stub implementation - would actually test connectivity
-    if url_str.starts_with("http") { 1 } else { 0 }
+    if url_str.starts_with("http") {
+        1
+    } else {
+        0
+    }
 }

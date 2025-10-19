@@ -94,7 +94,9 @@ jobs:
       - name: Generate version tag
         id: version
         run: |
-          echo "tag=toasty-$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+          echo "tag=toasty-nightly" >> $GITHUB_OUTPUT
+          echo "title=Toasty Nightly Build $(date +%Y-%m-%d)" >> $GITHUB_OUTPUT
+          echo "notes=Automated nightly toasty build from commit ${{ github.sha }}" >> $GITHUB_OUTPUT
           echo "date=$(date +%Y%m%d-%H%M%S)" >> $GITHUB_OUTPUT
 
       - name: Install GitHub CLI
@@ -106,7 +108,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          gh release delete toasty-nightly --yes || true
           gh release create "${{ steps.version.outputs.tag }}" \
-            --title "Toasty Build ${{ steps.version.outputs.date }}" \
-            --notes "Automated Toasty CLI build from commit $(git rev-parse --short HEAD)" \
+            --title "${{ steps.version.outputs.title }}" \
+            --notes "${{ steps.version.outputs.notes }}" \
+            --prerelease \
             artifacts/**/*

@@ -6,6 +6,7 @@
 
 // Core modules
 pub mod core;
+pub mod raw;
 pub mod sys;
 
 // Public API modules

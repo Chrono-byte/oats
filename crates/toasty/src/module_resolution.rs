@@ -16,6 +16,7 @@ pub type NodeIndex = petgraph::graph::NodeIndex;
 /// # Arguments
 /// * `from` - Absolute path of the importing module
 /// * `spec` - Relative import specifier (e.g., "./module", "../utils")
+/// * `project_root` - Canonical absolute path of the project root directory
 ///
 /// # Returns
 /// Canonical absolute path string if a matching file is found, `None` otherwise
@@ -24,36 +25,50 @@ pub type NodeIndex = petgraph::graph::NodeIndex;
 /// 1. **Direct file matching**: Tries `.oats`, and extension-less variants
 /// 2. **Directory resolution**: Attempts `index.oats` for directories
 /// 3. **Index fallbacks**: Additional index file patterns for compatibility
-pub fn resolve_relative_import(from: &str, spec: &str) -> Option<String> {
+/// 4. **Security check**: Ensures resolved path is within project root
+pub fn resolve_relative_import(
+    from: &str,
+    spec: &str,
+    project_root: &std::path::Path,
+) -> Option<String> {
+    // Canonicalize the project root to ensure consistent path comparison
+    let canonical_root = std::fs::canonicalize(project_root).unwrap_or_else(|_| project_root.to_path_buf());
+    
     let base = std::path::Path::new(from)
         .parent()
         .unwrap_or_else(|| std::path::Path::new("."));
     let candidate = base.join(spec);
+    
+    // SECURITY: Canonicalize the candidate path to resolve any .. sequences
+    let canonical_candidate = std::fs::canonicalize(&candidate).ok()?;
+    
+    // SECURITY: Strictly check that the canonical candidate path starts with the canonical root
+    if !canonical_candidate.starts_with(&canonical_root) {
+        return None; // Reject paths outside the project root
+    }
+    
     let exts = [".oats", ""]; // Prioritize .oats, then raw
 
     // Attempt direct file resolution with extension inference
     for ext in &exts {
-        let mut c = candidate.clone();
+        let mut c = canonical_candidate.clone();
         if c.extension().is_none() && !ext.is_empty() {
             c.set_extension(ext.trim_start_matches('.'));
         }
-        if c.exists()
-            && let Ok(cabs) = std::fs::canonicalize(&c)
-        {
-            return Some(cabs.to_string_lossy().to_string());
+        if c.exists() {
+            return Some(c.to_string_lossy().to_string());
         }
     }
 
     // Handle directory imports with index file resolution
-    if candidate.exists()
-        && candidate.is_dir()
-        && let Some(index_path) = resolve_index_file(&candidate)
-    {
-        return Some(index_path);
+    if canonical_candidate.exists() && canonical_candidate.is_dir() {
+        if let Some(index_path) = resolve_index_file(&canonical_candidate) {
+            return Some(index_path);
+        }
     }
 
     // Additional index file resolution for edge cases
-    if let Some(index_path) = resolve_index_file(&candidate) {
+    if let Some(index_path) = resolve_index_file(&canonical_candidate) {
         return Some(index_path);
     }
 
@@ -109,6 +124,7 @@ pub fn load_modules_with_verbosity(
     let entry_abs = std::fs::canonicalize(entry_path)
         .with_context(|| format!("Failed to canonicalize entry path: {}", entry_path))?;
     let entry_str = entry_abs.to_string_lossy().to_string();
+    let project_root = entry_abs.parent().unwrap_or(&entry_abs);
     queue.push_back(entry_str.clone());
 
     // PHASE 1: Transitive module loading and dependency resolution
@@ -134,7 +150,7 @@ pub fn load_modules_with_verbosity(
                 let src_val = import_decl.src.value.to_string();
                 // Process only relative import paths (absolute imports are not supported)
                 if (src_val.starts_with("./") || src_val.starts_with("../"))
-                    && let Some(fpath) = resolve_relative_import(&path, &src_val)
+                    && let Some(fpath) = resolve_relative_import(&path, &src_val, project_root)
                     && !modules.contains_key(&fpath)
                 {
                     if verbose {
@@ -177,6 +193,7 @@ pub fn build_dependency_graph(
     let entry_abs = std::fs::canonicalize(entry_path)
         .with_context(|| format!("Failed to canonicalize entry path: {}", entry_path))?;
     let entry_str = entry_abs.to_string_lossy().to_string();
+    let project_root = entry_abs.parent().unwrap_or(&entry_abs);
 
     // Add entry node
     let entry_node = graph.add_node(entry_str.clone());
@@ -209,7 +226,8 @@ pub fn build_dependency_graph(
                 let import_src = import_decl.src.value.to_string();
                 // Process only relative import paths
                 if (import_src.starts_with("./") || import_src.starts_with("../"))
-                    && let Some(imported_path) = resolve_relative_import(&current_path, &import_src)
+                    && let Some(imported_path) =
+                        resolve_relative_import(&current_path, &import_src, project_root)
                 {
                     // Add dependency edge: current -> imported (current depends on imported)
                     let imported_node =

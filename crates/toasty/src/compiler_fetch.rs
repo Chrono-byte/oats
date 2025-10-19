@@ -7,9 +7,20 @@ use anyhow::Result;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use sha2::{Digest, Sha256};
+
 /// GitHub repository information
 const GITHUB_OWNER: &str = "Chrono-byte";
 const GITHUB_REPO: &str = "oats";
+
+/// Compute SHA-256 hash of a file
+fn compute_sha256(path: &Path) -> Result<String> {
+    let mut file = fs::File::open(path)?;
+    let mut hasher = Sha256::new();
+    std::io::copy(&mut file, &mut hasher)?;
+    let hash = hasher.finalize();
+    Ok(format!("{:x}", hash))
+}
 
 /// Get the cache directory for compiler binaries
 fn get_cache_dir() -> Result<PathBuf> {
@@ -104,6 +115,18 @@ fn download_compiler(tag: &str, artifact_name: &str, dest_path: &Path) -> Result
         let mut perms = file.metadata()?.permissions();
         perms.set_mode(0o755);
         fs::set_permissions(dest_path, perms)?;
+    }
+
+    // Verify the hash of the downloaded file
+    let computed_hash = compute_sha256(dest_path)?;
+    let expected_hash = "116642b3377f93d6275b91024fad113821558ee73b92653efb03b0855428b464"; // TODO: Replace with actual expected hash
+    if computed_hash != expected_hash {
+        fs::remove_file(dest_path)?;
+        anyhow::bail!(
+            "Downloaded compiler hash mismatch: expected {}, got {}",
+            expected_hash,
+            computed_hash
+        );
     }
 
     if verbose {
@@ -276,9 +299,10 @@ pub fn uninstall_compiler_version(version: &str) -> Result<()> {
     fs::remove_file(&compiler_path)?;
 
     // Remove the version directory if it's empty
-    let version_dir = compiler_path.parent().unwrap();
-    if version_dir.read_dir()?.next().is_none() {
-        fs::remove_dir(version_dir)?;
+    if let Some(version_dir) = compiler_path.parent() {
+        if version_dir.read_dir()?.next().is_none() {
+            fs::remove_dir(version_dir)?;
+        }
     }
 
     // If this was the currently selected version, clear the selection

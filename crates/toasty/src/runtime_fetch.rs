@@ -8,9 +8,20 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
+use sha2::{Digest, Sha256};
+
 /// GitHub repository information
 const GITHUB_OWNER: &str = "Chrono-byte";
 const GITHUB_REPO: &str = "oats";
+
+/// Compute SHA-256 hash of a file
+fn compute_sha256(path: &Path) -> Result<String> {
+    let mut file = fs::File::open(path)?;
+    let mut hasher = Sha256::new();
+    std::io::copy(&mut file, &mut hasher)?;
+    let hash = hasher.finalize();
+    Ok(format!("{:x}", hash))
+}
 
 /// Get the cache directory for runtime libraries and compiler
 fn get_cache_dir() -> Result<PathBuf> {
@@ -117,6 +128,18 @@ fn download_runtime(tag: &str, artifact_name: &str, dest_path: &Path) -> Result<
 
     let mut file = fs::File::create(dest_path)?;
     let bytes_written = std::io::copy(&mut response.into_reader(), &mut file)?;
+
+    // Verify the hash of the downloaded file
+    let computed_hash = compute_sha256(dest_path)?;
+    let expected_hash = "EXPECTED_RUNTIME_HASH"; // TODO: Replace with actual expected hash
+    if computed_hash != expected_hash {
+        fs::remove_file(dest_path)?;
+        anyhow::bail!(
+            "Downloaded runtime hash mismatch: expected {}, got {}",
+            expected_hash,
+            computed_hash
+        );
+    }
 
     if verbose {
         eprintln!("Downloaded {} bytes", bytes_written);
@@ -312,6 +335,172 @@ pub fn try_fetch_oatsc() -> Option<PathBuf> {
             eprintln!("Warning: Failed to download oatsc compiler: {}", e);
             None
         }
+    }
+}
+
+/// List all available runtime versions from GitHub releases
+pub fn list_available_runtimes() -> Result<Vec<String>> {
+    let url = format!(
+        "https://api.github.com/repos/{}/{}/releases",
+        GITHUB_OWNER, GITHUB_REPO
+    );
+
+    let response = ureq::get(&url)
+        .set("User-Agent", "oats-compiler")
+        .call()
+        .map_err(|e| anyhow::anyhow!("Failed to fetch releases: {}", e))?;
+
+    let releases: serde_json::Value = serde_json::from_reader(response.into_reader())?;
+
+    let mut versions = Vec::new();
+    if let Some(releases_array) = releases.as_array() {
+        for release in releases_array {
+            if let Some(tag) = release["tag_name"].as_str()
+                && tag.starts_with("runtime-")
+            {
+                versions.push(tag.to_string());
+            }
+        }
+    }
+
+    Ok(versions)
+}
+
+/// Install a specific runtime version
+pub fn install_runtime_version(version: &str) -> Result<()> {
+    let artifact_name = get_runtime_artifact_name();
+    if artifact_name == "libruntime-unsupported.a" {
+        anyhow::bail!("Unsupported platform for pre-built runtime");
+    }
+
+    let cache_dir = get_cache_dir()?;
+    let cached_path = cache_dir.join(version).join(artifact_name);
+
+    // Check if already installed
+    if cached_path.exists() {
+        eprintln!("Runtime version {} is already installed.", version);
+        return Ok(());
+    }
+
+    // Download the runtime
+    if let Some(parent) = cached_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    download_runtime(version, artifact_name, &cached_path)?;
+
+    eprintln!("Successfully installed runtime version {}", version);
+    Ok(())
+}
+
+/// Uninstall a specific runtime version
+pub fn uninstall_runtime_version(version: &str) -> Result<()> {
+    let artifact_name = get_runtime_artifact_name();
+    if artifact_name == "libruntime-unsupported.a" {
+        anyhow::bail!("Unsupported platform for pre-built runtime");
+    }
+
+    let cache_dir = get_cache_dir()?;
+    let runtime_path = cache_dir.join(version).join(artifact_name);
+
+    // Check if installed
+    if !runtime_path.exists() {
+        eprintln!("Runtime version {} is not installed.", version);
+        return Ok(());
+    }
+
+    // Remove the runtime library
+    fs::remove_file(&runtime_path)?;
+
+    // Remove the version directory if it's empty
+    if let Some(version_dir) = runtime_path.parent() {
+        if version_dir.read_dir()?.next().is_none() {
+            fs::remove_dir(version_dir)?;
+        }
+    }
+
+    // If this was the currently selected version, clear the selection
+    let config_path = cache_dir.join("current_runtime_version");
+    if config_path.exists() {
+        let current = fs::read_to_string(&config_path)?;
+        if current.trim() == version {
+            fs::remove_file(&config_path)?;
+            eprintln!(
+                "Cleared current runtime version selection since {} was uninstalled.",
+                version
+            );
+        }
+    }
+
+    eprintln!("Successfully uninstalled runtime version {}", version);
+    Ok(())
+}
+
+/// Switch to using a specific runtime version
+pub fn use_runtime_version(version: &str) -> Result<()> {
+    let artifact_name = get_runtime_artifact_name();
+    if artifact_name == "libruntime-unsupported.a" {
+        anyhow::bail!("Unsupported platform for pre-built runtime");
+    }
+
+    let cache_dir = get_cache_dir()?;
+    let runtime_path = cache_dir.join(version).join(artifact_name);
+
+    if !runtime_path.exists() {
+        anyhow::bail!(
+            "Runtime version {} is not installed. Install it first with 'toasty runtime install {}'",
+            version,
+            version
+        );
+    }
+
+    // Store the selected version in a config file
+    let config_path = cache_dir.join("current_runtime_version");
+    fs::write(&config_path, version)?;
+
+    eprintln!("Switched to runtime version {}", version);
+    Ok(())
+}
+
+/// Get the currently selected runtime version
+pub fn current_runtime_version() -> Result<String> {
+    let cache_dir = get_cache_dir()?;
+    let config_path = cache_dir.join("current_runtime_version");
+
+    if config_path.exists() {
+        let version = fs::read_to_string(&config_path)?;
+        Ok(version.trim().to_string())
+    } else {
+        // If no version is selected, try to get the latest
+        match get_latest_runtime_tag() {
+            Ok(tag) => Ok(format!("{} (latest)", tag)),
+            Err(_) => Ok("none selected".to_string()),
+        }
+    }
+}
+
+/// Get the path to the currently selected runtime
+pub fn get_selected_runtime_path() -> Option<PathBuf> {
+    let cache_dir = match get_cache_dir() {
+        Ok(dir) => dir,
+        Err(_) => return None,
+    };
+
+    let config_path = cache_dir.join("current_runtime_version");
+    let version = match fs::read_to_string(&config_path) {
+        Ok(v) => v.trim().to_string(),
+        Err(_) => return None,
+    };
+
+    let artifact_name = get_runtime_artifact_name();
+    if artifact_name == "libruntime-unsupported.a" {
+        return None;
+    }
+
+    let runtime_path = cache_dir.join(version).join(artifact_name);
+    if runtime_path.exists() {
+        Some(runtime_path)
+    } else {
+        None
     }
 }
 

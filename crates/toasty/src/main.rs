@@ -1,204 +1,12 @@
-use anyhow::{Context, Result};
 use atty::Stream as AtStream;
-use clap::{Parser, Subcommand};
+use clap::Parser;
 use colored::Colorize;
 use std::path::PathBuf;
-
-mod build;
-mod compiler_fetch;
-mod manifest;
-mod module_resolution;
-mod package_graph;
-mod runtime_fetch;
-
-/// Compilation options for invoking oatsc
-#[derive(Debug, Clone)]
-struct CompileOptions {
-    pub src_file: String,
-    pub extern_oats: std::collections::HashMap<String, String>,
-    pub package_root: Option<std::path::PathBuf>,
-    pub extern_pkg: std::collections::HashMap<String, String>,
-    pub out_dir: Option<String>,
-    pub out_name: Option<String>,
-    pub linker: Option<String>,
-    pub emit_object_only: bool,
-    pub link_runtime: bool,
-    pub opt_level: Option<String>,
-    pub lto: Option<String>,
-    pub target_triple: Option<String>,
-    pub target_cpu: Option<String>,
-    pub target_features: Option<String>,
-    pub build_profile: Option<String>,
-}
-
-impl CompileOptions {
-    fn new(src_file: String) -> Self {
-        Self {
-            src_file,
-            extern_oats: std::collections::HashMap::new(),
-            package_root: None,
-            extern_pkg: std::collections::HashMap::new(),
-            out_dir: None,
-            out_name: None,
-            linker: None,
-            emit_object_only: false,
-            link_runtime: true,
-            opt_level: None,
-            lto: None,
-            target_triple: None,
-            target_cpu: None,
-            target_features: None,
-            build_profile: None,
-        }
-    }
-
-    fn with_modules(entry_point: String) -> Self {
-        Self {
-            src_file: entry_point,
-            extern_oats: std::collections::HashMap::new(),
-            package_root: None,
-            extern_pkg: std::collections::HashMap::new(),
-            out_dir: None,
-            out_name: None,
-            linker: None,
-            emit_object_only: false,
-            link_runtime: true,
-            opt_level: None,
-            lto: None,
-            target_triple: None,
-            target_cpu: None,
-            target_features: None,
-            build_profile: None,
-        }
-    }
-}
-
-#[derive(Parser)]
-#[command(name = "toasty", about = "Oats Project Manager", version = env!("CARGO_PKG_VERSION"))]
-struct Cli {
-    /// Print verbose debug information even in release builds
-    #[arg(long = "verbose")]
-    verbose: bool,
-    #[command(subcommand)]
-    cmd: Commands,
-}
-
-#[derive(Subcommand)]
-enum Commands {
-    /// Build a .oats file into a native executable (like `cargo build`)
-    Build {
-        /// Path to the source .oats file to compile. If omitted, OATS_SRC_FILE env var is used.
-        src: Option<String>,
-
-        /// Output directory for compilation artifacts (defaults to current directory or OATS_OUT_DIR)
-        #[arg(short, long)]
-        out_dir: Option<String>,
-        /// Override the produced executable name (without path)
-        #[arg(long = "out-name")]
-        out_name: Option<String>,
-
-        /// Explicit linker to use for final binary (sets OATS_LINKER)
-        #[arg(long)]
-        linker: Option<String>,
-        /// Build in release mode (enables optimizations/LTO)
-        #[arg(long)]
-        release: bool,
-
-        /// Emit object only and skip final host linking (sets OATS_EMIT_OBJECT_ONLY)
-        #[arg(long = "emit-object-only")]
-        emit_object_only: bool,
-
-        /// Skip linking the runtime library (for custom linking)
-        #[arg(long = "no-link-runtime")]
-        no_link_runtime: bool,
-
-        /// Set opt level: none, default, aggressive (also OATS_OPT_LEVEL)
-        #[arg(long = "opt-level")]
-        opt_level: Option<String>,
-
-        /// LTO mode: none, thin, full (also OATS_LTO)
-        #[arg(long = "lto")]
-        lto: Option<String>,
-
-        /// Target triple to pass to LLVM (sets OATS_TARGET_TRIPLE)
-        #[arg(long = "target-triple")]
-        target_triple: Option<String>,
-
-        /// Target CPU to use for TargetMachine (sets OATS_TARGET_CPU)
-        #[arg(long = "target-cpu")]
-        target_cpu: Option<String>,
-
-        /// Target features to enable (sets OATS_TARGET_FEATURES)
-        #[arg(long = "target-features")]
-        target_features: Option<String>,
-        /// Suppress progress output
-        #[arg(long = "quiet")]
-        quiet: bool,
-        /// Force color output: auto, always, never
-        #[arg(long = "color")]
-        color: Option<String>,
-    },
-
-    /// Build then run the produced executable (like `cargo run`)
-    Run {
-        /// Path to the source .oats file to compile. If omitted, OATS_SRC_FILE env var is used.
-        src: Option<String>,
-
-        /// Arguments to pass to the executed program (after `--`)
-        #[arg(last = true)]
-        args: Vec<String>,
-        /// Override the produced executable name (without path)
-        #[arg(long = "out-name")]
-        out_name: Option<String>,
-        /// Suppress progress output
-        #[arg(long = "quiet")]
-        quiet: bool,
-        /// Force color output: auto, always, never
-        #[arg(long = "color")]
-        color: Option<String>,
-    },
-
-    /// Create a new Oats project (like `cargo new`)
-    New {
-        /// Name of the project to create
-        name: String,
-        /// Create a library project instead of executable
-        #[arg(long)]
-        lib: bool,
-        /// Suppress progress output
-        #[arg(long)]
-        quiet: bool,
-    },
-
-    /// Manage oatsc compiler versions
-    Compiler {
-        #[command(subcommand)]
-        action: CompilerCommands,
-    },
-}
-
-#[derive(Subcommand)]
-enum CompilerCommands {
-    /// List available compiler versions
-    List,
-    /// Install a specific compiler version
-    Install {
-        /// Version tag to install (e.g., stable, nightly, or compiler-v1.0.0)
-        version: String,
-    },
-    /// Switch to a specific compiler version
-    Use {
-        /// Version tag to use (e.g., stable, nightly, or compiler-v1.0.0)
-        version: String,
-    },
-    /// Show current compiler version
-    Current,
-    /// Uninstall a specific compiler version
-    Uninstall {
-        /// Version tag to uninstall (e.g., stable, nightly, or compiler-v1.0.0)
-        version: String,
-    },
-}
+use toasty::build;
+use toasty::cli::{Cli, Commands, CompileOptions, CompilerCommands, RuntimeCommands};
+use toasty::error::{Diagnostic, Result};
+use toasty::fetch;
+use toasty::project;
 
 /// Perform preflight checks to ensure required tools are available
 fn preflight_check() -> Result<()> {
@@ -207,46 +15,39 @@ fn preflight_check() -> Result<()> {
         return Ok(());
     }
 
-    // Check for oatsc compiler (try selected version first, then downloaded latest, then local target, then system)
-    let oatsc_available =
-        if let Some(oatsc_path) = crate::compiler_fetch::get_selected_compiler_path() {
-            // Use selected oatsc version
-            unsafe {
-                std::env::set_var("OATS_OATSC_PATH", oatsc_path);
-            }
-            true
-        } else if let Some(oatsc_path) = crate::compiler_fetch::try_fetch_compiler() {
-            // Use downloaded oatsc
-            unsafe {
-                std::env::set_var("OATS_OATSC_PATH", oatsc_path);
-            }
-            true
-        } else if let Ok(current_exe) = std::env::current_exe() {
-            let local_oatsc = current_exe
-                .parent()
-                .and_then(|p| p.parent())
-                .map(|p| p.join("oatsc"))
-                .filter(|p| p.exists());
+    // Check for oatsc compiler (try selected version first, then local target, then system)
+    let oatsc_available = if let Some(oatsc_path) = fetch::get_selected_compiler_path() {
+        // Use selected oatsc version
+        unsafe {
+            std::env::set_var("OATS_OATSC_PATH", oatsc_path);
+        }
+        true
+    } else if let Ok(current_exe) = std::env::current_exe() {
+        let local_oatsc = current_exe
+            .parent()
+            .and_then(|p| p.parent())
+            .map(|p| p.join("oatsc"))
+            .filter(|p| p.exists());
 
-            if let Some(oatsc_path) = local_oatsc {
-                // Use local oatsc from target directory
-                unsafe {
-                    std::env::set_var("OATS_OATSC_PATH", oatsc_path);
-                }
-                true
-            } else {
-                false
+        if let Some(oatsc_path) = local_oatsc {
+            // Use local oatsc from target directory
+            unsafe {
+                std::env::set_var("OATS_OATSC_PATH", oatsc_path);
             }
-        } else if is_command_available("oatsc") {
-            // Use system oatsc
             true
         } else {
             false
-        };
+        }
+    } else if is_command_available("oatsc") {
+        // Use system oatsc
+        true
+    } else {
+        false
+    };
 
     if !oatsc_available {
-        anyhow::bail!(
-            "oatsc compiler not found. Please ensure oatsc is installed, or pre-built binaries are available for download."
+        eprintln!(
+            "Warning: oatsc compiler not found. Please install oatsc or use 'toasty compiler install' to install a pre-built version."
         );
     }
 
@@ -255,7 +56,9 @@ fn preflight_check() -> Result<()> {
         is_command_available("clang") || is_command_available("gcc") || is_command_available("ld");
 
     if !linker_available {
-        anyhow::bail!("No linker found in PATH. Please install clang, gcc, or another linker.");
+        eprintln!(
+            "Warning: No linker found in PATH. Please install clang, gcc, or another linker."
+        );
     }
 
     Ok(())
@@ -361,16 +164,20 @@ fn invoke_oatsc(options: &CompileOptions) -> Result<Option<PathBuf>> {
     let output = std::process::Command::new(&oatsc_path)
         .args(&args)
         .output()
-        .with_context(|| format!("Failed to execute oatsc command: {} {:?}", oatsc_path, args))?;
+        .map_err(|e| {
+            Diagnostic::new(format!(
+                "Failed to execute oatsc command: {} {:?}: {}",
+                oatsc_path, args, e
+            ))
+        })?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stdout = String::from_utf8_lossy(&output.stdout);
-        anyhow::bail!(
+        return Err(Diagnostic::new(format!(
             "oatsc compilation failed:\nSTDOUT: {}\nSTDERR: {}",
-            stdout,
-            stderr
-        );
+            stdout, stderr
+        )));
     }
 
     // Parse output to get object file path if any
@@ -441,7 +248,7 @@ fn main() -> Result<()> {
             // Try to discover and load manifest for package-based build
             if src.is_none() {
                 // Only auto-discover manifest if no explicit source file provided
-                match manifest::Manifest::discover() {
+                match project::Manifest::discover() {
                     Ok(Some((_manifest, manifest_path))) => {
                         if !quiet && (verbose || cfg!(debug_assertions)) {
                             eprintln!(
@@ -452,7 +259,7 @@ fn main() -> Result<()> {
                         }
 
                         // Use package-based build
-                        let build_config = build::BuildConfig {
+                        let build_config = crate::build::BuildConfig {
                             verbose,
                             quiet,
                             release,
@@ -500,9 +307,9 @@ fn main() -> Result<()> {
             } else if let Ok(p) = std::env::var("OATS_SRC_FILE") {
                 p
             } else {
-                anyhow::bail!(
-                    "No source file provided. Pass path as argument, set OATS_SRC_FILE env var, or create Oats.toml"
-                );
+                return Err(Diagnostic::new(
+                    "No source file provided. Pass path as argument, set OATS_SRC_FILE env var, or create Oats.toml",
+                ));
             };
 
             // Read out_dir from environment variable if not provided
@@ -553,7 +360,7 @@ fn main() -> Result<()> {
                 eprintln!("{}", "Building dependency graph...".blue());
             }
             let (dep_graph, node_indices, _entry_node) =
-                module_resolution::build_dependency_graph(&src_file, verbose)?;
+                project::build_dependency_graph(&src_file, verbose)?;
 
             if !quiet && (verbose || cfg!(debug_assertions)) {
                 eprintln!(
@@ -566,7 +373,7 @@ fn main() -> Result<()> {
             if !quiet && (verbose || cfg!(debug_assertions)) {
                 eprintln!("{}", "Computing compilation order...".blue());
             }
-            let compilation_order = module_resolution::topological_sort(&dep_graph, &node_indices)?;
+            let compilation_order = project::topological_sort(&dep_graph, &node_indices)?;
 
             if verbose {
                 eprintln!("Compilation order:");
@@ -671,29 +478,23 @@ fn main() -> Result<()> {
 
             // Use clang to link all object files with the runtime
             // Ensure runtime is available
-            let _runtime_lib = if let Ok(runtime_path) = std::env::var("OATS_RUNTIME_PATH") {
+            let runtime_lib = if let Ok(runtime_path) = std::env::var("OATS_RUNTIME_PATH") {
                 // Use explicitly specified runtime path
                 let runtime_lib = std::path::PathBuf::from(runtime_path);
                 if !runtime_lib.exists() {
-                    anyhow::bail!(
-                        "Runtime library not found at OATS_RUNTIME_PATH: {}",
+                    eprintln!(
+                        "Warning: Runtime library not found at OATS_RUNTIME_PATH: {}",
                         runtime_lib.display()
                     );
                 }
                 runtime_lib
-            } else if let Some(cached_runtime) = crate::runtime_fetch::try_fetch_runtime() {
-                // Use the cached pre-built runtime
-                cached_runtime
             } else {
                 // Look for runtime in current directory or standard locations
                 let runtime_lib = std::path::PathBuf::from("libruntime.a");
 
                 if !runtime_lib.exists() {
-                    anyhow::bail!(
-                        "Runtime library not found. Please either:\n\
-                        1. Ensure pre-built runtimes can be downloaded from GitHub, or\n\
-                        2. Place libruntime.a in the current directory, or\n\
-                        3. Set OATS_RUNTIME_PATH to the path of libruntime.a"
+                    eprintln!(
+                        "Warning: Runtime library not found. Please either place libruntime.a in the current directory or set OATS_RUNTIME_PATH to the path of libruntime.a"
                     );
                 }
                 runtime_lib
@@ -707,10 +508,8 @@ fn main() -> Result<()> {
                 link_cmd.arg(obj_file);
             }
 
-            // Add linker if specified
-            if let Some(linker) = linker {
-                link_cmd.arg(format!("-fuse-ld={}", linker));
-            }
+            // Add the runtime library
+            link_cmd.arg(&runtime_lib);
 
             if verbose {
                 eprintln!("Link command: {:?}", link_cmd);
@@ -718,7 +517,7 @@ fn main() -> Result<()> {
 
             let link_status = link_cmd.status()?;
             if !link_status.success() {
-                anyhow::bail!("Linking failed");
+                return Err(Diagnostic::new("Linking failed"));
             }
 
             if !quiet && (verbose || cfg!(debug_assertions)) {
@@ -758,16 +557,16 @@ fn main() -> Result<()> {
             } else if let Ok(p) = std::env::var("OATS_SRC_FILE") {
                 p
             } else {
-                anyhow::bail!(
-                    "No source file provided. Pass path as argument or set OATS_SRC_FILE env var."
-                );
+                return Err(Diagnostic::new(
+                    "No source file provided. Pass path as argument or set OATS_SRC_FILE env var.",
+                ));
             };
 
             // Perform module resolution to discover all source files
             if !quiet && (verbose || cfg!(debug_assertions)) {
                 eprintln!("{}", "Resolving module dependencies...".blue());
             }
-            let modules = module_resolution::load_modules(&src_file)?;
+            let modules = project::load_modules(&src_file)?;
 
             if !quiet && (verbose || cfg!(debug_assertions)) {
                 eprintln!(
@@ -825,7 +624,9 @@ fn main() -> Result<()> {
             }
             let status = cmd.status()?;
             if !status.success() {
-                anyhow::bail!("Executed program returned non-zero exit code");
+                return Err(Diagnostic::new(
+                    "Executed program returned non-zero exit code",
+                ));
             }
             Ok(())
         }
@@ -834,7 +635,10 @@ fn main() -> Result<()> {
             let project_path = std::path::Path::new(&name);
 
             if project_path.exists() {
-                anyhow::bail!("Directory '{}' already exists", name);
+                return Err(Diagnostic::new(format!(
+                    "Directory '{}' already exists",
+                    name
+                )));
             }
 
             // Create project directory
@@ -903,7 +707,7 @@ export function main(): number {{
         Commands::Compiler { action } => match action {
             CompilerCommands::List => {
                 // List available compiler versions
-                let versions = crate::compiler_fetch::list_available_compilers()?;
+                let versions = fetch::list_available_compilers()?;
                 if versions.is_empty() {
                     println!("No compiler versions found.");
                 } else {
@@ -916,26 +720,65 @@ export function main(): number {{
             }
             CompilerCommands::Install { version } => {
                 // Install a specific compiler version
-                crate::compiler_fetch::install_compiler_version(&version)?;
+                fetch::install_compiler_version(&version)?;
                 println!("Compiler version {} installed successfully.", version);
                 Ok(())
             }
             CompilerCommands::Use { version } => {
                 // Switch to a specific compiler version
-                crate::compiler_fetch::use_compiler_version(&version)?;
+                fetch::use_compiler_version(&version)?;
                 println!("Switched to compiler version {}.", version);
                 Ok(())
             }
             CompilerCommands::Current => {
                 // Show current compiler version
-                let current_version = crate::compiler_fetch::current_compiler_version()?;
+                let current_version = fetch::current_compiler_version()?;
                 println!("Current compiler version: {}", current_version);
                 Ok(())
             }
             CompilerCommands::Uninstall { version } => {
                 // Uninstall a specific compiler version
-                crate::compiler_fetch::uninstall_compiler_version(&version)?;
+                fetch::uninstall_compiler_version(&version)?;
                 println!("Compiler version {} uninstalled successfully.", version);
+                Ok(())
+            }
+        },
+        Commands::Runtime { action } => match action {
+            RuntimeCommands::List => {
+                // List available runtime versions
+                let versions = fetch::list_available_runtimes()?;
+                if versions.is_empty() {
+                    println!("No runtime versions found.");
+                } else {
+                    println!("Available runtime versions:");
+                    for version in versions {
+                        println!("  - {}", version);
+                    }
+                }
+                Ok(())
+            }
+            RuntimeCommands::Install { version } => {
+                // Install a specific runtime version
+                fetch::install_runtime_version(&version)?;
+                println!("Runtime version {} installed successfully.", version);
+                Ok(())
+            }
+            RuntimeCommands::Use { version } => {
+                // Switch to a specific runtime version
+                fetch::use_runtime_version(&version)?;
+                println!("Switched to runtime version {}.", version);
+                Ok(())
+            }
+            RuntimeCommands::Current => {
+                // Show current runtime version
+                let current_version = fetch::current_runtime_version()?;
+                println!("Current runtime version: {}", current_version);
+                Ok(())
+            }
+            RuntimeCommands::Uninstall { version } => {
+                // Uninstall a specific runtime version
+                fetch::uninstall_runtime_version(&version)?;
+                println!("Runtime version {} uninstalled successfully.", version);
                 Ok(())
             }
         },

@@ -402,7 +402,9 @@ impl<'a> CodeGen<'a> {
                 let mut field_vals: Vec<inkwell::values::BasicValueEnum> = Vec::new();
 
                 for k in &keys {
-                    let v = map.get(k).ok_or_else(|| crate::diagnostics::Diagnostic::simple_boxed("key not found in const map"))?;
+                    let v = map.get(k).ok_or_else(|| {
+                        crate::diagnostics::Diagnostic::simple_boxed("key not found in const map")
+                    })?;
                     match v {
                         ConstValue::Number(n) => {
                             field_types.push(self.f64_t.into());
@@ -475,7 +477,9 @@ impl<'a> CodeGen<'a> {
                 // Pointer fields start at offset 16 (header 8 + meta 8), each field is 8 bytes
                 let mut meta_offsets: Vec<i32> = Vec::new();
                 for (idx, k) in keys.iter().enumerate() {
-                    let v = map.get(k).ok_or_else(|| crate::diagnostics::Diagnostic::simple_boxed("key not found in const map"))?;
+                    let v = map.get(k).ok_or_else(|| {
+                        crate::diagnostics::Diagnostic::simple_boxed("key not found in const map")
+                    })?;
                     match v {
                         ConstValue::Str(_) | ConstValue::Array(_) | ConstValue::Object(_) => {
                             let off = 16 + (idx * 8);
@@ -1145,7 +1149,9 @@ impl<'a> CodeGen<'a> {
             Ok(cs) => cs,
             Err(_) => {
                 crate::diagnostics::emit_diagnostic(
-                    &crate::diagnostics::Diagnostic::simple_boxed("failed to build call to oats_main"),
+                    &crate::diagnostics::Diagnostic::simple_boxed(
+                        "failed to build call to oats_main",
+                    ),
                     Some(self.source),
                 );
                 let const_zero = i32_t.const_int(0, false);
@@ -1278,10 +1284,12 @@ impl<'a> CodeGen<'a> {
             .borrow()
             .get(func_name)
             .cloned()
-            .ok_or_else(|| crate::diagnostics::Diagnostic::simple_boxed(format!(
-                "Generic function '{}' not found",
-                func_name
-            )))?;
+            .ok_or_else(|| {
+                crate::diagnostics::Diagnostic::simple_boxed(format!(
+                    "Generic function '{}' not found",
+                    func_name
+                ))
+            })?;
 
         // Verify type args match type params
         if type_args.len() != fsig.type_params.len() {
@@ -1357,7 +1365,9 @@ impl<'a> CodeGen<'a> {
 
                     // If only one unique type, return it; otherwise create union
                     if unique_types.len() == 1 {
-                        unique_types.into_iter().next().ok_or_else(|| crate::diagnostics::Diagnostic::simple_boxed("expected one unique type"))
+                        unique_types.into_iter().next().ok_or_else(|| {
+                            crate::diagnostics::Diagnostic::simple_boxed("expected one unique type")
+                        })
                     } else {
                         Ok(crate::types::OatsType::Union(unique_types))
                     }

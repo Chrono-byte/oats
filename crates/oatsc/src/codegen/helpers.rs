@@ -874,7 +874,9 @@ impl<'a> super::CodeGen<'a> {
         let malloc_ret = call_site
             .try_as_basic_value()
             .left()
-            .ok_or_else(|| crate::diagnostics::Diagnostic::simple_boxed("malloc call did not return a value"))?
+            .ok_or_else(|| {
+                crate::diagnostics::Diagnostic::simple_boxed("malloc call did not return a value")
+            })?
             .into_pointer_value();
 
         // Cast to i8* for stores
@@ -934,7 +936,9 @@ impl<'a> super::CodeGen<'a> {
                 let casted = self
                     .builder
                     .build_pointer_cast(pv, self.i8ptr_t, "cast_to_i8ptr")
-                    .map_err(|_| crate::diagnostics::Diagnostic::simple_boxed("pointer cast failed"))?;
+                    .map_err(|_| {
+                        crate::diagnostics::Diagnostic::simple_boxed("pointer cast failed")
+                    })?;
                 store_val = casted.as_basic_value_enum();
             }
 
@@ -1075,7 +1079,9 @@ impl<'a> super::CodeGen<'a> {
         let malloc_ret = call_site
             .try_as_basic_value()
             .left()
-            .ok_or_else(|| crate::diagnostics::Diagnostic::simple_boxed("malloc call did not return a value"))?
+            .ok_or_else(|| {
+                crate::diagnostics::Diagnostic::simple_boxed("malloc call did not return a value")
+            })?
             .into_pointer_value();
 
         let obj_ptr = self
@@ -1131,7 +1137,9 @@ impl<'a> super::CodeGen<'a> {
                 let casted = self
                     .builder
                     .build_pointer_cast(pv, self.i8ptr_t, "cast_to_i8ptr")
-                    .map_err(|_| crate::diagnostics::Diagnostic::simple_boxed("pointer cast failed"))?;
+                    .map_err(|_| {
+                        crate::diagnostics::Diagnostic::simple_boxed("pointer cast failed")
+                    })?;
                 store_val = casted.as_basic_value_enum();
             }
             let _ = self.builder.build_store(field_ptr_cast, store_val);

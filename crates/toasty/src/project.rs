@@ -401,7 +401,10 @@ pub fn load_modules_with_verbosity(
                 for diag in parse_diags {
                     eprintln!("Parse error in {}: {}", path, diag.message);
                 }
-                return Err(ToastyError::other(format!("Failed to parse module {}", path)));
+                return Err(ToastyError::other(format!(
+                    "Failed to parse module {}",
+                    path
+                )));
             }
         };
 
@@ -475,8 +478,9 @@ pub fn build_dependency_graph(
         }
 
         // Parse the current file to discover imports
-        let source = std::fs::read_to_string(&current_path)
-            .map_err(|e| ToastyError::other(format!("Failed to read file {}: {}", current_path, e)))?;
+        let source = std::fs::read_to_string(&current_path).map_err(|e| {
+            ToastyError::other(format!("Failed to read file {}: {}", current_path, e))
+        })?;
         let (parsed_opt, parse_diags) =
             oatsc::parser::parse_oats_module(&source, Some(&current_path)).map_err(|e| {
                 ToastyError::other(format!("Failed to parse module {}: {}", current_path, e))
@@ -561,7 +565,10 @@ pub fn topological_sort(
         Err(cycle) => {
             // Try to extract cycle information
             let cycle_info = format!("Cycle detected involving node {:?}", cycle.node_id());
-            Err(ToastyError::other(format!("Dependency cycle: {}", cycle_info)))
+            Err(ToastyError::other(format!(
+                "Dependency cycle: {}",
+                cycle_info
+            )))
         }
     }
 }

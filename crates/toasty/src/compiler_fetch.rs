@@ -22,19 +22,19 @@ fn compute_sha256(path: &Path) -> Result<String> {
     Ok(format!("{:x}", hash))
 }
 
-/// Get the cache directory for compiler binaries
-fn get_cache_dir() -> Result<PathBuf> {
-    let cache_dir = if let Ok(dir) = std::env::var("OATS_CACHE_DIR") {
+/// Get the oats home directory for compiler binaries
+fn get_oats_home() -> Result<PathBuf> {
+    let oats_home = if let Ok(dir) = std::env::var("OATS_HOME") {
         PathBuf::from(dir)
-    } else if let Some(cache_home) = dirs::cache_dir() {
-        cache_home.join("oats")
+    } else if let Some(home) = dirs::home_dir() {
+        home.join(".oats")
     } else {
         // Fallback to temp directory
-        std::env::temp_dir().join("oats_cache")
+        std::env::temp_dir().join("oats_home")
     };
 
-    fs::create_dir_all(&cache_dir)?;
-    Ok(cache_dir)
+    fs::create_dir_all(&oats_home)?;
+    Ok(oats_home)
 }
 
 /// Detect the current platform and return the appropriate compiler artifact name

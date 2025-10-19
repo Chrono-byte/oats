@@ -569,7 +569,9 @@ impl<'a> CodeGen<'a> {
                                         ) {
                                             Ok(v) => v,
                                             Err(_) => {
-                                                return Err(Diagnostic::simple_boxed("operation failed"));
+                                                return Err(Diagnostic::simple_boxed(
+                                                    "operation failed",
+                                                ));
                                             }
                                         };
                                         return Ok(loaded.as_basic_value_enum());
@@ -587,7 +589,9 @@ impl<'a> CodeGen<'a> {
                                         ) {
                                             Ok(p) => p,
                                             Err(_) => {
-                                                return Err(Diagnostic::simple_boxed("operation failed"));
+                                                return Err(Diagnostic::simple_boxed(
+                                                    "operation failed",
+                                                ));
                                             }
                                         };
                                         // load slot (an i8*)
@@ -598,7 +602,9 @@ impl<'a> CodeGen<'a> {
                                         ) {
                                             Ok(v) => v,
                                             Err(_) => {
-                                                return Err(Diagnostic::simple_boxed("operation failed"));
+                                                return Err(Diagnostic::simple_boxed(
+                                                    "operation failed",
+                                                ));
                                             }
                                         };
                                         // If the object expression had an origin marker,
@@ -632,7 +638,9 @@ impl<'a> CodeGen<'a> {
                                         ) {
                                             Ok(p) => p,
                                             Err(_) => {
-                                                return Err(Diagnostic::simple_boxed("operation failed"));
+                                                return Err(Diagnostic::simple_boxed(
+                                                    "operation failed",
+                                                ));
                                             }
                                         };
                                         let boxed = match self.builder.build_load(
@@ -642,7 +650,9 @@ impl<'a> CodeGen<'a> {
                                         ) {
                                             Ok(v) => v,
                                             Err(_) => {
-                                                return Err(Diagnostic::simple_boxed("operation failed"));
+                                                return Err(Diagnostic::simple_boxed(
+                                                    "operation failed",
+                                                ));
                                             }
                                         };
                                         // Try to unbox as f64 first
@@ -886,7 +896,10 @@ impl<'a> CodeGen<'a> {
                 "unsupported member access expression; recv={}, lowered_recv={}, recv_fields={:?}, known_nominals={:?}",
                 recv_info, lowered_recv, recv_fields, keys
             );
-            Err(Diagnostic::simple_with_span_boxed(msg, member.span.lo.0 as usize))
+            Err(Diagnostic::simple_with_span_boxed(
+                msg,
+                member.span.lo.0 as usize,
+            ))
         }
     }
 }

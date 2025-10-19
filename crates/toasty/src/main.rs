@@ -174,12 +174,12 @@ fn invoke_oatsc(options: &CompileOptions) -> Result<Option<PathBuf>> {
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        
+
         // Check if this is likely a user code error (oatsc already printed diagnostics)
         if stderr.contains("error:") || stderr.contains("Error") || stdout.contains("error:") {
             return Err(ToastyError::CompilationFailed);
         }
-        
+
         return Err(ToastyError::CompilerInternalError {
             message: format!(
                 "oatsc compilation failed:\nSTDOUT:\n{}\n\nSTDERR:\n{}",
@@ -812,7 +812,10 @@ fn main_wrapper() -> i32 {
         // Provide context-specific help messages
         match &err {
             ToastyError::ManifestNotFound { path: _ } => {
-                eprintln!("  {}help:{} Ensure you are in the root of an Oats project with Oats.toml", green, reset);
+                eprintln!(
+                    "  {}help:{} Ensure you are in the root of an Oats project with Oats.toml",
+                    green, reset
+                );
                 eprintln!("         Or specify a source file directly");
             }
             ToastyError::LinkerFailed { stderr, .. } => {
@@ -826,7 +829,10 @@ fn main_wrapper() -> i32 {
             }
             ToastyError::Io { path: _, source } => {
                 if source.kind() == std::io::ErrorKind::NotFound {
-                    eprintln!("  {}help:{} Check that the file exists and the path is correct", green, reset);
+                    eprintln!(
+                        "  {}help:{} Check that the file exists and the path is correct",
+                        green, reset
+                    );
                 }
             }
             _ => {}

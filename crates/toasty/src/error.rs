@@ -44,7 +44,9 @@ pub enum ToastyError {
     },
 
     /// Hash mismatch when verifying downloaded component integrity
-    #[error("Component validation failed for '{name}': Hash mismatch (expected {expected}, got {actual})")]
+    #[error(
+        "Component validation failed for '{name}': Hash mismatch (expected {expected}, got {actual})"
+    )]
     HashMismatch {
         name: String,
         expected: String,
@@ -57,10 +59,7 @@ pub enum ToastyError {
 
     /// Linker command failed with error output
     #[error("Linker failed with exit code {code:?}")]
-    LinkerFailed {
-        code: Option<i32>,
-        stderr: String,
-    },
+    LinkerFailed { code: Option<i32>, stderr: String },
 
     /// oatsc compiler encountered a fatal, non-code-related error (e.g., internal error)
     #[error("Compiler error: {message}")]

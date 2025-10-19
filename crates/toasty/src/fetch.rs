@@ -22,19 +22,19 @@ fn compute_sha256(path: &Path) -> Result<String> {
     Ok(format!("{:x}", hash))
 }
 
-/// Get the cache directory for binaries and libraries
-fn get_cache_dir() -> Result<PathBuf> {
-    let cache_dir = if let Ok(dir) = std::env::var("OATS_CACHE_DIR") {
+/// Get the oats home directory for binaries and libraries
+fn get_oats_home() -> Result<PathBuf> {
+    let oats_home = if let Ok(dir) = std::env::var("OATS_HOME") {
         PathBuf::from(dir)
-    } else if let Some(cache_home) = dirs::cache_dir() {
-        cache_home.join("oats")
+    } else if let Some(home) = dirs::home_dir() {
+        home.join(".oats")
     } else {
         // Fallback to temp directory
-        std::env::temp_dir().join("oats_cache")
+        std::env::temp_dir().join("oats_home")
     };
 
-    fs::create_dir_all(&cache_dir)?;
-    Ok(cache_dir)
+    fs::create_dir_all(&oats_home)?;
+    Ok(oats_home)
 }
 
 /// Detect the current platform and return the appropriate compiler artifact name
@@ -167,21 +167,55 @@ fn download_compiler(tag: &str, artifact_name: &str, dest_path: &Path) -> Result
         fs::set_permissions(dest_path, perms)?;
     }
 
-    // Verify the hash of the downloaded file
-    let computed_hash = compute_sha256(dest_path)?;
-    let expected_hash = "116642b3377f93d6275b91024fad113821558ee73b92653efb03b0855428b464"; // TODO: Replace with actual expected hash
-    if computed_hash != expected_hash {
-        fs::remove_file(dest_path)?;
-        return Err(ToastyError::other(format!(
-            "Downloaded compiler hash mismatch: expected {}, got {}",
-            expected_hash, computed_hash
-        )));
+    // Fetch digest from GitHub API
+    let api_url = format!(
+        "https://api.github.com/repos/{}/{}/releases/tags/{}",
+        GITHUB_OWNER, GITHUB_REPO, tag
+    );
+    let release_resp = ureq::get(&api_url)
+        .set("User-Agent", "oats-compiler")
+        .call()
+        .map_err(|e| ToastyError::other(format!("Failed to fetch release metadata: {}", e)))?;
+    let release_json: serde_json::Value = serde_json::from_reader(release_resp.into_reader())
+        .map_err(|e| ToastyError::other(format!("Failed to parse release metadata: {}", e)))?;
+    let mut expected_hash = None;
+    if let Some(assets) = release_json.get("assets").and_then(|a| a.as_array()) {
+        for asset in assets {
+            if asset.get("name").and_then(|n| n.as_str()) == Some(artifact_name)
+                && let Some(digest) = asset.get("digest").and_then(|d| d.as_str())
+                    && let Some(hash) = digest.strip_prefix("sha256:") {
+                        expected_hash = Some(hash.to_string());
+                    }
+        }
     }
-
+    let computed_hash = compute_sha256(dest_path)?;
+    if let Some(expected_hash) = expected_hash {
+        if computed_hash != expected_hash {
+            eprintln!(
+                "Warning: Hash mismatch for compiler asset (expected {}, got {}). Marking as unusable.",
+                expected_hash, computed_hash
+            );
+            // Move unusable asset to quarantine folder
+            let quarantine_dir = get_oats_home()?.join("quarantine");
+            fs::create_dir_all(&quarantine_dir)?;
+            let quarantine_path = quarantine_dir.join(artifact_name);
+            fs::rename(dest_path, &quarantine_path)?;
+            eprintln!(
+                "Unusable compiler asset moved to quarantine: {}",
+                quarantine_path.display()
+            );
+            return Err(ToastyError::HashMismatch {
+                name: artifact_name.to_string(),
+                expected: expected_hash,
+                actual: computed_hash,
+            });
+        }
+    } else {
+        eprintln!("Warning: No digest found for compiler asset. Skipping hash verification.");
+    }
     if verbose {
         eprintln!("Downloaded {} bytes", bytes_written);
     }
-
     Ok(())
 }
 
@@ -207,21 +241,55 @@ fn download_runtime(tag: &str, artifact_name: &str, dest_path: &Path) -> Result<
     let mut file = fs::File::create(dest_path)?;
     let bytes_written = std::io::copy(&mut response.into_reader(), &mut file)?;
 
-    // Verify the hash of the downloaded file
-    let computed_hash = compute_sha256(dest_path)?;
-    let expected_hash = "EXPECTED_RUNTIME_HASH"; // TODO: Replace with actual expected hash
-    if computed_hash != expected_hash {
-        fs::remove_file(dest_path)?;
-        return Err(ToastyError::other(format!(
-            "Downloaded runtime hash mismatch: expected {}, got {}",
-            expected_hash, computed_hash
-        )));
+    // Fetch digest from GitHub API
+    let api_url = format!(
+        "https://api.github.com/repos/{}/{}/releases/tags/{}",
+        GITHUB_OWNER, GITHUB_REPO, tag
+    );
+    let release_resp = ureq::get(&api_url)
+        .set("User-Agent", "oats-compiler")
+        .call()
+        .map_err(|e| ToastyError::other(format!("Failed to fetch release metadata: {}", e)))?;
+    let release_json: serde_json::Value = serde_json::from_reader(release_resp.into_reader())
+        .map_err(|e| ToastyError::other(format!("Failed to parse release metadata: {}", e)))?;
+    let mut expected_hash = None;
+    if let Some(assets) = release_json.get("assets").and_then(|a| a.as_array()) {
+        for asset in assets {
+            if asset.get("name").and_then(|n| n.as_str()) == Some(artifact_name)
+                && let Some(digest) = asset.get("digest").and_then(|d| d.as_str())
+                    && let Some(hash) = digest.strip_prefix("sha256:") {
+                        expected_hash = Some(hash.to_string());
+                    }
+        }
     }
-
+    let computed_hash = compute_sha256(dest_path)?;
+    if let Some(expected_hash) = expected_hash {
+        if computed_hash != expected_hash {
+            eprintln!(
+                "Warning: Hash mismatch for runtime asset (expected {}, got {}). Marking as unusable.",
+                expected_hash, computed_hash
+            );
+            // Move unusable asset to quarantine folder
+            let quarantine_dir = get_oats_home()?.join("quarantine");
+            fs::create_dir_all(&quarantine_dir)?;
+            let quarantine_path = quarantine_dir.join(artifact_name);
+            fs::rename(dest_path, &quarantine_path)?;
+            eprintln!(
+                "Unusable runtime asset moved to quarantine: {}",
+                quarantine_path.display()
+            );
+            return Err(ToastyError::HashMismatch {
+                name: artifact_name.to_string(),
+                expected: expected_hash,
+                actual: computed_hash,
+            });
+        }
+    } else {
+        eprintln!("Warning: No digest found for runtime asset. Skipping hash verification.");
+    }
     if verbose {
         eprintln!("Downloaded {} bytes", bytes_written);
     }
-
     Ok(())
 }
 
@@ -253,7 +321,7 @@ pub fn try_fetch_compiler() -> Option<PathBuf> {
     }
 
     // Get cache directory
-    let cache_dir = match get_cache_dir() {
+    let oats_home = match get_oats_home() {
         Ok(dir) => {
             if verbose {
                 eprintln!("Compiler cache directory: {}", dir.display());
@@ -283,7 +351,7 @@ pub fn try_fetch_compiler() -> Option<PathBuf> {
     };
 
     // Check if we already have this version cached
-    let cached_path = cache_dir.join(&tag).join(artifact_name);
+    let cached_path = oats_home.join(&tag).join(artifact_name);
     if cached_path.exists() {
         eprintln!("Using cached compiler: {}", cached_path.display());
         return Some(cached_path);
@@ -339,7 +407,7 @@ pub fn try_fetch_runtime() -> Option<PathBuf> {
     }
 
     // Get cache directory
-    let cache_dir = match get_cache_dir() {
+    let oats_home = match get_oats_home() {
         Ok(dir) => {
             if verbose {
                 eprintln!("Runtime cache directory: {}", dir.display());
@@ -369,7 +437,7 @@ pub fn try_fetch_runtime() -> Option<PathBuf> {
     };
 
     // Check if we already have this version cached
-    let cached_path = cache_dir.join(&tag).join(artifact_name);
+    let cached_path = oats_home.join(&tag).join(artifact_name);
     if cached_path.exists() {
         eprintln!("Using cached runtime: {}", cached_path.display());
         return Some(cached_path);
@@ -464,8 +532,8 @@ pub fn install_compiler_version(version: &str) -> Result<()> {
         ));
     }
 
-    let cache_dir = get_cache_dir()?;
-    let cached_path = cache_dir.join(version).join(artifact_name);
+    let oats_home = get_oats_home()?;
+    let cached_path = oats_home.join(version).join(artifact_name);
 
     // Check if already installed
     if cached_path.exists() {
@@ -492,8 +560,8 @@ pub fn install_runtime_version(version: &str) -> Result<()> {
         ));
     }
 
-    let cache_dir = get_cache_dir()?;
-    let cached_path = cache_dir.join(version).join(artifact_name);
+    let oats_home = get_oats_home()?;
+    let cached_path = oats_home.join(version).join(artifact_name);
 
     // Check if already installed
     if cached_path.exists() {
@@ -520,8 +588,8 @@ pub fn use_compiler_version(version: &str) -> Result<()> {
         ));
     }
 
-    let cache_dir = get_cache_dir()?;
-    let compiler_path = cache_dir.join(version).join(artifact_name);
+    let oats_home = get_oats_home()?;
+    let compiler_path = oats_home.join(version).join(artifact_name);
 
     if !compiler_path.exists() {
         return Err(ToastyError::other(format!(
@@ -531,7 +599,7 @@ pub fn use_compiler_version(version: &str) -> Result<()> {
     }
 
     // Store the selected version in a config file
-    let config_path = cache_dir.join("current_version");
+    let config_path = oats_home.join("current_version");
     fs::write(&config_path, version)?;
 
     eprintln!("Switched to compiler version {}", version);
@@ -547,8 +615,8 @@ pub fn use_runtime_version(version: &str) -> Result<()> {
         ));
     }
 
-    let cache_dir = get_cache_dir()?;
-    let runtime_path = cache_dir.join(version).join(artifact_name);
+    let oats_home = get_oats_home()?;
+    let runtime_path = oats_home.join(version).join(artifact_name);
 
     if !runtime_path.exists() {
         return Err(ToastyError::other(format!(
@@ -558,7 +626,7 @@ pub fn use_runtime_version(version: &str) -> Result<()> {
     }
 
     // Store the selected version in a config file
-    let config_path = cache_dir.join("current_runtime_version");
+    let config_path = oats_home.join("current_runtime_version");
     fs::write(&config_path, version)?;
 
     eprintln!("Switched to runtime version {}", version);
@@ -567,8 +635,8 @@ pub fn use_runtime_version(version: &str) -> Result<()> {
 
 /// Get the currently selected compiler version
 pub fn current_compiler_version() -> Result<String> {
-    let cache_dir = get_cache_dir()?;
-    let config_path = cache_dir.join("current_version");
+    let oats_home = get_oats_home()?;
+    let config_path = oats_home.join("current_version");
 
     if config_path.exists() {
         let version = fs::read_to_string(&config_path)?;
@@ -584,8 +652,8 @@ pub fn current_compiler_version() -> Result<String> {
 
 /// Get the currently selected runtime version
 pub fn current_runtime_version() -> Result<String> {
-    let cache_dir = get_cache_dir()?;
-    let config_path = cache_dir.join("current_runtime_version");
+    let oats_home = get_oats_home()?;
+    let config_path = oats_home.join("current_runtime_version");
 
     if config_path.exists() {
         let version = fs::read_to_string(&config_path)?;
@@ -601,12 +669,12 @@ pub fn current_runtime_version() -> Result<String> {
 
 /// Get the path to the currently selected compiler
 pub fn get_selected_compiler_path() -> Option<PathBuf> {
-    let cache_dir = match get_cache_dir() {
+    let oats_home = match get_oats_home() {
         Ok(dir) => dir,
         Err(_) => return None,
     };
 
-    let config_path = cache_dir.join("current_version");
+    let config_path = oats_home.join("current_version");
     let version = match fs::read_to_string(&config_path) {
         Ok(v) => v.trim().to_string(),
         Err(_) => return None,
@@ -617,7 +685,7 @@ pub fn get_selected_compiler_path() -> Option<PathBuf> {
         return None;
     }
 
-    let compiler_path = cache_dir.join(version).join(artifact_name);
+    let compiler_path = oats_home.join(version).join(artifact_name);
     if compiler_path.exists() {
         Some(compiler_path)
     } else {
@@ -627,12 +695,12 @@ pub fn get_selected_compiler_path() -> Option<PathBuf> {
 
 /// Get the path to the currently selected runtime
 pub fn get_selected_runtime_path() -> Option<PathBuf> {
-    let cache_dir = match get_cache_dir() {
+    let oats_home = match get_oats_home() {
         Ok(dir) => dir,
         Err(_) => return None,
     };
 
-    let config_path = cache_dir.join("current_runtime_version");
+    let config_path = oats_home.join("current_runtime_version");
     let version = match fs::read_to_string(&config_path) {
         Ok(v) => v.trim().to_string(),
         Err(_) => return None,
@@ -643,7 +711,7 @@ pub fn get_selected_runtime_path() -> Option<PathBuf> {
         return None;
     }
 
-    let runtime_path = cache_dir.join(version).join(artifact_name);
+    let runtime_path = oats_home.join(version).join(artifact_name);
     if runtime_path.exists() {
         Some(runtime_path)
     } else {
@@ -660,8 +728,8 @@ pub fn uninstall_compiler_version(version: &str) -> Result<()> {
         ));
     }
 
-    let cache_dir = get_cache_dir()?;
-    let compiler_path = cache_dir.join(version).join(artifact_name);
+    let oats_home = get_oats_home()?;
+    let compiler_path = oats_home.join(version).join(artifact_name);
 
     // Check if installed
     if !compiler_path.exists() {
@@ -680,7 +748,7 @@ pub fn uninstall_compiler_version(version: &str) -> Result<()> {
     }
 
     // If this was the currently selected version, clear the selection
-    let config_path = cache_dir.join("current_version");
+    let config_path = oats_home.join("current_version");
     if config_path.exists() {
         let current = fs::read_to_string(&config_path)?;
         if current.trim() == version {
@@ -705,8 +773,8 @@ pub fn uninstall_runtime_version(version: &str) -> Result<()> {
         ));
     }
 
-    let cache_dir = get_cache_dir()?;
-    let runtime_path = cache_dir.join(version).join(artifact_name);
+    let oats_home = get_oats_home()?;
+    let runtime_path = oats_home.join(version).join(artifact_name);
 
     // Check if installed
     if !runtime_path.exists() {
@@ -725,7 +793,7 @@ pub fn uninstall_runtime_version(version: &str) -> Result<()> {
     }
 
     // If this was the currently selected version, clear the selection
-    let config_path = cache_dir.join("current_runtime_version");
+    let config_path = oats_home.join("current_runtime_version");
     if config_path.exists() {
         let current = fs::read_to_string(&config_path)?;
         if current.trim() == version {

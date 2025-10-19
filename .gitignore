@@ -80,3 +80,4 @@ third_party/*
 # Ignore object files & LLVM IR in source directories
 **/*.ll
 **/*.o
+update_diagnostics.py

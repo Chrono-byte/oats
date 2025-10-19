@@ -671,7 +671,7 @@ fn main() -> Result<()> {
 
             // Use clang to link all object files with the runtime
             // Ensure runtime is available
-            let runtime_lib = if let Ok(runtime_path) = std::env::var("OATS_RUNTIME_PATH") {
+            let _runtime_lib = if let Ok(runtime_path) = std::env::var("OATS_RUNTIME_PATH") {
                 // Use explicitly specified runtime path
                 let runtime_lib = std::path::PathBuf::from(runtime_path);
                 if !runtime_lib.exists() {
@@ -707,11 +707,6 @@ fn main() -> Result<()> {
                     link_cmd.arg(obj_file);
                 }
 
-            // Add runtime library
-            if !no_link_runtime {
-                link_cmd.arg(runtime_lib);
-            }
-
                 // Add linker if specified
                 if let Some(linker) = linker {
                     link_cmd.arg(format!("-fuse-ld={}", linker));
@@ -732,11 +727,6 @@ fn main() -> Result<()> {
                         format!("Build finished: {}", exe_path.display()).green()
                     );
                 }
-            } else {
-                if !quiet && (verbose || cfg!(debug_assertions)) {
-                    eprintln!("{}", "Object files emitted, skipping linking".blue());
-                }
-            }
             Ok(())
         }
         Commands::Run {

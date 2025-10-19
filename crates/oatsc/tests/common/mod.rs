@@ -28,6 +28,25 @@ use std::collections::HashMap;
 use inkwell::context::Context;
 use inkwell::targets::TargetMachine;
 
+/// Helper function to parse Oats source code for tests
+/// Unpacks the tuple return type and handles diagnostics
+#[allow(dead_code)]
+pub fn parse_oats_module_for_test(src: &str) -> Result<oatsc::parser::ParsedModule> {
+    let _diag_guard = oatsc::diagnostics::suppress();
+    let (parsed_opt, _diags) = parser::parse_oats_module(src, None)?;
+    parsed_opt.ok_or_else(|| anyhow::anyhow!("Failed to parse source"))
+}
+
+#[allow(dead_code)]
+pub fn parse_oats_module_with_options_for_test(
+    src: &str,
+    enforce_semicolons: bool,
+) -> Result<oatsc::parser::ParsedModule> {
+    let _diag_guard = oatsc::diagnostics::suppress();
+    let (parsed_opt, _diags) = parser::parse_oats_module_with_options(src, None, enforce_semicolons)?;
+    parsed_opt.ok_or_else(|| anyhow::anyhow!("Failed to parse source"))
+}
+
 pub mod deno_adapter;
 
 /// Generates LLVM IR from Oats source code for testing purposes.
@@ -48,13 +67,13 @@ pub mod deno_adapter;
 /// test output clean and focused. Diagnostics are restored when the function
 /// completes, ensuring proper error reporting in subsequent operations.
 #[cfg(test)]
-#[allow(dead_code)]
 pub fn gen_ir_for_source(src: &str) -> Result<String> {
     // Suppress diagnostic output during test execution to maintain clean test output.
     // The guard automatically restores previous diagnostic settings when dropped.
     let _diag_guard = oatsc::diagnostics::suppress();
 
-    let parsed_mod = parser::parse_oats_module(src, None)?;
+    let (parsed_mod_opt, _parse_diags) = parser::parse_oats_module(src, None)?;
+    let parsed_mod = parsed_mod_opt.ok_or_else(|| anyhow::anyhow!("Failed to parse source"))?;
     let parsed = &parsed_mod.parsed;
 
     // Locate the exported main function required for test compilation
@@ -76,7 +95,8 @@ pub fn gen_ir_for_source(src: &str) -> Result<String> {
         func_decl_opt.ok_or_else(|| anyhow::anyhow!("No exported `main` found in example"))?;
 
     let mut symbols = SymbolTable::new();
-    let func_sig = check_function_strictness(&func_decl, &mut symbols)?;
+    let (sig_opt, _diags) = check_function_strictness(&func_decl, &mut symbols)?;
+    let func_sig = sig_opt.ok_or_else(|| anyhow::anyhow!("Function signature could not be determined"))?;
 
     let context = Context::create();
     let module = context.create_module("test_module");
@@ -87,7 +107,7 @@ pub fn gen_ir_for_source(src: &str) -> Result<String> {
     // gen_function_ir returns Diagnostic on failures; convert to anyhow for `?` compatibility
     // Emit class methods/constructors for exported classes so tests can inspect
     // generated IR (mirror behavior in crates/oats/src/main.rs).
-    let parsed_mod_ref = parser::parse_oats_module(src, None)?;
+    let parsed_mod_ref = parse_oats_module_for_test(src)?;
     let parsed_full = &parsed_mod_ref.parsed;
 
     for item_ref in parsed_full.program_ref().body() {
@@ -172,7 +192,7 @@ pub fn gen_ir_for_source(src: &str) -> Result<String> {
                             deno_ast::swc::ast::PropName::Str(s) => s.value.to_string(),
                             _ => continue,
                         };
-                        if let Ok(sig) = oatsc::types::check_function_strictness(
+                        if let Ok((Some(sig), _diags)) = oatsc::types::check_function_strictness(
                             &m.function,
                             &mut oatsc::types::SymbolTable::new(),
                         ) {
@@ -186,7 +206,7 @@ pub fn gen_ir_for_source(src: &str) -> Result<String> {
                                 .map_err(|d| anyhow::anyhow!(d.message))?;
                         } else {
                             // fallback: emit with void return
-                            if let Ok(sig2) = oatsc::types::check_function_strictness(
+                            if let Ok((Some(sig2), _diags2)) = oatsc::types::check_function_strictness(
                                 &m.function,
                                 &mut oatsc::types::SymbolTable::new(),
                             ) {
@@ -255,7 +275,8 @@ pub fn create_codegen<'a>(
 
     // Simulate module resolution and symbol registration
     let mut modules = std::collections::HashMap::new();
-    let parsed_mod = oatsc::parser::parse_oats_module(source, None)?;
+    let (parsed_opt, _) = oatsc::parser::parse_oats_module(source, None)?;
+    let parsed_mod = parsed_opt.ok_or_else(|| anyhow::anyhow!("Failed to parse source"))?;
     modules.insert(module_name.to_string(), parsed_mod);
 
     for (_, parsed_module) in modules.iter() {

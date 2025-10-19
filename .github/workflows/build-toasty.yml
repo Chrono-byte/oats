@@ -29,15 +29,15 @@ jobs:
           - os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
             artifact: toasty-linux-x86_64
-#          - os: ubuntu-24.04
-#            target: aarch64-unknown-linux-gnu
-#            artifact: toasty-linux-aarch64
-#          - os: macos-14
-#            target: aarch64-apple-darwin
-#            artifact: toasty-macos-aarch64
-#          - os: macos-13
-#            target: x86_64-apple-darwin
-#            artifact: toasty-macos-x86_64
+    #          - os: ubuntu-24.04
+    #            target: aarch64-unknown-linux-gnu
+    #            artifact: toasty-linux-aarch64
+    #          - os: macos-14
+    #            target: aarch64-apple-darwin
+    #            artifact: toasty-macos-aarch64
+    #          - os: macos-13
+    #            target: x86_64-apple-darwin
+    #            artifact: toasty-macos-x86_64
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout repository
@@ -59,29 +59,11 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
-      - name: Install cross-compilation tools (Linux ARM64)
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
-
-      - name: Create Cargo config for aarch64 linker
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
-        run: |
-          mkdir -p .cargo
-          cat > .cargo/config.toml <<'EOF'
-          [target.aarch64-unknown-linux-gnu]
-          linker = "aarch64-linux-gnu-gcc"
-          EOF
-
       - name: Build toasty
-        run: |
-          cd crates/toasty
-          cargo build --release --target ${{ matrix.target }}
+        run: cargo build --release --bin toasty --target ${{ matrix.target }}
 
       - name: Rename artifact
-        run: |
-          cp crates/toasty/target/${{ matrix.target }}/release/toasty ${{ matrix.artifact }}
+        run: cp target/${{ matrix.target }}/release/toasty ${{ matrix.artifact }}
 
       - name: Make executable (Unix)
         run: chmod +x ${{ matrix.artifact }}

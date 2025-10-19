@@ -63,12 +63,12 @@ pub mod runtime {
     /// Get the string concatenation function
     pub fn get_str_concat<'a>(
         codegen: &CodeGen<'a>,
-    ) -> Result<inkwell::values::FunctionValue<'a>, Diagnostic> {
+    ) -> crate::diagnostics::DiagnosticResult<inkwell::values::FunctionValue<'a>> {
         codegen.gen_str_concat();
         codegen
             .module
             .get_function("str_concat")
-            .ok_or_else(|| Diagnostic::simple("str_concat function not found"))
+            .ok_or_else(|| Diagnostic::simple_boxed("str_concat function not found"))
     }
 
     /// Get the number to string function
@@ -86,7 +86,7 @@ pub mod memory {
         codegen: &CodeGen<'a>,
         size: inkwell::values::IntValue<'a>,
         name: &str,
-    ) -> Result<PointerValue<'a>, Diagnostic> {
+    ) -> crate::diagnostics::DiagnosticResult<PointerValue<'a>> {
         let malloc_fn = codegen.get_malloc();
         let call_site = codegen
             .builder
@@ -104,7 +104,7 @@ pub mod memory {
         codegen: &CodeGen<'a>,
         length: inkwell::values::IntValue<'a>,
         name: &str,
-    ) -> Result<PointerValue<'a>, Diagnostic> {
+    ) -> crate::diagnostics::DiagnosticResult<PointerValue<'a>> {
         let array_alloc_fn = codegen.get_array_alloc();
         let call_site = codegen
             .builder

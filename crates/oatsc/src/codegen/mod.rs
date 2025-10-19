@@ -175,7 +175,7 @@ impl<'a> CodeGen<'a> {
         &self,
         name: &str,
         val: &crate::codegen::const_eval::ConstValue,
-    ) -> Result<PointerValue<'a>, crate::diagnostics::Diagnostic> {
+    ) -> crate::diagnostics::DiagnosticResult<PointerValue<'a>> {
         use crate::codegen::const_eval::ConstValue;
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
@@ -317,7 +317,7 @@ impl<'a> CodeGen<'a> {
                                 if let ConstValue::Number(n) = e {
                                     float_vals.push(self.context.f64_type().const_float(*n));
                                 } else {
-                                    return Err(crate::diagnostics::Diagnostic::simple(
+                                    return Err(crate::diagnostics::Diagnostic::simple_boxed(
                                         "mixed array element types in const array",
                                     ));
                                 }
@@ -360,7 +360,7 @@ impl<'a> CodeGen<'a> {
                                     let child_ptr = self.emit_const_global(&child_name, e)?;
                                     ptr_vals.push(child_ptr);
                                 } else {
-                                    return Err(crate::diagnostics::Diagnostic::simple(
+                                    return Err(crate::diagnostics::Diagnostic::simple_boxed(
                                         "mixed types in const array",
                                     ));
                                 }
@@ -378,7 +378,7 @@ impl<'a> CodeGen<'a> {
                             self.const_interns.borrow_mut().insert(key.clone(), pv);
                             Ok(pv)
                         }
-                        _ => Err(crate::diagnostics::Diagnostic::simple(
+                        _ => Err(crate::diagnostics::Diagnostic::simple_boxed(
                             "unsupported const array element type",
                         )),
                     }
@@ -389,7 +389,7 @@ impl<'a> CodeGen<'a> {
                 // Fields may be numbers (f64) or pointers (i8*). We emit a
                 // deterministic field order by sorting keys.
                 if map.is_empty() {
-                    return Err(crate::diagnostics::Diagnostic::simple(
+                    return Err(crate::diagnostics::Diagnostic::simple_boxed(
                         "empty const object not supported",
                     ));
                 }
@@ -402,9 +402,7 @@ impl<'a> CodeGen<'a> {
                 let mut field_vals: Vec<inkwell::values::BasicValueEnum> = Vec::new();
 
                 for k in &keys {
-                    let v = map.get(k).ok_or_else(|| {
-                        crate::diagnostics::Diagnostic::simple("key not found in const map")
-                    })?;
+                    let v = map.get(k).ok_or_else(|| crate::diagnostics::Diagnostic::simple_boxed("key not found in const map"))?;
                     match v {
                         ConstValue::Number(n) => {
                             field_types.push(self.f64_t.into());
@@ -477,9 +475,7 @@ impl<'a> CodeGen<'a> {
                 // Pointer fields start at offset 16 (header 8 + meta 8), each field is 8 bytes
                 let mut meta_offsets: Vec<i32> = Vec::new();
                 for (idx, k) in keys.iter().enumerate() {
-                    let v = map.get(k).ok_or_else(|| {
-                        crate::diagnostics::Diagnostic::simple("key not found in const map")
-                    })?;
+                    let v = map.get(k).ok_or_else(|| crate::diagnostics::Diagnostic::simple_boxed("key not found in const map"))?;
                     match v {
                         ConstValue::Str(_) | ConstValue::Array(_) | ConstValue::Object(_) => {
                             let off = 16 + (idx * 8);
@@ -552,7 +548,7 @@ impl<'a> CodeGen<'a> {
                 Ok(pv)
             }
 
-            _ => Err(crate::diagnostics::Diagnostic::simple(
+            _ => Err(crate::diagnostics::Diagnostic::simple_boxed(
                 "unsupported const global kind",
             )),
         }
@@ -980,7 +976,7 @@ impl<'a> CodeGen<'a> {
         func_decl: &ast::Function,
         llvm_param_types: &[BasicTypeEnum<'a>],
         receiver_name: Option<&str>,
-    ) -> Result<(HashMap<String, u32>, LocalsStackLocal<'a>), crate::diagnostics::Diagnostic> {
+    ) -> crate::diagnostics::DiagnosticResult<(HashMap<String, u32>, LocalsStackLocal<'a>)> {
         let mut param_map = HashMap::new();
         if let Some(rname) = receiver_name {
             param_map.insert(rname.to_string(), 0u32);
@@ -1094,7 +1090,7 @@ impl<'a> CodeGen<'a> {
                                 .build_call(rc_inc, &[pv.into()], "rc_inc_param")
                                 .is_err()
                             {
-                                return Err(crate::diagnostics::Diagnostic::simple(
+                                return Err(crate::diagnostics::Diagnostic::simple_boxed(
                                     "rc_inc param call failed",
                                 ));
                             }
@@ -1149,7 +1145,7 @@ impl<'a> CodeGen<'a> {
             Ok(cs) => cs,
             Err(_) => {
                 crate::diagnostics::emit_diagnostic(
-                    &crate::diagnostics::Diagnostic::simple("failed to build call to oats_main"),
+                    &crate::diagnostics::Diagnostic::simple_boxed("failed to build call to oats_main"),
                     Some(self.source),
                 );
                 let const_zero = i32_t.const_int(0, false);
@@ -1180,7 +1176,7 @@ impl<'a> CodeGen<'a> {
                     Ok(c) => c,
                     Err(_) => {
                         crate::diagnostics::emit_diagnostic(
-                            &crate::diagnostics::Diagnostic::simple(
+                            &crate::diagnostics::Diagnostic::simple_boxed(
                                 "int cast failed when building host main",
                             ),
                             Some(self.source),
@@ -1196,7 +1192,7 @@ impl<'a> CodeGen<'a> {
                     Ok(c) => c,
                     Err(_) => {
                         crate::diagnostics::emit_diagnostic(
-                            &crate::diagnostics::Diagnostic::simple(
+                            &crate::diagnostics::Diagnostic::simple_boxed(
                                 "float->int conversion failed in host main",
                             ),
                             Some(self.source),
@@ -1249,7 +1245,7 @@ impl<'a> CodeGen<'a> {
         &self,
         _type_params: &[crate::types::OatsType],
         _args: &[deno_ast::swc::ast::ExprOrSpread],
-    ) -> Result<BasicValueEnum<'a>, crate::diagnostics::Diagnostic> {
+    ) -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
         // Logic to specialize the generic type
         Ok(self
             .context
@@ -1263,7 +1259,7 @@ impl<'a> CodeGen<'a> {
         &self,
         func_name: &str,
         type_args: &[crate::types::OatsType],
-    ) -> Result<String, crate::diagnostics::Diagnostic> {
+    ) -> crate::diagnostics::DiagnosticResult<String> {
         // Create a unique name for this monomorphization
         let mut key_parts = vec![func_name.to_string()];
         for arg in type_args {
@@ -1282,16 +1278,14 @@ impl<'a> CodeGen<'a> {
             .borrow()
             .get(func_name)
             .cloned()
-            .ok_or_else(|| {
-                crate::diagnostics::Diagnostic::simple(format!(
-                    "Generic function '{}' not found",
-                    func_name
-                ))
-            })?;
+            .ok_or_else(|| crate::diagnostics::Diagnostic::simple_boxed(format!(
+                "Generic function '{}' not found",
+                func_name
+            )))?;
 
         // Verify type args match type params
         if type_args.len() != fsig.type_params.len() {
-            return Err(crate::diagnostics::Diagnostic::simple(format!(
+            return Err(crate::diagnostics::Diagnostic::simple_boxed(format!(
                 "Expected {} type arguments for generic function '{}', got {}",
                 fsig.type_params.len(),
                 func_name,
@@ -1332,7 +1326,7 @@ impl<'a> CodeGen<'a> {
     pub fn infer_return_type_from_arrow_body(
         &self,
         body: &deno_ast::swc::ast::BlockStmtOrExpr,
-    ) -> Result<crate::types::OatsType, crate::diagnostics::Diagnostic> {
+    ) -> crate::diagnostics::DiagnosticResult<crate::types::OatsType> {
         match body {
             deno_ast::swc::ast::BlockStmtOrExpr::Expr(expr) => {
                 // Simple inference for single expression body
@@ -1363,9 +1357,7 @@ impl<'a> CodeGen<'a> {
 
                     // If only one unique type, return it; otherwise create union
                     if unique_types.len() == 1 {
-                        unique_types.into_iter().next().ok_or_else(|| {
-                            crate::diagnostics::Diagnostic::simple("expected one unique type")
-                        })
+                        unique_types.into_iter().next().ok_or_else(|| crate::diagnostics::Diagnostic::simple_boxed("expected one unique type"))
                     } else {
                         Ok(crate::types::OatsType::Union(unique_types))
                     }
@@ -1437,7 +1429,7 @@ impl<'a> CodeGen<'a> {
     fn infer_type_from_expr(
         &self,
         expr: &deno_ast::swc::ast::Expr,
-    ) -> Result<crate::types::OatsType, crate::diagnostics::Diagnostic> {
+    ) -> crate::diagnostics::DiagnosticResult<crate::types::OatsType> {
         match expr {
             deno_ast::swc::ast::Expr::Lit(lit) => match lit {
                 deno_ast::swc::ast::Lit::Num(_) => Ok(crate::types::OatsType::Number),

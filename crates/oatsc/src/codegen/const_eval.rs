@@ -56,7 +56,7 @@ pub fn eval_const_expr(
     expr: &ast::Expr,
     span_start: usize,
     const_items: &std::collections::HashMap<String, ConstValue>,
-) -> Result<ConstValue, Diagnostic> {
+) -> crate::diagnostics::DiagnosticResult<ConstValue> {
     use ast::{BinExpr, BinaryOp, Expr, Lit, UnaryExpr, UnaryOp};
 
     match expr {
@@ -64,7 +64,7 @@ pub fn eval_const_expr(
             Lit::Num(n) => Ok(ConstValue::Number(n.value)),
             Lit::Str(s) => Ok(ConstValue::Str(s.value.to_string())),
             Lit::Bool(b) => Ok(ConstValue::Bool(b.value)),
-            _ => Err(Diagnostic::simple_with_span(
+            _ => Err(Diagnostic::simple_with_span_boxed(
                 "unsupported literal in const initializer",
                 span_start,
             )),
@@ -76,7 +76,7 @@ pub fn eval_const_expr(
                     if let Some(n) = inner.as_f64() {
                         Ok(ConstValue::Number(-n))
                     } else {
-                        Err(Diagnostic::simple_with_span(
+                        Err(Diagnostic::simple_with_span_boxed(
                             "unary - on non-number in const initializer",
                             span_start,
                         ))
@@ -86,13 +86,13 @@ pub fn eval_const_expr(
                     if let ConstValue::Bool(b) = inner {
                         Ok(ConstValue::Bool(!b))
                     } else {
-                        Err(Diagnostic::simple_with_span(
+                        Err(Diagnostic::simple_with_span_boxed(
                             "! on non-bool in const initializer",
                             span_start,
                         ))
                     }
                 }
-                _ => Err(Diagnostic::simple_with_span(
+                _ => Err(Diagnostic::simple_with_span_boxed(
                     "unsupported unary op in const initializer",
                     span_start,
                 )),
@@ -116,7 +116,7 @@ pub fn eval_const_expr(
                         };
                         Ok(ConstValue::Number(v))
                     } else {
-                        Err(Diagnostic::simple_with_span(
+                        Err(Diagnostic::simple_with_span_boxed(
                             "arithmetic on non-number in const initializer",
                             span_start,
                         ))
@@ -138,7 +138,7 @@ pub fn eval_const_expr(
                             EqEq => a == b,
                             NotEq => a != b,
                             _ => {
-                                return Err(Diagnostic::simple_with_span(
+                                return Err(Diagnostic::simple_with_span_boxed(
                                     "unsupported string comparison in const initializer",
                                     span_start,
                                 ));
@@ -148,14 +148,14 @@ pub fn eval_const_expr(
                             EqEq => a == b,
                             NotEq => a != b,
                             _ => {
-                                return Err(Diagnostic::simple_with_span(
+                                return Err(Diagnostic::simple_with_span_boxed(
                                     "unsupported bool comparison in const initializer",
                                     span_start,
                                 ));
                             }
                         },
                         _ => {
-                            return Err(Diagnostic::simple_with_span(
+                            return Err(Diagnostic::simple_with_span_boxed(
                                 "mismatched types in comparison in const initializer",
                                 span_start,
                             ));
@@ -177,7 +177,7 @@ pub fn eval_const_expr(
                         Ok(r)
                     }
                 }
-                _ => Err(Diagnostic::simple_with_span(
+                _ => Err(Diagnostic::simple_with_span_boxed(
                     "unsupported binary op in const initializer",
                     span_start,
                 )),
@@ -188,7 +188,7 @@ pub fn eval_const_expr(
             if let Some(v) = const_items.get(&name) {
                 return Ok(v.clone());
             }
-            Err(Diagnostic::simple_with_span(
+            Err(Diagnostic::simple_with_span_boxed(
                 "unknown const identifier in const initializer",
                 span_start,
             ))
@@ -200,7 +200,7 @@ pub fn eval_const_expr(
                     let v = eval_const_expr(&es.expr, span_start, const_items)?;
                     out.push(v);
                 } else {
-                    return Err(Diagnostic::simple_with_span(
+                    return Err(Diagnostic::simple_with_span_boxed(
                         "elided array elements not supported in const initializer",
                         span_start,
                     ));
@@ -219,19 +219,19 @@ pub fn eval_const_expr(
                             let val = eval_const_expr(&kv.value, span_start, const_items)?;
                             map.insert(key, val);
                         } else {
-                            return Err(Diagnostic::simple_with_span(
+                            return Err(Diagnostic::simple_with_span_boxed(
                                 "unsupported object key in const initializer",
                                 span_start,
                             ));
                         }
                     } else {
-                        return Err(Diagnostic::simple_with_span(
+                        return Err(Diagnostic::simple_with_span_boxed(
                             "unsupported object property in const initializer",
                             span_start,
                         ));
                     }
                 } else {
-                    return Err(Diagnostic::simple_with_span(
+                    return Err(Diagnostic::simple_with_span_boxed(
                         "unsupported spread in const object initializer",
                         span_start,
                     ));
@@ -268,12 +268,12 @@ pub fn eval_const_expr(
                     }
                 }
             }
-            Err(Diagnostic::simple_with_span(
+            Err(Diagnostic::simple_with_span_boxed(
                 "function calls not supported in const initializer (except Math.*)",
                 span_start,
             ))
         }
-        _ => Err(Diagnostic::simple_with_span(
+        _ => Err(Diagnostic::simple_with_span_boxed(
             "expression not supported in const initializer",
             span_start,
         )),

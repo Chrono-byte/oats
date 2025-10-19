@@ -10,15 +10,15 @@ pub mod sys;
 
 // Public API modules
 pub mod console;
-pub mod fs;
-pub mod process;
-pub mod path;
-pub mod net;
 pub mod env;
+pub mod fs;
+pub mod net;
+pub mod path;
+pub mod process;
 pub mod time;
 
 // Re-export commonly used types
-pub use core::{Error, Result, OatsString, OatsArray, OatsObject};
+pub use core::{Error, OatsArray, OatsObject, OatsString, Result};
 
 // Initialize the standard library
 #[unsafe(no_mangle)]

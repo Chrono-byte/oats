@@ -85,7 +85,9 @@ fn parse_module(content: &str, _module_name: &str) -> String {
             // Look for the function signature in the next few lines
             for j in (i + 1)..lines.len().min(i + 10) {
                 let func_line = lines[j].trim();
-                if func_line.starts_with("pub extern \"C\" fn ") || func_line.starts_with("extern \"C\" fn ") {
+                if func_line.starts_with("pub extern \"C\" fn ")
+                    || func_line.starts_with("extern \"C\" fn ")
+                {
                     if let Some(func_def) = parse_function_signature(func_line) {
                         output.push_str(&func_def);
                         output.push_str("\n");
@@ -146,7 +148,12 @@ fn parse_function_signature(line: &str) -> Option<String> {
 
     let ts_return = rust_type_to_oats_type(return_type);
 
-    Some(format!("    function {}({}): {};", func_name, ts_params.join(", "), ts_return))
+    Some(format!(
+        "    function {}({}): {};",
+        func_name,
+        ts_params.join(", "),
+        ts_return
+    ))
 }
 
 fn rust_type_to_oats_type(rust_type: &str) -> &str {

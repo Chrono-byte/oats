@@ -65,10 +65,9 @@ pub mod runtime {
         codegen: &CodeGen<'a>,
     ) -> crate::diagnostics::DiagnosticResult<inkwell::values::FunctionValue<'a>> {
         codegen.gen_str_concat();
-        codegen
-            .module
-            .get_function("str_concat")
-            .ok_or_else(|| Diagnostic::simple_boxed(Severity::Error, "str_concat function not found"))
+        codegen.module.get_function("str_concat").ok_or_else(|| {
+            Diagnostic::simple_boxed(Severity::Error, "str_concat function not found")
+        })
     }
 
     /// Get the number to string function

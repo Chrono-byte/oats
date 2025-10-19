@@ -62,21 +62,15 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     let cmp_num = self
                         .builder
                         .build_int_compare(inkwell::IntPredicate::EQ, disc, zero, "disc_eq_num")
-                        .map_err(|_| {
-                            Diagnostic::error("failed to build int compare for typeof")
-                        })?;
+                        .map_err(|_| Diagnostic::error("failed to build int compare for typeof"))?;
                     let cmp_str = self
                         .builder
                         .build_int_compare(inkwell::IntPredicate::EQ, disc, one, "disc_eq_str")
-                        .map_err(|_| {
-                            Diagnostic::error("failed to build int compare for typeof")
-                        })?;
+                        .map_err(|_| Diagnostic::error("failed to build int compare for typeof"))?;
                     let cmp_bool = self
                         .builder
                         .build_int_compare(inkwell::IntPredicate::EQ, disc, two, "disc_eq_bool")
-                        .map_err(|_| {
-                            Diagnostic::error("failed to build int compare for typeof")
-                        })?;
+                        .map_err(|_| Diagnostic::error("failed to build int compare for typeof"))?;
 
                     let s_num = self.intern_string_literal("number");
                     let s_str = self.intern_string_literal("string");
@@ -135,7 +129,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         .map_err(|_| Diagnostic::error("LLVM builder error"))?;
                     Ok(neg.as_basic_value_enum())
                 } else {
-                    Err(Diagnostic::simple_boxed(Severity::Error, "unary minus requires numeric operand",
+                    Err(Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "unary minus requires numeric operand",
                     ))
                 }
             }
@@ -144,7 +140,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 if let Some(fv) = self.coerce_to_f64(arg_val) {
                     Ok(fv.as_basic_value_enum())
                 } else {
-                    Err(Diagnostic::simple_boxed(Severity::Error, "unary plus requires numeric operand",
+                    Err(Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "unary plus requires numeric operand",
                     ))
                 }
             }
@@ -180,11 +178,16 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         .map_err(|_| Diagnostic::error("LLVM builder error"))?;
                     Ok(result_fv.as_basic_value_enum())
                 } else {
-                    Err(Diagnostic::simple_boxed(Severity::Error, "bitwise NOT requires numeric operand",
+                    Err(Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "bitwise NOT requires numeric operand",
                     ))
                 }
             }
-            _ => Err(Diagnostic::simple_boxed(Severity::Error, "unsupported unary operator")),
+            _ => Err(Diagnostic::simple_boxed(
+                Severity::Error,
+                "unsupported unary operator",
+            )),
         }
     }
 
@@ -207,16 +210,23 @@ impl<'a> crate::codegen::CodeGen<'a> {
             let var_entry = if param_map.contains_key(&name) {
                 // It's a parameter - we can't update parameters directly
                 // Need to create a local shadow
-                return Err(Diagnostic::simple_boxed(Severity::Error, "cannot update function parameter directly",
+                return Err(Diagnostic::simple_boxed(
+                    Severity::Error,
+                    "cannot update function parameter directly",
                 ));
             } else if let Some((ptr, ty, initialized, is_const, _extra, _nominal, _oats_type)) =
                 self.find_local(locals, &name)
             {
                 if is_const {
-                    return Err(Diagnostic::simple_boxed(Severity::Error, "cannot update immutable variable"));
+                    return Err(Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "cannot update immutable variable",
+                    ));
                 }
                 if !initialized {
-                    return Err(Diagnostic::simple_boxed(Severity::Error, "cannot update uninitialized variable",
+                    return Err(Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "cannot update uninitialized variable",
                     ));
                 }
                 Some((ptr, ty))
@@ -259,14 +269,21 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         Ok(old_fv.as_basic_value_enum())
                     }
                 } else {
-                    Err(Diagnostic::simple_boxed(Severity::Error, "update operators require numeric operand",
+                    Err(Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "update operators require numeric operand",
                     ))
                 }
             } else {
-                Err(Diagnostic::simple_boxed(Severity::Error, "variable not found"))
+                Err(Diagnostic::simple_boxed(
+                    Severity::Error,
+                    "variable not found",
+                ))
             }
         } else {
-            Err(Diagnostic::simple_boxed(Severity::Error, "update operator only supports simple identifiers",
+            Err(Diagnostic::simple_boxed(
+                Severity::Error,
+                "update operator only supports simple identifiers",
             ))
         }
     }

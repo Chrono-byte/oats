@@ -37,7 +37,10 @@ impl<'a> CodeGen<'a> {
                         if let Ok(val) = self.lower_expr(&a.expr, function, param_map, locals) {
                             lowered_args.push(val.into());
                         } else {
-                            return Err(Diagnostic::simple_boxed(Severity::Error, "expression lowering failed"))?;
+                            return Err(Diagnostic::simple_boxed(
+                                Severity::Error,
+                                "expression lowering failed",
+                            ))?;
                         }
                     }
                 }
@@ -64,14 +67,23 @@ impl<'a> CodeGen<'a> {
                 let either = cs.try_as_basic_value();
                 match either {
                     inkwell::Either::Left(bv) => Ok(bv),
-                    _ => Err(Diagnostic::simple_boxed(Severity::Error, "operation not supported")),
+                    _ => Err(Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "operation not supported",
+                    )),
                 }
             } else {
-                Err(Diagnostic::simple_with_span_boxed(Severity::Error, "unknown constructor or missing `<Name>_ctor` function", new_expr.span.lo.0 as usize,
+                Err(Diagnostic::simple_with_span_boxed(
+                    Severity::Error,
+                    "unknown constructor or missing `<Name>_ctor` function",
+                    new_expr.span.lo.0 as usize,
                 ))
             }
         } else {
-            Err(Diagnostic::simple_with_span_boxed(Severity::Error, "unsupported `new` callee: only identifier constructors are supported", new_expr.span.lo.0 as usize,
+            Err(Diagnostic::simple_with_span_boxed(
+                Severity::Error,
+                "unsupported `new` callee: only identifier constructors are supported",
+                new_expr.span.lo.0 as usize,
             ))
         }
     }

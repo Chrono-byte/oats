@@ -156,16 +156,22 @@ impl<'a> CodeGen<'a> {
                         if let Some(mapped) = crate::types::map_ts_type(&type_ann.type_ann) {
                             param_types.push(mapped);
                         } else {
-                            return Err(Diagnostic::simple_boxed(Severity::Error, "Arrow parameter has unsupported type annotation",
+                            return Err(Diagnostic::simple_boxed(
+                                Severity::Error,
+                                "Arrow parameter has unsupported type annotation",
                             ));
                         }
                     } else {
-                        return Err(Diagnostic::simple_boxed(Severity::Error, "Arrow parameter missing type annotation",
+                        return Err(Diagnostic::simple_boxed(
+                            Severity::Error,
+                            "Arrow parameter missing type annotation",
                         ));
                     }
                 }
                 _ => {
-                    return Err(Diagnostic::simple_boxed(Severity::Error, "Arrow function parameter pattern not supported",
+                    return Err(Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "Arrow function parameter pattern not supported",
                     ));
                 }
             }
@@ -176,10 +182,15 @@ impl<'a> CodeGen<'a> {
             if let Some(mapped) = crate::types::map_ts_type(&return_type.type_ann) {
                 mapped
             } else {
-                return Err(Diagnostic::simple_boxed(Severity::Error, "Arrow return type not supported"));
+                return Err(Diagnostic::simple_boxed(
+                    Severity::Error,
+                    "Arrow return type not supported",
+                ));
             }
         } else {
-            return Err(Diagnostic::simple_boxed(Severity::Error, "Arrow function return type annotation required - test",
+            return Err(Diagnostic::simple_boxed(
+                Severity::Error,
+                "Arrow function return type annotation required - test",
             ));
         };
 
@@ -339,7 +350,10 @@ impl<'a> CodeGen<'a> {
                             let boxed_ptr = bv.into_pointer_value();
                             captured_vals.push((boxed_ptr.as_basic_value_enum(), is_weak));
                         } else {
-                            return Err(Diagnostic::simple_boxed(Severity::Error, "failed to box numeric capture"));
+                            return Err(Diagnostic::simple_boxed(
+                                Severity::Error,
+                                "failed to box numeric capture",
+                            ));
                         }
                     } else if pv.get_type().is_int_type() {
                         // convert int->f64 then box
@@ -358,10 +372,15 @@ impl<'a> CodeGen<'a> {
                             let boxed_ptr = bv.into_pointer_value();
                             captured_vals.push((boxed_ptr.as_basic_value_enum(), is_weak));
                         } else {
-                            return Err(Diagnostic::simple_boxed(Severity::Error, "failed to box numeric capture"));
+                            return Err(Diagnostic::simple_boxed(
+                                Severity::Error,
+                                "failed to box numeric capture",
+                            ));
                         }
                     } else {
-                        return Err(Diagnostic::simple_boxed(Severity::Error, "unsupported capture type: non-pointer parameter",
+                        return Err(Diagnostic::simple_boxed(
+                            Severity::Error,
+                            "unsupported capture type: non-pointer parameter",
                         ));
                     }
                     continue;
@@ -379,7 +398,9 @@ impl<'a> CodeGen<'a> {
                 )) = self.find_local(locals, cname)
                 {
                     if !initialized {
-                        return Err(Diagnostic::simple_boxed(Severity::Error, "cannot capture uninitialized local",
+                        return Err(Diagnostic::simple_boxed(
+                            Severity::Error,
+                            "cannot capture uninitialized local",
                         ));
                     }
                     // load current value
@@ -390,7 +411,10 @@ impl<'a> CodeGen<'a> {
                     ) {
                         Ok(v) => v,
                         Err(_) => {
-                            return Err(Diagnostic::simple_boxed(Severity::Error, "failed to load captured local"));
+                            return Err(Diagnostic::simple_boxed(
+                                Severity::Error,
+                                "failed to load captured local",
+                            ));
                         }
                     };
                     // If pointer, use directly. If float/int, box into union object.
@@ -409,7 +433,9 @@ impl<'a> CodeGen<'a> {
                                 let boxed_ptr = bv.into_pointer_value();
                                 captured_vals.push((boxed_ptr.as_basic_value_enum(), is_weak_flag));
                             } else {
-                                return Err(Diagnostic::simple_boxed(Severity::Error, "failed to box numeric capture",
+                                return Err(Diagnostic::simple_boxed(
+                                    Severity::Error,
+                                    "failed to box numeric capture",
                                 ));
                             }
                         }
@@ -430,17 +456,24 @@ impl<'a> CodeGen<'a> {
                                 let boxed_ptr = bv.into_pointer_value();
                                 captured_vals.push((boxed_ptr.as_basic_value_enum(), is_weak_flag));
                             } else {
-                                return Err(Diagnostic::simple_boxed(Severity::Error, "failed to box numeric capture",
+                                return Err(Diagnostic::simple_boxed(
+                                    Severity::Error,
+                                    "failed to box numeric capture",
                                 ));
                             }
                         }
                         _ => {
-                            return Err(Diagnostic::simple_boxed(Severity::Error, "unsupported capture type: non-pointer local",
+                            return Err(Diagnostic::simple_boxed(
+                                Severity::Error,
+                                "unsupported capture type: non-pointer local",
                             ));
                         }
                     }
                 } else {
-                    return Err(Diagnostic::simple_boxed(Severity::Error, "capture not found in outer scope"));
+                    return Err(Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "capture not found in outer scope",
+                    ));
                 }
             }
 
@@ -592,13 +625,18 @@ impl<'a> CodeGen<'a> {
                             let _ = self.builder.build_return(Some(&zero));
                         }
                         _ => {
-                            return Err(Diagnostic::simple_boxed(Severity::Error, "Cannot generate default return for arrow function",
+                            return Err(Diagnostic::simple_boxed(
+                                Severity::Error,
+                                "Cannot generate default return for arrow function",
                             ));
                         }
                     }
                 }
             } else {
-                return Err(Diagnostic::simple_boxed(Severity::Error, "Arrow body type mismatch"));
+                return Err(Diagnostic::simple_boxed(
+                    Severity::Error,
+                    "Arrow body type mismatch",
+                ));
             }
         } else {
             // Expression body: => expr (implicit return)
@@ -611,7 +649,10 @@ impl<'a> CodeGen<'a> {
 
                 let _ = self.builder.build_return(Some(&result));
             } else {
-                return Err(Diagnostic::simple_boxed(Severity::Error, "Arrow body type mismatch"));
+                return Err(Diagnostic::simple_boxed(
+                    Severity::Error,
+                    "Arrow body type mismatch",
+                ));
             }
         }
 
@@ -627,7 +668,10 @@ impl<'a> CodeGen<'a> {
                 self.find_local(locals, "__closure_tmp")
             {
                 if !init {
-                    return Err(Diagnostic::simple_boxed(Severity::Error, "closure tmp uninitialized"));
+                    return Err(Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "closure tmp uninitialized",
+                    ));
                 }
                 let loaded = match self
                     .builder
@@ -635,12 +679,18 @@ impl<'a> CodeGen<'a> {
                 {
                     Ok(v) => v,
                     Err(_) => {
-                        return Err(Diagnostic::simple_boxed(Severity::Error, "failed to load closure tmp"));
+                        return Err(Diagnostic::simple_boxed(
+                            Severity::Error,
+                            "failed to load closure tmp",
+                        ));
                     }
                 };
                 return Ok(loaded);
             } else {
-                return Err(Diagnostic::simple_boxed(Severity::Error, "closure tmp missing"));
+                return Err(Diagnostic::simple_boxed(
+                    Severity::Error,
+                    "closure tmp missing",
+                ));
             }
         }
 

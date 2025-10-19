@@ -69,5 +69,9 @@ pub extern "C" fn oats_std_path_is_absolute(path: *const c_char) -> libc::c_int 
         Err(_) => return 0,
     };
 
-    if Path::new(path_str).is_absolute() { 1 } else { 0 }
+    if Path::new(path_str).is_absolute() {
+        1
+    } else {
+        0
+    }
 }

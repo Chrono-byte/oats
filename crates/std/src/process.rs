@@ -102,7 +102,11 @@ pub extern "C" fn oats_std_process_command_exists(cmd: *const c_char) -> c_int {
 
     match Command::new(cmd_str).arg("--version").output() {
         Ok(output) => {
-            if output.status.success() { 1 } else { 0 }
+            if output.status.success() {
+                1
+            } else {
+                0
+            }
         }
         Err(_) => 0,
     }

@@ -3,9 +3,9 @@
 //! This module handles linking compiled object files with the runtime and std libraries
 //! to produce the final executable.
 
+use crate::diagnostics::{Result, ToastyError};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use crate::diagnostics::{Result, ToastyError};
 
 /// Link compiled modules into a final executable
 pub fn link_executable(

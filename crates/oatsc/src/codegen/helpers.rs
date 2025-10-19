@@ -871,12 +871,17 @@ impl<'a> super::CodeGen<'a> {
         let call_site = self
             .builder
             .build_call(malloc_fn, &[size_const.into()], "call_malloc")
-            .map_err(|_| crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "build_call failed"))?;
+            .map_err(|_| {
+                crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "build_call failed")
+            })?;
         let malloc_ret = call_site
             .try_as_basic_value()
             .left()
             .ok_or_else(|| {
-                crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "malloc call did not return a value")
+                crate::diagnostics::Diagnostic::simple_boxed(
+                    Severity::Error,
+                    "malloc call did not return a value",
+                )
             })?
             .into_pointer_value();
 
@@ -884,7 +889,9 @@ impl<'a> super::CodeGen<'a> {
         let obj_ptr = self
             .builder
             .build_pointer_cast(malloc_ret, self.i8ptr_t, "obj_ptr")
-            .map_err(|_| crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "pointer cast failed"))?;
+            .map_err(|_| {
+                crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "pointer cast failed")
+            })?;
 
         // Initialize header: rc=1, type_tag=3 (closure/env-like)
         let type_tag_val = 3u64 << 49;
@@ -895,16 +902,22 @@ impl<'a> super::CodeGen<'a> {
         let obj_ptr_int = self
             .builder
             .build_ptr_to_int(malloc_ret, self.i64_t, "obj_addr_for_zero")
-            .map_err(|_| crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "ptr_to_int failed"))?;
+            .map_err(|_| {
+                crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "ptr_to_int failed")
+            })?;
         let off_meta = self.i64_t.const_int(header_size, false);
         let meta_addr = self
             .builder
             .build_int_add(obj_ptr_int, off_meta, "meta_addr")
-            .map_err(|_| crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "int_add failed"))?;
+            .map_err(|_| {
+                crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "int_add failed")
+            })?;
         let meta_ptr = self
             .builder
             .build_int_to_ptr(meta_addr, self.i8ptr_t, "meta_ptr")
-            .map_err(|_| crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "int_to_ptr failed"))?;
+            .map_err(|_| {
+                crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "int_to_ptr failed")
+            })?;
         let null_ptr = self.i8ptr_t.const_null();
         let _ = self
             .builder
@@ -918,11 +931,18 @@ impl<'a> super::CodeGen<'a> {
             let field_addr = self
                 .builder
                 .build_int_add(obj_ptr_int, off_const, "field_addr")
-                .map_err(|_| crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "int_add failed"))?;
+                .map_err(|_| {
+                    crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "int_add failed")
+                })?;
             let field_ptr_cast = self
                 .builder
                 .build_int_to_ptr(field_addr, self.i8ptr_t, "field_ptr")
-                .map_err(|_| crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "int_to_ptr failed"))?;
+                .map_err(|_| {
+                    crate::diagnostics::Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "int_to_ptr failed",
+                    )
+                })?;
 
             // Ensure val is pointer-like; if it's not an i8* (heap object pointer),
             // cast it to i8* for storage but DO NOT adjust refcounts for non-heap
@@ -938,7 +958,10 @@ impl<'a> super::CodeGen<'a> {
                     .builder
                     .build_pointer_cast(pv, self.i8ptr_t, "cast_to_i8ptr")
                     .map_err(|_| {
-                        crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "pointer cast failed")
+                        crate::diagnostics::Diagnostic::simple_boxed(
+                            Severity::Error,
+                            "pointer cast failed",
+                        )
                     })?;
                 store_val = casted.as_basic_value_enum();
             }
@@ -977,7 +1000,12 @@ impl<'a> super::CodeGen<'a> {
             let gv_i8 = self
                 .builder
                 .build_pointer_cast(gv_ptr, self.i8ptr_t, "field_map_i8ptr")
-                .map_err(|_| crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "pointer cast failed"))?;
+                .map_err(|_| {
+                    crate::diagnostics::Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "pointer cast failed",
+                    )
+                })?;
             return Ok(gv_i8);
         }
 
@@ -1009,7 +1037,9 @@ impl<'a> super::CodeGen<'a> {
         let gv_i8 = self
             .builder
             .build_pointer_cast(gv_ptr, self.i8ptr_t, "field_map_i8ptr")
-            .map_err(|_| crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "pointer cast failed"))?;
+            .map_err(|_| {
+                crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "pointer cast failed")
+            })?;
         Ok(gv_i8)
     }
 
@@ -1027,17 +1057,23 @@ impl<'a> super::CodeGen<'a> {
         let obj_ptr_int = self
             .builder
             .build_ptr_to_int(base, self.i64_t, "obj_addr_for_gep")
-            .map_err(|_| crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "ptr_to_int failed"))?;
+            .map_err(|_| {
+                crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "ptr_to_int failed")
+            })?;
         // add offset
         let field_addr = self
             .builder
             .build_int_add(obj_ptr_int, offset, "field_addr_for_gep")
-            .map_err(|_| crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "int_add failed"))?;
+            .map_err(|_| {
+                crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "int_add failed")
+            })?;
         // inttoptr -> i8*
         let field_ptr = self
             .builder
             .build_int_to_ptr(field_addr, self.i8ptr_t, name)
-            .map_err(|_| crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "int_to_ptr failed"))?;
+            .map_err(|_| {
+                crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "int_to_ptr failed")
+            })?;
         Ok(field_ptr)
     }
 
@@ -1076,19 +1112,26 @@ impl<'a> super::CodeGen<'a> {
         let call_site = self
             .builder
             .build_call(malloc_fn, &[size_const.into()], "call_malloc")
-            .map_err(|_| crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "build_call failed"))?;
+            .map_err(|_| {
+                crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "build_call failed")
+            })?;
         let malloc_ret = call_site
             .try_as_basic_value()
             .left()
             .ok_or_else(|| {
-                crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "malloc call did not return a value")
+                crate::diagnostics::Diagnostic::simple_boxed(
+                    Severity::Error,
+                    "malloc call did not return a value",
+                )
             })?
             .into_pointer_value();
 
         let obj_ptr = self
             .builder
             .build_pointer_cast(malloc_ret, self.i8ptr_t, "obj_ptr")
-            .map_err(|_| crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "pointer cast failed"))?;
+            .map_err(|_| {
+                crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "pointer cast failed")
+            })?;
 
         // Initialize header
         let type_tag_val = 3u64 << 49;
@@ -1099,16 +1142,22 @@ impl<'a> super::CodeGen<'a> {
         let obj_ptr_int = self
             .builder
             .build_ptr_to_int(malloc_ret, self.i64_t, "obj_addr_for_zero")
-            .map_err(|_| crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "ptr_to_int failed"))?;
+            .map_err(|_| {
+                crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "ptr_to_int failed")
+            })?;
         let off_meta = self.i64_t.const_int(header_size, false);
         let meta_addr = self
             .builder
             .build_int_add(obj_ptr_int, off_meta, "meta_addr")
-            .map_err(|_| crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "int_add failed"))?;
+            .map_err(|_| {
+                crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "int_add failed")
+            })?;
         let meta_ptr = self
             .builder
             .build_int_to_ptr(meta_addr, self.i8ptr_t, "meta_ptr")
-            .map_err(|_| crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "int_to_ptr failed"))?;
+            .map_err(|_| {
+                crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "int_to_ptr failed")
+            })?;
         let null_ptr = self.i8ptr_t.const_null();
         let _ = self
             .builder
@@ -1123,11 +1172,18 @@ impl<'a> super::CodeGen<'a> {
             let field_addr = self
                 .builder
                 .build_int_add(obj_ptr_int, off_const, "field_addr")
-                .map_err(|_| crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "int_add failed"))?;
+                .map_err(|_| {
+                    crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "int_add failed")
+                })?;
             let field_ptr_cast = self
                 .builder
                 .build_int_to_ptr(field_addr, self.i8ptr_t, "field_ptr")
-                .map_err(|_| crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "int_to_ptr failed"))?;
+                .map_err(|_| {
+                    crate::diagnostics::Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "int_to_ptr failed",
+                    )
+                })?;
 
             // Cast slot_val to i8* if necessary and store
             let mut store_val = *slot_val;
@@ -1139,7 +1195,10 @@ impl<'a> super::CodeGen<'a> {
                     .builder
                     .build_pointer_cast(pv, self.i8ptr_t, "cast_to_i8ptr")
                     .map_err(|_| {
-                        crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "pointer cast failed")
+                        crate::diagnostics::Diagnostic::simple_boxed(
+                            Severity::Error,
+                            "pointer cast failed",
+                        )
                     })?;
                 store_val = casted.as_basic_value_enum();
             }
@@ -1162,12 +1221,16 @@ impl<'a> super::CodeGen<'a> {
         let ret_addr = self
             .builder
             .build_int_add(obj_ptr_int, off_ret, "ret_addr")
-            .map_err(|_| crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "int_add failed"))?;
+            .map_err(|_| {
+                crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "int_add failed")
+            })?;
         let ret_ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
         let ret_ptr = self
             .builder
             .build_int_to_ptr(ret_addr, ret_ptr_ty, "ret_ptr")
-            .map_err(|_| crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "int_to_ptr failed"))?;
+            .map_err(|_| {
+                crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "int_to_ptr failed")
+            })?;
         let ret_const = self.i64_t.const_int(ret_tag, false);
         let _ = self
             .builder

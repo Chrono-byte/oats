@@ -60,7 +60,9 @@ pub fn check_environment() -> Result<()> {
 
     if !oatsc_available {
         warnings.add(ToastyWarn::MissingCompiler {
-            install_hint: Some("use 'toasty compiler install' to install a pre-built version".to_string()),
+            install_hint: Some(
+                "use 'toasty compiler install' to install a pre-built version".to_string(),
+            ),
         });
     }
 

@@ -2,8 +2,8 @@
 import { add, multiply } from "mylib";
 
 export function main(): number {
-    const result = add(5, 3);
-    const product = multiply(4, 2);
+    const result: number = add(5, 3);
+    const product: number = multiply(4, 2);
     println("Testing package build system");
     return 0;
 }

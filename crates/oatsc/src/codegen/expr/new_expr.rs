@@ -2,8 +2,8 @@ use crate::codegen::CodeGen;
 use crate::diagnostics::Diagnostic;
 use crate::types::OatsType;
 use deno_ast::swc::ast;
-use inkwell::values::{BasicValue, BasicValueEnum, FunctionValue};
 use inkwell::types::BasicTypeEnum;
+use inkwell::values::{BasicValue, BasicValueEnum, FunctionValue};
 use std::collections::HashMap;
 
 // LocalEntry now includes an Option<String> for an optional nominal type name
@@ -30,13 +30,10 @@ impl<'a> CodeGen<'a> {
         if let ast::Expr::Ident(ident) = &*new_expr.callee {
             let ctor_name = format!("{}_ctor", ident.sym);
             if let Some(fv) = self.module.get_function(&ctor_name) {
-                let mut lowered_args: Vec<inkwell::values::BasicMetadataValueEnum> =
-                    Vec::new();
+                let mut lowered_args: Vec<inkwell::values::BasicMetadataValueEnum> = Vec::new();
                 if let Some(args) = &new_expr.args {
                     for a in args {
-                        if let Ok(val) =
-                            self.lower_expr(&a.expr, function, param_map, locals)
-                        {
+                        if let Ok(val) = self.lower_expr(&a.expr, function, param_map, locals) {
                             lowered_args.push(val.into());
                         } else {
                             return Err(Diagnostic::simple("expression lowering failed"))?;
@@ -55,8 +52,7 @@ impl<'a> CodeGen<'a> {
                 } else if call_args.len() < expected {
                     // pad with null pointers
                     while call_args.len() < expected {
-                        call_args
-                            .push(self.i8ptr_t.const_null().as_basic_value_enum().into());
+                        call_args.push(self.i8ptr_t.const_null().as_basic_value_enum().into());
                     }
                 }
 

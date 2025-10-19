@@ -20,22 +20,18 @@ use inkwell::values::BasicValueEnum;
 use inkwell::values::FunctionValue;
 use std::collections::HashMap;
 
-use crate::types::OatsType;
-use inkwell::AddressSpace;
-use inkwell::builder::Builder;
-use inkwell::types::BasicType;
 use inkwell::types::BasicTypeEnum;
-use inkwell::values::{BasicValue, PointerValue};
+use inkwell::values::PointerValue;
 
-pub mod async_expr;
 pub mod arrow_expr;
+pub mod async_expr;
 pub mod binary_ops;
 pub mod calls;
 // pub mod closures;  // TODO: Fix closures.rs - missing code
 pub mod control_flow_expr;
 pub mod ident;
 pub mod literals;
-pub mod member_access;  // TODO: Fix member_access.rs - currently has malformed code
+pub mod member_access; // TODO: Fix member_access.rs - currently has malformed code
 pub mod new_expr;
 pub mod paren;
 pub mod this;
@@ -110,16 +106,22 @@ impl<'a> crate::codegen::CodeGen<'a> {
             }
             ast::Expr::Call(call) => self.lower_call_expr(call, function, param_map, locals),
             // (Duplicate closure-call lowering removed; handled in the primary Call arm above.)
-            ast::Expr::Assign(assign) => self.lower_assign_expr(assign, function, param_map, locals),
+            ast::Expr::Assign(assign) => {
+                self.lower_assign_expr(assign, function, param_map, locals)
+            }
             ast::Expr::Paren(paren) => self.lower_paren_expr(paren, function, param_map, locals),
             ast::Expr::Cond(cond) => self.lower_cond_expr(cond, function, param_map, locals),
             ast::Expr::Lit(lit) => Ok(crate::codegen::expr::literals::lower_lit(self, lit)?),
             ast::Expr::Array(arr) => Ok(literals::lower_array(
                 self, arr, function, param_map, locals,
             )?),
-            ast::Expr::Member(member) => self.lower_member_expr(member, function, param_map, locals),
+            ast::Expr::Member(member) => {
+                self.lower_member_expr(member, function, param_map, locals)
+            }
             ast::Expr::New(new_expr) => self.lower_new_expr(new_expr, function, param_map, locals),
-            ast::Expr::Await(await_expr) => self.lower_await_expr(await_expr, function, param_map, locals),
+            ast::Expr::Await(await_expr) => {
+                self.lower_await_expr(await_expr, function, param_map, locals)
+            }
             ast::Expr::Arrow(arrow) => self.lower_arrow_expr(arrow, function, param_map, locals),
             ast::Expr::Object(obj_lit) => Ok(literals::lower_object(
                 self, obj_lit, function, param_map, locals,
@@ -128,7 +130,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 self, tpl, function, param_map, locals,
             )?),
             ast::Expr::Unary(unary) => self.lower_unary_expr(unary, function, param_map, locals),
-            ast::Expr::Update(update) => self.lower_update_expr(update, function, param_map, locals),
+            ast::Expr::Update(update) => {
+                self.lower_update_expr(update, function, param_map, locals)
+            }
             _ => Err(Diagnostic::simple("operation not supported")),
         }
     }

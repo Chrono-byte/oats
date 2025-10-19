@@ -188,7 +188,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
     pub(super) fn lower_update_expr(
         &self,
         update: &deno_ast::swc::ast::UpdateExpr,
-        function: FunctionValue<'a>,
+        _function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals: &mut LocalsStackLocal<'a>,
     ) -> Result<BasicValueEnum<'a>, Diagnostic> {

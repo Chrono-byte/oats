@@ -4,7 +4,7 @@
 //! structure, dependencies, and source files. It combines manifest parsing,
 //! package dependency resolution, and module resolution into a cohesive API.
 
-use crate::error::{Diagnostic, BoxedResult};
+use crate::error::{Result, ToastyError};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
@@ -157,20 +157,20 @@ impl PackageNode {
 
 impl Manifest {
     /// Parse a manifest from a TOML string
-    pub fn from_toml(content: &str) -> BoxedResult<Self> {
+    pub fn from_toml(content: &str) -> Result<Self> {
         let manifest: Self = toml::from_str(content)?;
         manifest.validate()?;
         Ok(manifest)
     }
 
     /// Load manifest from a file path
-    pub fn from_file(path: &Path) -> BoxedResult<Self> {
+    pub fn from_file(path: &Path) -> Result<Self> {
         let content = std::fs::read_to_string(path)?;
         Self::from_toml(&content)
     }
 
     /// Find and load manifest from current directory or parent directories
-    pub fn discover() -> BoxedResult<Option<(Self, PathBuf)>> {
+    pub fn discover() -> Result<Option<(Self, PathBuf)>> {
         let mut current = std::env::current_dir()?;
 
         loop {
@@ -189,10 +189,10 @@ impl Manifest {
     }
 
     /// Validate the manifest
-    pub fn validate(&self) -> BoxedResult<()> {
+    pub fn validate(&self) -> Result<()> {
         // Validate package name
         if self.package.name.is_empty() {
-            return Err(Diagnostic::boxed("Package name cannot be empty"));
+            return Err(ToastyError::other("Package name cannot be empty"));
         }
 
         if !self
@@ -201,23 +201,23 @@ impl Manifest {
             .chars()
             .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
         {
-            return Err(Diagnostic::boxed(
+            return Err(ToastyError::other(
                 "Package name must contain only alphanumeric characters, hyphens, and underscores",
             ));
         }
 
         // Validate version (semver format)
         if self.package.version.is_empty() {
-            return Err(Diagnostic::boxed("Package version cannot be empty"));
+            return Err(ToastyError::other("Package version cannot be empty"));
         }
 
         // Validate entry point is not empty
         if self.package.entry.is_empty() {
-            return Err(Diagnostic::boxed("Package entry point cannot be empty"));
+            return Err(ToastyError::other("Package entry point cannot be empty"));
         }
 
         if !is_valid_semver(&self.package.version) {
-            return Err(Diagnostic::boxed(
+            return Err(ToastyError::other(
                 "Package version must be a valid semantic version (e.g., 1.0.0)",
             ));
         }
@@ -227,7 +227,7 @@ impl Manifest {
             match dep {
                 Dependency::Detailed(spec) => {
                     if spec.path.is_none() && spec.version.is_none() {
-                        return Err(Diagnostic::boxed(format!(
+                        return Err(ToastyError::other(format!(
                             "Dependency '{}' must specify either 'path' or 'version'",
                             name
                         )));
@@ -235,7 +235,7 @@ impl Manifest {
                     if let Some(version) = &spec.version
                         && !is_valid_semver(version)
                     {
-                        return Err(Diagnostic::boxed(format!(
+                        return Err(ToastyError::other(format!(
                             "Dependency '{}' version '{}' is not a valid semantic version",
                             name, version
                         )));
@@ -243,7 +243,7 @@ impl Manifest {
                 }
                 Dependency::Version(version) => {
                     if !is_valid_semver(version) {
-                        return Err(Diagnostic::boxed(format!(
+                        return Err(ToastyError::other(format!(
                             "Dependency '{}' version '{}' is not a valid semantic version",
                             name, version
                         )));
@@ -352,7 +352,7 @@ fn resolve_index_file(dir_path: &std::path::Path) -> Option<String> {
 ///
 /// # Returns
 /// A map of canonicalized absolute paths to parsed modules
-pub fn load_modules(entry_path: &str) -> BoxedResult<HashMap<String, oatsc::parser::ParsedModule>> {
+pub fn load_modules(entry_path: &str) -> Result<HashMap<String, oatsc::parser::ParsedModule>> {
     load_modules_with_verbosity(entry_path, false)
 }
 
@@ -360,10 +360,10 @@ pub fn load_modules(entry_path: &str) -> BoxedResult<HashMap<String, oatsc::pars
 pub fn load_modules_with_verbosity(
     entry_path: &str,
     verbose: bool,
-) -> BoxedResult<HashMap<String, oatsc::parser::ParsedModule>> {
+) -> Result<HashMap<String, oatsc::parser::ParsedModule>> {
     // Validate entry path exists and is readable
     if !std::path::Path::new(entry_path).exists() {
-        return Err(Diagnostic::boxed(format!(
+        return Err(ToastyError::other(format!(
             "Entry file not found: {}",
             entry_path
         )));
@@ -389,9 +389,9 @@ pub fn load_modules_with_verbosity(
         }
 
         let src = std::fs::read_to_string(&path)
-            .map_err(|e| Diagnostic::boxed(format!("Failed to read file {}: {}", path, e)))?;
+            .map_err(|e| ToastyError::other(format!("Failed to read file {}: {}", path, e)))?;
         let (parsed_opt, parse_diags) = oatsc::parser::parse_oats_module(&src, Some(&path))
-            .map_err(|e| Diagnostic::boxed(format!("Failed to parse module {}: {}", path, e)))?;
+            .map_err(|e| ToastyError::other(format!("Failed to parse module {}: {}", path, e)))?;
 
         // Check if parsing was successful
         let parsed = match parsed_opt {
@@ -401,7 +401,7 @@ pub fn load_modules_with_verbosity(
                 for diag in parse_diags {
                     eprintln!("Parse error in {}: {}", path, diag.message);
                 }
-                return Err(Diagnostic::boxed(format!("Failed to parse module {}", path)));
+                return Err(ToastyError::other(format!("Failed to parse module {}", path)));
             }
         };
 
@@ -443,13 +443,13 @@ pub fn load_modules_with_verbosity(
 pub fn build_dependency_graph(
     entry_path: &str,
     verbose: bool,
-) -> BoxedResult<(DependencyGraph, HashMap<String, NodeIndex>, NodeIndex)> {
+) -> Result<(DependencyGraph, HashMap<String, NodeIndex>, NodeIndex)> {
     let mut graph = DependencyGraph::new();
     let mut node_indices = HashMap::new();
 
     // Validate entry path exists
     if !std::path::Path::new(entry_path).exists() {
-        return Err(Diagnostic::boxed(format!(
+        return Err(ToastyError::other(format!(
             "Entry file not found: {}",
             entry_path
         )));
@@ -476,10 +476,10 @@ pub fn build_dependency_graph(
 
         // Parse the current file to discover imports
         let source = std::fs::read_to_string(&current_path)
-            .map_err(|e| Diagnostic::boxed(format!("Failed to read file {}: {}", current_path, e)))?;
+            .map_err(|e| ToastyError::other(format!("Failed to read file {}: {}", current_path, e)))?;
         let (parsed_opt, parse_diags) =
             oatsc::parser::parse_oats_module(&source, Some(&current_path)).map_err(|e| {
-                Diagnostic::boxed(format!("Failed to parse module {}: {}", current_path, e))
+                ToastyError::other(format!("Failed to parse module {}: {}", current_path, e))
             })?;
 
         // Check if parsing was successful
@@ -540,7 +540,7 @@ pub fn build_dependency_graph(
 pub fn topological_sort(
     graph: &DependencyGraph,
     node_indices: &HashMap<String, NodeIndex>,
-) -> BoxedResult<Vec<String>> {
+) -> Result<Vec<String>> {
     // Create reverse mapping from node index to path
     let mut index_to_path = HashMap::new();
     for (path, &node) in node_indices {
@@ -561,7 +561,7 @@ pub fn topological_sort(
         Err(cycle) => {
             // Try to extract cycle information
             let cycle_info = format!("Cycle detected involving node {:?}", cycle.node_id());
-            Err(Diagnostic::boxed(format!("Dependency cycle: {}", cycle_info)))
+            Err(ToastyError::other(format!("Dependency cycle: {}", cycle_info)))
         }
     }
 }
@@ -577,7 +577,7 @@ pub fn topological_sort(
 pub fn build_package_graph(
     root_manifest_path: &Path,
     verbose: bool,
-) -> BoxedResult<(PackageGraph, HashMap<String, NodeIndex>, NodeIndex)> {
+) -> Result<(PackageGraph, HashMap<String, NodeIndex>, NodeIndex)> {
     let mut graph = PackageGraph::new();
     let mut node_map: HashMap<String, NodeIndex> = HashMap::new();
     let mut path_to_node: HashMap<PathBuf, NodeIndex> = HashMap::new();
@@ -589,7 +589,7 @@ pub fn build_package_graph(
 
     let root_dir = root_manifest_path
         .parent()
-        .ok_or(Diagnostic::boxed(
+        .ok_or(ToastyError::other(
             "Manifest path has no parent directory".to_string(),
         ))?
         .to_path_buf();
@@ -636,14 +636,14 @@ pub fn build_package_graph(
                     if let Some(ref path) = spec.path {
                         current_dir.join(path)
                     } else {
-                        return Err(Diagnostic::boxed(format!(
+                        return Err(ToastyError::other(format!(
                             "Dependency '{}' in package '{}' has no path specified (external dependencies not yet supported)",
                             dep_name, current_name
                         )));
                     }
                 }
                 Dependency::Version(_) => {
-                    return Err(Diagnostic::boxed(format!(
+                    return Err(ToastyError::other(format!(
                         "External dependencies not yet supported (dependency '{}' in package '{}')",
                         dep_name, current_name
                     )));
@@ -654,7 +654,7 @@ pub fn build_package_graph(
             let dep_dir = if dep_path.exists() {
                 std::fs::canonicalize(&dep_path)?
             } else {
-                return Err(Diagnostic::boxed(format!(
+                return Err(ToastyError::other(format!(
                     "Dependency path does not exist: {} (from package '{}')",
                     dep_path.display(),
                     current_name
@@ -664,7 +664,7 @@ pub fn build_package_graph(
             // Look for Oats.toml in dependency directory
             let dep_manifest_path = dep_dir.join("Oats.toml");
             if !dep_manifest_path.exists() {
-                return Err(Diagnostic::boxed(format!(
+                return Err(ToastyError::other(format!(
                     "No Oats.toml found in dependency '{}' at: {}",
                     dep_name,
                     dep_dir.display()
@@ -676,7 +676,7 @@ pub fn build_package_graph(
                 // Verify the package name matches
                 let existing_node = &graph[existing_idx];
                 if existing_node.name != *dep_name {
-                    return Err(Diagnostic::boxed(format!(
+                    return Err(ToastyError::other(format!(
                         "Dependency name mismatch: package at {} is named '{}' but referenced as '{}'",
                         dep_dir.display(),
                         existing_node.name,
@@ -692,7 +692,7 @@ pub fn build_package_graph(
 
                 // Verify the package name matches
                 if dep_manifest.package.name != *dep_name {
-                    return Err(Diagnostic::boxed(format!(
+                    return Err(ToastyError::other(format!(
                         "Package name mismatch: Oats.toml at {} declares name '{}' but is referenced as '{}'",
                         dep_dir.display(),
                         dep_manifest.package.name,
@@ -743,7 +743,7 @@ pub fn build_package_graph(
 pub fn topological_sort_packages(
     graph: &PackageGraph,
     node_map: &HashMap<String, NodeIndex>,
-) -> BoxedResult<Vec<(String, NodeIndex)>> {
+) -> Result<Vec<(String, NodeIndex)>> {
     match petgraph::algo::toposort(graph, None) {
         Ok(sorted_nodes) => {
             // Create reverse mapping
@@ -761,7 +761,7 @@ pub fn topological_sort_packages(
             sorted.reverse(); // Dependencies come first
             Ok(sorted)
         }
-        Err(cycle) => Err(Diagnostic::boxed(format!(
+        Err(cycle) => Err(ToastyError::other(format!(
             "Circular package dependency detected involving node {:?}",
             cycle.node_id()
         ))),

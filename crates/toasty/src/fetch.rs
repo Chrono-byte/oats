@@ -4,7 +4,7 @@
 //! and runtime libraries from GitHub releases, enabling toasty to work
 //! standalone without requiring the full oats repository or Rust toolchain.
 
-use crate::error::{Diagnostic, BoxedResult};
+use crate::error::{Result, ToastyError};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -14,7 +14,7 @@ const GITHUB_OWNER: &str = "Chrono-byte";
 const GITHUB_REPO: &str = "oats";
 
 /// Compute SHA-256 hash of a file
-fn compute_sha256(path: &Path) -> BoxedResult<String> {
+fn compute_sha256(path: &Path) -> Result<String> {
     let mut file = fs::File::open(path)?;
     let mut hasher = Sha256::new();
     std::io::copy(&mut file, &mut hasher)?;
@@ -23,7 +23,7 @@ fn compute_sha256(path: &Path) -> BoxedResult<String> {
 }
 
 /// Get the cache directory for binaries and libraries
-fn get_cache_dir() -> BoxedResult<PathBuf> {
+fn get_cache_dir() -> Result<PathBuf> {
     let cache_dir = if let Ok(dir) = std::env::var("OATS_CACHE_DIR") {
         PathBuf::from(dir)
     } else if let Some(cache_home) = dirs::cache_dir() {
@@ -79,7 +79,7 @@ fn get_runtime_artifact_name() -> &'static str {
 }
 
 /// Fetch the latest compiler release tag from GitHub
-fn get_latest_compiler_tag() -> BoxedResult<String> {
+fn get_latest_compiler_tag() -> Result<String> {
     let url = format!(
         "https://api.github.com/repos/{}/{}/releases",
         GITHUB_OWNER, GITHUB_REPO
@@ -88,10 +88,10 @@ fn get_latest_compiler_tag() -> BoxedResult<String> {
     let response = ureq::get(&url)
         .set("User-Agent", "oats-compiler")
         .call()
-        .map_err(|e| Diagnostic::boxed(format!("Failed to fetch releases: {}", e)))?;
+        .map_err(|e| ToastyError::other(format!("Failed to fetch releases: {}", e)))?;
 
     let releases: serde_json::Value = serde_json::from_reader(response.into_reader())
-        .map_err(|e| Diagnostic::boxed(format!("Failed to parse releases JSON: {}", e)))?;
+        .map_err(|e| ToastyError::other(format!("Failed to parse releases JSON: {}", e)))?;
 
     // Find the latest compiler release (tagged as nightly or stable-*)
     if let Some(releases_array) = releases.as_array() {
@@ -104,11 +104,11 @@ fn get_latest_compiler_tag() -> BoxedResult<String> {
         }
     }
 
-    Err(Diagnostic::boxed("No compiler releases found"))
+    Err(ToastyError::other("No compiler releases found"))
 }
 
 /// Fetch the latest runtime release tag from GitHub
-fn get_latest_runtime_tag() -> BoxedResult<String> {
+fn get_latest_runtime_tag() -> Result<String> {
     let url = format!(
         "https://api.github.com/repos/{}/{}/releases",
         GITHUB_OWNER, GITHUB_REPO
@@ -117,10 +117,10 @@ fn get_latest_runtime_tag() -> BoxedResult<String> {
     let response = ureq::get(&url)
         .set("User-Agent", "oats-compiler")
         .call()
-        .map_err(|e| Diagnostic::boxed(format!("Failed to parse releases JSON: {}", e)))?;
+        .map_err(|e| ToastyError::other(format!("Failed to parse releases JSON: {}", e)))?;
 
     let releases: serde_json::Value = serde_json::from_reader(response.into_reader())
-        .map_err(|e| Diagnostic::boxed(format!("Failed to parse releases JSON: {}", e)))?;
+        .map_err(|e| ToastyError::other(format!("Failed to parse releases JSON: {}", e)))?;
 
     // Find the latest runtime release (tagged as runtime-*)
     if let Some(releases_array) = releases.as_array() {
@@ -133,11 +133,11 @@ fn get_latest_runtime_tag() -> BoxedResult<String> {
         }
     }
 
-    Err(Diagnostic::boxed("No runtime releases found"))
+    Err(ToastyError::other("No runtime releases found"))
 }
 
 /// Download compiler binary from GitHub release
-fn download_compiler(tag: &str, artifact_name: &str, dest_path: &Path) -> BoxedResult<()> {
+fn download_compiler(tag: &str, artifact_name: &str, dest_path: &Path) -> Result<()> {
     let url = format!(
         "https://github.com/{}/{}/releases/download/{}/{}",
         GITHUB_OWNER, GITHUB_REPO, tag, artifact_name
@@ -153,7 +153,7 @@ fn download_compiler(tag: &str, artifact_name: &str, dest_path: &Path) -> BoxedR
     let response = ureq::get(&url)
         .set("User-Agent", "oats-compiler")
         .call()
-        .map_err(|e| Diagnostic::boxed(format!("Failed to download compiler: {}", e)))?;
+        .map_err(|e| ToastyError::other(format!("Failed to download compiler: {}", e)))?;
 
     let mut file = fs::File::create(dest_path)?;
     let bytes_written = std::io::copy(&mut response.into_reader(), &mut file)?;
@@ -172,7 +172,7 @@ fn download_compiler(tag: &str, artifact_name: &str, dest_path: &Path) -> BoxedR
     let expected_hash = "116642b3377f93d6275b91024fad113821558ee73b92653efb03b0855428b464"; // TODO: Replace with actual expected hash
     if computed_hash != expected_hash {
         fs::remove_file(dest_path)?;
-        return Err(Diagnostic::boxed(format!(
+        return Err(ToastyError::other(format!(
             "Downloaded compiler hash mismatch: expected {}, got {}",
             expected_hash, computed_hash
         )));
@@ -186,7 +186,7 @@ fn download_compiler(tag: &str, artifact_name: &str, dest_path: &Path) -> BoxedR
 }
 
 /// Download runtime library from GitHub release
-fn download_runtime(tag: &str, artifact_name: &str, dest_path: &Path) -> BoxedResult<()> {
+fn download_runtime(tag: &str, artifact_name: &str, dest_path: &Path) -> Result<()> {
     let url = format!(
         "https://github.com/{}/{}/releases/download/{}/{}",
         GITHUB_OWNER, GITHUB_REPO, tag, artifact_name
@@ -202,7 +202,7 @@ fn download_runtime(tag: &str, artifact_name: &str, dest_path: &Path) -> BoxedRe
     let response = ureq::get(&url)
         .set("User-Agent", "oats-compiler")
         .call()
-        .map_err(|e| Diagnostic::boxed(format!("Failed to download runtime: {}", e)))?;
+        .map_err(|e| ToastyError::other(format!("Failed to download runtime: {}", e)))?;
 
     let mut file = fs::File::create(dest_path)?;
     let bytes_written = std::io::copy(&mut response.into_reader(), &mut file)?;
@@ -212,7 +212,7 @@ fn download_runtime(tag: &str, artifact_name: &str, dest_path: &Path) -> BoxedRe
     let expected_hash = "EXPECTED_RUNTIME_HASH"; // TODO: Replace with actual expected hash
     if computed_hash != expected_hash {
         fs::remove_file(dest_path)?;
-        return Err(Diagnostic::boxed(format!(
+        return Err(ToastyError::other(format!(
             "Downloaded runtime hash mismatch: expected {}, got {}",
             expected_hash, computed_hash
         )));
@@ -398,7 +398,7 @@ pub fn try_fetch_runtime() -> Option<PathBuf> {
 }
 
 /// List all available compiler versions from GitHub releases
-pub fn list_available_compilers() -> BoxedResult<Vec<String>> {
+pub fn list_available_compilers() -> Result<Vec<String>> {
     let url = format!(
         "https://api.github.com/repos/{}/{}/releases",
         GITHUB_OWNER, GITHUB_REPO
@@ -407,10 +407,10 @@ pub fn list_available_compilers() -> BoxedResult<Vec<String>> {
     let response = ureq::get(&url)
         .set("User-Agent", "oats-compiler")
         .call()
-        .map_err(|e| Diagnostic::boxed(format!("Failed to fetch releases: {}", e)))?;
+        .map_err(|e| ToastyError::other(format!("Failed to fetch releases: {}", e)))?;
 
     let releases: serde_json::Value = serde_json::from_reader(response.into_reader())
-        .map_err(|e| Diagnostic::boxed(format!("Failed to parse releases JSON: {}", e)))?;
+        .map_err(|e| ToastyError::other(format!("Failed to parse releases JSON: {}", e)))?;
 
     let mut versions = Vec::new();
     if let Some(releases_array) = releases.as_array() {
@@ -427,7 +427,7 @@ pub fn list_available_compilers() -> BoxedResult<Vec<String>> {
 }
 
 /// List all available runtime versions from GitHub releases
-pub fn list_available_runtimes() -> BoxedResult<Vec<String>> {
+pub fn list_available_runtimes() -> Result<Vec<String>> {
     let url = format!(
         "https://api.github.com/repos/{}/{}/releases",
         GITHUB_OWNER, GITHUB_REPO
@@ -436,10 +436,10 @@ pub fn list_available_runtimes() -> BoxedResult<Vec<String>> {
     let response = ureq::get(&url)
         .set("User-Agent", "oats-compiler")
         .call()
-        .map_err(|e| Diagnostic::boxed(format!("Failed to fetch releases: {}", e)))?;
+        .map_err(|e| ToastyError::other(format!("Failed to fetch releases: {}", e)))?;
 
     let releases: serde_json::Value = serde_json::from_reader(response.into_reader())
-        .map_err(|e| Diagnostic::boxed(format!("Failed to parse releases JSON: {}", e)))?;
+        .map_err(|e| ToastyError::other(format!("Failed to parse releases JSON: {}", e)))?;
 
     let mut versions = Vec::new();
     if let Some(releases_array) = releases.as_array() {
@@ -456,10 +456,10 @@ pub fn list_available_runtimes() -> BoxedResult<Vec<String>> {
 }
 
 /// Install a specific compiler version
-pub fn install_compiler_version(version: &str) -> BoxedResult<()> {
+pub fn install_compiler_version(version: &str) -> Result<()> {
     let artifact_name = get_compiler_artifact_name();
     if artifact_name == "oatsc-unsupported" {
-        return Err(Diagnostic::boxed(
+        return Err(ToastyError::other(
             "Unsupported platform for pre-built compiler",
         ));
     }
@@ -484,10 +484,10 @@ pub fn install_compiler_version(version: &str) -> BoxedResult<()> {
 }
 
 /// Install a specific runtime version
-pub fn install_runtime_version(version: &str) -> BoxedResult<()> {
+pub fn install_runtime_version(version: &str) -> Result<()> {
     let artifact_name = get_runtime_artifact_name();
     if artifact_name == "libruntime-unsupported.a" {
-        return Err(Diagnostic::boxed(
+        return Err(ToastyError::other(
             "Unsupported platform for pre-built runtime",
         ));
     }
@@ -512,10 +512,10 @@ pub fn install_runtime_version(version: &str) -> BoxedResult<()> {
 }
 
 /// Switch to using a specific compiler version
-pub fn use_compiler_version(version: &str) -> BoxedResult<()> {
+pub fn use_compiler_version(version: &str) -> Result<()> {
     let artifact_name = get_compiler_artifact_name();
     if artifact_name == "oatsc-unsupported" {
-        return Err(Diagnostic::boxed(
+        return Err(ToastyError::other(
             "Unsupported platform for pre-built compiler",
         ));
     }
@@ -524,7 +524,7 @@ pub fn use_compiler_version(version: &str) -> BoxedResult<()> {
     let compiler_path = cache_dir.join(version).join(artifact_name);
 
     if !compiler_path.exists() {
-        return Err(Diagnostic::boxed(format!(
+        return Err(ToastyError::other(format!(
             "Compiler version {} is not installed. Install it first with 'toasty compiler install {}'",
             version, version
         )));
@@ -539,10 +539,10 @@ pub fn use_compiler_version(version: &str) -> BoxedResult<()> {
 }
 
 /// Switch to using a specific runtime version
-pub fn use_runtime_version(version: &str) -> BoxedResult<()> {
+pub fn use_runtime_version(version: &str) -> Result<()> {
     let artifact_name = get_runtime_artifact_name();
     if artifact_name == "libruntime-unsupported.a" {
-        return Err(Diagnostic::boxed(
+        return Err(ToastyError::other(
             "Unsupported platform for pre-built runtime",
         ));
     }
@@ -551,7 +551,7 @@ pub fn use_runtime_version(version: &str) -> BoxedResult<()> {
     let runtime_path = cache_dir.join(version).join(artifact_name);
 
     if !runtime_path.exists() {
-        return Err(Diagnostic::boxed(format!(
+        return Err(ToastyError::other(format!(
             "Runtime version {} is not installed. Install it first with 'toasty runtime install {}'",
             version, version
         )));
@@ -566,7 +566,7 @@ pub fn use_runtime_version(version: &str) -> BoxedResult<()> {
 }
 
 /// Get the currently selected compiler version
-pub fn current_compiler_version() -> BoxedResult<String> {
+pub fn current_compiler_version() -> Result<String> {
     let cache_dir = get_cache_dir()?;
     let config_path = cache_dir.join("current_version");
 
@@ -583,7 +583,7 @@ pub fn current_compiler_version() -> BoxedResult<String> {
 }
 
 /// Get the currently selected runtime version
-pub fn current_runtime_version() -> BoxedResult<String> {
+pub fn current_runtime_version() -> Result<String> {
     let cache_dir = get_cache_dir()?;
     let config_path = cache_dir.join("current_runtime_version");
 
@@ -652,10 +652,10 @@ pub fn get_selected_runtime_path() -> Option<PathBuf> {
 }
 
 /// Uninstall a specific compiler version
-pub fn uninstall_compiler_version(version: &str) -> BoxedResult<()> {
+pub fn uninstall_compiler_version(version: &str) -> Result<()> {
     let artifact_name = get_compiler_artifact_name();
     if artifact_name == "oatsc-unsupported" {
-        return Err(Diagnostic::boxed(
+        return Err(ToastyError::other(
             "Unsupported platform for pre-built compiler",
         ));
     }
@@ -697,10 +697,10 @@ pub fn uninstall_compiler_version(version: &str) -> BoxedResult<()> {
 }
 
 /// Uninstall a specific runtime version
-pub fn uninstall_runtime_version(version: &str) -> BoxedResult<()> {
+pub fn uninstall_runtime_version(version: &str) -> Result<()> {
     let artifact_name = get_runtime_artifact_name();
     if artifact_name == "libruntime-unsupported.a" {
-        return Err(Diagnostic::boxed(
+        return Err(ToastyError::other(
             "Unsupported platform for pre-built runtime",
         ));
     }

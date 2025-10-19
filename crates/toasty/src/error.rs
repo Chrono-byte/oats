@@ -1,174 +1,156 @@
 //! Error types for the toasty crate
 //!
 //! This module defines the centralized error handling for the toasty CLI tool.
-//! All fallible operations return `Result<T>` where the error type is `Diagnostic`.
+//! All fallible operations return `Result<T>` where the error type is `ToastyError`.
+
+use std::path::PathBuf;
 
 /// Result type alias for all fallible operations
-pub type Result<T> = std::result::Result<T, Diagnostic>;
+pub type Result<T> = std::result::Result<T, ToastyError>;
 
-/// Result type alias using boxed Diagnostic errors to avoid large error variants.
-/// Use this for functions where the Diagnostic error size causes clippy warnings.
-pub type BoxedResult<T> = std::result::Result<T, Box<Diagnostic>>;
-
-/// # Design
+/// Semantic error type for all build system and configuration errors.
 ///
-/// The diagnostic system uses this container to decouple error detection
-/// from error emission, allowing the compiler to collect multiple errors
-/// before deciding how to present them to the user. The optional `span_start`
-/// field enables precise error highlighting when source text is available.
-#[derive(Debug, Clone, Copy)]
-pub struct Span {
-    pub start: usize,
-    pub end: usize,
+/// This enum distinguishes between different failure modes in the build process:
+/// - **User code errors**: Compilation failures in user's `.oats` files (handled by oatsc)
+/// - **Build system errors**: Environment, configuration, or I/O issues (our responsibility)
+#[derive(Debug, thiserror::Error)]
+pub enum ToastyError {
+    /// Manifest file (`Oats.toml`) was not found
+    #[error("Manifest file not found at {path:?}")]
+    ManifestNotFound { path: PathBuf },
+
+    /// Failed to parse manifest file
+    #[error("Failed to parse manifest '{path:?}': {source}")]
+    ManifestParse {
+        path: PathBuf,
+        #[source]
+        source: toml::de::Error,
+    },
+
+    /// I/O error for a specific file
+    #[error("I/O error for file {path:?}: {source}")]
+    Io {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+
+    /// Failed to fetch or download a component
+    #[error("Failed to fetch component '{name}': {source}")]
+    Fetch {
+        name: String,
+        #[source]
+        source: Box<ureq::Error>,
+    },
+
+    /// Hash mismatch when verifying downloaded component integrity
+    #[error("Component validation failed for '{name}': Hash mismatch (expected {expected}, got {actual})")]
+    HashMismatch {
+        name: String,
+        expected: String,
+        actual: String,
+    },
+
+    /// Dependency cycle detected in package graph
+    #[error("Dependency cycle detected: {cycle_info}")]
+    DependencyCycle { cycle_info: String },
+
+    /// Linker command failed with error output
+    #[error("Linker failed with exit code {code:?}")]
+    LinkerFailed {
+        code: Option<i32>,
+        stderr: String,
+    },
+
+    /// oatsc compiler encountered a fatal, non-code-related error (e.g., internal error)
+    #[error("Compiler error: {message}")]
+    CompilerInternalError { message: String },
+
+    /// User's code failed to compile (oatsc already printed diagnostics)
+    ///
+    /// This is a signal to the CLI that oatsc has already emitted human-readable
+    /// error messages, so we should exit quietly without additional output.
+    #[error("Build failed due to previous errors")]
+    CompilationFailed,
+
+    /// JSON serialization/deserialization error
+    #[error("JSON error: {source}")]
+    Json {
+        #[source]
+        source: serde_json::Error,
+    },
+
+    /// TOML serialization/deserialization error
+    #[error("TOML error: {source}")]
+    Toml {
+        #[source]
+        source: toml::de::Error,
+    },
+
+    /// Generic error for other failures
+    #[error("{message}")]
+    Other { message: String },
 }
 
-#[derive(Debug, Clone)]
-pub struct Label {
-    pub span: Span,
-    pub message: String,
-}
+impl ToastyError {
+    /// Check if this error represents a user code compilation failure
+    ///
+    /// Returns `true` if the error is `CompilationFailed`, which means oatsc
+    /// has already printed the actual error diagnostics to the user.
+    pub fn is_user_code_error(&self) -> bool {
+        matches!(self, ToastyError::CompilationFailed)
+    }
 
-/// Primary error message describing the issue
-#[derive(Debug, Clone)]
-pub struct Diagnostic {
-    /// Optional error code
-    pub code: Option<String>,
-    /// Primary error message
-    pub message: String,
-    /// Optional file path where the error occurred
-    pub file: Option<String>,
-    /// Optional labels for different error spans
-    pub labels: Vec<Label>,
-    /// Optional additional context
-    pub note: Option<String>,
-    /// Optional help message with suggestions
-    pub help: Option<String>,
-}
+    /// Create an I/O error with context
+    pub fn io<P: Into<PathBuf>>(path: P, source: std::io::Error) -> Self {
+        ToastyError::Io {
+            path: path.into(),
+            source,
+        }
+    }
 
-impl Diagnostic {
-    /// Create a new diagnostic with a message
-    pub fn new(message: impl Into<String>) -> Self {
-        Diagnostic {
-            code: None,
+    /// Create a manifest parsing error with context
+    pub fn manifest_parse<P: Into<PathBuf>>(path: P, source: toml::de::Error) -> Self {
+        ToastyError::ManifestParse {
+            path: path.into(),
+            source,
+        }
+    }
+
+    /// Create a generic error
+    pub fn other<S: Into<String>>(message: S) -> Self {
+        ToastyError::Other {
             message: message.into(),
-            file: None,
-            labels: Vec::new(),
-            note: None,
-            help: None,
         }
-    }
-
-    /// Create a boxed diagnostic for use in BoxedResult error types
-    pub fn boxed(message: impl Into<String>) -> Box<Self> {
-        Box::new(Self::new(message))
-    }
-
-    /// Create a diagnostic with file context
-    pub fn with_file(mut self, file: impl Into<String>) -> Self {
-        self.file = Some(file.into());
-        self
-    }
-
-    /// Add a note to the diagnostic
-    pub fn with_note(mut self, note: impl Into<String>) -> Self {
-        self.note = Some(note.into());
-        self
-    }
-
-    /// Set the span for the diagnostic
-    pub fn with_label(mut self, span: Span, message: impl Into<String>) -> Self {
-        self.labels.push(Label {
-            span,
-            message: message.into(),
-        });
-        self
-    }
-
-    /// Set the error code
-    pub fn with_code(mut self, code: impl Into<String>) -> Self {
-        self.code = Some(code.into());
-        self
-    }
-
-    /// Set the help message
-    pub fn with_help(mut self, help: impl Into<String>) -> Self {
-        self.help = Some(help.into());
-        self
     }
 }
 
-impl std::fmt::Display for Diagnostic {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if let Some(file) = &self.file {
-            write!(f, "{}: {}", file, self.message)?;
-        } else {
-            write!(f, "{}", self.message)?;
-        }
-        if let Some(note) = &self.note {
-            write!(f, "\nNote: {}", note)?;
-        }
-        if let Some(help) = &self.help {
-            write!(f, "\nHelp: {}", help)?;
-        }
-        for label in &self.labels {
-            write!(f, "\n{}: {}", label.span.start, label.message)?;
-        }
-        Ok(())
-    }
-}
-
-impl std::error::Error for Diagnostic {}
-
-impl From<Box<Diagnostic>> for Diagnostic {
-    fn from(err: Box<Diagnostic>) -> Self {
-        *err
-    }
-}
-
-impl From<std::io::Error> for Diagnostic {
-    fn from(err: std::io::Error) -> Self {
-        Diagnostic::new(format!("IO error: {}", err))
-    }
-}
-
-impl From<serde_json::Error> for Diagnostic {
+impl From<serde_json::Error> for ToastyError {
     fn from(err: serde_json::Error) -> Self {
-        Diagnostic::new(format!("JSON error: {}", err))
+        ToastyError::Json { source: err }
     }
 }
 
-impl From<ureq::Error> for Diagnostic {
-    fn from(err: ureq::Error) -> Self {
-        Diagnostic::new(format!("HTTP error: {}", err))
-    }
-}
-
-impl From<toml::de::Error> for Diagnostic {
+impl From<toml::de::Error> for ToastyError {
     fn from(err: toml::de::Error) -> Self {
-        Diagnostic::new(format!("TOML parsing error: {}", err))
+        ToastyError::Toml { source: err }
     }
 }
 
-impl From<std::io::Error> for Box<Diagnostic> {
+impl From<ureq::Error> for ToastyError {
+    fn from(err: ureq::Error) -> Self {
+        ToastyError::Fetch {
+            name: "unknown".to_string(),
+            source: Box::new(err),
+        }
+    }
+}
+
+impl From<std::io::Error> for ToastyError {
     fn from(err: std::io::Error) -> Self {
-        Box::new(Diagnostic::new(format!("IO error: {}", err)))
-    }
-}
-
-impl From<serde_json::Error> for Box<Diagnostic> {
-    fn from(err: serde_json::Error) -> Self {
-        Box::new(Diagnostic::new(format!("JSON error: {}", err)))
-    }
-}
-
-impl From<ureq::Error> for Box<Diagnostic> {
-    fn from(err: ureq::Error) -> Self {
-        Box::new(Diagnostic::new(format!("HTTP error: {}", err)))
-    }
-}
-
-impl From<toml::de::Error> for Box<Diagnostic> {
-    fn from(err: toml::de::Error) -> Self {
-        Box::new(Diagnostic::new(format!("TOML parsing error: {}", err)))
+        ToastyError::Io {
+            path: PathBuf::from("<unknown>"),
+            source: err,
+        }
     }
 }

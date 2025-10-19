@@ -189,17 +189,19 @@ fn compile_package(
         // Check entry point
         if let Ok(src_metadata) = std::fs::metadata(pkg_node.entry_point())
             && let Ok(src_mtime) = src_metadata.modified()
-                && src_mtime > obj_mtime {
-                    needs_rebuild = true;
-                }
+            && src_mtime > obj_mtime
+        {
+            needs_rebuild = true;
+        }
 
         // Check manifest if it exists
         let manifest_path = pkg_root.join("Oats.toml");
         if let Ok(manifest_metadata) = std::fs::metadata(&manifest_path)
             && let Ok(manifest_mtime) = manifest_metadata.modified()
-                && manifest_mtime > obj_mtime {
-                    needs_rebuild = true;
-                }
+            && manifest_mtime > obj_mtime
+        {
+            needs_rebuild = true;
+        }
 
         // Check dependency metadata files
         for edge in graph.edges(pkg_idx) {
@@ -207,10 +209,11 @@ fn compile_package(
             let dep_node = &graph[dep_idx];
             if let Some(dep_result) = built_deps.get(&dep_node.name)
                 && let Ok(dep_metadata) = std::fs::metadata(&dep_result.meta_file)
-                    && let Ok(dep_mtime) = dep_metadata.modified()
-                        && dep_mtime > obj_mtime {
-                            needs_rebuild = true;
-                        }
+                && let Ok(dep_mtime) = dep_metadata.modified()
+                && dep_mtime > obj_mtime
+            {
+                needs_rebuild = true;
+            }
         }
 
         if !needs_rebuild {
@@ -229,9 +232,10 @@ fn compile_package(
             let mut meta_needs_update = true;
             if let Ok(meta_metadata) = std::fs::metadata(&meta_file)
                 && let Ok(meta_mtime) = meta_metadata.modified()
-                    && meta_mtime >= obj_mtime {
-                        meta_needs_update = false;
-                    }
+                && meta_mtime >= obj_mtime
+            {
+                meta_needs_update = false;
+            }
 
             if meta_needs_update {
                 // Ensure output directory exists

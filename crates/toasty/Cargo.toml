@@ -19,6 +19,7 @@ petgraph = "0.6"
 ureq = "2.9"
 dirs = "5.0"
 sha2 = "0.10"
+pathdiff = "0.2"
 
 [dependencies.oatsc]
 path = "../oatsc"

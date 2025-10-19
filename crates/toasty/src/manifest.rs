@@ -266,6 +266,7 @@ mod tests {
     fn test_validate_invalid_version() {
         let manifest = Manifest {
             package: Package {
+                entry: "src/main.oats".to_string(),
                 name: "test".to_string(),
                 version: "invalid".to_string(),
                 authors: vec![],

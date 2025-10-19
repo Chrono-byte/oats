@@ -2,8 +2,8 @@ use crate::codegen::CodeGen;
 use crate::diagnostics::Diagnostic;
 use crate::types::OatsType;
 use deno_ast::swc::ast;
-use inkwell::values::{BasicValue, BasicValueEnum, FunctionValue};
 use inkwell::types::{BasicType, BasicTypeEnum};
+use inkwell::values::{BasicValue, BasicValueEnum, FunctionValue};
 use std::collections::HashMap;
 
 // LocalEntry now includes an Option<String> for an optional nominal type name
@@ -66,8 +66,7 @@ impl<'a> CodeGen<'a> {
                 ast::Expr::Arrow(a) => {
                     // nested arrow: scan body
                     if a.body.is_block_stmt() {
-                        if let deno_ast::swc::ast::BlockStmtOrExpr::BlockStmt(b) = &*a.body
-                        {
+                        if let deno_ast::swc::ast::BlockStmtOrExpr::BlockStmt(b) = &*a.body {
                             for s in &b.stmts {
                                 use deno_ast::swc::ast::Stmt;
                                 if let Stmt::Expr(es) = s {
@@ -106,8 +105,7 @@ impl<'a> CodeGen<'a> {
         }
 
         // Build a set of names visible in the surrounding locals stack
-        let mut outer_names: std::collections::HashSet<String> =
-            std::collections::HashSet::new();
+        let mut outer_names: std::collections::HashSet<String> = std::collections::HashSet::new();
         for scope in locals.iter() {
             for k in scope.keys() {
                 outer_names.insert(k.clone());
@@ -154,8 +152,7 @@ impl<'a> CodeGen<'a> {
             match param {
                 ast::Pat::Ident(ident) => {
                     if let Some(type_ann) = &ident.type_ann {
-                        if let Some(mapped) = crate::types::map_ts_type(&type_ann.type_ann)
-                        {
+                        if let Some(mapped) = crate::types::map_ts_type(&type_ann.type_ann) {
                             param_types.push(mapped);
                         } else {
                             return Err(Diagnostic::simple(
@@ -310,8 +307,7 @@ impl<'a> CodeGen<'a> {
         if !captures.is_empty() {
             // Collect current values of captured variables from outer scope
             // Store tuples of (value, is_weak) so env allocation can use weak increments
-            let mut captured_vals: Vec<(inkwell::values::BasicValueEnum, bool)> =
-                Vec::new();
+            let mut captured_vals: Vec<(inkwell::values::BasicValueEnum, bool)> = Vec::new();
             for cname in &captures {
                 // First check if it's a parameter in the outer function
                 if let Some(idx) = param_map.get(cname)
@@ -337,20 +333,16 @@ impl<'a> CodeGen<'a> {
                     } else if pv.get_type().is_float_type() {
                         // box f64
                         let box_fn = self.get_union_box_f64();
-                        let cs = self.builder.build_call(
-                            box_fn,
-                            &[pv.into()],
-                            "union_box_f64_ctor",
-                        );
+                        let cs =
+                            self.builder
+                                .build_call(box_fn, &[pv.into()], "union_box_f64_ctor");
                         if let Ok(cs) = cs
                             && let inkwell::Either::Left(bv) = cs.try_as_basic_value()
                         {
                             let boxed_ptr = bv.into_pointer_value();
                             captured_vals.push((boxed_ptr.as_basic_value_enum(), is_weak));
                         } else {
-                            return Err(Diagnostic::simple(
-                                "failed to box numeric capture",
-                            ));
+                            return Err(Diagnostic::simple("failed to box numeric capture"));
                         }
                     } else if pv.get_type().is_int_type() {
                         // convert int->f64 then box
@@ -360,20 +352,16 @@ impl<'a> CodeGen<'a> {
                             .build_signed_int_to_float(iv, self.f64_t, "i_to_f")
                             .map_err(|_| Diagnostic::simple("int->float cast failed"))?;
                         let box_fn = self.get_union_box_f64();
-                        let cs = self.builder.build_call(
-                            box_fn,
-                            &[fconv.into()],
-                            "union_box_f64_ctor",
-                        );
+                        let cs =
+                            self.builder
+                                .build_call(box_fn, &[fconv.into()], "union_box_f64_ctor");
                         if let Ok(cs) = cs
                             && let inkwell::Either::Left(bv) = cs.try_as_basic_value()
                         {
                             let boxed_ptr = bv.into_pointer_value();
                             captured_vals.push((boxed_ptr.as_basic_value_enum(), is_weak));
                         } else {
-                            return Err(Diagnostic::simple(
-                                "failed to box numeric capture",
-                            ));
+                            return Err(Diagnostic::simple("failed to box numeric capture"));
                         }
                     } else {
                         return Err(Diagnostic::simple(
@@ -395,9 +383,7 @@ impl<'a> CodeGen<'a> {
                 )) = self.find_local(locals, cname)
                 {
                     if !initialized {
-                        return Err(Diagnostic::simple(
-                            "cannot capture uninitialized local",
-                        ));
+                        return Err(Diagnostic::simple("cannot capture uninitialized local"));
                     }
                     // load current value
                     let loaded = match self.builder.build_load(
@@ -407,9 +393,7 @@ impl<'a> CodeGen<'a> {
                     ) {
                         Ok(v) => v,
                         Err(_) => {
-                            return Err(Diagnostic::simple(
-                                "failed to load captured local",
-                            ));
+                            return Err(Diagnostic::simple("failed to load captured local"));
                         }
                     };
                     // If pointer, use directly. If float/int, box into union object.
@@ -419,30 +403,23 @@ impl<'a> CodeGen<'a> {
                         }
                         BasicValueEnum::FloatValue(fv) => {
                             let box_fn = self.get_union_box_f64();
-                            let cs = self.builder.build_call(
-                                box_fn,
-                                &[fv.into()],
-                                "union_box_f64_ctor",
-                            );
+                            let cs =
+                                self.builder
+                                    .build_call(box_fn, &[fv.into()], "union_box_f64_ctor");
                             if let Ok(cs) = cs
                                 && let inkwell::Either::Left(bv) = cs.try_as_basic_value()
                             {
                                 let boxed_ptr = bv.into_pointer_value();
-                                captured_vals
-                                    .push((boxed_ptr.as_basic_value_enum(), is_weak_flag));
+                                captured_vals.push((boxed_ptr.as_basic_value_enum(), is_weak_flag));
                             } else {
-                                return Err(Diagnostic::simple(
-                                    "failed to box numeric capture",
-                                ));
+                                return Err(Diagnostic::simple("failed to box numeric capture"));
                             }
                         }
                         BasicValueEnum::IntValue(iv) => {
                             let fconv = self
                                 .builder
                                 .build_signed_int_to_float(iv, self.f64_t, "i_to_f")
-                                .map_err(|_| {
-                                    Diagnostic::simple("int->float cast failed")
-                                })?;
+                                .map_err(|_| Diagnostic::simple("int->float cast failed"))?;
                             let box_fn = self.get_union_box_f64();
                             let cs = self.builder.build_call(
                                 box_fn,
@@ -453,12 +430,9 @@ impl<'a> CodeGen<'a> {
                                 && let inkwell::Either::Left(bv) = cs.try_as_basic_value()
                             {
                                 let boxed_ptr = bv.into_pointer_value();
-                                captured_vals
-                                    .push((boxed_ptr.as_basic_value_enum(), is_weak_flag));
+                                captured_vals.push((boxed_ptr.as_basic_value_enum(), is_weak_flag));
                             } else {
-                                return Err(Diagnostic::simple(
-                                    "failed to box numeric capture",
-                                ));
+                                return Err(Diagnostic::simple("failed to box numeric capture"));
                             }
                         }
                         _ => {
@@ -606,12 +580,8 @@ impl<'a> CodeGen<'a> {
         if arrow.body.is_block_stmt() {
             // Block body: { statements }
             if let ast::BlockStmtOrExpr::BlockStmt(block) = &*arrow.body {
-                let terminated = self.lower_stmts(
-                    &block.stmts,
-                    arrow_fn,
-                    &arrow_param_map,
-                    &mut arrow_locals,
-                );
+                let terminated =
+                    self.lower_stmts(&block.stmts, arrow_fn, &arrow_param_map, &mut arrow_locals);
 
                 let terminated = terminated?;
 
@@ -664,16 +634,15 @@ impl<'a> CodeGen<'a> {
                 if !init {
                     return Err(Diagnostic::simple("closure tmp uninitialized"));
                 }
-                let loaded =
-                    match self
-                        .builder
-                        .build_load(self.i8ptr_t, tmp_ptr, "closure_load")
-                    {
-                        Ok(v) => v,
-                        Err(_) => {
-                            return Err(Diagnostic::simple("failed to load closure tmp"));
-                        }
-                    };
+                let loaded = match self
+                    .builder
+                    .build_load(self.i8ptr_t, tmp_ptr, "closure_load")
+                {
+                    Ok(v) => v,
+                    Err(_) => {
+                        return Err(Diagnostic::simple("failed to load closure tmp"));
+                    }
+                };
                 return Ok(loaded);
             } else {
                 return Err(Diagnostic::simple("closure tmp missing"));

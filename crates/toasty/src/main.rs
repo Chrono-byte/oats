@@ -4,12 +4,12 @@ use colored::Colorize;
 use std::path::PathBuf;
 use toasty::build;
 use toasty::cli::{Cli, Commands, CompileOptions, CompilerCommands, RuntimeCommands};
-use toasty::error::{Diagnostic, Result};
+use toasty::error::{Diagnostic, BoxedResult};
 use toasty::fetch;
 use toasty::project;
 
 /// Perform preflight checks to ensure required tools are available
-fn preflight_check() -> Result<()> {
+fn preflight_check() -> BoxedResult<()> {
     // Check if OATS_OATSC_PATH is already set (e.g., by tests)
     if std::env::var("OATS_OATSC_PATH").is_ok() {
         return Ok(());
@@ -76,7 +76,7 @@ fn is_command_available(cmd: &str) -> bool {
 }
 
 /// Invoke oatsc compiler as external command
-fn invoke_oatsc(options: &CompileOptions) -> Result<Option<PathBuf>> {
+fn invoke_oatsc(options: &CompileOptions) -> BoxedResult<Option<PathBuf>> {
     // Get oatsc path from environment (set by preflight check)
     let oatsc_path = std::env::var("OATS_OATSC_PATH").unwrap_or_else(|_| "oatsc".to_string());
 
@@ -165,7 +165,7 @@ fn invoke_oatsc(options: &CompileOptions) -> Result<Option<PathBuf>> {
         .args(&args)
         .output()
         .map_err(|e| {
-            Diagnostic::new(format!(
+            Diagnostic::boxed(format!(
                 "Failed to execute oatsc command: {} {:?}: {}",
                 oatsc_path, args, e
             ))
@@ -174,7 +174,7 @@ fn invoke_oatsc(options: &CompileOptions) -> Result<Option<PathBuf>> {
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stdout = String::from_utf8_lossy(&output.stdout);
-        return Err(Diagnostic::new(format!(
+        return Err(Diagnostic::boxed(format!(
             "oatsc compilation failed:\nSTDOUT: {}\nSTDERR: {}",
             stdout, stderr
         )));
@@ -197,7 +197,7 @@ fn invoke_oatsc(options: &CompileOptions) -> Result<Option<PathBuf>> {
     }
 }
 
-fn main() -> Result<()> {
+fn main() -> BoxedResult<()> {
     // Perform preflight checks to ensure required tools are available
     preflight_check()?;
 
@@ -307,7 +307,7 @@ fn main() -> Result<()> {
             } else if let Ok(p) = std::env::var("OATS_SRC_FILE") {
                 p
             } else {
-                return Err(Diagnostic::new(
+                return Err(Diagnostic::boxed(
                     "No source file provided. Pass path as argument, set OATS_SRC_FILE env var, or create Oats.toml",
                 ));
             };
@@ -517,7 +517,7 @@ fn main() -> Result<()> {
 
             let link_status = link_cmd.status()?;
             if !link_status.success() {
-                return Err(Diagnostic::new("Linking failed"));
+                return Err(Diagnostic::boxed("Linking failed"));
             }
 
             if !quiet && (verbose || cfg!(debug_assertions)) {
@@ -557,7 +557,7 @@ fn main() -> Result<()> {
             } else if let Ok(p) = std::env::var("OATS_SRC_FILE") {
                 p
             } else {
-                return Err(Diagnostic::new(
+                return Err(Diagnostic::boxed(
                     "No source file provided. Pass path as argument or set OATS_SRC_FILE env var.",
                 ));
             };
@@ -624,7 +624,7 @@ fn main() -> Result<()> {
             }
             let status = cmd.status()?;
             if !status.success() {
-                return Err(Diagnostic::new(
+                return Err(Diagnostic::boxed(
                     "Executed program returned non-zero exit code",
                 ));
             }
@@ -635,7 +635,7 @@ fn main() -> Result<()> {
             let project_path = std::path::Path::new(&name);
 
             if project_path.exists() {
-                return Err(Diagnostic::new(format!(
+                return Err(Diagnostic::boxed(format!(
                     "Directory '{}' already exists",
                     name
                 )));

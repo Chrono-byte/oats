@@ -25,6 +25,12 @@ fn test_interfaces_types_example_end_to_end() -> Result<()> {
         .status()?;
     assert!(status.success(), "building toasty failed");
 
+    // Build the `oats_std` static library
+    let status = Command::new("cargo")
+        .args(["build", "-p", "oats_std", "--release"])
+        .status()?;
+    assert!(status.success(), "building oats_std failed");
+
     let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let workspace_root = manifest_dir
         .parent()
@@ -46,6 +52,10 @@ fn test_interfaces_types_example_end_to_end() -> Result<()> {
         .join("target")
         .join("release")
         .join("libruntime.a");
+    let std_path = workspace_root
+        .join("target")
+        .join("release")
+        .join("liboats_std.a");
     let status = Command::new(&bin_path)
         .args(["build", &example.to_string_lossy()])
         .env("OATS_OUT_DIR", out_dir)
@@ -54,6 +64,7 @@ fn test_interfaces_types_example_end_to_end() -> Result<()> {
             workspace_root.join("target").join("release").join("oatsc"),
         )
         .env("OATS_RUNTIME_PATH", runtime_path)
+        .env("OATS_STD_PATH", std_path)
         .current_dir(workspace_root)
         .status()?;
     assert!(status.success(), "toasty failed to compile example");

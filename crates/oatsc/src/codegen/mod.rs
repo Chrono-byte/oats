@@ -1120,10 +1120,10 @@ impl<'a> CodeGen<'a> {
         // Only handle the simple case: no params, integer return or void.
         // Build: int main(int argc, char** argv) { int r = oats_main(); return r; }
         let i32_t = self.i32_t;
-        let i8ptr_t = self.i8ptr_t;
 
         // Build function type: i32 (int) with (i32, i8**) params
-        let fn_type = i32_t.fn_type(&[i32_t.into(), i8ptr_t.as_basic_type_enum().into()], false);
+        let argv_type = self.context.ptr_type(inkwell::AddressSpace::default());
+        let fn_type = i32_t.fn_type(&[i32_t.into(), argv_type.into()], false);
         let main_fn = self.module.add_function("main", fn_type, None);
         let entry = self.context.append_basic_block(main_fn, "entry");
         self.builder.position_at_end(entry);

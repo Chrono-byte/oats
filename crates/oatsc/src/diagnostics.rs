@@ -225,6 +225,18 @@ pub fn report_error_span_and_bail<T>(
     Err(anyhow::anyhow!("{}", err_text))
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct Span {
+    pub start: usize,
+    pub end: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct Label {
+    pub span: Span,
+    pub message: String,
+}
+
 /// Structured diagnostic container for propagating compiler errors.
 ///
 /// This type provides a uniform way to collect and propagate diagnostic
@@ -240,18 +252,23 @@ pub fn report_error_span_and_bail<T>(
 /// field enables precise error highlighting when source text is available.
 #[derive(Debug, Clone)]
 pub struct Diagnostic {
+    /// Optional error code categorizing the error type
+    pub code: Option<String>,
     /// Primary error message describing the issue
     pub message: String,
     /// Optional file path where the error occurred
     pub file: Option<String>,
+    /// Optional labels for precise error spans and messages
+    pub labels: Vec<Label>,
     /// Optional additional context or suggestion
     pub note: Option<String>,
-    /// Optional byte offset into source text for span-aware highlighting.
-    /// When present and source text is provided to `emit_diagnostic`,
-    /// the system displays a caret-highlighted diagnostic instead of
-    /// basic file header context.
-    pub span_start: Option<usize>,
+    /// Optional help message with further guidance
+    pub help: Option<String>,
 }
+
+/// Convenient type alias for Results that use boxed Diagnostic errors.
+/// Boxing the Diagnostic avoids large stack copies and improves performance.
+pub type DiagnosticResult<T> = Result<T, Box<Diagnostic>>;
 
 impl Diagnostic {
     /// Creates a simple diagnostic with only an error message.
@@ -264,11 +281,18 @@ impl Diagnostic {
     /// * `msg` - Error message describing the issue
     pub fn simple(msg: impl Into<String>) -> Self {
         Diagnostic {
+            code: None,
             message: msg.into(),
             file: None,
+            labels: Vec::new(),
             note: None,
-            span_start: None,
+            help: None,
         }
+    }
+
+    /// Creates a boxed simple diagnostic (suitable for Result error types).
+    pub fn simple_boxed(msg: impl Into<String>) -> Box<Self> {
+        Box::new(Self::simple(msg))
     }
 
     /// Creates a span-aware diagnostic with precise source location.
@@ -283,11 +307,88 @@ impl Diagnostic {
     /// * `span_start` - Zero-based byte index into the source text
     pub fn simple_with_span(msg: impl Into<String>, span_start: usize) -> Self {
         Diagnostic {
+            code: None,
             message: msg.into(),
             file: None,
+            labels: vec![Label {
+                span: Span {
+                    start: span_start,
+                    end: span_start,
+                },
+                message: String::new(),
+            }],
             note: None,
-            span_start: Some(span_start),
+            help: None,
         }
+    }
+
+    /// Creates a boxed span-aware diagnostic (suitable for Result error types).
+    pub fn simple_with_span_boxed(msg: impl Into<String>, span_start: usize) -> Box<Self> {
+        Box::new(Self::simple_with_span(msg, span_start))
+    }
+
+    /// Sets the error code for the diagnostic.
+    ///
+    /// This method allows specifying an optional error code that categorizes
+    /// the type of error. Error codes can be used for programmatic error
+    /// handling or to provide more information to the user.
+    ///
+    /// # Arguments
+    /// * `code` - Error code string
+    ///
+    /// # Returns
+    /// A mutable reference to `self` for chaining
+    pub fn with_code(mut self, code: impl Into<String>) -> Self {
+        self.code = Some(code.into());
+        self
+    }
+
+    /// Adds a label to the diagnostic for precise error span and message.
+    ///
+    /// This method allows associating a specific span of text with an
+    /// error message, enabling precise error highlighting and multiple
+    /// error locations for a single diagnostic.
+    ///
+    /// # Arguments
+    /// * `label` - Label struct containing span and message
+    ///
+    /// # Returns
+    /// A mutable reference to `self` for chaining
+    pub fn with_label(mut self, label: Label) -> Self {
+        self.labels.push(label);
+        self
+    }
+
+    /// Sets an additional note for the diagnostic.
+    ///
+    /// This method allows specifying an optional note that provides
+    /// additional context or suggestions for fixing the error.
+    ///
+    /// # Arguments
+    /// * `note` - Note string
+    ///
+    /// # Returns
+    /// A mutable reference to `self` for chaining
+    pub fn with_note(mut self, note: impl Into<String>) -> Self {
+        self.note = Some(note.into());
+        self
+    }
+
+    /// Sets a help message for the diagnostic.
+    ///
+    /// This method allows specifying an optional help message that offers
+    /// further guidance or solutions for the error. Help messages are
+    /// typically more detailed and can include code fixes or links to
+    /// documentation.
+    ///
+    /// # Arguments
+    /// * `help` - Help message string
+    ///
+    /// # Returns
+    /// A mutable reference to `self` for chaining
+    pub fn with_help(mut self, help: impl Into<String>) -> Self {
+        self.help = Some(help.into());
+        self
     }
 }
 
@@ -303,13 +404,37 @@ impl Diagnostic {
 /// * `source` - Optional source text for span-aware highlighting
 pub fn emit_diagnostic(d: &Diagnostic, source: Option<&str>) {
     if DIAGNOSTICS_ENABLED.load(Ordering::SeqCst) {
-        // Select appropriate diagnostic format based on available information.
-        // Span-aware diagnostics provide precise error highlighting when both
-        // source text and byte offset are available.
-        if let (Some(span), Some(src)) = (d.span_start, source) {
-            report_error_span(d.file.as_deref(), src, span, &d.message, d.note.as_deref());
+        // Print the diagnostic code if available
+        if let Some(code) = &d.code {
+            println!("error[{}]: {}", code, d.message);
         } else {
-            report_error(d.file.as_deref(), source, &d.message, d.note.as_deref());
+            println!("error: {}", d.message);
+        }
+
+        // Print labels with spans
+        if let Some(src) = source {
+            for label in &d.labels {
+                let span_text = &src[label.span.start..label.span.end];
+                println!(
+                    " --> {}:{}:{}",
+                    d.file.as_deref().unwrap_or("<unknown>"),
+                    label.span.start,
+                    label.span.end
+                );
+                println!(
+                    " | {}
+ | {}",
+                    span_text, label.message
+                );
+            }
+        }
+
+        // Print additional notes and help
+        if let Some(note) = &d.note {
+            println!("note: {}", note);
+        }
+        if let Some(help) = &d.help {
+            println!("help: {}", help);
         }
     }
 }

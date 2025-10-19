@@ -1,10 +1,12 @@
 use anyhow::Result;
 use std::fs::File;
 use std::io::Write;
+use std::process::Command;
 
 use std::cell::Cell;
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::path::Path;
 
 use crate::codegen::CodeGen;
 use crate::diagnostics;
@@ -1160,13 +1162,7 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
     if let Some(ref func) = func_decl {
         if let Some(ref sig) = func_sig {
             codegen
-                .gen_function_ir(
-                    "oats_main",
-                    func,
-                    &sig.params,
-                    &sig.ret,
-                    None,
-                )
+                .gen_function_ir("oats_main", func, &sig.params, &sig.ret, None)
                 .map_err(|d| {
                     crate::diagnostics::emit_diagnostic(&d, Some(source.as_str()));
                     anyhow::anyhow!("{}", d.message)
@@ -1193,7 +1189,7 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
         .unwrap_or("out");
     let out_ll = format!("{}/{}.ll", out_dir, src_filename);
     // Allow overriding output name with OATS_OUT_NAME
-    let _out_exe = if let Ok(name) = std::env::var("OATS_OUT_NAME") {
+    let out_exe = if let Ok(name) = std::env::var("OATS_OUT_NAME") {
         format!("{}/{}", out_dir, name)
     } else {
         format!("{}/{}", out_dir, src_filename)
@@ -1286,6 +1282,31 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
         );
         return Ok(Some(out_obj));
     }
+
+    // Build the runtime library
+    let rust_lib = {
+        let mut cargo_cmd = Command::new("cargo");
+        cargo_cmd
+            .arg("build")
+            .arg("--release")
+            .arg("--package")
+            .arg("runtime");
+        match cargo_cmd.status() {
+            Ok(status) => {
+                if !status.success() {
+                    anyhow::bail!("cargo failed to build runtime");
+                }
+            }
+            Err(e) => {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    anyhow::bail!("cargo not found in PATH");
+                } else {
+                    return Err(e.into());
+                }
+            }
+        }
+        "target/release/libruntime.a".to_string()
+    };
 
     // Locate or produce rt_main object. Prefer an existing top-level `rt_main.o` so
     // the repo can ship a prebuilt small host object. Otherwise try to compile

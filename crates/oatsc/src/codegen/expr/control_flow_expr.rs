@@ -3,9 +3,10 @@ use inkwell::values::BasicValueEnum;
 use inkwell::values::FunctionValue;
 use std::collections::HashMap;
 
-use inkwell::types::BasicTypeEnum;
-use inkwell::values::PointerValue;
+use inkwell::types::{BasicTypeEnum, BasicType};
+use inkwell::values::{PointerValue, BasicValue};
 use inkwell::IntPredicate;
+use deno_ast::swc::ast;
 
 // LocalEntry now includes an Option<String> for an optional nominal type name
 // LocalEntry now includes an Option<OatsType> for union tracking

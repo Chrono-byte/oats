@@ -20,13 +20,15 @@ cd "$REPO_ROOT" || exit 1
 
 # --- Environment Setup ---
 # Load LLVM/env helpers if present.
-if [ -f ./scripts/setup_env.sh ]; then
+# if [ -f ./scripts/setup_env.sh ]; then
     # shellcheck source=/dev/null
-    source ./scripts/setup_env.sh
-fi
+    # source ./scripts/setup_env.sh
+# fi
 
 # Set the output directory for the compiler artifacts.
-export OATS_OUT_DIR="${REPO_ROOT}/aot_out"
+export OATS_OUT_DIR="${REPO_ROOT}/aot_out" 
+export OATS_RUNTIME_PATH="/home/chrono/Dev/oats/target/debug/libruntime.a" 
+export OATS_STD_PATH="/home/chrono/Dev/oats/target/debug/liboats_std.a"
 
 # --- Find Files ---
 # Find all .oats files to compile. Thanks to nullglob, this will be an
@@ -75,7 +77,7 @@ for file in "${files[@]}"; do
         # Command failed (non-zero exit code), indicating a crash or fatal error.
         echo "FAILED (non-zero exit code): $file"
         echo "---- begin output ----"
-        sed -n '1,200p' "$tmp_out" # Print first 200 lines of raw output
+        sed -n '1,50p' "$tmp_out" # Print first 200 lines of raw output
         echo "---- end output ----"
         failures+=("$file")
     fi

@@ -1,5 +1,5 @@
 use crate::codegen::CodeGen;
-use crate::diagnostics::Diagnostic;
+use crate::diagnostics::{Diagnostic, Severity};
 use crate::types::OatsType;
 use deno_ast::swc::ast;
 use inkwell::types::{BasicType, BasicTypeEnum};
@@ -156,19 +156,16 @@ impl<'a> CodeGen<'a> {
                         if let Some(mapped) = crate::types::map_ts_type(&type_ann.type_ann) {
                             param_types.push(mapped);
                         } else {
-                            return Err(Diagnostic::simple_boxed(
-                                "Arrow parameter has unsupported type annotation",
+                            return Err(Diagnostic::simple_boxed(Severity::Error, "Arrow parameter has unsupported type annotation",
                             ));
                         }
                     } else {
-                        return Err(Diagnostic::simple_boxed(
-                            "Arrow parameter missing type annotation",
+                        return Err(Diagnostic::simple_boxed(Severity::Error, "Arrow parameter missing type annotation",
                         ));
                     }
                 }
                 _ => {
-                    return Err(Diagnostic::simple_boxed(
-                        "Arrow function parameter pattern not supported",
+                    return Err(Diagnostic::simple_boxed(Severity::Error, "Arrow function parameter pattern not supported",
                     ));
                 }
             }
@@ -179,11 +176,10 @@ impl<'a> CodeGen<'a> {
             if let Some(mapped) = crate::types::map_ts_type(&return_type.type_ann) {
                 mapped
             } else {
-                return Err(Diagnostic::simple_boxed("Arrow return type not supported"));
+                return Err(Diagnostic::simple_boxed(Severity::Error, "Arrow return type not supported"));
             }
         } else {
-            return Err(Diagnostic::simple_boxed(
-                "Arrow function return type annotation required - test",
+            return Err(Diagnostic::simple_boxed(Severity::Error, "Arrow function return type annotation required - test",
             ));
         };
 
@@ -237,13 +233,13 @@ impl<'a> CodeGen<'a> {
             // env is the first parameter of arrow_fn
             let env_param = arrow_fn
                 .get_nth_param(0)
-                .ok_or_else(|| Diagnostic::simple("missing env parameter for arrow"))?;
+                .ok_or_else(|| Diagnostic::error("missing env parameter for arrow"))?;
             let env_ptr = env_param.into_pointer_value();
             // Convert env pointer to integer for offset math
             let obj_ptr_int = self
                 .builder
                 .build_ptr_to_int(env_ptr, self.i64_t, "env_addr")
-                .map_err(|_| Diagnostic::simple("ptr_to_int failed"))?;
+                .map_err(|_| Diagnostic::error("ptr_to_int failed"))?;
             let header_size = 8u64;
             let meta_slot = 8u64;
 
@@ -253,21 +249,21 @@ impl<'a> CodeGen<'a> {
                 let field_addr = self
                     .builder
                     .build_int_add(obj_ptr_int, off_const, "cap_field_addr")
-                    .map_err(|_| Diagnostic::simple("int_add failed"))?;
+                    .map_err(|_| Diagnostic::error("int_add failed"))?;
                 let field_ptr = self
                     .builder
                     .build_int_to_ptr(field_addr, self.i8ptr_t, "cap_field_ptr")
-                    .map_err(|_| Diagnostic::simple("int_to_ptr failed"))?;
+                    .map_err(|_| Diagnostic::error("int_to_ptr failed"))?;
                 let loaded = self
                     .builder
                     .build_load(self.i8ptr_t, field_ptr, &format!("cap_load_{}", cname))
-                    .map_err(|_| Diagnostic::simple("load failed"))?;
+                    .map_err(|_| Diagnostic::error("load failed"))?;
 
                 // Create an alloca for the captured local inside the arrow function and store the loaded value
                 let alloca = self
                     .builder
                     .build_alloca(self.i8ptr_t, &format!("cap_{}", cname))
-                    .map_err(|_| Diagnostic::simple("alloca failed"))?;
+                    .map_err(|_| Diagnostic::error("alloca failed"))?;
                 let _ = self.builder.build_store(alloca, loaded);
                 // Insert into arrow_locals so later identifier lookups resolve to this alloca
                 if let Some(scope) = arrow_locals.last_mut() {
@@ -343,7 +339,7 @@ impl<'a> CodeGen<'a> {
                             let boxed_ptr = bv.into_pointer_value();
                             captured_vals.push((boxed_ptr.as_basic_value_enum(), is_weak));
                         } else {
-                            return Err(Diagnostic::simple_boxed("failed to box numeric capture"));
+                            return Err(Diagnostic::simple_boxed(Severity::Error, "failed to box numeric capture"));
                         }
                     } else if pv.get_type().is_int_type() {
                         // convert int->f64 then box
@@ -351,7 +347,7 @@ impl<'a> CodeGen<'a> {
                         let fconv = self
                             .builder
                             .build_signed_int_to_float(iv, self.f64_t, "i_to_f")
-                            .map_err(|_| Diagnostic::simple("int->float cast failed"))?;
+                            .map_err(|_| Diagnostic::error("int->float cast failed"))?;
                         let box_fn = self.get_union_box_f64();
                         let cs =
                             self.builder
@@ -362,11 +358,10 @@ impl<'a> CodeGen<'a> {
                             let boxed_ptr = bv.into_pointer_value();
                             captured_vals.push((boxed_ptr.as_basic_value_enum(), is_weak));
                         } else {
-                            return Err(Diagnostic::simple_boxed("failed to box numeric capture"));
+                            return Err(Diagnostic::simple_boxed(Severity::Error, "failed to box numeric capture"));
                         }
                     } else {
-                        return Err(Diagnostic::simple_boxed(
-                            "unsupported capture type: non-pointer parameter",
+                        return Err(Diagnostic::simple_boxed(Severity::Error, "unsupported capture type: non-pointer parameter",
                         ));
                     }
                     continue;
@@ -384,8 +379,7 @@ impl<'a> CodeGen<'a> {
                 )) = self.find_local(locals, cname)
                 {
                     if !initialized {
-                        return Err(Diagnostic::simple_boxed(
-                            "cannot capture uninitialized local",
+                        return Err(Diagnostic::simple_boxed(Severity::Error, "cannot capture uninitialized local",
                         ));
                     }
                     // load current value
@@ -396,7 +390,7 @@ impl<'a> CodeGen<'a> {
                     ) {
                         Ok(v) => v,
                         Err(_) => {
-                            return Err(Diagnostic::simple_boxed("failed to load captured local"));
+                            return Err(Diagnostic::simple_boxed(Severity::Error, "failed to load captured local"));
                         }
                     };
                     // If pointer, use directly. If float/int, box into union object.
@@ -415,8 +409,7 @@ impl<'a> CodeGen<'a> {
                                 let boxed_ptr = bv.into_pointer_value();
                                 captured_vals.push((boxed_ptr.as_basic_value_enum(), is_weak_flag));
                             } else {
-                                return Err(Diagnostic::simple_boxed(
-                                    "failed to box numeric capture",
+                                return Err(Diagnostic::simple_boxed(Severity::Error, "failed to box numeric capture",
                                 ));
                             }
                         }
@@ -424,7 +417,7 @@ impl<'a> CodeGen<'a> {
                             let fconv = self
                                 .builder
                                 .build_signed_int_to_float(iv, self.f64_t, "i_to_f")
-                                .map_err(|_| Diagnostic::simple("int->float cast failed"))?;
+                                .map_err(|_| Diagnostic::error("int->float cast failed"))?;
                             let box_fn = self.get_union_box_f64();
                             let cs = self.builder.build_call(
                                 box_fn,
@@ -437,19 +430,17 @@ impl<'a> CodeGen<'a> {
                                 let boxed_ptr = bv.into_pointer_value();
                                 captured_vals.push((boxed_ptr.as_basic_value_enum(), is_weak_flag));
                             } else {
-                                return Err(Diagnostic::simple_boxed(
-                                    "failed to box numeric capture",
+                                return Err(Diagnostic::simple_boxed(Severity::Error, "failed to box numeric capture",
                                 ));
                             }
                         }
                         _ => {
-                            return Err(Diagnostic::simple_boxed(
-                                "unsupported capture type: non-pointer local",
+                            return Err(Diagnostic::simple_boxed(Severity::Error, "unsupported capture type: non-pointer local",
                             ));
                         }
                     }
                 } else {
-                    return Err(Diagnostic::simple_boxed("capture not found in outer scope"));
+                    return Err(Diagnostic::simple_boxed(Severity::Error, "capture not found in outer scope"));
                 }
             }
 
@@ -457,7 +448,7 @@ impl<'a> CodeGen<'a> {
             // captured_vals is Vec<(BasicValueEnum, bool)> where bool indicates is_weak
             let env_ptr = self
                 .heap_alloc_with_ptr_fields(captured_vals.as_slice())
-                .map_err(|_| Diagnostic::simple("failed to allocate env object"))?;
+                .map_err(|_| Diagnostic::error("failed to allocate env object"))?;
 
             // Emit field_map global for env and store pointer into env.meta slot
             let env_gv_name = format!("{}_env_field_map", arrow_fn_name);
@@ -470,21 +461,21 @@ impl<'a> CodeGen<'a> {
             }
             let env_gv_i8 = self
                 .emit_field_map_global(&env_gv_name, &env_offsets)
-                .map_err(|_| Diagnostic::simple("failed to emit env field_map"))?;
+                .map_err(|_| Diagnostic::error("failed to emit env field_map"))?;
             // store into env meta slot
             let env_ptr_int = self
                 .builder
                 .build_ptr_to_int(env_ptr, self.i64_t, "env_addr_for_meta")
-                .map_err(|_| Diagnostic::simple("ptr_to_int failed"))?;
+                .map_err(|_| Diagnostic::error("ptr_to_int failed"))?;
             let off_const = self.i64_t.const_int(8, false);
             let meta_addr = self
                 .builder
                 .build_int_add(env_ptr_int, off_const, "env_meta_addr")
-                .map_err(|_| Diagnostic::simple("int_add failed"))?;
+                .map_err(|_| Diagnostic::error("int_add failed"))?;
             let meta_ptr = self
                 .builder
                 .build_int_to_ptr(meta_addr, self.i8ptr_t, "env_meta_ptr")
-                .map_err(|_| Diagnostic::simple("int_to_ptr failed"))?;
+                .map_err(|_| Diagnostic::error("int_to_ptr failed"))?;
             let _ = self
                 .builder
                 .build_store(meta_ptr, env_gv_i8.as_basic_value_enum());
@@ -502,7 +493,7 @@ impl<'a> CodeGen<'a> {
             let use_static_layout = true; // conservative: current flow records mapping for __closure_tmp
             let closure_obj = if use_static_layout {
                 self.heap_alloc_with_ptr_fields_simple(&[fn_ptr_bv, env_bv])
-                    .map_err(|_| Diagnostic::simple("failed to allocate closure object"))?
+                    .map_err(|_| Diagnostic::error("failed to allocate closure object"))?
             } else {
                 // ret_tag: 0=void, 1=number (f64), 2=pointer (i8*)
                 let ret_tag_val: u64 = match ret_type {
@@ -511,7 +502,7 @@ impl<'a> CodeGen<'a> {
                     _ => 2,
                 };
                 self.heap_alloc_closure_with_rettag(fn_ptr_bv, env_bv, ret_tag_val)
-                    .map_err(|_| Diagnostic::simple("failed to allocate closure object"))?
+                    .map_err(|_| Diagnostic::error("failed to allocate closure object"))?
             };
 
             // Emit field_map for closure object (two pointer fields at offsets 16 and 24)
@@ -521,20 +512,20 @@ impl<'a> CodeGen<'a> {
                 vec![header_size + meta_slot, header_size + meta_slot + 8];
             let closure_gv_i8 = self
                 .emit_field_map_global(&closure_gv_name, &closure_offsets)
-                .map_err(|_| Diagnostic::simple("failed to emit closure field_map"))?;
+                .map_err(|_| Diagnostic::error("failed to emit closure field_map"))?;
             // store into closure meta slot
             let closure_ptr_int = self
                 .builder
                 .build_ptr_to_int(closure_obj, self.i64_t, "closure_addr_for_meta")
-                .map_err(|_| Diagnostic::simple("ptr_to_int failed"))?;
+                .map_err(|_| Diagnostic::error("ptr_to_int failed"))?;
             let closure_meta_addr = self
                 .builder
                 .build_int_add(closure_ptr_int, off_const, "closure_meta_addr")
-                .map_err(|_| Diagnostic::simple("int_add failed"))?;
+                .map_err(|_| Diagnostic::error("int_add failed"))?;
             let closure_meta_ptr = self
                 .builder
                 .build_int_to_ptr(closure_meta_addr, self.i8ptr_t, "closure_meta_ptr")
-                .map_err(|_| Diagnostic::simple("int_to_ptr failed"))?;
+                .map_err(|_| Diagnostic::error("int_to_ptr failed"))?;
             let _ = self
                 .builder
                 .build_store(closure_meta_ptr, closure_gv_i8.as_basic_value_enum());
@@ -558,7 +549,7 @@ impl<'a> CodeGen<'a> {
             let tmp_alloca = self
                 .builder
                 .build_alloca(self.i8ptr_t, "closure_tmp")
-                .map_err(|_| Diagnostic::simple("alloca failed"))?;
+                .map_err(|_| Diagnostic::error("alloca failed"))?;
             let _ = self.builder.build_store(tmp_alloca, closure_ret);
             // remember where to load it later by adding an entry to locals stack
             // mark initialized=true so emit_rc_dec_for_locals knows about it
@@ -601,14 +592,13 @@ impl<'a> CodeGen<'a> {
                             let _ = self.builder.build_return(Some(&zero));
                         }
                         _ => {
-                            return Err(Diagnostic::simple_boxed(
-                                "Cannot generate default return for arrow function",
+                            return Err(Diagnostic::simple_boxed(Severity::Error, "Cannot generate default return for arrow function",
                             ));
                         }
                     }
                 }
             } else {
-                return Err(Diagnostic::simple_boxed("Arrow body type mismatch"));
+                return Err(Diagnostic::simple_boxed(Severity::Error, "Arrow body type mismatch"));
             }
         } else {
             // Expression body: => expr (implicit return)
@@ -621,7 +611,7 @@ impl<'a> CodeGen<'a> {
 
                 let _ = self.builder.build_return(Some(&result));
             } else {
-                return Err(Diagnostic::simple_boxed("Arrow body type mismatch"));
+                return Err(Diagnostic::simple_boxed(Severity::Error, "Arrow body type mismatch"));
             }
         }
 
@@ -637,7 +627,7 @@ impl<'a> CodeGen<'a> {
                 self.find_local(locals, "__closure_tmp")
             {
                 if !init {
-                    return Err(Diagnostic::simple_boxed("closure tmp uninitialized"));
+                    return Err(Diagnostic::simple_boxed(Severity::Error, "closure tmp uninitialized"));
                 }
                 let loaded = match self
                     .builder
@@ -645,12 +635,12 @@ impl<'a> CodeGen<'a> {
                 {
                     Ok(v) => v,
                     Err(_) => {
-                        return Err(Diagnostic::simple_boxed("failed to load closure tmp"));
+                        return Err(Diagnostic::simple_boxed(Severity::Error, "failed to load closure tmp"));
                     }
                 };
                 return Ok(loaded);
             } else {
-                return Err(Diagnostic::simple_boxed("closure tmp missing"));
+                return Err(Diagnostic::simple_boxed(Severity::Error, "closure tmp missing"));
             }
         }
 

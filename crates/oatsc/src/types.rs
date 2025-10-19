@@ -557,7 +557,7 @@ pub fn check_function_strictness(
             mapped
         } else {
             diagnostics.push(
-                Diagnostic::simple("Unsupported return type")
+                Diagnostic::error("Unsupported return type")
                     .with_code("E1001")
                     .with_label(Label {
                         span: Span {
@@ -571,7 +571,7 @@ pub fn check_function_strictness(
         }
     } else {
         diagnostics.push(
-            Diagnostic::simple("Missing return type annotation")
+            Diagnostic::error("Missing return type annotation")
                 .with_code("E1002")
                 .with_label(Label {
                     span: Span {
@@ -599,7 +599,7 @@ pub fn check_function_strictness(
                     }
                 }
                 diagnostics.push(
-                    Diagnostic::simple("Unsupported parameter type")
+                    Diagnostic::error("Unsupported parameter type")
                         .with_code("E1003")
                         .with_label(Label {
                             span: Span {
@@ -612,7 +612,7 @@ pub fn check_function_strictness(
             }
             _ => {
                 diagnostics.push(
-                    Diagnostic::simple("Unsupported parameter pattern")
+                    Diagnostic::error("Unsupported parameter pattern")
                         .with_code("E1004")
                         .with_label(Label {
                             span: Span {

@@ -14,6 +14,7 @@
 //! to the LLVM module. This centralization ensures consistent ABI types for
 //! these helpers and avoids duplicate declarations.
 
+use crate::diagnostics::Severity;
 use deno_ast::swc::ast;
 use inkwell::AddressSpace;
 use inkwell::basic_block::BasicBlock;
@@ -317,8 +318,7 @@ impl<'a> CodeGen<'a> {
                                 if let ConstValue::Number(n) = e {
                                     float_vals.push(self.context.f64_type().const_float(*n));
                                 } else {
-                                    return Err(crate::diagnostics::Diagnostic::simple_boxed(
-                                        "mixed array element types in const array",
+                                    return Err(crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "mixed array element types in const array",
                                     ));
                                 }
                             }
@@ -360,8 +360,7 @@ impl<'a> CodeGen<'a> {
                                     let child_ptr = self.emit_const_global(&child_name, e)?;
                                     ptr_vals.push(child_ptr);
                                 } else {
-                                    return Err(crate::diagnostics::Diagnostic::simple_boxed(
-                                        "mixed types in const array",
+                                    return Err(crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "mixed types in const array",
                                     ));
                                 }
                             }
@@ -378,8 +377,7 @@ impl<'a> CodeGen<'a> {
                             self.const_interns.borrow_mut().insert(key.clone(), pv);
                             Ok(pv)
                         }
-                        _ => Err(crate::diagnostics::Diagnostic::simple_boxed(
-                            "unsupported const array element type",
+                        _ => Err(crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "unsupported const array element type",
                         )),
                     }
                 }
@@ -389,8 +387,7 @@ impl<'a> CodeGen<'a> {
                 // Fields may be numbers (f64) or pointers (i8*). We emit a
                 // deterministic field order by sorting keys.
                 if map.is_empty() {
-                    return Err(crate::diagnostics::Diagnostic::simple_boxed(
-                        "empty const object not supported",
+                    return Err(crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "empty const object not supported",
                     ));
                 }
 
@@ -403,7 +400,7 @@ impl<'a> CodeGen<'a> {
 
                 for k in &keys {
                     let v = map.get(k).ok_or_else(|| {
-                        crate::diagnostics::Diagnostic::simple_boxed("key not found in const map")
+                        crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "key not found in const map")
                     })?;
                     match v {
                         ConstValue::Number(n) => {
@@ -478,7 +475,7 @@ impl<'a> CodeGen<'a> {
                 let mut meta_offsets: Vec<i32> = Vec::new();
                 for (idx, k) in keys.iter().enumerate() {
                     let v = map.get(k).ok_or_else(|| {
-                        crate::diagnostics::Diagnostic::simple_boxed("key not found in const map")
+                        crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "key not found in const map")
                     })?;
                     match v {
                         ConstValue::Str(_) | ConstValue::Array(_) | ConstValue::Object(_) => {
@@ -552,8 +549,7 @@ impl<'a> CodeGen<'a> {
                 Ok(pv)
             }
 
-            _ => Err(crate::diagnostics::Diagnostic::simple_boxed(
-                "unsupported const global kind",
+            _ => Err(crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "unsupported const global kind",
             )),
         }
     }
@@ -1094,8 +1090,7 @@ impl<'a> CodeGen<'a> {
                                 .build_call(rc_inc, &[pv.into()], "rc_inc_param")
                                 .is_err()
                             {
-                                return Err(crate::diagnostics::Diagnostic::simple_boxed(
-                                    "rc_inc param call failed",
+                                return Err(crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "rc_inc param call failed",
                                 ));
                             }
                         }
@@ -1149,8 +1144,7 @@ impl<'a> CodeGen<'a> {
             Ok(cs) => cs,
             Err(_) => {
                 crate::diagnostics::emit_diagnostic(
-                    &crate::diagnostics::Diagnostic::simple_boxed(
-                        "failed to build call to oats_main",
+                    &crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "failed to build call to oats_main",
                     ),
                     Some(self.source),
                 );
@@ -1182,8 +1176,7 @@ impl<'a> CodeGen<'a> {
                     Ok(c) => c,
                     Err(_) => {
                         crate::diagnostics::emit_diagnostic(
-                            &crate::diagnostics::Diagnostic::simple_boxed(
-                                "int cast failed when building host main",
+                            &crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "int cast failed when building host main",
                             ),
                             Some(self.source),
                         );
@@ -1198,8 +1191,7 @@ impl<'a> CodeGen<'a> {
                     Ok(c) => c,
                     Err(_) => {
                         crate::diagnostics::emit_diagnostic(
-                            &crate::diagnostics::Diagnostic::simple_boxed(
-                                "float->int conversion failed in host main",
+                            &crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "float->int conversion failed in host main",
                             ),
                             Some(self.source),
                         );
@@ -1285,7 +1277,7 @@ impl<'a> CodeGen<'a> {
             .get(func_name)
             .cloned()
             .ok_or_else(|| {
-                crate::diagnostics::Diagnostic::simple_boxed(format!(
+                crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, format!(
                     "Generic function '{}' not found",
                     func_name
                 ))
@@ -1293,7 +1285,7 @@ impl<'a> CodeGen<'a> {
 
         // Verify type args match type params
         if type_args.len() != fsig.type_params.len() {
-            return Err(crate::diagnostics::Diagnostic::simple_boxed(format!(
+            return Err(crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, format!(
                 "Expected {} type arguments for generic function '{}', got {}",
                 fsig.type_params.len(),
                 func_name,
@@ -1366,7 +1358,7 @@ impl<'a> CodeGen<'a> {
                     // If only one unique type, return it; otherwise create union
                     if unique_types.len() == 1 {
                         unique_types.into_iter().next().ok_or_else(|| {
-                            crate::diagnostics::Diagnostic::simple_boxed("expected one unique type")
+                            crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "expected one unique type")
                         })
                     } else {
                         Ok(crate::types::OatsType::Union(unique_types))

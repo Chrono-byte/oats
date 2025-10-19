@@ -240,9 +240,7 @@ fn compile_package(
             if meta_needs_update {
                 // Ensure output directory exists
                 if let Some(parent) = meta_file.parent() {
-                    std::fs::create_dir_all(parent).map_err(|e| {
-                        ToastyError::io(&meta_file, e)
-                    })?;
+                    std::fs::create_dir_all(parent).map_err(|e| ToastyError::io(&meta_file, e))?;
                 }
 
                 // Try to load manifest for package information
@@ -257,9 +255,8 @@ fn compile_package(
                     format!("name = \"{}\"\n", pkg_name)
                 };
 
-                std::fs::write(&meta_file, manifest_info).map_err(|e| {
-                    ToastyError::io(&meta_file, e)
-                })?;
+                std::fs::write(&meta_file, manifest_info)
+                    .map_err(|e| ToastyError::io(&meta_file, e))?;
             }
 
             return Ok(PackageBuildResult {
@@ -296,8 +293,7 @@ fn compile_package(
 
     // Ensure output directory exists
     if let Some(parent) = meta_file.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| ToastyError::io(&meta_file, e))?;
+        std::fs::create_dir_all(parent).map_err(|e| ToastyError::io(&meta_file, e))?;
     }
 
     // Try to load manifest for package information
@@ -311,8 +307,7 @@ fn compile_package(
             format!("name = \"{}\"\n", pkg_name)
         };
 
-    std::fs::write(&meta_file, manifest_info)
-        .map_err(|e| ToastyError::io(&meta_file, e))?;
+    std::fs::write(&meta_file, manifest_info).map_err(|e| ToastyError::io(&meta_file, e))?;
 
     Ok(PackageBuildResult {
         name: pkg_name.clone(),
@@ -402,13 +397,13 @@ fn invoke_oatsc(options: &CompileOptions) -> Result<PathBuf> {
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        
+
         // Check if this is likely a user code error (oatsc already printed diagnostics)
         // If stderr contains type errors, parsing errors, etc., treat as compilation failure
         if stderr.contains("error:") || stderr.contains("Error") || stdout.contains("error:") {
             return Err(ToastyError::CompilationFailed);
         }
-        
+
         return Err(ToastyError::CompilerInternalError {
             message: format!(
                 "oatsc compilation failed:\nSTDOUT:\n{}\n\nSTDERR:\n{}",
@@ -423,9 +418,7 @@ fn invoke_oatsc(options: &CompileOptions) -> Result<PathBuf> {
     let object_path = stdout.trim().to_string();
 
     if object_path.is_empty() {
-        return Err(ToastyError::other(
-            "oatsc did not return output path"
-        ));
+        return Err(ToastyError::other("oatsc did not return output path"));
     }
 
     Ok(PathBuf::from(object_path))
@@ -451,10 +444,7 @@ fn link_packages(
         if !runtime_lib.exists() {
             return Err(ToastyError::io(
                 &runtime_lib,
-                std::io::Error::new(
-                    std::io::ErrorKind::NotFound,
-                    "Runtime library not found",
-                ),
+                std::io::Error::new(std::io::ErrorKind::NotFound, "Runtime library not found"),
             ));
         }
         runtime_lib
@@ -465,10 +455,7 @@ fn link_packages(
         if !runtime_lib.exists() {
             return Err(ToastyError::io(
                 &runtime_lib,
-                std::io::Error::new(
-                    std::io::ErrorKind::NotFound,
-                    "Runtime library not found",
-                ),
+                std::io::Error::new(std::io::ErrorKind::NotFound, "Runtime library not found"),
             ));
         }
         runtime_lib

@@ -43,7 +43,8 @@ pub fn parse_oats_module_with_options_for_test(
     enforce_semicolons: bool,
 ) -> Result<oatsc::parser::ParsedModule> {
     let _diag_guard = oatsc::diagnostics::suppress();
-    let (parsed_opt, _diags) = parser::parse_oats_module_with_options(src, None, enforce_semicolons)?;
+    let (parsed_opt, _diags) =
+        parser::parse_oats_module_with_options(src, None, enforce_semicolons)?;
     parsed_opt.ok_or_else(|| anyhow::anyhow!("Failed to parse source"))
 }
 
@@ -97,7 +98,8 @@ pub fn gen_ir_for_source(src: &str) -> Result<String> {
 
     let mut symbols = SymbolTable::new();
     let (sig_opt, _diags) = check_function_strictness(&func_decl, &mut symbols)?;
-    let func_sig = sig_opt.ok_or_else(|| anyhow::anyhow!("Function signature could not be determined"))?;
+    let func_sig =
+        sig_opt.ok_or_else(|| anyhow::anyhow!("Function signature could not be determined"))?;
 
     let context = Context::create();
     let module = context.create_module("test_module");
@@ -207,10 +209,12 @@ pub fn gen_ir_for_source(src: &str) -> Result<String> {
                                 .map_err(|d| anyhow::anyhow!(d.message))?;
                         } else {
                             // fallback: emit with void return
-                            if let Ok((Some(sig2), _diags2)) = oatsc::types::check_function_strictness(
-                                &m.function,
-                                &mut oatsc::types::SymbolTable::new(),
-                            ) {
+                            if let Ok((Some(sig2), _diags2)) =
+                                oatsc::types::check_function_strictness(
+                                    &m.function,
+                                    &mut oatsc::types::SymbolTable::new(),
+                                )
+                            {
                                 let mut params = Vec::new();
                                 params.push(oatsc::types::OatsType::NominalStruct(
                                     class_name.clone(),

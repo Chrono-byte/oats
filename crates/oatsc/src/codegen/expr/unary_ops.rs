@@ -135,7 +135,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         .map_err(|_| Diagnostic::simple("LLVM builder error"))?;
                     Ok(neg.as_basic_value_enum())
                 } else {
-                    Err(Diagnostic::simple_boxed("unary minus requires numeric operand"))
+                    Err(Diagnostic::simple_boxed(
+                        "unary minus requires numeric operand",
+                    ))
                 }
             }
             UnaryOp::Plus => {
@@ -143,7 +145,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 if let Some(fv) = self.coerce_to_f64(arg_val) {
                     Ok(fv.as_basic_value_enum())
                 } else {
-                    Err(Diagnostic::simple_boxed("unary plus requires numeric operand"))
+                    Err(Diagnostic::simple_boxed(
+                        "unary plus requires numeric operand",
+                    ))
                 }
             }
             UnaryOp::Bang => {
@@ -178,7 +182,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         .map_err(|_| Diagnostic::simple("LLVM builder error"))?;
                     Ok(result_fv.as_basic_value_enum())
                 } else {
-                    Err(Diagnostic::simple_boxed("bitwise NOT requires numeric operand"))
+                    Err(Diagnostic::simple_boxed(
+                        "bitwise NOT requires numeric operand",
+                    ))
                 }
             }
             _ => Err(Diagnostic::simple_boxed("unsupported unary operator")),
@@ -214,7 +220,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     return Err(Diagnostic::simple_boxed("cannot update immutable variable"));
                 }
                 if !initialized {
-                    return Err(Diagnostic::simple_boxed("cannot update uninitialized variable"));
+                    return Err(Diagnostic::simple_boxed(
+                        "cannot update uninitialized variable",
+                    ));
                 }
                 Some((ptr, ty))
             } else {

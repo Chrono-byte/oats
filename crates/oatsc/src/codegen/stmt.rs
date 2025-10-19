@@ -497,11 +497,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                 Ok(a) => a,
                                                 Err(_) => {
                                                     crate::diagnostics::emit_diagnostic(
-                                                        &crate::diagnostics::Diagnostic::simple_boxed(
-                                                            "alloca failed for local variable",
-                                                        ),
-                                                        Some(self.source),
-                                                    );
+                                                    &crate::diagnostics::Diagnostic::simple_boxed(
+                                                        "alloca failed for local variable",
+                                                    ),
+                                                    Some(self.source),
+                                                );
                                                     return Ok(false);
                                                 }
                                             };
@@ -815,7 +815,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             for diag in &type_diags {
                                 crate::diagnostics::emit_diagnostic(diag, Some(self.source));
                             }
-                            
+
                             // If this nested function is generic (has type params)
                             // register it for monomorphization instead of emitting
                             // a single generic instance now. We'll create
@@ -857,7 +857,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             for diag in &type_diags {
                                 crate::diagnostics::emit_diagnostic(diag, Some(self.source));
                             }
-                            
+
                             // Function signature could not be determined
                             let msg = format!(
                                 "skipping nested function '{}' due to missing/invalid type annotations",
@@ -977,12 +977,17 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     class_name.clone(),
                                 ));
                                 let ret: crate::types::OatsType;
-                                if let Ok((Some(sig), type_diags)) = crate::types::check_function_strictness(
-                                    &m.function,
-                                    &mut method_symbols,
-                                ) {
+                                if let Ok((Some(sig), type_diags)) =
+                                    crate::types::check_function_strictness(
+                                        &m.function,
+                                        &mut method_symbols,
+                                    )
+                                {
                                     for diag in &type_diags {
-                                        crate::diagnostics::emit_diagnostic(diag, Some(self.source));
+                                        crate::diagnostics::emit_diagnostic(
+                                            diag,
+                                            Some(self.source),
+                                        );
                                     }
                                     params.extend(sig.params.into_iter());
                                     ret = sig.ret;

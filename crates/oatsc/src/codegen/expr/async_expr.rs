@@ -129,7 +129,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
             match self.builder.build_unconditional_branch(cont_bb) {
                 Ok(_) => (),
                 Err(_) => {
-                    return Err(Diagnostic::simple_boxed("failed to branch to cont from ready"));
+                    return Err(Diagnostic::simple_boxed(
+                        "failed to branch to cont from ready",
+                    ));
                 }
             };
 

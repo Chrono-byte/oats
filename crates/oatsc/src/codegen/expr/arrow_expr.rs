@@ -384,7 +384,9 @@ impl<'a> CodeGen<'a> {
                 )) = self.find_local(locals, cname)
                 {
                     if !initialized {
-                        return Err(Diagnostic::simple_boxed("cannot capture uninitialized local"));
+                        return Err(Diagnostic::simple_boxed(
+                            "cannot capture uninitialized local",
+                        ));
                     }
                     // load current value
                     let loaded = match self.builder.build_load(
@@ -413,7 +415,9 @@ impl<'a> CodeGen<'a> {
                                 let boxed_ptr = bv.into_pointer_value();
                                 captured_vals.push((boxed_ptr.as_basic_value_enum(), is_weak_flag));
                             } else {
-                                return Err(Diagnostic::simple_boxed("failed to box numeric capture"));
+                                return Err(Diagnostic::simple_boxed(
+                                    "failed to box numeric capture",
+                                ));
                             }
                         }
                         BasicValueEnum::IntValue(iv) => {
@@ -433,7 +437,9 @@ impl<'a> CodeGen<'a> {
                                 let boxed_ptr = bv.into_pointer_value();
                                 captured_vals.push((boxed_ptr.as_basic_value_enum(), is_weak_flag));
                             } else {
-                                return Err(Diagnostic::simple_boxed("failed to box numeric capture"));
+                                return Err(Diagnostic::simple_boxed(
+                                    "failed to box numeric capture",
+                                ));
                             }
                         }
                         _ => {

@@ -401,7 +401,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
             // index (1-based) we will jump into the corresponding resume block.
             // Otherwise the promise is already completed and we return ready.
             let state_param = poll_f.get_nth_param(0).ok_or_else(|| {
-                crate::diagnostics::Diagnostic::simple_boxed("poll function missing state parameter")
+                crate::diagnostics::Diagnostic::simple_boxed(
+                    "poll function missing state parameter",
+                )
             })?;
             let state_ptr = state_param.into_pointer_value();
 
@@ -593,7 +595,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             .try_as_basic_value()
                             .left()
                             .ok_or_else(|| {
-                                crate::diagnostics::Diagnostic::simple_boxed("unbox returned no value")
+                                crate::diagnostics::Diagnostic::simple_boxed(
+                                    "unbox returned no value",
+                                )
                             })?
                             .into_float_value();
                         let _ = self.builder.build_store(alloca, fv.as_basic_value_enum());
@@ -657,12 +661,16 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
                 // Get the out_ptr parameter
                 let out_param = poll_f.get_nth_param(1).ok_or_else(|| {
-                    crate::diagnostics::Diagnostic::simple_boxed("poll function missing out parameter")
+                    crate::diagnostics::Diagnostic::simple_boxed(
+                        "poll function missing out parameter",
+                    )
                 })?;
                 let out_ptr_cast = self
                     .builder
                     .build_pointer_cast(out_param.into_pointer_value(), self.i8ptr_t, "out_cast")
-                    .map_err(|_| crate::diagnostics::Diagnostic::simple_boxed("pointer cast failed"))?;
+                    .map_err(|_| {
+                        crate::diagnostics::Diagnostic::simple_boxed("pointer cast failed")
+                    })?;
 
                 // Store result based on return type
                 let payload_bv = if matches!(*inner_ret, OatsType::Void) {
@@ -681,7 +689,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     crate::diagnostics::Diagnostic::simple_boxed("boxing failed")
                                 })?;
                             cs.try_as_basic_value().left().ok_or_else(|| {
-                                crate::diagnostics::Diagnostic::simple_boxed("boxing returned no value")
+                                crate::diagnostics::Diagnostic::simple_boxed(
+                                    "boxing returned no value",
+                                )
                             })?
                         }
                         _ => {
@@ -757,7 +767,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
             let state_ptr = cs
                 .try_as_basic_value()
                 .left()
-                .ok_or_else(|| crate::diagnostics::Diagnostic::simple_boxed("malloc failed for state"))?
+                .ok_or_else(|| {
+                    crate::diagnostics::Diagnostic::simple_boxed("malloc failed for state")
+                })?
                 .into_pointer_value();
 
             // store poll function pointer at offset 0 (first word of state)
@@ -964,9 +976,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     ) {
                                         Ok(v) => v,
                                         Err(_) => {
-                                            return Err(crate::diagnostics::Diagnostic::simple_boxed(
-                                                "ptr_to_int failed when resuming locals",
-                                            ));
+                                            return Err(
+                                                crate::diagnostics::Diagnostic::simple_boxed(
+                                                    "ptr_to_int failed when resuming locals",
+                                                ),
+                                            );
                                         }
                                     };
                                     let off_const =
@@ -978,9 +992,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     ) {
                                         Ok(v) => v,
                                         Err(_) => {
-                                            return Err(crate::diagnostics::Diagnostic::simple_boxed(
-                                                "int_add failed when resuming locals",
-                                            ));
+                                            return Err(
+                                                crate::diagnostics::Diagnostic::simple_boxed(
+                                                    "int_add failed when resuming locals",
+                                                ),
+                                            );
                                         }
                                     };
                                     let slot_ptr = match self.builder.build_int_to_ptr(
@@ -990,9 +1006,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     ) {
                                         Ok(p) => p,
                                         Err(_) => {
-                                            return Err(crate::diagnostics::Diagnostic::simple_boxed(
-                                                "int_to_ptr failed when resuming locals",
-                                            ));
+                                            return Err(
+                                                crate::diagnostics::Diagnostic::simple_boxed(
+                                                    "int_to_ptr failed when resuming locals",
+                                                ),
+                                            );
                                         }
                                     };
                                     let loaded_slot = match self.builder.build_load(
@@ -1002,9 +1020,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     ) {
                                         Ok(v) => v,
                                         Err(_) => {
-                                            return Err(crate::diagnostics::Diagnostic::simple_boxed(
-                                                "failed to load from slot when resuming",
-                                            ));
+                                            return Err(
+                                                crate::diagnostics::Diagnostic::simple_boxed(
+                                                    "failed to load from slot when resuming",
+                                                ),
+                                            );
                                         }
                                     };
                                     // store into alloca (unbox for floats)
@@ -1273,7 +1293,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
             match ret_type {
                 crate::types::OatsType::Void => {
                     self.builder.build_return(None).map_err(|_| {
-                        crate::diagnostics::Diagnostic::simple_boxed("Failed to build implicit return")
+                        crate::diagnostics::Diagnostic::simple_boxed(
+                            "Failed to build implicit return",
+                        )
                     })?;
                 }
                 crate::types::OatsType::Number | crate::types::OatsType::F64 => {
@@ -1691,7 +1713,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 let field_ptr_int = self
                     .builder
                     .build_ptr_to_int(malloc_ret, self.i64_t, "obj_addr")
-                    .map_err(|_| crate::diagnostics::Diagnostic::simple_boxed("ptr_to_int failed"))?;
+                    .map_err(|_| {
+                        crate::diagnostics::Diagnostic::simple_boxed("ptr_to_int failed")
+                    })?;
                 let offset_const = self.i64_t.const_int(field_offset, false);
                 let field_addr = self
                     .builder
@@ -1700,7 +1724,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 let field_ptr_cast = self
                     .builder
                     .build_int_to_ptr(field_addr, self.i8ptr_t, "field_ptr")
-                    .map_err(|_| crate::diagnostics::Diagnostic::simple_boxed("int_to_ptr failed"))?;
+                    .map_err(|_| {
+                        crate::diagnostics::Diagnostic::simple_boxed("int_to_ptr failed")
+                    })?;
                 // If the field type is a union, we expect to store a boxed union object.
                 match _field_type {
                     OatsType::Union(_) => {

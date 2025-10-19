@@ -333,7 +333,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         ) {
                                             Ok(p) => p,
                                             Err(_) => {
-                                                return Err(Diagnostic::simple_boxed("operation failed"));
+                                                return Err(Diagnostic::simple_boxed(
+                                                    "operation failed",
+                                                ));
                                             }
                                         };
 
@@ -398,7 +400,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         ) {
                                             Ok(v) => v,
                                             Err(_) => {
-                                                return Err(Diagnostic::simple_boxed("operation failed"));
+                                                return Err(Diagnostic::simple_boxed(
+                                                    "operation failed",
+                                                ));
                                             }
                                         };
 
@@ -458,7 +462,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         ) {
                                             Ok(p) => p,
                                             Err(_) => {
-                                                return Err(Diagnostic::simple_boxed("operation failed"));
+                                                return Err(Diagnostic::simple_boxed(
+                                                    "operation failed",
+                                                ));
                                             }
                                         };
 
@@ -470,7 +476,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         ) {
                                             Ok(v) => v,
                                             Err(_) => {
-                                                return Err(Diagnostic::simple_boxed("operation failed"));
+                                                return Err(Diagnostic::simple_boxed(
+                                                    "operation failed",
+                                                ));
                                             }
                                         };
 
@@ -584,7 +592,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         match self.builder.build_int_s_extend(iv, self.i64_t, "idx_i64") {
                             Ok(v) => v,
                             Err(_) => {
-                                return Err(Diagnostic::simple_boxed("failed to extend index to i64"));
+                                return Err(Diagnostic::simple_boxed(
+                                    "failed to extend index to i64",
+                                ));
                             }
                         }
                     } else {
@@ -625,7 +635,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         }
                     };
                 } else {
-                    return Err(Diagnostic::simple_boxed("unsupported array element value type"));
+                    return Err(Diagnostic::simple_boxed(
+                        "unsupported array element value type",
+                    ));
                 }
 
                 return Ok(val);

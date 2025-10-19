@@ -538,8 +538,9 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
                         };
                         // Try to type-check the method function
                         let mut method_symbols = SymbolTable::new();
-                        let (sig_opt, type_diags) = check_function_strictness(&m.function, &mut method_symbols)?;
-                        
+                        let (sig_opt, type_diags) =
+                            check_function_strictness(&m.function, &mut method_symbols)?;
+
                         // Emit type checking diagnostics
                         for diag in &type_diags {
                             diagnostics::emit_diagnostic(diag, Some(&parsed_mod.source));
@@ -561,12 +562,13 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
                         } else {
                             // If strict check failed (e.g., missing return annotation), try to emit with Void return
                             let mut method_symbols = SymbolTable::new();
-                            let (sig2_opt, type_diags2) = check_function_strictness(&m.function, &mut method_symbols)?;
-                            
+                            let (sig2_opt, type_diags2) =
+                                check_function_strictness(&m.function, &mut method_symbols)?;
+
                             for diag in &type_diags2 {
                                 diagnostics::emit_diagnostic(diag, Some(&parsed_mod.source));
                             }
-                            
+
                             if let Some(sig2) = sig2_opt {
                                 let mut params = Vec::new();
                                 params.push(crate::types::OatsType::NominalStruct(
@@ -750,8 +752,9 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
                         };
                         // Try to type-check the method function
                         let mut method_symbols = SymbolTable::new();
-                        let (sig_opt, type_diags) = check_function_strictness(&m.function, &mut method_symbols)?;
-                        
+                        let (sig_opt, type_diags) =
+                            check_function_strictness(&m.function, &mut method_symbols)?;
+
                         // Emit type checking diagnostics
                         for diag in &type_diags {
                             diagnostics::emit_diagnostic(diag, Some(&parsed_mod.source));
@@ -767,18 +770,22 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
                             codegen
                                 .gen_function_ir(&fname, &m.function, &params, &ret, Some("this"))
                                 .map_err(|d| {
-                                    crate::diagnostics::emit_diagnostic(&d, Some(&parsed_mod.source));
+                                    crate::diagnostics::emit_diagnostic(
+                                        &d,
+                                        Some(&parsed_mod.source),
+                                    );
                                     anyhow::anyhow!(d.message)
                                 })?;
                         } else {
                             // If strict check failed (e.g., missing return annotation), try to emit with Void return
                             let mut method_symbols = SymbolTable::new();
-                            let (sig2_opt, type_diags2) = check_function_strictness(&m.function, &mut method_symbols)?;
-                            
+                            let (sig2_opt, type_diags2) =
+                                check_function_strictness(&m.function, &mut method_symbols)?;
+
                             for diag in &type_diags2 {
                                 diagnostics::emit_diagnostic(diag, Some(&parsed_mod.source));
                             }
-                            
+
                             if let Some(sig2) = sig2_opt {
                                 let mut params = Vec::new();
                                 params.push(crate::types::OatsType::NominalStruct(
@@ -1095,11 +1102,11 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
             let inner_func = (*fdecl.function).clone();
             let mut inner_symbols = SymbolTable::new();
             let (sig_opt, type_diags) = check_function_strictness(&inner_func, &mut inner_symbols)?;
-            
+
             for diag in &type_diags {
                 diagnostics::emit_diagnostic(diag, Some(&parsed_mod.source));
             }
-            
+
             if let Some(fsig) = sig_opt {
                 // skip exported `main` (we handle exported main separately)
                 if fname != "main" {
@@ -1122,11 +1129,11 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
             let inner_func = (*fdecl.function).clone();
             let mut inner_symbols = SymbolTable::new();
             let (sig_opt, type_diags) = check_function_strictness(&inner_func, &mut inner_symbols)?;
-            
+
             for diag in &type_diags {
                 diagnostics::emit_diagnostic(diag, Some(&parsed_mod.source));
             }
-            
+
             if let Some(fsig) = sig_opt
                 && fname != "main"
             {
@@ -1198,11 +1205,11 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
 
         let mut inner_symbols = SymbolTable::new();
         let (sig_opt, type_diags) = check_function_strictness(&func, &mut inner_symbols)?;
-        
+
         for diag in &type_diags {
             diagnostics::emit_diagnostic(diag, Some(&parsed_mod.source));
         }
-        
+
         if let Some(fsig) = sig_opt {
             codegen
                 .gen_function_ir(fname, &func, &fsig.params, &fsig.ret, None)

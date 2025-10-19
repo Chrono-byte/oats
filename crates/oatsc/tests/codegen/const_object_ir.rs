@@ -326,7 +326,7 @@ export function main(): number {
                         matches!(cv, oatsc::codegen::const_eval::ConstValue::Str(s) if s == "less")
                     ),
                     "math_abs" => assert!(
-                        matches!(cv, oatsc::codegen::const_eval::ConstValue::Number(n) if (n - 3.14).abs() < 0.001)
+                        matches!(cv, oatsc::codegen::const_eval::ConstValue::Number(n) if (n - std::f64::consts::PI).abs() < 0.001)
                     ),
                     "math_floor" => assert!(
                         matches!(cv, oatsc::codegen::const_eval::ConstValue::Number(n) if n == 3.0)

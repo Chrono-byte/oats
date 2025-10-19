@@ -88,7 +88,8 @@ fn infer_number_return_from_block() -> Result<()> {
         };
     "#;
 
-    let parsed_mod = parser::parse_oats_module(source, None)?;
+    let (parsed_mod_opt, _) = parser::parse_oats_module(source, None)?;
+    let parsed_mod = parsed_mod_opt.ok_or_else(|| anyhow::anyhow!("Failed to parse source"))?;
     let parsed = &parsed_mod.parsed;
 
     // Find the arrow function
@@ -130,7 +131,8 @@ fn infer_string_return_from_block() -> Result<()> {
         };
     "#;
 
-    let parsed_mod = parser::parse_oats_module(source, None)?;
+    let (parsed_mod_opt, _) = parser::parse_oats_module(source, None)?;
+    let parsed_mod = parsed_mod_opt.ok_or_else(|| anyhow::anyhow!("Failed to parse source"))?;
     let parsed = &parsed_mod.parsed;
 
     let mut arrow_body = None;
@@ -171,7 +173,8 @@ fn infer_void_return_from_block_no_return() -> Result<()> {
         };
     "#;
 
-    let parsed_mod = parser::parse_oats_module(source, None)?;
+    let (parsed_mod_opt, _) = parser::parse_oats_module(source, None)?;
+    let parsed_mod = parsed_mod_opt.ok_or_else(|| anyhow::anyhow!("Failed to parse source"))?;
     let parsed = &parsed_mod.parsed;
 
     let mut arrow_body = None;
@@ -215,7 +218,8 @@ fn infer_union_return_from_block_multiple_types() -> Result<()> {
         };
     "#;
 
-    let parsed_mod = parser::parse_oats_module(source, None)?;
+    let (parsed_mod_opt, _) = parser::parse_oats_module(source, None)?;
+    let parsed_mod = parsed_mod_opt.ok_or_else(|| anyhow::anyhow!("Failed to parse source"))?;
     let parsed = &parsed_mod.parsed;
 
     let mut arrow_body = None;
@@ -268,7 +272,8 @@ fn infer_number_return_from_nested_if() -> Result<()> {
         };
     "#;
 
-    let parsed_mod = parser::parse_oats_module(source, None)?;
+    let (parsed_mod_opt, _) = parser::parse_oats_module(source, None)?;
+    let parsed_mod = parsed_mod_opt.ok_or_else(|| anyhow::anyhow!("Failed to parse source"))?;
     let parsed = &parsed_mod.parsed;
 
     let mut arrow_body = None;
@@ -308,7 +313,8 @@ fn infer_expr_body_return() -> Result<()> {
         let double = (x: number) => x * 2;
     "#;
 
-    let parsed_mod = parser::parse_oats_module(source, None)?;
+    let (parsed_mod_opt, _) = parser::parse_oats_module(source, None)?;
+    let parsed_mod = parsed_mod_opt.ok_or_else(|| anyhow::anyhow!("Failed to parse source"))?;
     let parsed = &parsed_mod.parsed;
 
     let mut arrow_body = None;

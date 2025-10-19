@@ -26,7 +26,8 @@
 // }
 // "#;
 
-//     let parsed_mod = parser::parse_oats_module(source, None)?;
+//     let (parsed_mod_opt, _) = parser::parse_oats_module(source, None)?;
+//     let parsed_mod = parsed_mod_opt.ok_or_else(|| anyhow::anyhow!("Failed to parse source"))?;
 //     let parsed = &parsed_mod.parsed;
 
 //     let mut func_decl_opt: Option<(String, deno_ast::swc::ast::Function)> = None;

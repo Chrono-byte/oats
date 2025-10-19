@@ -16,7 +16,8 @@ export function main(): number {
 "#;
 
     // Parse module and find exported main
-    let parsed_mod = parser::parse_oats_module(src, None)?;
+    let (parsed_mod_opt, _) = parser::parse_oats_module(src, None)?;
+    let parsed_mod = parsed_mod_opt.ok_or_else(|| anyhow::anyhow!("Failed to parse source"))?;
     let parsed = &parsed_mod.parsed;
     let mut func_decl_opt: Option<deno_ast::swc::ast::Function> = None;
     for item_ref in parsed.program_ref().body() {
@@ -34,13 +35,14 @@ export function main(): number {
     let func_decl = func_decl_opt.ok_or_else(|| anyhow::anyhow!("No exported `main` found"))?;
 
     let mut symbols = SymbolTable::new();
-    let _func_sig = check_function_strictness(&func_decl, &mut symbols)?;
+    let (_func_sig_opt, _) = check_function_strictness(&func_decl, &mut symbols)?;
 
     let context = Context::create();
     let module = context.create_module("test_module");
     let triple = TargetMachine::get_default_triple();
     module.set_triple(&triple);
-    let codegen = create_codegen(&context, "test_module", symbols, &parsed_mod.source)?;
+    let source_str = parsed_mod.source.clone();
+    let codegen = create_codegen(&context, "test_module", symbols, &source_str)?;
 
     // Replicate builder's top-level const pass to emit const globals
     use deno_ast::swc::ast;
@@ -197,7 +199,8 @@ export function main(): number {
 
     // Emit the main function using codegen helpers
     let mut inner_symbols = SymbolTable::new();
-    let fsig = check_function_strictness(&func_decl, &mut inner_symbols)?;
+    let (fsig_opt, _) = check_function_strictness(&func_decl, &mut inner_symbols)?;
+    let fsig = fsig_opt.ok_or_else(|| anyhow::anyhow!("Failed to check function strictness"))?;
     codegen
         .gen_function_ir("oats_main", &func_decl, &fsig.params, &fsig.ret, None)
         .map_err(|d| anyhow::anyhow!(d.message))?;
@@ -251,7 +254,8 @@ export function main(): number {
 "#;
 
     // Parse module and find exported main
-    let parsed_mod = parser::parse_oats_module(src, None)?;
+    let (parsed_mod_opt, _) = parser::parse_oats_module(src, None)?;
+    let parsed_mod = parsed_mod_opt.ok_or_else(|| anyhow::anyhow!("Failed to parse source"))?;
     let parsed = &parsed_mod.parsed;
     let mut func_decl_opt: Option<deno_ast::swc::ast::Function> = None;
     for item_ref in parsed.program_ref().body() {
@@ -269,13 +273,14 @@ export function main(): number {
     let func_decl = func_decl_opt.ok_or_else(|| anyhow::anyhow!("No exported `main` found"))?;
 
     let mut symbols = SymbolTable::new();
-    let _func_sig = check_function_strictness(&func_decl, &mut symbols)?;
+    let (_func_sig_opt, _) = check_function_strictness(&func_decl, &mut symbols)?;
 
     let context = Context::create();
     let module = context.create_module("test_module");
     let triple = TargetMachine::get_default_triple();
     module.set_triple(&triple);
-    let codegen = create_codegen(&context, "test_module", symbols, &parsed_mod.source)?;
+    let source_str = parsed_mod.source.clone();
+    let codegen = create_codegen(&context, "test_module", symbols, &source_str)?;
 
     // Replicate the const evaluation process
     use deno_ast::swc::ast;

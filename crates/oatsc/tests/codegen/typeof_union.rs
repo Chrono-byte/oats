@@ -20,7 +20,8 @@ export function main(x: number | string): string {
 }
 "#;
 
-    let parsed_mod = parser::parse_oats_module(source, None)?;
+    let (parsed_mod_opt, _) = parser::parse_oats_module(source, None)?;
+    let parsed_mod = parsed_mod_opt.ok_or_else(|| anyhow::anyhow!("Failed to parse source"))?;
     let parsed = &parsed_mod.parsed;
 
     // Extract exported function

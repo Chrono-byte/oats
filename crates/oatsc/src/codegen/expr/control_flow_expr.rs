@@ -215,41 +215,43 @@ impl<'a> crate::codegen::CodeGen<'a> {
             let ev_ty = ev.get_type();
 
             // Helper to box numeric/int values into an i8* union pointer
-            let box_to_ptr = |codegen: &crate::codegen::CodeGen<'a>,
-                              bv: BasicValueEnum<'a>|
-             -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
-                match bv {
-                    BasicValueEnum::PointerValue(pv) => Ok(pv.as_basic_value_enum()),
-                    BasicValueEnum::FloatValue(fv) => {
-                        let box_fn = codegen.get_union_box_f64();
-                        let cs = codegen.builder.build_call(box_fn, &[fv.into()], "box_phi");
-                        if let Ok(cs) = cs
-                            && let inkwell::Either::Left(bv2) = cs.try_as_basic_value()
-                        {
-                            return Ok(bv2);
+            let box_to_ptr =
+                |codegen: &crate::codegen::CodeGen<'a>,
+                 bv: BasicValueEnum<'a>|
+                 -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
+                    match bv {
+                        BasicValueEnum::PointerValue(pv) => Ok(pv.as_basic_value_enum()),
+                        BasicValueEnum::FloatValue(fv) => {
+                            let box_fn = codegen.get_union_box_f64();
+                            let cs = codegen.builder.build_call(box_fn, &[fv.into()], "box_phi");
+                            if let Ok(cs) = cs
+                                && let inkwell::Either::Left(bv2) = cs.try_as_basic_value()
+                            {
+                                return Ok(bv2);
+                            }
+                            Err(Diagnostic::simple_boxed("boxing failed for phi"))
                         }
-                        Err(Diagnostic::simple_boxed("boxing failed for phi"))
-                    }
-                    BasicValueEnum::IntValue(iv) => {
-                        // convert to f64 then box
-                        let as_f64 = codegen
-                            .builder
-                            .build_signed_int_to_float(iv, codegen.f64_t, "i2f_phi")
-                            .map_err(|_| Diagnostic::simple("int->float cast failed"))?;
-                        let box_fn = codegen.get_union_box_f64();
-                        let cs = codegen
-                            .builder
-                            .build_call(box_fn, &[as_f64.into()], "box_phi");
-                        if let Ok(cs) = cs
-                            && let inkwell::Either::Left(bv2) = cs.try_as_basic_value()
-                        {
-                            return Ok(bv2);
+                        BasicValueEnum::IntValue(iv) => {
+                            // convert to f64 then box
+                            let as_f64 = codegen
+                                .builder
+                                .build_signed_int_to_float(iv, codegen.f64_t, "i2f_phi")
+                                .map_err(|_| Diagnostic::simple("int->float cast failed"))?;
+                            let box_fn = codegen.get_union_box_f64();
+                            let cs =
+                                codegen
+                                    .builder
+                                    .build_call(box_fn, &[as_f64.into()], "box_phi");
+                            if let Ok(cs) = cs
+                                && let inkwell::Either::Left(bv2) = cs.try_as_basic_value()
+                            {
+                                return Ok(bv2);
+                            }
+                            Err(Diagnostic::simple_boxed("boxing failed for phi"))
                         }
-                        Err(Diagnostic::simple_boxed("boxing failed for phi"))
+                        _ => Err(Diagnostic::simple_boxed("unsupported phi arm type")),
                     }
-                    _ => Err(Diagnostic::simple_boxed("unsupported phi arm type")),
-                }
-            };
+                };
 
             // If either side is a pointer and the other is numeric, prefer a
             // simple fast-path: if the `then` arm is numeric (f64/int) and the

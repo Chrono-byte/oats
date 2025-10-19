@@ -461,7 +461,9 @@ pub fn lower_object<'a>(
                     }
                 }
                 _ => {
-                    return Err(Diagnostic::simple_boxed("unsupported object literal property"));
+                    return Err(Diagnostic::simple_boxed(
+                        "unsupported object literal property",
+                    ));
                 }
             },
             deno_ast::swc::ast::PropOrSpread::Spread(_) => {
@@ -579,60 +581,61 @@ pub fn lower_template<'a>(
         .ok_or_else(|| Diagnostic::simple("str_concat not found"))?;
 
     // Helper to create a string literal (with header, same as Lit::Str)
-    let create_string_literal = |codegen: &crate::codegen::CodeGen<'a>,
-                                 s: &str|
-     -> crate::diagnostics::DiagnosticResult<inkwell::values::PointerValue<'a>> {
-        let bytes = s.as_bytes();
-        let key = s.to_string();
+    let create_string_literal =
+        |codegen: &crate::codegen::CodeGen<'a>,
+         s: &str|
+         -> crate::diagnostics::DiagnosticResult<inkwell::values::PointerValue<'a>> {
+            let bytes = s.as_bytes();
+            let key = s.to_string();
 
-        // Check cache first
-        if let Some(ptr_val) = codegen.string_literals.borrow().get(&key) {
-            return Ok(*ptr_val);
-        }
+            // Check cache first
+            if let Some(ptr_val) = codegen.string_literals.borrow().get(&key) {
+                return Ok(*ptr_val);
+            }
 
-        // String literal layout with header: [u64 header][u64 length][N x i8 data]
-        let str_len = bytes.len();
-        let header_ty = codegen.i64_t;
-        let len_ty = codegen.i64_t;
-        let data_ty = codegen.context.i8_type().array_type((str_len + 1) as u32);
-        let struct_ty = codegen
-            .context
-            .struct_type(&[header_ty.into(), len_ty.into(), data_ty.into()], false);
+            // String literal layout with header: [u64 header][u64 length][N x i8 data]
+            let str_len = bytes.len();
+            let header_ty = codegen.i64_t;
+            let len_ty = codegen.i64_t;
+            let data_ty = codegen.context.i8_type().array_type((str_len + 1) as u32);
+            let struct_ty = codegen
+                .context
+                .struct_type(&[header_ty.into(), len_ty.into(), data_ty.into()], false);
 
-        let id = codegen.next_str_id.get();
-        let name = format!("strlit.{}", id);
-        codegen.next_str_id.set(id.wrapping_add(1));
-        let gv = codegen.module.add_global(struct_ty, None, &name);
+            let id = codegen.next_str_id.get();
+            let name = format!("strlit.{}", id);
+            codegen.next_str_id.set(id.wrapping_add(1));
+            let gv = codegen.module.add_global(struct_ty, None, &name);
 
-        // Initialize with static header
-        let static_header = codegen.i64_t.const_int(1u64 << 32, false);
-        let length_val = codegen.i64_t.const_int(str_len as u64, false);
-        let data_val = codegen.context.const_string(bytes, true);
+            // Initialize with static header
+            let static_header = codegen.i64_t.const_int(1u64 << 32, false);
+            let length_val = codegen.i64_t.const_int(str_len as u64, false);
+            let data_val = codegen.context.const_string(bytes, true);
 
-        let initializer = codegen.context.const_struct(
-            &[static_header.into(), length_val.into(), data_val.into()],
-            false,
-        );
-        gv.set_initializer(&initializer);
+            let initializer = codegen.context.const_struct(
+                &[static_header.into(), length_val.into(), data_val.into()],
+                false,
+            );
+            gv.set_initializer(&initializer);
 
-        // Return pointer to data section (offset +16, field index 2)
-        // We need [0, 2, 0] to get: struct base -> field 2 (array) -> element 0
-        let zero = utils::constants::zero_i32(codegen);
-        let two = utils::constants::i32_const(codegen, 2);
-        let indices = &[zero, two, zero];
-        let gep = unsafe {
-            codegen
-                .builder
-                .build_gep(struct_ty, gv.as_pointer_value(), indices, "strptr")
+            // Return pointer to data section (offset +16, field index 2)
+            // We need [0, 2, 0] to get: struct base -> field 2 (array) -> element 0
+            let zero = utils::constants::zero_i32(codegen);
+            let two = utils::constants::i32_const(codegen, 2);
+            let indices = &[zero, two, zero];
+            let gep = unsafe {
+                codegen
+                    .builder
+                    .build_gep(struct_ty, gv.as_pointer_value(), indices, "strptr")
+            };
+
+            if let Ok(ptr) = gep {
+                codegen.string_literals.borrow_mut().insert(key, ptr);
+                Ok(ptr)
+            } else {
+                Err(Diagnostic::simple_boxed("failed to create string literal"))
+            }
         };
-
-        if let Ok(ptr) = gep {
-            codegen.string_literals.borrow_mut().insert(key, ptr);
-            Ok(ptr)
-        } else {
-            Err(Diagnostic::simple_boxed("failed to create string literal"))
-        }
-    };
 
     // Track the running result pointer and whether it is a temporary
     // (i.e., freshly-allocated and owned by this expression). We

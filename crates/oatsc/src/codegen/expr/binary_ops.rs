@@ -362,7 +362,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     ))
                 }
             }
-            _ => Err(Diagnostic::simple_boxed("operation not supported (bin fallback)")),
+            _ => Err(Diagnostic::simple_boxed(
+                "operation not supported (bin fallback)",
+            )),
         }
     }
 }

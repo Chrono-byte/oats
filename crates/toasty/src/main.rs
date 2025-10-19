@@ -59,6 +59,7 @@ fn run_main() -> Result<()> {
         Commands::New { name, lib, quiet } => commands::handle_new(name.clone(), *lib, *quiet),
         Commands::Compiler { action } => commands::handle_compiler((*action).clone()),
         Commands::Runtime { action } => commands::handle_runtime((*action).clone()),
+        Commands::Package { action } => commands::handle_package((*action).clone()),
     }
 }
 

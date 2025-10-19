@@ -59,6 +59,7 @@ package-name = { path = "relative/path/to/package" }
 ```
 
 Each dependency must:
+
 - Have its own `Oats.toml` manifest
 - Use the same name in both manifest and dependency reference
 - Be located at the specified path relative to the current package
@@ -84,6 +85,7 @@ app (root)
 ```
 
 The graph builder:
+
 - Recursively discovers dependencies
 - Detects circular dependencies
 - Validates package names and paths
@@ -96,6 +98,7 @@ Build order: [common-lib, utils, app]
 ```
 
 Packages are sorted in dependency-first order:
+
 - Dependencies always compile before dependents
 - Circular dependencies cause build failure
 - Parallel compilation can be added in future
@@ -111,6 +114,7 @@ oatsc --package-root /path/to/package \
 ```
 
 The compiler:
+
 - Loads package entry point from manifest
 - Receives dependency metadata via `--extern-pkg` flags
 - Emits object file and metadata
@@ -141,6 +145,7 @@ toasty new mylib --lib
 ```
 
 This generates:
+
 ```
 myapp/
 ├── Oats.toml
@@ -164,6 +169,7 @@ project/
 ```
 
 **app/Oats.toml**:
+
 ```toml
 [package]
 name = "app"
@@ -176,6 +182,7 @@ utils = { path = "../utils" }
 ```
 
 **app/src/main.oats**:
+
 ```typescript
 import { Logger } from "common";
 import { format } from "utils";
@@ -189,6 +196,7 @@ export function main(): number {
 ```
 
 Build the app:
+
 ```bash
 cd app
 toasty build
@@ -275,11 +283,13 @@ target/
 ### From File-Based to Package-Based
 
 **Before (single file)**:
+
 ```bash
 toasty build main.oats
 ```
 
 **After (package-based)**:
+
 ```bash
 # Create Oats.toml
 cat > Oats.toml << EOF
@@ -298,12 +308,14 @@ toasty build
 ### Migrating Multi-File Projects
 
 1. Create package structure:
+
    ```bash
    mkdir -p src
    mv *.oats src/
    ```
 
 2. Create manifest:
+
    ```bash
    toasty new myproject
    ```
@@ -347,29 +359,35 @@ Future `.oats.meta` files will include:
 ### Common Issues
 
 **Issue**: `No Oats.toml found, using single-file mode`
+
 - **Cause**: Working directory doesn't contain package manifest
 - **Fix**: Create `Oats.toml` or use `toasty new`
 
 **Issue**: `Circular package dependency detected`
+
 - **Cause**: Package A depends on B, which depends on A
 - **Fix**: Refactor to break cycle (extract common code, invert dependency)
 
 **Issue**: `Dependency path does not exist`
+
 - **Cause**: Path in manifest is incorrect
 - **Fix**: Verify relative path from manifest location to dependency
 
 **Issue**: `Package name mismatch`
+
 - **Cause**: Package name in `Oats.toml` doesn't match dependency reference
 - **Fix**: Ensure names are identical in both places
 
 ### Debugging
 
 Enable verbose output:
+
 ```bash
 toasty --verbose build
 ```
 
 This shows:
+
 - Manifest discovery
 - Package graph construction
 - Build order
@@ -379,12 +397,14 @@ This shows:
 ## Examples
 
 See `examples/pkg_test/` for working examples:
+
 - `mylib`: Simple library package
 - `myapp`: Application depending on mylib
 
 ## Contributing
 
 When adding package system features:
+
 1. Update manifest schema in `crates/toasty/src/manifest.rs`
 2. Enhance graph builder in `crates/toasty/src/package_graph.rs`
 3. Update build orchestrator in `crates/toasty/src/build.rs`

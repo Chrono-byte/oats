@@ -27,8 +27,8 @@ cd "$REPO_ROOT" || exit 1
 
 # Set the output directory for the compiler artifacts.
 export OATS_OUT_DIR="${REPO_ROOT}/aot_out" 
-export OATS_RUNTIME_PATH="/home/chrono/Dev/oats/target/debug/libruntime.a" 
-export OATS_STD_PATH="/home/chrono/Dev/oats/target/debug/liboats_std.a"
+export OATS_RUNTIME_PATH="${REPO_ROOT}/target/debug/libruntime.a" 
+export OATS_STD_PATH="${REPO_ROOT}/target/debug/liboats_std.a"
 
 # --- Find Files ---
 # Find all .oats files to compile. Thanks to nullglob, this will be an

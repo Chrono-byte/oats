@@ -3,7 +3,7 @@
 //! This module implements the build orchestrator for package-based compilation,
 //! managing dependency resolution, parallel compilation, and final linking.
 
-use crate::error::{Diagnostic, Result};
+use crate::error::{Diagnostic, BoxedResult};
 use crate::project::{NodeIndex, PackageGraph, build_package_graph, topological_sort_packages};
 use petgraph::visit::EdgeRef;
 use std::collections::HashMap;
@@ -78,7 +78,7 @@ pub struct BuildConfig {
 }
 
 /// Orchestrate a package-based build starting from a root manifest
-pub fn build_package_project(manifest_path: &Path, config: BuildConfig) -> Result<PathBuf> {
+pub fn build_package_project(manifest_path: &Path, config: BuildConfig) -> BoxedResult<PathBuf> {
     // Build package dependency graph
     if !config.quiet && (config.verbose || cfg!(debug_assertions)) {
         eprintln!("Building package dependency graph...");
@@ -140,7 +140,7 @@ fn compile_package(
     pkg_idx: NodeIndex,
     built_deps: &HashMap<String, PackageBuildResult>,
     config: &BuildConfig,
-) -> Result<PackageBuildResult> {
+) -> BoxedResult<PackageBuildResult> {
     let pkg_node = &graph[pkg_idx];
     let pkg_name = &pkg_node.name;
     let pkg_root = &pkg_node.root_dir;
@@ -241,7 +241,7 @@ fn compile_package(
                 // Ensure output directory exists
                 if let Some(parent) = meta_file.parent() {
                     std::fs::create_dir_all(parent).map_err(|e| {
-                        Diagnostic::new(format!("Failed to create output directory: {}", e))
+                        Diagnostic::boxed(format!("Failed to create output directory: {}", e))
                     })?;
                 }
 
@@ -258,7 +258,7 @@ fn compile_package(
                 };
 
                 std::fs::write(&meta_file, manifest_info).map_err(|e| {
-                    Diagnostic::new(format!("Failed to write metadata file: {}", e))
+                    Diagnostic::boxed(format!("Failed to write metadata file: {}", e))
                 })?;
             }
 
@@ -297,7 +297,7 @@ fn compile_package(
     // Ensure output directory exists
     if let Some(parent) = meta_file.parent() {
         std::fs::create_dir_all(parent)
-            .map_err(|e| Diagnostic::new(format!("Failed to create output directory: {}", e)))?;
+            .map_err(|e| Diagnostic::boxed(format!("Failed to create output directory: {}", e)))?;
     }
 
     // Try to load manifest for package information
@@ -312,7 +312,7 @@ fn compile_package(
         };
 
     std::fs::write(&meta_file, manifest_info)
-        .map_err(|e| Diagnostic::new(format!("Failed to write metadata file: {}", e)))?;
+        .map_err(|e| Diagnostic::boxed(format!("Failed to write metadata file: {}", e)))?;
 
     Ok(PackageBuildResult {
         name: pkg_name.clone(),
@@ -322,7 +322,7 @@ fn compile_package(
 }
 
 /// Invoke oatsc compiler as external command
-fn invoke_oatsc(options: &CompileOptions) -> Result<PathBuf> {
+fn invoke_oatsc(options: &CompileOptions) -> BoxedResult<PathBuf> {
     // Get oatsc path from environment (set by preflight check)
     let oatsc_path = std::env::var("OATS_OATSC_PATH").unwrap_or_else(|_| "oatsc".to_string());
 
@@ -393,7 +393,7 @@ fn invoke_oatsc(options: &CompileOptions) -> Result<PathBuf> {
         .args(&args)
         .output()
         .map_err(|e| {
-            Diagnostic::new(format!(
+            Diagnostic::boxed(format!(
                 "Failed to execute oatsc command: {} {:?}",
                 oatsc_path, e
             ))
@@ -402,7 +402,7 @@ fn invoke_oatsc(options: &CompileOptions) -> Result<PathBuf> {
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stdout = String::from_utf8_lossy(&output.stdout);
-        return Err(Diagnostic::new(format!(
+        return Err(Diagnostic::boxed(format!(
             "oatsc compilation failed:\nSTDOUT: {}\nSTDERR: {}",
             stdout, stderr
         )));
@@ -414,7 +414,7 @@ fn invoke_oatsc(options: &CompileOptions) -> Result<PathBuf> {
     let object_path = stdout.trim().to_string();
 
     if object_path.is_empty() {
-        return Err(Diagnostic::new(
+        return Err(Diagnostic::boxed(
             "oatsc did not return output path".to_string(),
         ));
     }
@@ -427,7 +427,7 @@ fn link_packages(
     root_pkg_name: &str,
     build_results: &HashMap<String, PackageBuildResult>,
     config: &BuildConfig,
-) -> Result<PathBuf> {
+) -> BoxedResult<PathBuf> {
     let out_dir = config.out_dir.as_deref().unwrap_or(".");
     let exe_name = config
         .out_name
@@ -440,7 +440,7 @@ fn link_packages(
         // Use explicitly specified runtime path
         let runtime_lib = PathBuf::from(runtime_path);
         if !runtime_lib.exists() {
-            return Err(Diagnostic::new(format!(
+            return Err(Diagnostic::boxed(format!(
                 "Runtime library not found: {}",
                 runtime_lib.display()
             )));
@@ -451,7 +451,7 @@ fn link_packages(
         let runtime_lib = PathBuf::from("libruntime.a");
 
         if !runtime_lib.exists() {
-            return Err(Diagnostic::new(
+            return Err(Diagnostic::boxed(
                 "Runtime library not found: libruntime.a".to_string(),
             ));
         }
@@ -483,10 +483,10 @@ fn link_packages(
 
     let link_status = link_cmd
         .status()
-        .map_err(|e| Diagnostic::new(format!("Failed to run clang linker: {}", e)))?;
+        .map_err(|e| Diagnostic::boxed(format!("Failed to run clang linker: {}", e)))?;
 
     if !link_status.success() {
-        return Err(Diagnostic::new("Linking failed".to_string()));
+        return Err(Diagnostic::boxed("Linking failed".to_string()));
     }
 
     if !config.quiet && (config.verbose || cfg!(debug_assertions)) {

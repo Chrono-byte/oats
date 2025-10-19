@@ -121,17 +121,14 @@ pub fn invoke_oatsc(options: &CompileOptions) -> Result<Option<PathBuf>> {
     }
 
     // Parse output to get object file path if any
-    // oatsc may or may not print output depending on mode
+    // oatsc prints the output path on stdout (last line is the path)
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
 
     if stdout.is_empty() {
         Ok(None)
-    } else if let Some(path_str) = stdout
-        .strip_prefix("Emitted ")
-        .and_then(|s| s.split(" (linking delegated to toasty)").next())
-    {
-        Ok(Some(PathBuf::from(path_str)))
     } else {
-        Ok(None)
+        // oatsc prints the output file path on stdout (last line)
+        let path_str = stdout.lines().last().unwrap_or(&stdout);
+        Ok(Some(PathBuf::from(path_str)))
     }
 }

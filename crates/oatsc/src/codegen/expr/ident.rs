@@ -4,9 +4,6 @@ use inkwell::values::FunctionValue;
 use std::collections::HashMap;
 
 use crate::types::OatsType;
-use inkwell::AddressSpace;
-use inkwell::builder::Builder;
-use inkwell::types::BasicType;
 use inkwell::types::BasicTypeEnum;
 use inkwell::values::{BasicValue, PointerValue};
 

@@ -1,33 +1,3 @@
-use crate::diagnostics::Diagnostic;
-use inkwell::values::BasicValueEnum;
-use inkwell::values::FunctionValue;
-use std::collections::HashMap;
-
-use inkwell::types::BasicTypeEnum;
-use inkwell::values::PointerValue;
-
-// LocalEntry now includes an Option<String> for an optional nominal type name
-// LocalEntry now includes an Option<OatsType> for union tracking
-type LocalEntry<'a> = (
-    PointerValue<'a>,
-    BasicTypeEnum<'a>,
-    bool,
-    bool,
-    bool,
-    Option<String>,
-    Option<crate::types::OatsType>,
-);
-type LocalsStackLocal<'a> = Vec<HashMap<String, LocalEntry<'a>>>;
-
-impl<'a> crate::codegen::CodeGen<'a> {
-    pub(super) fn lower_await_expr(
-        &self,
-        _await_expr: &deno_ast::swc::ast::AwaitExpr,
-        _function: FunctionValue<'a>,
-        _param_map: &HashMap<String, u32>,
-        _locals: &mut LocalsStackLocal<'a>,
-    ) -> Result<BasicValueEnum<'a>, Diagnostic> {
-        // The full Await expression lowering code goes here
         // Phase 0+ improvement: call runtime `promise_poll_into(promise, out_ptr)`
         // and branch on the returned i32. If ready (1) load the resolved
         // value from out_ptr and return it. If pending (0) return the
@@ -374,5 +344,3 @@ impl<'a> crate::codegen::CodeGen<'a> {
         }
         // Non-pointer awaited values are returned as-is (numbers/booleans)
         Ok(v)
-    }
-}

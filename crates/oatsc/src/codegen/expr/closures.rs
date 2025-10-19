@@ -3,12 +3,8 @@ use inkwell::values::BasicValueEnum;
 use inkwell::values::FunctionValue;
 use std::collections::HashMap;
 
-use crate::types::OatsType;
-use inkwell::AddressSpace;
-use inkwell::builder::Builder;
-use inkwell::types::BasicType;
 use inkwell::types::BasicTypeEnum;
-use inkwell::values::{BasicValue, PointerValue};
+use inkwell::values::PointerValue;
 
 // LocalEntry now includes an Option<String> for an optional nominal type name
 // LocalEntry now includes an Option<OatsType> for union tracking
@@ -26,10 +22,10 @@ type LocalsStackLocal<'a> = Vec<HashMap<String, LocalEntry<'a>>>;
 impl<'a> crate::codegen::CodeGen<'a> {
     pub(super) fn lower_arrow_expr(
         &self,
-        arrow: &deno_ast::swc::ast::ArrowExpr,
-        function: FunctionValue<'a>,
-        param_map: &HashMap<String, u32>,
-        locals: &mut LocalsStackLocal<'a>,
+        _arrow: &deno_ast::swc::ast::ArrowExpr,
+        _function: FunctionValue<'a>,
+        _param_map: &HashMap<String, u32>,
+        _locals: &mut LocalsStackLocal<'a>,
     ) -> Result<BasicValueEnum<'a>, Diagnostic> {
         // The full Arrow expression lowering code goes here
         Err(Diagnostic::simple("arrow expression not implemented yet"))

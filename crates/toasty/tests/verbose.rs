@@ -11,7 +11,7 @@ fn verbose_flag_and_env_control_output() -> Result<(), Box<dyn std::error::Error
 
     // Build runtime and oatsc first
     let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
-    
+
     let mut runc = Command::new("cargo");
     runc.current_dir(&workspace_root);
     runc.arg("build").arg("-p").arg("runtime").arg("--release");
@@ -19,7 +19,11 @@ fn verbose_flag_and_env_control_output() -> Result<(), Box<dyn std::error::Error
 
     let mut oatsc_build = Command::new("cargo");
     oatsc_build.current_dir(&workspace_root);
-    oatsc_build.arg("build").arg("-p").arg("oatsc").arg("--release");
+    oatsc_build
+        .arg("build")
+        .arg("-p")
+        .arg("oatsc")
+        .arg("--release");
     oatsc_build.status()?;
 
     // Ensure release binary exists
@@ -31,7 +35,7 @@ fn verbose_flag_and_env_control_output() -> Result<(), Box<dyn std::error::Error
         .arg("toasty")
         .arg("--release");
     build_cmd.status()?;
-    
+
     let toasty_bin = workspace_root.join("target/release/toasty");
     let oatsc_path = workspace_root.join("target/release/oatsc");
     let runtime_path = workspace_root.join("target/release/libruntime.a");

@@ -44,7 +44,7 @@ fn module_resolution_discovers_dependencies() -> Result<(), Box<dyn std::error::
 
     // Check that it discovered both modules
     cmd.assert()
-        .stderr(predicate::str::contains("Found 2 module(s) to compile"))
+        .stderr(predicate::str::contains("Dependency graph has 2 module(s)"))
         .stderr(predicate::str::contains("main.oats"))
         .stderr(predicate::str::contains("math.oats"));
 
@@ -90,7 +90,7 @@ fn single_file_module_resolution() -> Result<(), Box<dyn std::error::Error>> {
     // Should discover just 1 module
     cmd.assert()
         .success()
-        .stderr(predicate::str::contains("Found 1 module(s) to compile"));
+        .stderr(predicate::str::contains("Dependency graph has 1 module(s)"));
 
     Ok(())
 }

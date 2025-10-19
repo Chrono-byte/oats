@@ -3,8 +3,7 @@
 //! to audit and maintain.
 
 use libc::{c_char, size_t};
-use std::ffi::{CStr, CString};
-use std::io::{self, Write};
+use std::ffi::CStr;
 
 use crate::*;
 
@@ -58,64 +57,4 @@ pub unsafe fn runtime_strlen(s: *const c_char) -> size_t {
     }
     let c = unsafe { CStr::from_ptr(s) };
     c.to_bytes().len() as size_t
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn print_f64(v: f64) {
-    let _ = io::stdout().write_all(format!("{}\n", v).as_bytes());
-    let _ = io::stdout().flush();
-}
-
-/// # Safety
-/// `s` must be a valid nul-terminated C string pointer or null. Passing
-/// invalid pointers is undefined behavior.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn print_str(s: *const c_char) {
-    unsafe {
-        if s.is_null() {
-            return;
-        }
-        let _ = io::stdout().write_all(CStr::from_ptr(s).to_bytes());
-        let _ = io::stdout().write_all(b"\n");
-        let _ = io::stdout().flush();
-    }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn print_i32(v: i32) {
-    let _ = io::stdout().write_all(format!("{}\n", v).as_bytes());
-    let _ = io::stdout().flush();
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn print_f64_no_nl(v: f64) {
-    let _ = io::stdout().write_all(format!("{}", v).as_bytes());
-    let _ = io::stdout().flush();
-}
-
-/// # Safety
-/// `s` must be a valid nul-terminated C string pointer or null. Passing
-/// invalid pointers is undefined behavior.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn print_str_no_nl(s: *const c_char) {
-    unsafe {
-        if s.is_null() {
-            return;
-        }
-        let _ = io::stdout().write_all(CStr::from_ptr(s).to_bytes());
-    }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn print_newline() {
-    let _ = io::stdout().write_all(b"\n");
-    let _ = io::stdout().flush();
-}
-
-#[allow(clippy::manual_c_str_literals)]
-#[unsafe(no_mangle)]
-pub extern "C" fn number_to_string(num: f64) -> *mut c_char {
-    let s = format!("{}", num);
-    let c = CString::new(s).unwrap_or_default();
-    unsafe { heap_str_from_cstr(c.as_ptr()) }
 }

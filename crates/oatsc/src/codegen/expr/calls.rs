@@ -2550,6 +2550,3 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 new_expr.span.lo.0 as usize,
             ))
         }
-    }
-    }
-}

@@ -3,8 +3,9 @@ use inkwell::values::BasicValueEnum;
 use inkwell::values::FunctionValue;
 use std::collections::HashMap;
 
-use inkwell::types::BasicTypeEnum;
-use inkwell::values::PointerValue;
+use inkwell::types::{BasicTypeEnum, BasicType};
+use inkwell::values::{PointerValue, BasicValue};
+use deno_ast::swc::ast;
 
 // LocalEntry now includes an Option<String> for an optional nominal type name
 // LocalEntry now includes an Option<OatsType> for union tracking
@@ -22,10 +23,10 @@ type LocalsStackLocal<'a> = Vec<HashMap<String, LocalEntry<'a>>>;
 impl<'a> crate::codegen::CodeGen<'a> {
     pub(super) fn lower_await_expr(
         &self,
-        _await_expr: &deno_ast::swc::ast::AwaitExpr,
-        _function: FunctionValue<'a>,
-        _param_map: &HashMap<String, u32>,
-        _locals: &mut LocalsStackLocal<'a>,
+        await_expr: &deno_ast::swc::ast::AwaitExpr,
+        function: FunctionValue<'a>,
+        param_map: &HashMap<String, u32>,
+        locals: &mut LocalsStackLocal<'a>,
     ) -> Result<BasicValueEnum<'a>, Diagnostic> {
         // The full Await expression lowering code goes here
         // Phase 0+ improvement: call runtime `promise_poll_into(promise, out_ptr)`

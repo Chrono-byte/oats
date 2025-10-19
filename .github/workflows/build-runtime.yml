@@ -29,15 +29,15 @@ jobs:
           - os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
             artifact: libruntime-linux-x86_64.a
-          - os: ubuntu-24.04
-            target: aarch64-unknown-linux-gnu
-            artifact: libruntime-linux-aarch64.a
-          - os: macos-14
-            target: aarch64-apple-darwin
-            artifact: libruntime-macos-aarch64.a
-          - os: macos-13
-            target: x86_64-apple-darwin
-            artifact: libruntime-macos-x86_64.a
+#          - os: ubuntu-24.04
+#            target: aarch64-unknown-linux-gnu
+#            artifact: libruntime-linux-aarch64.a
+#          - os: macos-14
+#            target: aarch64-apple-darwin
+#            artifact: libruntime-macos-aarch64.a
+#          - os: macos-13
+#            target: x86_64-apple-darwin
+#            artifact: libruntime-macos-x86_64.a
     runs-on: ${{ matrix.os }}
 
     steps:

@@ -1,4 +1,3 @@
-use crate::diagnostics::Diagnostic;
 use inkwell::values::BasicValueEnum;
 use inkwell::values::FunctionValue;
 use std::collections::HashMap;
@@ -20,13 +19,14 @@ type LocalEntry<'a> = (
 type LocalsStackLocal<'a> = Vec<HashMap<String, LocalEntry<'a>>>;
 
 impl<'a> crate::codegen::CodeGen<'a> {
+    #[allow(clippy::result_large_err)]
     pub(super) fn lower_paren_expr(
         &self,
         paren: &deno_ast::swc::ast::ParenExpr,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals: &mut LocalsStackLocal<'a>,
-    ) -> Result<BasicValueEnum<'a>, Diagnostic> {
+    ) -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
         // Unwrap parenthesized expression
         self.lower_expr(&paren.expr, function, param_map, locals)
     }

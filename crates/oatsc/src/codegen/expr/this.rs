@@ -26,7 +26,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         function: FunctionValue<'a>,
         _param_map: &HashMap<String, u32>,
         _locals: &mut LocalsStackLocal<'a>,
-    ) -> Result<BasicValueEnum<'a>, Diagnostic> {
+    ) -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
         // `this` is always the first parameter in method functions
         if let Some(pv) = function.get_nth_param(0) {
             // Record that this expression originated from 'this'
@@ -35,7 +35,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 .replace("this".to_string());
             Ok(pv)
         } else {
-            Err(Diagnostic::simple_with_span(
+            Err(Diagnostic::simple_with_span_boxed(
                 "'this' used in function with no parameters",
                 this_expr.span.lo.0 as usize,
             ))

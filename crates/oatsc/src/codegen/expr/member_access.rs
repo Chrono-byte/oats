@@ -22,13 +22,14 @@ type LocalEntry<'a> = (
 type LocalsStackLocal<'a> = Vec<HashMap<String, LocalEntry<'a>>>;
 
 impl<'a> CodeGen<'a> {
+    #[allow(clippy::result_large_err)]
     pub(super) fn lower_member_expr(
         &self,
         member: &ast::MemberExpr,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals: &mut LocalsStackLocal<'a>,
-    ) -> Result<BasicValueEnum<'a>, Diagnostic> {
+    ) -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
         // Support both computed member access (obj[expr]) and dot-member (obj.prop)
         match &member.prop {
             MemberProp::Computed(boxed) => {
@@ -39,7 +40,7 @@ impl<'a> CodeGen<'a> {
                 let obj_val = match obj_res {
                     Ok(v) => v,
                     Err(_) => {
-                        return Err(Diagnostic::simple_with_span(
+                        return Err(Diagnostic::simple_with_span_boxed(
                             "failed to lower member object expression",
                             member.span.lo.0 as usize,
                         ));
@@ -48,7 +49,7 @@ impl<'a> CodeGen<'a> {
                 let idx_val = match idx_res {
                     Ok(v) => v,
                     Err(_) => {
-                        return Err(Diagnostic::simple_with_span(
+                        return Err(Diagnostic::simple_with_span_boxed(
                             "failed to lower member index expression",
                             member.span.lo.0 as usize,
                         ));
@@ -110,7 +111,7 @@ impl<'a> CodeGen<'a> {
                                 .build_float_to_signed_int(fv, self.i64_t, "f2i")
                                 .map_err(|_| Diagnostic::simple("LLVM builder error"))?,
                             _ => {
-                                return Err(Diagnostic::simple_with_span(
+                                return Err(Diagnostic::simple_with_span_boxed(
                                     "unsupported index type for computed member access",
                                     member.span.lo.0 as usize,
                                 ));
@@ -232,10 +233,10 @@ impl<'a> CodeGen<'a> {
                                                 return Ok(bv2);
                                             }
                                         }
-                                        return Err(Diagnostic::simple("operation failed"));
+                                        return Err(Diagnostic::simple_boxed("operation failed"));
                                     }
                                     _ => {
-                                        return Err(Diagnostic::simple(
+                                        return Err(Diagnostic::simple_boxed(
                                             "unsupported field type for tuple/nominal access",
                                         ));
                                     }
@@ -254,7 +255,7 @@ impl<'a> CodeGen<'a> {
                             .build_float_to_signed_int(fv, self.i64_t, "f2i")
                             .map_err(|_| Diagnostic::simple("LLVM builder error"))?,
                         _ => {
-                            return Err(Diagnostic::simple_with_span(
+                            return Err(Diagnostic::simple_with_span_boxed(
                                 "unsupported index type for computed member access",
                                 member.span.lo.0 as usize,
                             ));
@@ -317,7 +318,7 @@ impl<'a> CodeGen<'a> {
                             ) {
                                 Ok(cs) => cs,
                                 Err(_) => {
-                                    return Err(Diagnostic::simple_with_span(
+                                    return Err(Diagnostic::simple_with_span_boxed(
                                         "operation failed",
                                         member.span.lo.0 as usize,
                                     ));
@@ -339,7 +340,7 @@ impl<'a> CodeGen<'a> {
                     ) {
                         Ok(cs) => cs,
                         Err(_) => {
-                            return Err(Diagnostic::simple_with_span(
+                            return Err(Diagnostic::simple_with_span_boxed(
                                 "operation failed",
                                 member.span.lo.0 as usize,
                             ));
@@ -350,7 +351,7 @@ impl<'a> CodeGen<'a> {
                         return Ok(bv);
                     }
                 } else {
-                    return Err(Diagnostic::simple_with_span(
+                    return Err(Diagnostic::simple_with_span_boxed(
                         "computed member access on non-pointer object",
                         member.span.lo.0 as usize,
                     ));
@@ -367,7 +368,7 @@ impl<'a> CodeGen<'a> {
                 } else if let deno_ast::swc::ast::Expr::This(_) = &*member.obj {
                     "this".to_string()
                 } else {
-                    return Err(Diagnostic::simple_with_span(
+                    return Err(Diagnostic::simple_with_span_boxed(
                         "member access requires identifier or 'this' object",
                         member.span.lo.0 as usize,
                     ));
@@ -382,7 +383,7 @@ impl<'a> CodeGen<'a> {
                         let enum_value = self.i64_t.const_int(member_index as u64, false);
                         return Ok(enum_value.as_basic_value_enum());
                     } else {
-                        return Err(Diagnostic::simple_with_span(
+                        return Err(Diagnostic::simple_with_span_boxed(
                             format!("enum '{}' has no member '{}'", ident_name, field_name),
                             member.span.lo.0 as usize,
                         ));
@@ -400,7 +401,7 @@ impl<'a> CodeGen<'a> {
                         let gep_ptr = match self.i8_ptr_from_offset_i64(pv, offset, "arr_len_i8") {
                             Ok(p) => p,
                             Err(_) => {
-                                return Err(Diagnostic::simple_with_span(
+                                return Err(Diagnostic::simple_with_span_boxed(
                                     "failed to compute array length pointer",
                                     member.span.lo.0 as usize,
                                 ));
@@ -415,7 +416,7 @@ impl<'a> CodeGen<'a> {
                         {
                             Ok(p) => p,
                             Err(_) => {
-                                return Err(Diagnostic::simple_with_span(
+                                return Err(Diagnostic::simple_with_span_boxed(
                                     "failed to cast length pointer",
                                     member.span.lo.0 as usize,
                                 ));
@@ -425,7 +426,7 @@ impl<'a> CodeGen<'a> {
                             match self.builder.build_load(self.i64_t, len_ptr, "arr_len_load") {
                                 Ok(v) => v,
                                 Err(_) => {
-                                    return Err(Diagnostic::simple_with_span(
+                                    return Err(Diagnostic::simple_with_span_boxed(
                                         "failed to load array length",
                                         member.span.lo.0 as usize,
                                     ));
@@ -568,7 +569,7 @@ impl<'a> CodeGen<'a> {
                                         ) {
                                             Ok(v) => v,
                                             Err(_) => {
-                                                return Err(Diagnostic::simple("operation failed"));
+                                                return Err(Diagnostic::simple_boxed("operation failed"));
                                             }
                                         };
                                         return Ok(loaded.as_basic_value_enum());
@@ -586,7 +587,7 @@ impl<'a> CodeGen<'a> {
                                         ) {
                                             Ok(p) => p,
                                             Err(_) => {
-                                                return Err(Diagnostic::simple("operation failed"));
+                                                return Err(Diagnostic::simple_boxed("operation failed"));
                                             }
                                         };
                                         // load slot (an i8*)
@@ -597,7 +598,7 @@ impl<'a> CodeGen<'a> {
                                         ) {
                                             Ok(v) => v,
                                             Err(_) => {
-                                                return Err(Diagnostic::simple("operation failed"));
+                                                return Err(Diagnostic::simple_boxed("operation failed"));
                                             }
                                         };
                                         // If the object expression had an origin marker,
@@ -631,7 +632,7 @@ impl<'a> CodeGen<'a> {
                                         ) {
                                             Ok(p) => p,
                                             Err(_) => {
-                                                return Err(Diagnostic::simple("operation failed"));
+                                                return Err(Diagnostic::simple_boxed("operation failed"));
                                             }
                                         };
                                         let boxed = match self.builder.build_load(
@@ -641,7 +642,7 @@ impl<'a> CodeGen<'a> {
                                         ) {
                                             Ok(v) => v,
                                             Err(_) => {
-                                                return Err(Diagnostic::simple("operation failed"));
+                                                return Err(Diagnostic::simple_boxed("operation failed"));
                                             }
                                         };
                                         // Try to unbox as f64 first
@@ -654,7 +655,7 @@ impl<'a> CodeGen<'a> {
                                             ) {
                                                 Ok(cs) => cs,
                                                 Err(_) => {
-                                                    return Err(Diagnostic::simple(
+                                                    return Err(Diagnostic::simple_boxed(
                                                         "operation failed",
                                                     ));
                                                 }
@@ -673,7 +674,7 @@ impl<'a> CodeGen<'a> {
                                             ) {
                                                 Ok(cs2) => cs2,
                                                 Err(_) => {
-                                                    return Err(Diagnostic::simple(
+                                                    return Err(Diagnostic::simple_boxed(
                                                         "operation failed",
                                                     ));
                                                 }
@@ -683,11 +684,11 @@ impl<'a> CodeGen<'a> {
                                                 return Ok(bv2);
                                             }
                                         }
-                                        return Err(Diagnostic::simple("operation failed"));
+                                        return Err(Diagnostic::simple_boxed("operation failed"));
                                     }
                                     _ => {
                                         // Unsupported field type
-                                        return Err(Diagnostic::simple(
+                                        return Err(Diagnostic::simple_boxed(
                                             "expression lowering failed",
                                         ))?;
                                     }
@@ -885,7 +886,7 @@ impl<'a> CodeGen<'a> {
                 "unsupported member access expression; recv={}, lowered_recv={}, recv_fields={:?}, known_nominals={:?}",
                 recv_info, lowered_recv, recv_fields, keys
             );
-            Err(Diagnostic::simple_with_span(msg, member.span.lo.0 as usize))
+            Err(Diagnostic::simple_with_span_boxed(msg, member.span.lo.0 as usize))
         }
     }
 }

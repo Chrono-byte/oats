@@ -26,7 +26,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals: &mut LocalsStackLocal<'a>,
-    ) -> Result<BasicValueEnum<'a>, Diagnostic> {
+    ) -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
         // Handle unary operators: -, +, !, ~, typeof
         use deno_ast::swc::ast::UnaryOp;
 
@@ -135,7 +135,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         .map_err(|_| Diagnostic::simple("LLVM builder error"))?;
                     Ok(neg.as_basic_value_enum())
                 } else {
-                    Err(Diagnostic::simple("unary minus requires numeric operand"))
+                    Err(Diagnostic::simple_boxed("unary minus requires numeric operand"))
                 }
             }
             UnaryOp::Plus => {
@@ -143,7 +143,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 if let Some(fv) = self.coerce_to_f64(arg_val) {
                     Ok(fv.as_basic_value_enum())
                 } else {
-                    Err(Diagnostic::simple("unary plus requires numeric operand"))
+                    Err(Diagnostic::simple_boxed("unary plus requires numeric operand"))
                 }
             }
             UnaryOp::Bang => {
@@ -178,10 +178,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         .map_err(|_| Diagnostic::simple("LLVM builder error"))?;
                     Ok(result_fv.as_basic_value_enum())
                 } else {
-                    Err(Diagnostic::simple("bitwise NOT requires numeric operand"))
+                    Err(Diagnostic::simple_boxed("bitwise NOT requires numeric operand"))
                 }
             }
-            _ => Err(Diagnostic::simple("unsupported unary operator")),
+            _ => Err(Diagnostic::simple_boxed("unsupported unary operator")),
         }
     }
 
@@ -191,7 +191,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         _function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals: &mut LocalsStackLocal<'a>,
-    ) -> Result<BasicValueEnum<'a>, Diagnostic> {
+    ) -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
         // Handle update operators: ++, --
         // These modify the variable and return the old (postfix) or new (prefix) value
         use deno_ast::swc::ast::UpdateOp;
@@ -204,17 +204,17 @@ impl<'a> crate::codegen::CodeGen<'a> {
             let var_entry = if param_map.contains_key(&name) {
                 // It's a parameter - we can't update parameters directly
                 // Need to create a local shadow
-                return Err(Diagnostic::simple(
+                return Err(Diagnostic::simple_boxed(
                     "cannot update function parameter directly",
                 ));
             } else if let Some((ptr, ty, initialized, is_const, _extra, _nominal, _oats_type)) =
                 self.find_local(locals, &name)
             {
                 if is_const {
-                    return Err(Diagnostic::simple("cannot update immutable variable"));
+                    return Err(Diagnostic::simple_boxed("cannot update immutable variable"));
                 }
                 if !initialized {
-                    return Err(Diagnostic::simple("cannot update uninitialized variable"));
+                    return Err(Diagnostic::simple_boxed("cannot update uninitialized variable"));
                 }
                 Some((ptr, ty))
             } else {
@@ -256,15 +256,15 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         Ok(old_fv.as_basic_value_enum())
                     }
                 } else {
-                    Err(Diagnostic::simple(
+                    Err(Diagnostic::simple_boxed(
                         "update operators require numeric operand",
                     ))
                 }
             } else {
-                Err(Diagnostic::simple("variable not found"))
+                Err(Diagnostic::simple_boxed("variable not found"))
             }
         } else {
-            Err(Diagnostic::simple(
+            Err(Diagnostic::simple_boxed(
                 "update operator only supports simple identifiers",
             ))
         }

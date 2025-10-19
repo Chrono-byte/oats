@@ -593,3 +593,28 @@ pub unsafe extern "C" fn array_to_string(arr: *mut c_void) -> *mut c_char {
         }
     }
 }
+
+#[unsafe(no_mangle)]
+pub extern "C" fn array_get(arr: *mut c_void, idx: usize) -> *mut c_void {
+    array_get_ptr(arr, idx)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn array_set(arr: *mut c_void, idx: usize, value: *mut c_void) {
+    let mut arr_ptr = arr;
+    unsafe {
+        array_set_ptr(&mut arr_ptr, idx, value);
+    }
+}
+
+pub fn array_alloc_pub(element_size: usize, length: usize) -> *mut c_void {
+    array_alloc(length, element_size, 0)
+}
+
+pub fn array_get_pub(arr: *mut c_void, idx: usize) -> *mut c_void {
+    array_get(arr, idx)
+}
+
+pub fn array_set_pub(arr: *mut c_void, idx: usize, value: *mut c_void) {
+    array_set(arr, idx, value)
+}

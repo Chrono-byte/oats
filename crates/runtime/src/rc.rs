@@ -50,6 +50,10 @@ pub unsafe extern "C" fn rc_inc(p: *mut c_void) {
     }
 }
 
+pub fn rc_inc_pub(p: *mut c_void) {
+    unsafe { rc_inc(p) }
+}
+
 /// Resolve the base object pointer from a possibly-offset pointer.
 #[inline]
 pub(crate) unsafe fn get_object_base(p: *mut c_void) -> *mut c_void {
@@ -163,6 +167,10 @@ pub unsafe extern "C" fn rc_dec(p: *mut c_void) {
             }
         }
     }
+}
+
+pub fn rc_dec_pub(p: *mut c_void) {
+    unsafe { rc_dec(p) }
 }
 
 /// Atomically increment the weak reference count on an object.

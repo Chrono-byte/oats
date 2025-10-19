@@ -95,6 +95,10 @@ pub unsafe fn runtime_free(p: *mut c_void) {
         if p.is_null() {
             return;
         }
+        // SAFETY: p is checked for null and plausible address before accessing memory
+        if !crate::is_plausible_addr(p as usize) {
+            return;
+        }
         let base = (p as *mut u8).sub(std::mem::size_of::<u64>());
         let size_ptr = base as *mut u64;
         let total = *size_ptr as usize;

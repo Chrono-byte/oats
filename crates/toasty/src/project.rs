@@ -4,7 +4,7 @@
 //! structure, dependencies, and source files. It combines manifest parsing,
 //! package dependency resolution, and module resolution into a cohesive API.
 
-use crate::error::{Result, ToastyError};
+use crate::diagnostics::{Result, ToastyError};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};

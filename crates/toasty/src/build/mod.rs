@@ -3,7 +3,7 @@
 //! This module implements the build orchestrator for package-based compilation,
 //! managing dependency resolution, parallel compilation, and final linking.
 
-use crate::error::{Result, ToastyError};
+use crate::diagnostics::{Result, ToastyError};
 use crate::project::{NodeIndex, PackageGraph, build_package_graph, topological_sort_packages};
 use petgraph::visit::EdgeRef;
 use std::collections::HashMap;

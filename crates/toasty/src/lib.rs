@@ -5,6 +5,10 @@
 
 pub mod build;
 pub mod cli;
-pub mod error;
+pub mod commands;
+pub mod compiler;
+pub mod diagnostics;
 pub mod fetch;
+pub mod linker;
+pub mod preflight;
 pub mod project;

@@ -133,11 +133,41 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 }
                             }
 
-                            if declared_mapped.is_none() {
+                            // Compute inferred type from initializer if present
+                            let init_inferred = decl
+                                .init
+                                .as_ref()
+                                .map(|init| crate::types::infer_type(None, Some(init)));
+
+                            // Require either explicit type annotation or initializer for inference
+                            if declared_mapped.is_none() && init_inferred.is_none() {
                                 return Err(crate::diagnostics::Diagnostic::simple_boxed(
                                     Severity::Error,
-                                    "Variable declaration requires explicit type annotation",
+                                    "Variable declaration requires explicit type annotation or initializer",
                                 ));
+                            }
+
+                            // Determine effective type: declared takes precedence, then inferred
+                            let effective_type =
+                                declared_mapped.as_ref().or(init_inferred.as_ref()).unwrap();
+
+                            // If no explicit type annotation, set flags from inferred type
+                            if declared_mapped.is_none() {
+                                if let crate::types::OatsType::Union(_) = effective_type {
+                                    declared_union = Some(effective_type.clone());
+                                }
+                                if let crate::types::OatsType::Weak(_) = effective_type {
+                                    declared_is_weak = true;
+                                }
+                                if let crate::types::OatsType::NominalStruct(n) = effective_type {
+                                    declared_nominal = Some(n.clone());
+                                }
+                                // If the inferred type is an Array, tag the local with
+                                // a sentinel nominal so lowering sites (like println)
+                                // can detect arrays at compile time.
+                                if let crate::types::OatsType::Array(_) = effective_type {
+                                    declared_nominal = Some("__oats_array".to_string());
+                                }
                             }
 
                             // If there is an initializer, lower it and allocate a
@@ -194,7 +224,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 // call-site monomorphization to see concrete types for
                                 // locals (e.g., `Array(String)`) when no explicit
                                 // annotation was provided.
-                                let init_inferred = crate::types::infer_type(None, Some(init));
+                                let init_inferred = init_inferred.as_ref().unwrap().clone();
                                 // If the initializer is an object literal and the
                                 // declared local carries a nominal struct name
                                 // (for example `const user: User = { ... }`),
@@ -494,22 +524,20 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
                                         // Create an alloca for the local and store the tuple pointer
                                         let allocated_ty = self.i8ptr_t.as_basic_type_enum();
-                                        let alloca = match self
-                                            .builder
-                                            .build_alloca(allocated_ty, &name)
-                                        {
-                                            Ok(a) => a,
-                                            Err(_) => {
-                                                crate::diagnostics::emit_diagnostic(
+                                        let alloca =
+                                            match self.builder.build_alloca(allocated_ty, &name) {
+                                                Ok(a) => a,
+                                                Err(_) => {
+                                                    crate::diagnostics::emit_diagnostic(
                                                     &crate::diagnostics::Diagnostic::simple_boxed(
                                                         Severity::Error,
                                                         "alloca failed for local variable",
                                                     ),
                                                     Some(self.source),
                                                 );
-                                                return Ok(false);
-                                            }
-                                        };
+                                                    return Ok(false);
+                                                }
+                                            };
                                         // increment rc for stored pointer (unless elided)
                                         if !self.should_elide_rc_for_local(&name) {
                                             let rc_inc = self.get_rc_inc();

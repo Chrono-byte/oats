@@ -1,0 +1,31 @@
+[package]
+name = "oats_std"
+version = "0.1.0"
+edition = "2021"
+build = "build.rs"
+
+[lib]
+name = "oats_std"
+crate-type = ["rlib", "staticlib"]
+
+[dependencies]
+libc = "0.2"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+reqwest = { version = "0.11", features = ["blocking", "json"] }
+tokio = { version = "1.0", features = ["full"] }
+sha2 = "0.10"
+base64 = "0.21"
+dirs = "5.0"
+tempfile = "3.0"
+walkdir = "2.4"
+regex = "1.10"
+chrono = { version = "0.4", features = ["serde"] }
+thiserror = "1.0"
+anyhow = "1.0"
+runtime = { path = "../runtime" }
+
+[build-dependencies]
+syn = { version = "2.0", features = ["full", "extra-traits"] }
+quote = "1.0"
+proc-macro2 = "1.0"

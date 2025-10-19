@@ -22,6 +22,7 @@ use std::collections::HashMap;
 
 use crate::types::OatsType;
 use inkwell::AddressSpace;
+use inkwell::builder::Builder;
 use inkwell::types::BasicType;
 use inkwell::types::BasicTypeEnum;
 use inkwell::values::{BasicValue, PointerValue};
@@ -2045,9 +2046,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 }
             }
             // (Duplicate closure-call lowering removed; handled in the primary Call arm above.)
-            ast::Expr::Assign(assign) => {
-                self.lower_assign_expr(assign, function, param_map, locals)
-            }
+            ast::Expr::Assign(assign) => self.lower_assign_expr(assign, function, param_map, locals),
             ast::Expr::Paren(paren) => self.lower_paren_expr(paren, function, param_map, locals),
             ast::Expr::Cond(cond) => self.lower_cond_expr(cond, function, param_map, locals),
             ast::Expr::Lit(lit) => Ok(crate::codegen::expr::literals::lower_lit(self, lit)?),
@@ -3065,9 +3064,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     ))
                 }
             }
-            ast::Expr::Await(await_expr) => {
-                self.lower_await_expr(await_expr, function, param_map, locals)
-            }
+            ast::Expr::Await(await_expr) => self.lower_await_expr(await_expr, function, param_map, locals),
             ast::Expr::Arrow(arrow) => {
                 // Detect captured variables in the arrow body by scanning for
                 // identifier usages that are not parameters and that resolve to
@@ -3735,9 +3732,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 self, tpl, function, param_map, locals,
             )?),
             ast::Expr::Unary(unary) => self.lower_unary_expr(unary, function, param_map, locals),
-            ast::Expr::Update(update) => {
-                self.lower_update_expr(update, function, param_map, locals)
-            }
+            ast::Expr::Update(update) => self.lower_update_expr(update, function, param_map, locals),
             _ => Err(Diagnostic::simple("operation not supported")),
         }
     }

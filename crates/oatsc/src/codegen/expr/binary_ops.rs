@@ -3,13 +3,13 @@ use inkwell::values::BasicValueEnum;
 use inkwell::values::FunctionValue;
 use std::collections::HashMap;
 
+use deno_ast::swc::ast;
 use deno_ast::swc::ast::BinaryOp;
+use inkwell::FloatPredicate;
+use inkwell::IntPredicate;
 use inkwell::builder::Builder;
 use inkwell::types::BasicTypeEnum;
 use inkwell::values::{BasicValue, PointerValue};
-use inkwell::FloatPredicate;
-use inkwell::IntPredicate;
-use deno_ast::swc::ast;
 
 // LocalEntry now includes an Option<String> for an optional nominal type name
 // LocalEntry now includes an Option<OatsType> for union tracking
@@ -91,8 +91,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         // Handle string concatenation BEFORE numeric coercion
         // If both operands are pointers and op is Add, treat as string concat
         if let BinaryOp::Add = bin.op
-            && let (BasicValueEnum::PointerValue(lp), BasicValueEnum::PointerValue(rp)) =
-                (l, r)
+            && let (BasicValueEnum::PointerValue(lp), BasicValueEnum::PointerValue(rp)) = (l, r)
         {
             if let Some(strcat) = self.module.get_function("str_concat") {
                 let call_site =
@@ -241,9 +240,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
         if let deno_ast::swc::ast::BinaryOp::LogicalAnd = bin.op {
             // a && b -> if a truthy then b else a
             let left_val = l;
-            let cond = self.to_condition_i1(left_val).ok_or_else(|| {
-                Diagnostic::simple("failed to convert to boolean condition")
-            })?;
+            let cond = self
+                .to_condition_i1(left_val)
+                .ok_or_else(|| Diagnostic::simple("failed to convert to boolean condition"))?;
             let then_bb = self.context.append_basic_block(function, "and.then");
             let else_bb = self.context.append_basic_block(function, "and.else");
             let merge_bb = self.context.append_basic_block(function, "and.merge");
@@ -293,9 +292,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
             // `||` mirrors `&&` but keeps the left value when truthy.
             // a || b -> if a truthy then a else b
             let left_val = l;
-            let cond = self.to_condition_i1(left_val).ok_or_else(|| {
-                Diagnostic::simple("failed to convert to boolean condition")
-            })?;
+            let cond = self
+                .to_condition_i1(left_val)
+                .ok_or_else(|| Diagnostic::simple("failed to convert to boolean condition"))?;
             let then_bb = self.context.append_basic_block(function, "or.then");
             let else_bb = self.context.append_basic_block(function, "or.else");
             let merge_bb = self.context.append_basic_block(function, "or.merge");
@@ -337,14 +336,14 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 // Keep string concat behavior for Add
                 if let BinaryOp::Add = bin.op {
                     if let Some(strcat) = self.module.get_function("str_concat") {
-                        let call_site = match self.builder.build_call(
-                            strcat,
-                            &[lp.into(), rp.into()],
-                            "concat",
-                        ) {
-                            Ok(cs) => cs,
-                            Err(_) => return Err(Diagnostic::simple("operation failed")),
-                        };
+                        let call_site =
+                            match self
+                                .builder
+                                .build_call(strcat, &[lp.into(), rp.into()], "concat")
+                            {
+                                Ok(cs) => cs,
+                                Err(_) => return Err(Diagnostic::simple("operation failed")),
+                            };
                         let either = call_site.try_as_basic_value();
                         match either {
                             inkwell::Either::Left(bv) => Ok(bv),

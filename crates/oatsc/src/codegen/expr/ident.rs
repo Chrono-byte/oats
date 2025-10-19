@@ -117,10 +117,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     let header_ty = self.i64_t;
                     let len_ty = self.i64_t;
                     let data_ty = self.context.i8_type().array_type((str_len + 1) as u32);
-                    let struct_ty = self.context.struct_type(
-                        &[header_ty.into(), len_ty.into(), data_ty.into()],
-                        false,
-                    );
+                    let struct_ty = self
+                        .context
+                        .struct_type(&[header_ty.into(), len_ty.into(), data_ty.into()], false);
 
                     let id = self.next_str_id.get();
                     let name = format!("strlit.{}", id);
@@ -140,12 +139,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     let two = self.i32_t.const_int(2, false);
                     let indices = &[zero, two, zero];
                     let gep = unsafe {
-                        self.builder.build_gep(
-                            struct_ty,
-                            gv.as_pointer_value(),
-                            indices,
-                            "strptr",
-                        )
+                        self.builder
+                            .build_gep(struct_ty, gv.as_pointer_value(), indices, "strptr")
                     };
                     if let Ok(ptr) = gep {
                         self.string_literals.borrow_mut().insert(s.clone(), ptr);

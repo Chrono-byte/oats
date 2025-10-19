@@ -57,10 +57,12 @@ pub fn handle_build(
     }
 
     // Try to discover and load manifest for package-based build
-    if src.is_none() {
+    let effective_src = if let Some(s) = src.clone() {
+        Some(s)
+    } else {
         // Only auto-discover manifest if no explicit source file provided
         match project::Manifest::discover() {
-            Ok(Some((_manifest, manifest_path))) => {
+            Ok(Some((manifest, manifest_path))) => {
                 if !quiet && (verbose || cfg!(debug_assertions)) {
                     eprintln!(
                         "{}",
@@ -69,37 +71,51 @@ pub fn handle_build(
                     );
                 }
 
-                // Use package-based build
+                // Try package-based build first
                 let build_config = crate::build::BuildConfig {
                     verbose,
                     quiet,
                     release,
-                    out_dir,
-                    out_name,
-                    linker,
-                    opt_level,
-                    lto,
-                    target_triple,
-                    target_cpu,
-                    target_features,
+                    out_dir: out_dir.clone(),
+                    out_name: out_name.clone(),
+                    linker: linker.clone(),
+                    opt_level: opt_level.clone(),
+                    lto: lto.clone(),
+                    target_triple: target_triple.clone(),
+                    target_cpu: target_cpu.clone(),
+                    target_features: target_features.clone(),
                     no_link_runtime,
                 };
 
-                let exe_path = build::build_package_project(&manifest_path, build_config)?;
-
-                if !quiet && (verbose || cfg!(debug_assertions)) {
-                    eprintln!(
-                        "{}",
-                        format!("Build complete: {}", exe_path.display()).green()
-                    );
+                match build::build_package_project(&manifest_path, build_config) {
+                    Ok(exe_path) => {
+                        if !quiet && (verbose || cfg!(debug_assertions)) {
+                            eprintln!(
+                                "{}",
+                                format!("Build complete: {}", exe_path.display()).green()
+                            );
+                        }
+                        return Ok(());
+                    }
+                    Err(_) => {
+                        // Package build failed, fall back to multi-module mode using manifest entry point
+                        if !quiet && (verbose || cfg!(debug_assertions)) {
+                            eprintln!(
+                                "{}",
+                                "Package build not available, falling back to multi-module mode".yellow()
+                            );
+                        }
+                        let manifest_dir = manifest_path.parent().unwrap_or_else(|| std::path::Path::new("."));
+                        let entry_point = manifest.entry_point(manifest_dir);
+                        Some(entry_point.to_string_lossy().to_string())
+                    }
                 }
-
-                return Ok(());
             }
             Ok(None) => {
                 if !quiet && (verbose || cfg!(debug_assertions)) {
                     eprintln!("{}", "No Oats.toml found, using single-file mode".yellow());
                 }
+                None
             }
             Err(e) => {
                 if !quiet {
@@ -108,19 +124,20 @@ pub fn handle_build(
                         format!("Warning: Failed to load manifest: {}", e).yellow()
                     );
                 }
+                None
             }
         }
-    }
+    };
 
     // Determine source file for legacy single-file mode
-    let src_file = if let Some(s) = src {
-        s
-    } else if let Ok(p) = std::env::var("OATS_SRC_FILE") {
-        p
+    let src_file = if let Some(effective) = effective_src {
+        effective
     } else {
-        return Err(ToastyError::other(
-            "No source file provided. Pass path as argument, set OATS_SRC_FILE env var, or create Oats.toml",
-        ));
+        src.unwrap_or_else(|| {
+            std::env::var("OATS_SRC_FILE").unwrap_or_else(|_| {
+                "No source file provided. Pass path as argument, set OATS_SRC_FILE env var, or create Oats.toml".to_string()
+            })
+        })
     };
 
     // Read out_dir from environment variable if not provided

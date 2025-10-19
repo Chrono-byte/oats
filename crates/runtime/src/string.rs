@@ -65,6 +65,10 @@ pub unsafe extern "C" fn heap_str_from_cstr(s: *const c_char) -> *mut c_char {
     }
 }
 
+pub fn heap_str_from_cstr_pub(s: *const c_char) -> *mut c_char {
+    unsafe { heap_str_from_cstr(s) }
+}
+
 #[inline]
 pub unsafe fn heap_str_to_obj(data: *const c_char) -> *mut c_void {
     if data.is_null() {
@@ -88,6 +92,10 @@ pub unsafe extern "C" fn rc_inc_str(data: *mut c_char) {
     }
 }
 
+pub fn rc_inc_str_pub(data: *mut c_char) {
+    unsafe { rc_inc_str(data) }
+}
+
 #[unsafe(no_mangle)]
 /// # Safety
 /// `data` must be a pointer previously returned by this runtime for string data
@@ -101,6 +109,10 @@ pub unsafe extern "C" fn rc_dec_str(data: *mut c_char) {
         let obj = heap_str_to_obj(data);
         rc_dec(obj);
     }
+}
+
+pub fn rc_dec_str_pub(data: *mut c_char) {
+    unsafe { rc_dec_str(data) }
 }
 
 #[unsafe(no_mangle)]

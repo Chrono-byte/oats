@@ -3,9 +3,9 @@
 //! This module handles invoking the oatsc compiler as an external process
 //! and managing compilation options.
 
-use std::path::PathBuf;
 use crate::cli::CompileOptions;
 use crate::diagnostics::{Result, ToastyError};
+use std::path::PathBuf;
 
 /// Invoke oatsc compiler as external command
 pub fn invoke_oatsc(options: &CompileOptions) -> Result<Option<PathBuf>> {
@@ -48,6 +48,12 @@ pub fn invoke_oatsc(options: &CompileOptions) -> Result<Option<PathBuf>> {
         args.push(format!("{}={}", name, path));
     }
 
+    // Add external oats modules
+    for (path, symbols) in &options.extern_oats {
+        args.push("--extern-oats".to_string());
+        args.push(format!("{}={}", path, symbols));
+    }
+
     // Add build profile
     if let Some(profile) = &options.build_profile {
         args.push("--profile".to_string());
@@ -87,9 +93,6 @@ pub fn invoke_oatsc(options: &CompileOptions) -> Result<Option<PathBuf>> {
     // Add flags
     if options.emit_object_only {
         args.push("--emit-object-only".to_string());
-    }
-    if !options.link_runtime {
-        args.push("--no-link-runtime".to_string());
     }
 
     // Execute command

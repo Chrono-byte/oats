@@ -4,7 +4,9 @@
 //! managing dependency resolution, parallel compilation, and final linking.
 
 use crate::diagnostics::{Result, ToastyError};
-use crate::project::{NodeIndex, PackageGraph, build_package_graph, topological_sort_packages};
+use crate::project::{
+    NodeIndex, PackageGraph, PackageNode, build_package_graph, topological_sort_packages,
+};
 use petgraph::visit::EdgeRef;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -121,8 +123,16 @@ pub fn build_package_project(manifest_path: &Path, config: BuildConfig) -> Resul
             );
         }
 
+        // Change to package directory for compilation
+        let pkg_node = &graph[*pkg_idx];
+        let original_dir = std::env::current_dir()?;
+        std::env::set_current_dir(&pkg_node.root_dir)?;
+
         let result = compile_package(&graph, *pkg_idx, &build_results, &config)?;
         build_results.insert(pkg_name.clone(), result);
+
+        // Restore original directory
+        std::env::set_current_dir(original_dir)?;
     }
 
     // Link all packages together
@@ -143,39 +153,25 @@ fn compile_package(
 ) -> Result<PackageBuildResult> {
     let pkg_node = &graph[pkg_idx];
     let pkg_name = &pkg_node.name;
-    let pkg_root = &pkg_node.root_dir;
 
     if config.verbose {
-        eprintln!("  Package root: {}", pkg_root.display());
+        eprintln!("  Package root: {}", pkg_node.root_dir.display());
         eprintln!("  Entry point: {}", pkg_node.entry_point().display());
     }
-
-    // Build compile options
-    let mut options = CompileOptions::for_package(pkg_root.clone());
-
-    // Add external package dependencies
-    for edge in graph.edges(pkg_idx) {
-        let dep_idx = edge.target();
-        let dep_node = &graph[dep_idx];
-        let dep_name = &dep_node.name;
-
-        if let Some(dep_result) = built_deps.get(dep_name) {
-            options.extern_pkg.insert(
-                dep_name.clone(),
-                dep_result.meta_file.to_string_lossy().to_string(),
-            );
-        }
-    }
-
-    // Set source file to entry point
-    options.src_file = pkg_node.entry_point().to_string_lossy().to_string();
 
     // Configure output
     let out_dir = config.out_dir.as_deref().unwrap_or("target");
     let obj_filename = format!("{}_pkg.o", pkg_name.replace('-', "_"));
     let obj_path = PathBuf::from(out_dir).join(&obj_filename);
-    options.out_dir = Some(out_dir.to_string());
-    options.out_name = Some(format!("{}_pkg", pkg_name.replace('-', "_")));
+
+    // Ensure output directory exists for incremental build checks
+    if let Some(parent) = obj_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| ToastyError::io(parent, e))?;
+        // Create CACHEDIR.TAG if this is a target directory
+        if parent.ends_with("target") {
+            create_cache_dir_tag(parent.to_string_lossy().as_ref())?;
+        }
+    }
 
     // Check for incremental build opportunity
     if let Ok(obj_metadata) = std::fs::metadata(&obj_path) {
@@ -195,7 +191,7 @@ fn compile_package(
         }
 
         // Check manifest if it exists
-        let manifest_path = pkg_root.join("Oats.toml");
+        let manifest_path = pkg_node.root_dir.join("Oats.toml");
         if let Ok(manifest_metadata) = std::fs::metadata(&manifest_path)
             && let Ok(manifest_mtime) = manifest_metadata.modified()
             && manifest_mtime > obj_mtime
@@ -245,7 +241,7 @@ fn compile_package(
 
                 // Try to load manifest for package information
                 let manifest_info = if let Ok(manifest) =
-                    crate::project::Manifest::from_file(&pkg_root.join("Oats.toml"))
+                    crate::project::Manifest::from_file(&pkg_node.root_dir.join("Oats.toml"))
                 {
                     format!(
                         "name = \"{}\"\nversion = \"{}\"\nentry = \"{}\"\n",
@@ -261,28 +257,17 @@ fn compile_package(
 
             return Ok(PackageBuildResult {
                 name: pkg_name.clone(),
-                object_file: obj_path,
-                meta_file,
+                object_file: obj_path.canonicalize().unwrap_or(obj_path),
+                meta_file: meta_file.canonicalize().unwrap_or(meta_file),
             });
         }
     }
 
-    // Apply build settings
-    options.linker = config.linker.clone();
-    options.link_runtime = !config.no_link_runtime;
-    options.opt_level = config.opt_level.clone();
-    options.lto = config.lto.clone();
-    options.target_triple = config.target_triple.clone();
-    options.target_cpu = config.target_cpu.clone();
-    options.target_features = config.target_features.clone();
-    options.build_profile = if config.release {
-        Some("release".to_string())
-    } else {
-        None
-    };
+    // Compile package using multi-module approach
+    let compiled_modules = compile_package_modules(pkg_node, built_deps, config)?;
 
-    // Compile the package
-    let object_path = invoke_oatsc(&options)?;
+    // Link all modules in this package together
+    link_package_modules(&compiled_modules, &obj_path, config)?;
 
     // Generate metadata file with package information
     let meta_file = PathBuf::from(format!(
@@ -297,133 +282,199 @@ fn compile_package(
     }
 
     // Try to load manifest for package information
-    let manifest_info =
-        if let Ok(manifest) = crate::project::Manifest::from_file(&pkg_root.join("Oats.toml")) {
-            format!(
-                "name = \"{}\"\nversion = \"{}\"\nentry = \"{}\"\n",
-                manifest.package.name, manifest.package.version, manifest.package.entry
-            )
-        } else {
-            format!("name = \"{}\"\n", pkg_name)
-        };
+    let manifest_info = if let Ok(manifest) =
+        crate::project::Manifest::from_file(&pkg_node.root_dir.join("Oats.toml"))
+    {
+        format!(
+            "name = \"{}\"\nversion = \"{}\"\nentry = \"{}\"\n",
+            manifest.package.name, manifest.package.version, manifest.package.entry
+        )
+    } else {
+        format!("name = \"{}\"\n", pkg_name)
+    };
 
     std::fs::write(&meta_file, manifest_info).map_err(|e| ToastyError::io(&meta_file, e))?;
 
     Ok(PackageBuildResult {
         name: pkg_name.clone(),
-        object_file: object_path,
-        meta_file,
+        object_file: obj_path.canonicalize().unwrap_or(obj_path),
+        meta_file: meta_file.canonicalize().unwrap_or(meta_file),
     })
 }
 
-/// Invoke oatsc compiler as external command
-fn invoke_oatsc(options: &CompileOptions) -> Result<PathBuf> {
-    // Get oatsc path from environment (set by preflight check)
-    let oatsc_path = std::env::var("OATS_OATSC_PATH").unwrap_or_else(|_| "oatsc".to_string());
+/// Compile all modules within a single package
+fn compile_package_modules(
+    pkg_node: &PackageNode,
+    built_deps: &HashMap<String, PackageBuildResult>,
+    config: &BuildConfig,
+) -> Result<HashMap<String, PathBuf>> {
+    use crate::project::{build_dependency_graph, topological_sort};
 
-    // Build command arguments
-    let mut args = vec![];
+    let pkg_name = &pkg_node.name;
+    let entry_point = pkg_node.entry_point();
 
-    // Add source file (only in single-file mode, not package mode)
-    if options.package_root.is_none() {
-        args.push(options.src_file.clone());
+    // Build dependency graph starting from entry point
+    let (dep_graph, node_indices, _entry_node) =
+        build_dependency_graph(&entry_point.to_string_lossy(), config.verbose)?;
+
+    // Perform topological sort to get compilation order
+    let compilation_order = topological_sort(&dep_graph, &node_indices)?;
+
+    let mut compiled_modules = HashMap::new();
+
+    for (i, module_path) in compilation_order.iter().enumerate() {
+        if !config.quiet && (config.verbose || cfg!(debug_assertions)) {
+            eprintln!(
+                "    Compiling module {}/{}: {}",
+                i + 1,
+                compilation_order.len(),
+                module_path
+            );
+        }
+
+        let mut options = crate::cli::CompileOptions::new(module_path.clone());
+
+        // Set up extern-pkg for package dependencies
+        for (dep_name, dep_result) in built_deps {
+            // Make meta file path relative to current package root
+            let current_pkg_root = pkg_node.root_dir.as_path();
+            let meta_path = pathdiff::diff_paths(&dep_result.meta_file, current_pkg_root)
+                .unwrap_or_else(|| dep_result.meta_file.clone())
+                .to_string_lossy()
+                .to_string();
+            options.extern_pkg.insert(dep_name.clone(), meta_path);
+        }
+
+        // Set up extern_oats for previously compiled modules in this package
+        for (j, prev_module_path) in compilation_order.iter().enumerate() {
+            if j >= i {
+                break; // Only look at previously compiled modules
+            }
+
+            // Extract exported symbols from the previous module
+            if let Ok(exported_symbols) = extract_exported_symbols(prev_module_path) {
+                if !exported_symbols.is_empty() {
+                    let symbol_list = exported_symbols.join(",");
+                    let module_name = format!(
+                        "./{}",
+                        std::path::Path::new(prev_module_path)
+                            .file_stem()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                    );
+                    options.extern_oats.insert(module_name, symbol_list);
+                }
+            }
+        }
+
+        // Configure output for this module
+        let out_dir = config.out_dir.as_deref().unwrap_or("target");
+        std::fs::create_dir_all(out_dir).map_err(|e| ToastyError::io(out_dir, e))?;
+
+        // Create CACHEDIR.TAG to mark this as a cache directory
+        create_cache_dir_tag(out_dir)?;
+
+        options.out_dir = Some(out_dir.to_string());
+        options.out_name = Some(format!("{}_mod_{}", pkg_name.replace('-', "_"), i));
+        options.emit_object_only = true;
+        options.link_runtime = false; // Don't link runtime for individual modules
+
+        // Apply build settings
+        options.opt_level = config.opt_level.clone();
+        options.lto = config.lto.clone();
+        options.target_triple = config.target_triple.clone();
+        options.target_cpu = config.target_cpu.clone();
+        options.target_features = config.target_features.clone();
+        options.build_profile = if config.release {
+            Some("release".to_string())
+        } else {
+            None
+        };
+
+        // Compile this module
+        let compile_result = crate::compiler::invoke_oatsc(&options)?;
+        if compile_result.is_some() {
+            // Move generated files to target directory
+            let source_stem = std::path::Path::new(module_path)
+                .file_stem()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
+
+            let ll_file = std::path::Path::new(&source_stem).with_extension("ll");
+            let o_file = std::path::Path::new(&source_stem).with_extension("o");
+            let target_ll = std::path::Path::new(out_dir).join(format!("{}.ll", source_stem));
+            let target_o = std::path::Path::new(out_dir).join(format!("{}.o", source_stem));
+
+            // Move .ll file if it exists
+            if ll_file.exists() {
+                std::fs::rename(&ll_file, &target_ll).map_err(|e| ToastyError::io(&ll_file, e))?;
+            }
+
+            // Move .o file if it exists
+            if o_file.exists() {
+                std::fs::rename(&o_file, &target_o).map_err(|e| ToastyError::io(&o_file, e))?;
+            }
+
+            // Return the path to the moved .o file
+            compiled_modules.insert(module_path.clone(), target_o);
+        }
     }
 
-    // Add package root if specified
-    if let Some(pkg_root) = &options.package_root {
-        args.push("--package-root".to_string());
-        args.push(pkg_root.to_string_lossy().to_string());
+    Ok(compiled_modules)
+}
+
+/// Link all modules within a package into a single object file
+fn link_package_modules(
+    compiled_modules: &HashMap<String, PathBuf>,
+    output_path: &Path,
+    config: &BuildConfig,
+) -> Result<()> {
+    if compiled_modules.is_empty() {
+        return Ok(());
     }
 
-    // Add external packages
-    for (name, path) in &options.extern_pkg {
-        args.push("--extern-pkg".to_string());
-        args.push(format!("{}={}", name, path));
+    // If only one module, just copy it
+    if compiled_modules.len() == 1 {
+        let (_module_path, obj_path) = compiled_modules.iter().next().unwrap();
+        std::fs::copy(obj_path, output_path).map_err(|e| ToastyError::io(output_path, e))?;
+        return Ok(());
     }
 
-    // Add build profile
-    if let Some(profile) = &options.build_profile {
-        args.push("--profile".to_string());
-        args.push(profile.clone());
+    // Link multiple modules together
+    let linker_cmd = config.linker.as_deref().unwrap_or("clang");
+    let mut link_cmd = std::process::Command::new(linker_cmd);
+
+    // Ensure output directory exists
+    if let Some(parent) = output_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| ToastyError::io(parent, e))?;
     }
 
-    // Add optimization level
-    if let Some(opt_level) = &options.opt_level {
-        args.push("--opt-level".to_string());
-        args.push(opt_level.clone());
+    // Create relocatable object file
+    link_cmd.arg("-r");
+    link_cmd.arg("-o").arg(output_path);
+
+    for obj_path in compiled_modules.values() {
+        link_cmd.arg(obj_path);
     }
 
-    // Add LTO
-    if let Some(lto) = &options.lto {
-        args.push("--lto".to_string());
-        args.push(lto.clone());
+    if config.verbose {
+        eprintln!("Package link command: {:?}", link_cmd);
     }
 
-    // Add target triple
-    if let Some(triple) = &options.target_triple {
-        args.push("--target-triple".to_string());
-        args.push(triple.clone());
-    }
-
-    // Add target CPU
-    if let Some(cpu) = &options.target_cpu {
-        args.push("--target-cpu".to_string());
-        args.push(cpu.clone());
-    }
-
-    // Add target features
-    if let Some(features) = &options.target_features {
-        args.push("--target-features".to_string());
-        args.push(features.clone());
-    }
-
-    // Add flags
-    if options.emit_object_only {
-        args.push("--emit-object-only".to_string());
-    }
-    if !options.link_runtime {
-        args.push("--no-link-runtime".to_string());
-    }
-
-    // Execute command
-    let output = Command::new(&oatsc_path)
-        .args(&args)
+    let output = link_cmd
         .output()
-        .map_err(|e| {
-            ToastyError::other(format!(
-                "Failed to execute oatsc command: {} {:?}: {}",
-                oatsc_path, args, e
-            ))
-        })?;
+        .map_err(|e| ToastyError::other(format!("Failed to run linker: {}", e)))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-
-        // Check if this is likely a user code error (oatsc already printed diagnostics)
-        // If stderr contains type errors, parsing errors, etc., treat as compilation failure
-        if stderr.contains("error:") || stderr.contains("Error") || stdout.contains("error:") {
-            return Err(ToastyError::CompilationFailed);
-        }
-
-        return Err(ToastyError::CompilerInternalError {
-            message: format!(
-                "oatsc compilation failed:\nSTDOUT:\n{}\n\nSTDERR:\n{}",
-                stdout, stderr
-            ),
+        return Err(ToastyError::LinkerFailed {
+            code: output.status.code(),
+            stderr,
         });
     }
 
-    // Parse output to get object file path
-    // oatsc should print the output path on success
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let object_path = stdout.trim().to_string();
-
-    if object_path.is_empty() {
-        return Err(ToastyError::other("oatsc did not return output path"));
-    }
-
-    Ok(PathBuf::from(object_path))
+    Ok(())
 }
 
 /// Link all compiled packages into final executable
@@ -503,4 +554,59 @@ fn link_packages(
     }
 
     Ok(exe_path)
+}
+
+/// Create a CACHEDIR.TAG file in the specified directory to mark it as a cache directory.
+/// This follows the CACHEDIR.TAG specification: https://bford.info/cachedir/
+fn create_cache_dir_tag(dir_path: &str) -> Result<()> {
+    use std::io::Write;
+
+    let tag_path = std::path::Path::new(dir_path).join("CACHEDIR.TAG");
+
+    // Only create if it doesn't already exist
+    if !tag_path.exists() {
+        let mut file =
+            std::fs::File::create(&tag_path).map_err(|e| ToastyError::io(&tag_path, e))?;
+
+        // Write the standard CACHEDIR.TAG content
+        writeln!(file, "Signature: 8a477f597d28d172789f06886806bc55")
+            .map_err(|e| ToastyError::io(&tag_path, e))?;
+        writeln!(
+            file,
+            "# This file is a cache directory tag created by toasty."
+        )
+        .map_err(|e| ToastyError::io(&tag_path, e))?;
+        writeln!(
+            file,
+            "# For information about cache directory tags see https://bford.info/cachedir/"
+        )
+        .map_err(|e| ToastyError::io(&tag_path, e))?;
+    }
+
+    Ok(())
+}
+
+/// Extract exported function names from an Oats source file
+fn extract_exported_symbols(file_path: &str) -> Result<Vec<String>> {
+    use std::fs;
+
+    let content = fs::read_to_string(file_path).map_err(|e| ToastyError::io(file_path, e))?;
+
+    let mut exported_symbols = Vec::new();
+
+    // Simple regex-like parsing for "export function name("
+    for line in content.lines() {
+        let line = line.trim();
+        if line.starts_with("export function ") {
+            if let Some(start) = line.find("export function ") {
+                let after_export = &line[start + "export function ".len()..];
+                if let Some(end) = after_export.find('(') {
+                    let function_name = after_export[..end].trim();
+                    exported_symbols.push(function_name.to_string());
+                }
+            }
+        }
+    }
+
+    Ok(exported_symbols)
 }

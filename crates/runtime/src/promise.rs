@@ -18,7 +18,12 @@ use crate::runtime_malloc;
 pub extern "C" fn promise_resolve(ptr: *mut std::ffi::c_void) -> *mut std::ffi::c_void {
     unsafe {
         // Allocate a tiny box to hold the pointer and a tag; use libc malloc
-        let size = std::mem::size_of::<*mut std::ffi::c_void>() + 8;
+        let size = match std::mem::size_of::<*mut std::ffi::c_void>().checked_add(8) {
+            Some(size) => size,
+            None => {
+                return std::ptr::null_mut();
+            }
+        };
         let mem = runtime_malloc(size) as *mut u8;
         if mem.is_null() {
             return std::ptr::null_mut();

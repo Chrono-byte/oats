@@ -218,8 +218,8 @@ jobs:
         id: version
         run: |
           if [[ $GITHUB_REF == refs/heads/master ]]; then
-            echo "tag=nightly" >> $GITHUB_OUTPUT
-            echo "title=Nightly Build $(date +%Y-%m-%d)" >> $GITHUB_OUTPUT
+            echo "tag=oatsc-nightly" >> $GITHUB_OUTPUT
+            echo "title=Oatsc Nightly Build $(date +%Y-%m-%d)" >> $GITHUB_OUTPUT
             echo "notes=Automated nightly oatsc compiler build from commit ${{ github.sha }}" >> $GITHUB_OUTPUT
           elif [[ $GITHUB_REF == refs/tags/* ]]; then
             TAG_NAME=${GITHUB_REF#refs/tags/}
@@ -238,8 +238,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if [[ "${{ steps.version.outputs.tag }}" == "nightly" ]]; then
-            gh release delete nightly --yes || true
+          if [[ "${{ steps.version.outputs.tag }}" == "oatsc-nightly" ]]; then
+            gh release delete oatsc-nightly --yes || true
             gh release create "${{ steps.version.outputs.tag }}" \
               --title "${{ steps.version.outputs.title }}" \
               --notes "${{ steps.version.outputs.notes }}" \

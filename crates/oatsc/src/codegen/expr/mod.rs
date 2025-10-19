@@ -27,11 +27,10 @@ pub mod arrow_expr;
 pub mod async_expr;
 pub mod binary_ops;
 pub mod calls;
-// pub mod closures;  // TODO: Fix closures.rs - missing code
 pub mod control_flow_expr;
 pub mod ident;
 pub mod literals;
-pub mod member_access; // TODO: Fix member_access.rs - currently has malformed code
+pub mod member_access;
 pub mod new_expr;
 pub mod paren;
 pub mod this;

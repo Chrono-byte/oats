@@ -22,6 +22,15 @@ fn module_resolution_discovers_dependencies() -> Result<(), Box<dyn std::error::
         .arg("--release");
     oatsc_build.status()?;
 
+    let mut std_build = Command::new("cargo");
+    std_build.current_dir(&workspace_root);
+    std_build
+        .arg("build")
+        .arg("-p")
+        .arg("oats_std")
+        .arg("--release");
+    std_build.status()?;
+
     // Test that toasty discovers imported modules
     let mut cmd = Command::cargo_bin("toasty")?;
 
@@ -36,8 +45,10 @@ fn module_resolution_discovers_dependencies() -> Result<(), Box<dyn std::error::
     // Set up environment variables for oatsc and runtime
     let oatsc_path = workspace_root.join("target/release/oatsc");
     let runtime_path = workspace_root.join("target/release/libruntime.a");
+    let std_path = workspace_root.join("target/release/liboats_std.a");
     cmd.env("OATS_OATSC_PATH", oatsc_path);
     cmd.env("OATS_RUNTIME_PATH", runtime_path);
+    cmd.env("OATS_STD_PATH", std_path);
 
     // Run with verbose to see module discovery
     cmd.arg("--verbose").arg("build").arg(example.as_os_str());
@@ -70,6 +81,15 @@ fn single_file_module_resolution() -> Result<(), Box<dyn std::error::Error>> {
         .arg("--release");
     oatsc_build.status()?;
 
+    let mut std_build = Command::new("cargo");
+    std_build.current_dir(&workspace_root);
+    std_build
+        .arg("build")
+        .arg("-p")
+        .arg("oats_std")
+        .arg("--release");
+    std_build.status()?;
+
     // Test that single files work correctly
     let mut cmd = Command::cargo_bin("toasty")?;
 
@@ -82,8 +102,10 @@ fn single_file_module_resolution() -> Result<(), Box<dyn std::error::Error>> {
     // Set up environment variables for oatsc and runtime
     let oatsc_path = workspace_root.join("target/release/oatsc");
     let runtime_path = workspace_root.join("target/release/libruntime.a");
+    let std_path = workspace_root.join("target/release/liboats_std.a");
     cmd.env("OATS_OATSC_PATH", oatsc_path);
     cmd.env("OATS_RUNTIME_PATH", runtime_path);
+    cmd.env("OATS_STD_PATH", std_path);
 
     cmd.arg("--verbose").arg("build").arg(example.as_os_str());
 

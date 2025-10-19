@@ -351,7 +351,10 @@ pub struct ParsedModule {
 ///
 /// # Security
 /// Checks source size against MAX_SOURCE_SIZE before parsing to prevent DoS.
-pub fn parse_oats_module(source_code: &str, file_path: Option<&str>) -> Result<ParsedModule> {
+pub fn parse_oats_module(
+    source_code: &str,
+    file_path: Option<&str>,
+) -> Result<(Option<ParsedModule>, Vec<diagnostics::Diagnostic>)> {
     parse_oats_module_with_options(source_code, file_path, false)
 }
 
@@ -359,7 +362,8 @@ pub fn parse_oats_module_with_options(
     source_code: &str,
     file_path: Option<&str>,
     enforce_semicolons: bool,
-) -> Result<ParsedModule> {
+) -> Result<(Option<ParsedModule>, Vec<diagnostics::Diagnostic>)> {
+    let diags = Vec::new();
     // Initialize resource limits on first call
     init_parser_limits();
 
@@ -883,9 +887,11 @@ pub fn parse_oats_module_with_options(
         }
     }
 
-    Ok(ParsedModule {
+    let parsed_module = ParsedModule {
         parsed,
         source: source_code.to_string(),
         mut_var_decls,
-    })
+    };
+
+    Ok((Some(parsed_module), diags))
 }

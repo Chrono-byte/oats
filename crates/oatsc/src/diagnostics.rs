@@ -20,6 +20,24 @@
 //! - **Notes and hints**: Blue "note:" and green "help:" annotations
 //! - **Span highlighting**: Caret markers pointing to specific columns
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Severity {
+    Error,
+    Warning,
+    Note,
+}
+
+static DIAGNOSTICS_ENABLED: AtomicBool = AtomicBool::new(true);
+
+/// Sanitizes a file path for display in diagnostic messages.
+/// Currently just returns the path as-is, but can be extended
+/// to normalize paths or make them relative to project root.
+fn sanitize_file_path(path: &str) -> String {
+    path.to_string()
+}
+
 /// Prints a compact, rustc-style diagnostic message to stderr.
 ///
 /// This function emits an error message with optional file context and source
@@ -27,6 +45,8 @@
 /// Rust compiler diagnostic conventions for familiarity.
 ///
 /// # Arguments
+/// * `title` - The diagnostic title (e.g., "error", "warning")
+/// * `color` - ANSI color code for the title
 /// * `file` - Optional file path to display in the diagnostic header
 /// * `source` - Optional source text to show for context (first 6 lines)
 /// * `message` - Primary error message to display
@@ -40,17 +60,16 @@
 ///      |           ^
 /// note: try adding ';' after this expression
 /// ```
-pub fn report_error(file: Option<&str>, source: Option<&str>, message: &str, note: Option<&str>) {
+pub fn report_error(title: &str, color: &str, file: Option<&str>, source: Option<&str>, message: &str, note: Option<&str>) {
     // Use ANSI red escape sequence for error highlighting
-    let red = "\x1b[31m";
     let reset = "\x1b[0m";
 
     if let Some(path) = file {
         let sanitized_path = sanitize_file_path(path);
-        eprintln!("{}error{}: {}", red, reset, message);
+        eprintln!("{}{}{}: {}", color, title, reset, message);
         eprintln!("  --> {}", sanitized_path);
     } else {
-        eprintln!("{}error{}: {}", red, reset, message);
+        eprintln!("{}{}{}: {}", color, title, reset, message);
     }
 
     if let Some(src) = source {
@@ -97,7 +116,7 @@ pub fn report_error_and_bail<T>(
     message: &str,
     note: Option<&str>,
 ) -> anyhow::Result<T> {
-    report_error(file, source, message, note);
+    report_error("error", "\x1b[31m", file, source, message, note);
     Err(anyhow::anyhow!("{}", message))
 }
 
@@ -109,6 +128,8 @@ pub fn report_error_and_bail<T>(
 /// for familiar, actionable diagnostics.
 ///
 /// # Arguments
+/// * `title` - The diagnostic title (e.g., "error", "warning")
+/// * `color` - ANSI color code for the title
 /// * `file` - Optional file path to display in the diagnostic header
 /// * `source` - Source text containing the error (required for span calculation)
 /// * `span_start` - Zero-based byte index of the error location
@@ -121,13 +142,14 @@ pub fn report_error_and_bail<T>(
 /// If the span calculation fails, fallback coordinates are used to ensure
 /// graceful degradation.
 pub fn report_error_span(
+    title: &str,
+    color: &str,
     file: Option<&str>,
     source: &str,
     span_start: usize,
     message: &str,
     note: Option<&str>,
 ) {
-    let red = "\x1b[31m";
     let reset = "\x1b[0m";
 
     // Convert byte offset to line and column coordinates
@@ -153,10 +175,10 @@ pub fn report_error_span(
 
     if let Some(path) = file {
         let sanitized_path = sanitize_file_path(path);
-        eprintln!("{}error{}: {}", red, reset, message);
+        eprintln!("{}{}{}: {}", color, title, reset, message);
         eprintln!("  --> {}:{}:{}", sanitized_path, line_no, col + 1);
     } else {
-        eprintln!("{}error{}: {}", red, reset, message);
+        eprintln!("{}{}{}: {}", color, title, reset, message);
     }
 
     // Display context lines with the error line highlighted
@@ -216,7 +238,7 @@ pub fn report_error_span_and_bail<T>(
     message: &str,
     note: Option<&str>,
 ) -> anyhow::Result<T> {
-    report_error_span(file, source, span_start, message, note);
+    report_error_span("error", "\x1b[31m", file, source, span_start, message, note);
     // Enhance error text with contextual hints for test assertion compatibility
     let mut err_text = message.to_string();
     if message.contains("missing semicolon") {
@@ -252,6 +274,8 @@ pub struct Label {
 /// field enables precise error highlighting when source text is available.
 #[derive(Debug, Clone)]
 pub struct Diagnostic {
+    /// The severity level of the diagnostic
+    pub severity: Severity,
     /// Optional error code categorizing the error type
     pub code: Option<String>,
     /// Primary error message describing the issue
@@ -278,9 +302,11 @@ impl Diagnostic {
     /// Additional context can be added later using the struct fields.
     ///
     /// # Arguments
+    /// * `severity` - The severity level of the diagnostic
     /// * `msg` - Error message describing the issue
-    pub fn simple(msg: impl Into<String>) -> Self {
+    pub fn simple(severity: Severity, msg: impl Into<String>) -> Self {
         Diagnostic {
+            severity,
             code: None,
             message: msg.into(),
             file: None,
@@ -291,8 +317,8 @@ impl Diagnostic {
     }
 
     /// Creates a boxed simple diagnostic (suitable for Result error types).
-    pub fn simple_boxed(msg: impl Into<String>) -> Box<Self> {
-        Box::new(Self::simple(msg))
+    pub fn simple_boxed(severity: Severity, msg: impl Into<String>) -> Box<Self> {
+        Box::new(Self::simple(severity, msg))
     }
 
     /// Creates a span-aware diagnostic with precise source location.
@@ -303,10 +329,12 @@ impl Diagnostic {
     /// marker at the exact error location.
     ///
     /// # Arguments
+    /// * `severity` - The severity level of the diagnostic
     /// * `msg` - Error message describing the issue
     /// * `span_start` - Zero-based byte index into the source text
-    pub fn simple_with_span(msg: impl Into<String>, span_start: usize) -> Self {
+    pub fn simple_with_span(severity: Severity, msg: impl Into<String>, span_start: usize) -> Self {
         Diagnostic {
+            severity,
             code: None,
             message: msg.into(),
             file: None,
@@ -323,8 +351,23 @@ impl Diagnostic {
     }
 
     /// Creates a boxed span-aware diagnostic (suitable for Result error types).
-    pub fn simple_with_span_boxed(msg: impl Into<String>, span_start: usize) -> Box<Self> {
-        Box::new(Self::simple_with_span(msg, span_start))
+    pub fn simple_with_span_boxed(severity: Severity, msg: impl Into<String>, span_start: usize) -> Box<Self> {
+        Box::new(Self::simple_with_span(severity, msg, span_start))
+    }
+
+    /// Creates a simple error diagnostic.
+    pub fn error(msg: impl Into<String>) -> Self {
+        Self::simple(Severity::Error, msg)
+    }
+
+    /// Creates a simple warning diagnostic.
+    pub fn warning(msg: impl Into<String>) -> Self {
+        Self::simple(Severity::Warning, msg)
+    }
+
+    /// Creates a simple note diagnostic.
+    pub fn note(msg: impl Into<String>) -> Self {
+        Self::simple(Severity::Note, msg)
     }
 
     /// Sets the error code for the diagnostic.
@@ -403,100 +446,75 @@ impl Diagnostic {
 /// * `d` - Diagnostic instance containing error information
 /// * `source` - Optional source text for span-aware highlighting
 pub fn emit_diagnostic(d: &Diagnostic, source: Option<&str>) {
-    if DIAGNOSTICS_ENABLED.load(Ordering::SeqCst) {
-        // Print the diagnostic code if available
-        if let Some(code) = &d.code {
-            println!("error[{}]: {}", code, d.message);
-        } else {
-            println!("error: {}", d.message);
-        }
+    if !DIAGNOSTICS_ENABLED.load(Ordering::SeqCst) {
+        return;
+    }
 
-        // Print labels with spans
-        if let Some(src) = source {
-            for label in &d.labels {
-                let span_text = &src[label.span.start..label.span.end];
-                println!(
-                    " --> {}:{}:{}",
-                    d.file.as_deref().unwrap_or("<unknown>"),
-                    label.span.start,
-                    label.span.end
-                );
-                println!(
-                    " | {}
- | {}",
-                    span_text, label.message
-                );
-            }
-        }
+    // Select color and title based on severity
+    let (title, color) = match d.severity {
+        Severity::Error => ("error", "\x1b[31m"), // Red
+        Severity::Warning => ("warning", "\x1b[33m"), // Yellow
+        Severity::Note => ("note", "\x1b[34m"), // Blue
+    };
 
-        // Print additional notes and help
-        if let Some(note) = &d.note {
-            println!("note: {}", note);
-        }
-        if let Some(help) = &d.help {
-            println!("help: {}", help);
-        }
+    // For now, use the first label if available
+    if let (Some(src), Some(label)) = (source, d.labels.first()) {
+        report_error_span(
+            title,
+            color,
+            d.file.as_deref(),
+            src,
+            label.span.start,
+            &d.message,
+            d.note.as_deref(),
+        );
+    } else {
+        report_error(
+            title,
+            color,
+            d.file.as_deref(),
+            source,
+            &d.message,
+            d.note.as_deref(),
+        );
+    }
+
+    // Print help if available
+    if let Some(help) = &d.help {
+        let green = "\x1b[32m";
+        let reset = "\x1b[0m";
+        eprintln!("{}help{}: {}", green, reset, help);
     }
 }
 
-use std::sync::atomic::{AtomicBool, Ordering};
-
-static DIAGNOSTICS_ENABLED: AtomicBool = AtomicBool::new(true);
-
-/// Sanitizes file paths to prevent information disclosure.
-///
-/// This function removes potentially sensitive path components such as
-/// absolute paths, home directory references, or system-specific information.
-/// Only the filename is preserved to prevent leaking system structure.
-///
-/// # Arguments
-/// * `path` - The file path to sanitize
-///
-/// # Returns
-/// A sanitized version of the path safe for diagnostic output
-fn sanitize_file_path(path: &str) -> String {
-    // Extract only the filename to prevent path disclosure
-    std::path::Path::new(path)
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("file")
-        .to_string()
+/// A guard that temporarily suppresses diagnostic output.
+/// When dropped, restores the previous state of diagnostics.
+pub struct DiagnosticsGuard {
+    _prev_state: bool,
 }
 
-/// Temporarily suppresses diagnostic output for testing scenarios.
-///
-/// This function provides a mechanism to disable diagnostic printing within
-/// a specific scope, allowing tests to verify error detection without
-/// cluttering stderr output. The returned guard automatically restores the
-/// previous diagnostic state when dropped.
-///
-/// # Usage
-/// ```rust
-/// use oatsc::diagnostics;
-/// let _guard = diagnostics::suppress();
-/// // Diagnostics are now silenced within this scope
-/// // Guard automatically restores previous state on drop
-/// ```
-///
-/// # Returns
-/// A `SuppressGuard` that restores diagnostic output when dropped
-pub fn suppress() -> SuppressGuard {
-    let prev = DIAGNOSTICS_ENABLED.swap(false, Ordering::SeqCst);
-    SuppressGuard { prev }
-}
-
-/// RAII guard that manages diagnostic output state.
-///
-/// This guard type ensures that diagnostic suppression is properly scoped
-/// and automatically restored when the guard goes out of scope. The guard
-/// should not be manually manipulated; it implements `Drop` to handle
-/// state restoration automatically.
-pub struct SuppressGuard {
-    prev: bool,
-}
-
-impl Drop for SuppressGuard {
+impl Drop for DiagnosticsGuard {
     fn drop(&mut self) {
-        DIAGNOSTICS_ENABLED.store(self.prev, Ordering::SeqCst);
+        DIAGNOSTICS_ENABLED.store(self._prev_state, Ordering::SeqCst);
     }
 }
+
+/// Temporarily suppresses diagnostic output for the lifetime of the returned guard.
+///
+/// This is useful for test scenarios where you want to disable diagnostic emission
+/// to avoid cluttering test output. The diagnostics state is restored when the
+/// guard is dropped.
+///
+/// # Example
+/// ```ignore
+/// let _guard = suppress();
+/// // diagnostics are now suppressed
+/// // when _guard is dropped, diagnostics are restored
+/// ```
+pub fn suppress() -> DiagnosticsGuard {
+    let prev_state = DIAGNOSTICS_ENABLED.swap(false, Ordering::SeqCst);
+    DiagnosticsGuard {
+        _prev_state: prev_state,
+    }
+}
+

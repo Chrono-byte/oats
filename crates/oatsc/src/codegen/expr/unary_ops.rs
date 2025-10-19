@@ -1,4 +1,4 @@
-use crate::diagnostics::Diagnostic;
+use crate::diagnostics::{Diagnostic, Severity};
 use inkwell::values::BasicValueEnum;
 use inkwell::values::FunctionValue;
 use std::collections::HashMap;
@@ -51,7 +51,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     .builder
                     .build_call(disc_fn, &[pv.into()], "union_get_disc");
                 let cs = call_site
-                    .map_err(|_| Diagnostic::simple("failed to call union_get_discriminant"))?;
+                    .map_err(|_| Diagnostic::error("failed to call union_get_discriminant"))?;
                 if let inkwell::Either::Left(bv) = cs.try_as_basic_value() {
                     let disc = bv.into_int_value();
                     // Compare disc to constants: 0 -> number, 1 -> string, 2 -> boolean
@@ -63,19 +63,19 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         .builder
                         .build_int_compare(inkwell::IntPredicate::EQ, disc, zero, "disc_eq_num")
                         .map_err(|_| {
-                            Diagnostic::simple("failed to build int compare for typeof")
+                            Diagnostic::error("failed to build int compare for typeof")
                         })?;
                     let cmp_str = self
                         .builder
                         .build_int_compare(inkwell::IntPredicate::EQ, disc, one, "disc_eq_str")
                         .map_err(|_| {
-                            Diagnostic::simple("failed to build int compare for typeof")
+                            Diagnostic::error("failed to build int compare for typeof")
                         })?;
                     let cmp_bool = self
                         .builder
                         .build_int_compare(inkwell::IntPredicate::EQ, disc, two, "disc_eq_bool")
                         .map_err(|_| {
-                            Diagnostic::simple("failed to build int compare for typeof")
+                            Diagnostic::error("failed to build int compare for typeof")
                         })?;
 
                     let s_num = self.intern_string_literal("number");
@@ -92,7 +92,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             s_str.as_basic_value_enum(),
                             "sel_num_str",
                         )
-                        .map_err(|_| Diagnostic::simple("failed to build select for typeof"))?;
+                        .map_err(|_| Diagnostic::error("failed to build select for typeof"))?;
                     let sel2 = self
                         .builder
                         .build_select(
@@ -101,11 +101,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             s_obj.as_basic_value_enum(),
                             "sel_bool_obj",
                         )
-                        .map_err(|_| Diagnostic::simple("failed to build select for typeof"))?;
+                        .map_err(|_| Diagnostic::error("failed to build select for typeof"))?;
                     let final_sel = self
                         .builder
                         .build_select(cmp_str, sel1, sel2, "sel_final")
-                        .map_err(|_| Diagnostic::simple("failed to build select for typeof"))?;
+                        .map_err(|_| Diagnostic::error("failed to build select for typeof"))?;
                     return Ok(final_sel);
                 }
                 // If the discriminant call failed, fall back to "string"
@@ -132,11 +132,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     let neg = self
                         .builder
                         .build_float_neg(fv, "neg")
-                        .map_err(|_| Diagnostic::simple("LLVM builder error"))?;
+                        .map_err(|_| Diagnostic::error("LLVM builder error"))?;
                     Ok(neg.as_basic_value_enum())
                 } else {
-                    Err(Diagnostic::simple_boxed(
-                        "unary minus requires numeric operand",
+                    Err(Diagnostic::simple_boxed(Severity::Error, "unary minus requires numeric operand",
                     ))
                 }
             }
@@ -145,8 +144,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 if let Some(fv) = self.coerce_to_f64(arg_val) {
                     Ok(fv.as_basic_value_enum())
                 } else {
-                    Err(Diagnostic::simple_boxed(
-                        "unary plus requires numeric operand",
+                    Err(Diagnostic::simple_boxed(Severity::Error, "unary plus requires numeric operand",
                     ))
                 }
             }
@@ -154,12 +152,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 // Logical NOT: convert to boolean and negate using XOR
                 let cond = self
                     .to_condition_i1(arg_val)
-                    .ok_or_else(|| Diagnostic::simple("failed to convert to boolean"))?;
+                    .ok_or_else(|| Diagnostic::error("failed to convert to boolean"))?;
                 let xor_val = self.context.bool_type().const_int(1, false);
                 let not = self
                     .builder
                     .build_xor(cond, xor_val, "logical_not")
-                    .map_err(|_| Diagnostic::simple("LLVM builder error"))?;
+                    .map_err(|_| Diagnostic::error("LLVM builder error"))?;
                 Ok(not.as_basic_value_enum())
             }
             UnaryOp::Tilde => {
@@ -169,25 +167,24 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     let iv = self
                         .builder
                         .build_float_to_signed_int(fv, self.context.i32_type(), "f2i")
-                        .map_err(|_| Diagnostic::simple("LLVM builder error"))?;
+                        .map_err(|_| Diagnostic::error("LLVM builder error"))?;
                     // Apply bitwise NOT
                     let not_iv = self
                         .builder
                         .build_not(iv, "bnot")
-                        .map_err(|_| Diagnostic::simple("LLVM builder error"))?;
+                        .map_err(|_| Diagnostic::error("LLVM builder error"))?;
                     // Convert back to f64
                     let result_fv = self
                         .builder
                         .build_signed_int_to_float(not_iv, self.f64_t, "i2f")
-                        .map_err(|_| Diagnostic::simple("LLVM builder error"))?;
+                        .map_err(|_| Diagnostic::error("LLVM builder error"))?;
                     Ok(result_fv.as_basic_value_enum())
                 } else {
-                    Err(Diagnostic::simple_boxed(
-                        "bitwise NOT requires numeric operand",
+                    Err(Diagnostic::simple_boxed(Severity::Error, "bitwise NOT requires numeric operand",
                     ))
                 }
             }
-            _ => Err(Diagnostic::simple_boxed("unsupported unary operator")),
+            _ => Err(Diagnostic::simple_boxed(Severity::Error, "unsupported unary operator")),
         }
     }
 
@@ -210,18 +207,16 @@ impl<'a> crate::codegen::CodeGen<'a> {
             let var_entry = if param_map.contains_key(&name) {
                 // It's a parameter - we can't update parameters directly
                 // Need to create a local shadow
-                return Err(Diagnostic::simple_boxed(
-                    "cannot update function parameter directly",
+                return Err(Diagnostic::simple_boxed(Severity::Error, "cannot update function parameter directly",
                 ));
             } else if let Some((ptr, ty, initialized, is_const, _extra, _nominal, _oats_type)) =
                 self.find_local(locals, &name)
             {
                 if is_const {
-                    return Err(Diagnostic::simple_boxed("cannot update immutable variable"));
+                    return Err(Diagnostic::simple_boxed(Severity::Error, "cannot update immutable variable"));
                 }
                 if !initialized {
-                    return Err(Diagnostic::simple_boxed(
-                        "cannot update uninitialized variable",
+                    return Err(Diagnostic::simple_boxed(Severity::Error, "cannot update uninitialized variable",
                     ));
                 }
                 Some((ptr, ty))
@@ -234,7 +229,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 let old_val = self
                     .builder
                     .build_load(ty, ptr, &name)
-                    .map_err(|_| Diagnostic::simple("LLVM builder error"))?;
+                    .map_err(|_| Diagnostic::error("LLVM builder error"))?;
 
                 // Only support numeric updates
                 if let Some(old_fv) = self.coerce_to_f64(old_val) {
@@ -245,17 +240,17 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         UpdateOp::PlusPlus => self
                             .builder
                             .build_float_add(old_fv, one, "inc")
-                            .map_err(|_| Diagnostic::simple("LLVM builder error"))?,
+                            .map_err(|_| Diagnostic::error("LLVM builder error"))?,
                         UpdateOp::MinusMinus => self
                             .builder
                             .build_float_sub(old_fv, one, "dec")
-                            .map_err(|_| Diagnostic::simple("LLVM builder error"))?,
+                            .map_err(|_| Diagnostic::error("LLVM builder error"))?,
                     };
 
                     // Store new value
                     self.builder
                         .build_store(ptr, new_fv)
-                        .map_err(|_| Diagnostic::simple("LLVM builder error"))?;
+                        .map_err(|_| Diagnostic::error("LLVM builder error"))?;
 
                     // Return old value for postfix, new value for prefix
                     if update.prefix {
@@ -264,16 +259,14 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         Ok(old_fv.as_basic_value_enum())
                     }
                 } else {
-                    Err(Diagnostic::simple_boxed(
-                        "update operators require numeric operand",
+                    Err(Diagnostic::simple_boxed(Severity::Error, "update operators require numeric operand",
                     ))
                 }
             } else {
-                Err(Diagnostic::simple_boxed("variable not found"))
+                Err(Diagnostic::simple_boxed(Severity::Error, "variable not found"))
             }
         } else {
-            Err(Diagnostic::simple_boxed(
-                "update operator only supports simple identifiers",
+            Err(Diagnostic::simple_boxed(Severity::Error, "update operator only supports simple identifiers",
             ))
         }
     }

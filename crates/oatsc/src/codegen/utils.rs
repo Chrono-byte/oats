@@ -8,7 +8,7 @@ use inkwell::values::{BasicValueEnum, PointerValue};
 use std::collections::HashMap;
 
 use crate::codegen::CodeGen;
-use crate::diagnostics::Diagnostic;
+use crate::diagnostics::{Diagnostic, Severity};
 use crate::types::OatsType;
 
 /// Reference counting operation helpers
@@ -68,7 +68,7 @@ pub mod runtime {
         codegen
             .module
             .get_function("str_concat")
-            .ok_or_else(|| Diagnostic::simple_boxed("str_concat function not found"))
+            .ok_or_else(|| Diagnostic::simple_boxed(Severity::Error, "str_concat function not found"))
     }
 
     /// Get the number to string function
@@ -91,11 +91,11 @@ pub mod memory {
         let call_site = codegen
             .builder
             .build_call(malloc_fn, &[size.into()], name)
-            .map_err(|_| Diagnostic::simple("failed to build malloc call"))?;
+            .map_err(|_| Diagnostic::error("failed to build malloc call"))?;
         let ptr = call_site
             .try_as_basic_value()
             .left()
-            .ok_or_else(|| Diagnostic::simple("malloc call returned no value"))?;
+            .ok_or_else(|| Diagnostic::error("malloc call returned no value"))?;
         Ok(ptr.into_pointer_value())
     }
 
@@ -109,11 +109,11 @@ pub mod memory {
         let call_site = codegen
             .builder
             .build_call(array_alloc_fn, &[length.into()], name)
-            .map_err(|_| Diagnostic::simple("failed to build array_alloc call"))?;
+            .map_err(|_| Diagnostic::error("failed to build array_alloc call"))?;
         let ptr = call_site
             .try_as_basic_value()
             .left()
-            .ok_or_else(|| Diagnostic::simple("array_alloc call returned no value"))?;
+            .ok_or_else(|| Diagnostic::error("array_alloc call returned no value"))?;
         Ok(ptr.into_pointer_value())
     }
 }

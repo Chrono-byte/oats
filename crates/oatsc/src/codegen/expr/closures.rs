@@ -1,4 +1,4 @@
-use crate::diagnostics::Diagnostic;
+use crate::diagnostics::{Diagnostic, Severity};
 use inkwell::values::BasicValueEnum;
 use inkwell::values::FunctionValue;
 use std::collections::HashMap;
@@ -29,6 +29,6 @@ impl<'a> crate::codegen::CodeGen<'a> {
         _locals: &mut LocalsStackLocal<'a>,
     ) -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
         // The full Arrow expression lowering code goes here
-        Err(Diagnostic::simple_boxed("arrow expression not implemented yet"))
+        Err(Diagnostic::simple_boxed(Severity::Error, "arrow expression not implemented yet"))
     }
 }

@@ -1,4 +1,4 @@
-use crate::diagnostics::Diagnostic;
+use crate::diagnostics::{Diagnostic, Severity};
 use inkwell::values::BasicValueEnum;
 use inkwell::values::FunctionValue;
 use std::collections::HashMap;
@@ -35,9 +35,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 .replace("this".to_string());
             Ok(pv)
         } else {
-            Err(Diagnostic::simple_with_span_boxed(
-                "'this' used in function with no parameters",
-                this_expr.span.lo.0 as usize,
+            Err(Diagnostic::simple_with_span_boxed(Severity::Error, "'this' used in function with no parameters", this_expr.span.lo.0 as usize,
             ))
         }
     }

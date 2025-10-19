@@ -1,4 +1,4 @@
-use crate::diagnostics::Diagnostic;
+use crate::diagnostics::{Diagnostic, Severity};
 use inkwell::values::BasicValueEnum;
 use inkwell::values::FunctionValue;
 use std::collections::HashMap;
@@ -46,8 +46,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
         // Check if the identifier refers to an enum type (enums themselves are not values)
         if let Some(OatsType::Enum(_, _)) = self.symbol_table.borrow().get(&name) {
-            return Err(Diagnostic::simple_with_span_boxed(
-                format!(
+            return Err(Diagnostic::simple_with_span_boxed(Severity::Error, format!(
                     "'{}' is an enum type and cannot be used as a value. Use 'enum.member' syntax instead.",
                     name
                 ),
@@ -147,9 +146,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         self.string_literals.borrow_mut().insert(s.clone(), ptr);
                         return Ok(ptr.as_basic_value_enum());
                     }
-                    return Err(Diagnostic::simple_with_span_boxed(
-                        "failed to lower const string literal",
-                        id as usize,
+                    return Err(Diagnostic::simple_with_span_boxed(Severity::Error, "failed to lower const string literal", id as usize,
                     ));
                 }
                 crate::codegen::const_eval::ConstValue::Array(_)
@@ -158,9 +155,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     if let Some(gptr) = self.const_globals.borrow().get(&name) {
                         return Ok(gptr.as_basic_value_enum());
                     }
-                    return Err(Diagnostic::simple_with_span_boxed(
-                        "const global not emitted",
-                        id.span.lo.0 as usize,
+                    return Err(Diagnostic::simple_with_span_boxed(Severity::Error, "const global not emitted", id.span.lo.0 as usize,
                     ));
                 }
             }
@@ -179,11 +174,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
             if !initialized {
                 // Emit a call to unreachable to trap at runtime
                 let _ = self.builder.build_unreachable();
-                return Err(Diagnostic::simple_boxed("expression lowering failed"))?;
+                return Err(Diagnostic::simple_boxed(Severity::Error, "expression lowering failed"))?;
             }
             let loaded = match self.builder.build_load(ty, ptr, &name) {
                 Ok(v) => v,
-                Err(_) => return Err(Diagnostic::simple_boxed("operation failed")),
+                Err(_) => return Err(Diagnostic::simple_boxed(Severity::Error, "operation failed")),
             };
             // Record that this expression originated from local `name`.
             self.last_expr_origin_local
@@ -192,8 +187,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             return Ok(loaded);
         }
 
-        Err(Diagnostic::simple_with_span_boxed(
-            format!("undefined identifier '{}'", name),
+        Err(Diagnostic::simple_with_span_boxed(Severity::Error, format!("undefined identifier '{}'", name),
             id.span.lo.0 as usize,
         ))
     }

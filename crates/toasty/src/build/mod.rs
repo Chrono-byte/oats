@@ -324,8 +324,10 @@ fn invoke_oatsc(options: &CompileOptions) -> Result<PathBuf> {
     // Build command arguments
     let mut args = vec![];
 
-    // Add source file
-    args.push(options.src_file.clone());
+    // Add source file (only in single-file mode, not package mode)
+    if options.package_root.is_none() {
+        args.push(options.src_file.clone());
+    }
 
     // Add package root if specified
     if let Some(pkg_root) = &options.package_root {

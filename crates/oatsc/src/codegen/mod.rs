@@ -1229,7 +1229,46 @@ impl<'a> CodeGen<'a> {
             } else {
                 inkwell::values::BasicValueEnum::IntValue(i32_t.const_int(0, false))
             };
-            let _ = self.builder.build_return(Some(&ret_val));
+
+            // Convert to proper exit code: 0 for success, 1 for failure
+            let ret_int_val = ret_val.into_int_value();
+            let zero = i32_t.const_int(0, false);
+            let one = i32_t.const_int(1, false);
+            let is_success = match self.builder.build_int_compare(
+                inkwell::IntPredicate::EQ,
+                ret_int_val,
+                zero,
+                "is_success",
+            ) {
+                Ok(cmp) => cmp,
+                Err(_) => {
+                    crate::diagnostics::emit_diagnostic(
+                        &crate::diagnostics::Diagnostic::simple_boxed(
+                            Severity::Error,
+                            "failed to build int compare for exit code",
+                        ),
+                        Some(self.source),
+                    );
+                    zero
+                }
+            };
+            let exit_code = match self
+                .builder
+                .build_select(is_success, zero, one, "exit_code")
+            {
+                Ok(sel) => sel,
+                Err(_) => {
+                    crate::diagnostics::emit_diagnostic(
+                        &crate::diagnostics::Diagnostic::simple_boxed(
+                            Severity::Error,
+                            "failed to build select for exit code",
+                        ),
+                        Some(self.source),
+                    );
+                    inkwell::values::BasicValueEnum::IntValue(zero)
+                }
+            };
+            let _ = self.builder.build_return(Some(&exit_code));
         } else {
             // No basic return (void), return 0
             let const_zero = i32_t.const_int(0, false);

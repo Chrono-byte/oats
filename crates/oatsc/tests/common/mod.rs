@@ -67,6 +67,7 @@ pub mod deno_adapter;
 /// test output clean and focused. Diagnostics are restored when the function
 /// completes, ensuring proper error reporting in subsequent operations.
 #[cfg(test)]
+#[allow(dead_code)]
 pub fn gen_ir_for_source(src: &str) -> Result<String> {
     // Suppress diagnostic output during test execution to maintain clean test output.
     // The guard automatically restores previous diagnostic settings when dropped.

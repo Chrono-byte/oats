@@ -3,7 +3,7 @@
 //! This module implements the build orchestrator for package-based compilation,
 //! managing dependency resolution, parallel compilation, and final linking.
 
-use crate::error::{Diagnostic, BoxedResult};
+use crate::error::{Result, ToastyError};
 use crate::project::{NodeIndex, PackageGraph, build_package_graph, topological_sort_packages};
 use petgraph::visit::EdgeRef;
 use std::collections::HashMap;
@@ -78,7 +78,7 @@ pub struct BuildConfig {
 }
 
 /// Orchestrate a package-based build starting from a root manifest
-pub fn build_package_project(manifest_path: &Path, config: BuildConfig) -> BoxedResult<PathBuf> {
+pub fn build_package_project(manifest_path: &Path, config: BuildConfig) -> Result<PathBuf> {
     // Build package dependency graph
     if !config.quiet && (config.verbose || cfg!(debug_assertions)) {
         eprintln!("Building package dependency graph...");
@@ -140,7 +140,7 @@ fn compile_package(
     pkg_idx: NodeIndex,
     built_deps: &HashMap<String, PackageBuildResult>,
     config: &BuildConfig,
-) -> BoxedResult<PackageBuildResult> {
+) -> Result<PackageBuildResult> {
     let pkg_node = &graph[pkg_idx];
     let pkg_name = &pkg_node.name;
     let pkg_root = &pkg_node.root_dir;
@@ -241,7 +241,7 @@ fn compile_package(
                 // Ensure output directory exists
                 if let Some(parent) = meta_file.parent() {
                     std::fs::create_dir_all(parent).map_err(|e| {
-                        Diagnostic::boxed(format!("Failed to create output directory: {}", e))
+                        ToastyError::io(&meta_file, e)
                     })?;
                 }
 
@@ -258,7 +258,7 @@ fn compile_package(
                 };
 
                 std::fs::write(&meta_file, manifest_info).map_err(|e| {
-                    Diagnostic::boxed(format!("Failed to write metadata file: {}", e))
+                    ToastyError::io(&meta_file, e)
                 })?;
             }
 
@@ -297,7 +297,7 @@ fn compile_package(
     // Ensure output directory exists
     if let Some(parent) = meta_file.parent() {
         std::fs::create_dir_all(parent)
-            .map_err(|e| Diagnostic::boxed(format!("Failed to create output directory: {}", e)))?;
+            .map_err(|e| ToastyError::io(&meta_file, e))?;
     }
 
     // Try to load manifest for package information
@@ -312,7 +312,7 @@ fn compile_package(
         };
 
     std::fs::write(&meta_file, manifest_info)
-        .map_err(|e| Diagnostic::boxed(format!("Failed to write metadata file: {}", e)))?;
+        .map_err(|e| ToastyError::io(&meta_file, e))?;
 
     Ok(PackageBuildResult {
         name: pkg_name.clone(),
@@ -322,7 +322,7 @@ fn compile_package(
 }
 
 /// Invoke oatsc compiler as external command
-fn invoke_oatsc(options: &CompileOptions) -> BoxedResult<PathBuf> {
+fn invoke_oatsc(options: &CompileOptions) -> Result<PathBuf> {
     // Get oatsc path from environment (set by preflight check)
     let oatsc_path = std::env::var("OATS_OATSC_PATH").unwrap_or_else(|_| "oatsc".to_string());
 
@@ -393,19 +393,28 @@ fn invoke_oatsc(options: &CompileOptions) -> BoxedResult<PathBuf> {
         .args(&args)
         .output()
         .map_err(|e| {
-            Diagnostic::boxed(format!(
-                "Failed to execute oatsc command: {} {:?}",
-                oatsc_path, e
+            ToastyError::other(format!(
+                "Failed to execute oatsc command: {} {:?}: {}",
+                oatsc_path, args, e
             ))
         })?;
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        return Err(Diagnostic::boxed(format!(
-            "oatsc compilation failed:\nSTDOUT: {}\nSTDERR: {}",
-            stdout, stderr
-        )));
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        
+        // Check if this is likely a user code error (oatsc already printed diagnostics)
+        // If stderr contains type errors, parsing errors, etc., treat as compilation failure
+        if stderr.contains("error:") || stderr.contains("Error") || stdout.contains("error:") {
+            return Err(ToastyError::CompilationFailed);
+        }
+        
+        return Err(ToastyError::CompilerInternalError {
+            message: format!(
+                "oatsc compilation failed:\nSTDOUT:\n{}\n\nSTDERR:\n{}",
+                stdout, stderr
+            ),
+        });
     }
 
     // Parse output to get object file path
@@ -414,8 +423,8 @@ fn invoke_oatsc(options: &CompileOptions) -> BoxedResult<PathBuf> {
     let object_path = stdout.trim().to_string();
 
     if object_path.is_empty() {
-        return Err(Diagnostic::boxed(
-            "oatsc did not return output path".to_string(),
+        return Err(ToastyError::other(
+            "oatsc did not return output path"
         ));
     }
 
@@ -427,7 +436,7 @@ fn link_packages(
     root_pkg_name: &str,
     build_results: &HashMap<String, PackageBuildResult>,
     config: &BuildConfig,
-) -> BoxedResult<PathBuf> {
+) -> Result<PathBuf> {
     let out_dir = config.out_dir.as_deref().unwrap_or(".");
     let exe_name = config
         .out_name
@@ -440,10 +449,13 @@ fn link_packages(
         // Use explicitly specified runtime path
         let runtime_lib = PathBuf::from(runtime_path);
         if !runtime_lib.exists() {
-            return Err(Diagnostic::boxed(format!(
-                "Runtime library not found: {}",
-                runtime_lib.display()
-            )));
+            return Err(ToastyError::io(
+                &runtime_lib,
+                std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    "Runtime library not found",
+                ),
+            ));
         }
         runtime_lib
     } else {
@@ -451,8 +463,12 @@ fn link_packages(
         let runtime_lib = PathBuf::from("libruntime.a");
 
         if !runtime_lib.exists() {
-            return Err(Diagnostic::boxed(
-                "Runtime library not found: libruntime.a".to_string(),
+            return Err(ToastyError::io(
+                &runtime_lib,
+                std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    "Runtime library not found",
+                ),
             ));
         }
         runtime_lib
@@ -481,12 +497,16 @@ fn link_packages(
         eprintln!("Link command: {:?}", link_cmd);
     }
 
-    let link_status = link_cmd
-        .status()
-        .map_err(|e| Diagnostic::boxed(format!("Failed to run clang linker: {}", e)))?;
+    let output = link_cmd
+        .output()
+        .map_err(|e| ToastyError::other(format!("Failed to run clang linker: {}", e)))?;
 
-    if !link_status.success() {
-        return Err(Diagnostic::boxed("Linking failed".to_string()));
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        return Err(ToastyError::LinkerFailed {
+            code: output.status.code(),
+            stderr,
+        });
     }
 
     if !config.quiet && (config.verbose || cfg!(debug_assertions)) {

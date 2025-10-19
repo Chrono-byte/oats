@@ -53,16 +53,16 @@ thread_local! {
 const MAX_RECURSION_DEPTH: usize = 128;
 
 // Module placeholders for incremental refactor.
-mod array;
-mod ffi;
-mod header;
-mod heap;
-mod object;
-mod rc;
-mod string;
-mod utils;
+pub mod array;
+pub mod ffi;
+pub mod header;
+pub mod heap;
+pub mod object;
+pub mod rc;
+pub mod string;
+pub mod utils;
 // Collector implementation lives in a separate module.
-mod collector;
+pub mod collector;
 #[allow(unused_imports)]
 pub use crate::ffi::*;
 
@@ -343,7 +343,6 @@ pub use crate::rc::rc_weak_inc;
 pub use crate::rc::rc_weak_upgrade;
 
 // Re-export utils functions
-pub use crate::utils::sleep_ms;
 
 // Re-export object/union functions
 pub use crate::object::{

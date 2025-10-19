@@ -370,19 +370,16 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
         }
     }
 
-    let func_decl = if let Some(f) = func_decl_opt {
-        f
+    let func_decl: Option<deno_ast::swc::ast::Function> = if let Some(f) = func_decl_opt {
+        Some(f)
     } else {
         // Check if we're in library mode (emitting object only)
         let emit_object_only = std::env::var("OATS_EMIT_OBJECT_ONLY").is_ok();
         if emit_object_only {
-            let out_dir = std::env::var("OATS_OUT_DIR").unwrap_or_else(|_| ".".to_string());
-            let src_filename = std::path::Path::new(&src_path)
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("out");
-            let out_obj = format!("{}/{}.o", out_dir, src_filename);
-            return Ok(Some(out_obj));
+            // For library modules, we still need to compile but skip main function requirement
+            // We'll continue with compilation but won't require a main function
+            // The actual return will happen after object file emission
+            None
         } else {
             return diagnostics::report_error_and_bail(
                 Some(&src_path),
@@ -394,7 +391,11 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
     };
 
     let mut symbols = SymbolTable::new();
-    let func_sig = check_function_strictness(&func_decl, &mut symbols)?;
+    let func_sig = if let Some(ref func) = func_decl {
+        Some(check_function_strictness(func, &mut symbols)?)
+    } else {
+        None
+    };
 
     let context = Context::create();
     let module = context.create_module("oats_aot");
@@ -1156,22 +1157,30 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
     // conflicting with the C runtime entrypoint. The script must export
     // `main`, but we generate `oats_main` as the emitted symbol the host
     // runtime will call.
-    codegen
-        .gen_function_ir(
-            "oats_main",
-            &func_decl,
-            &func_sig.params,
-            &func_sig.ret,
-            None,
-        )
-        .map_err(|d| {
-            crate::diagnostics::emit_diagnostic(&d, Some(source.as_str()));
-            anyhow::anyhow!("{}", d.message)
-        })?;
+    if let Some(ref func) = func_decl {
+        if let Some(ref sig) = func_sig {
+            codegen
+                .gen_function_ir(
+                    "oats_main",
+                    func,
+                    &sig.params,
+                    &sig.ret,
+                    None,
+                )
+                .map_err(|d| {
+                    crate::diagnostics::emit_diagnostic(&d, Some(source.as_str()));
+                    anyhow::anyhow!("{}", d.message)
+                })?;
+        }
+    }
 
     // Try to emit a host `main` into the module so no external shim is
     // required. Recompute IR after emission.
-    let _emitted_host_main = codegen.emit_host_main(&func_sig.params, &func_sig.ret);
+    let emitted_host_main = if let Some(ref sig) = func_sig {
+        codegen.emit_host_main(&sig.params, &sig.ret)
+    } else {
+        false
+    };
 
     // Note: LLVM optimizations (inlining, loop opts) are applied via clang -O3 during compilation
     let ir = codegen.module.print_to_string().to_string();
@@ -1269,13 +1278,208 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
             )
         })?;
 
-    // oatsc now always emits objects only - linking is handled by toasty
-    println!("{}", out_obj);
-    let out_dir = std::env::var("OATS_OUT_DIR").unwrap_or_else(|_| ".".to_string());
-    let src_filename = std::path::Path::new(&src_path)
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("out");
-    let out_obj = format!("{}/{}.o", out_dir, src_filename);
-    return Ok(Some(out_obj));
+    // If requested, only emit the object and skip the final host linking step.
+    if std::env::var("OATS_EMIT_OBJECT_ONLY").is_ok() {
+        eprintln!(
+            "OATS_EMIT_OBJECT_ONLY set; emitted {} and skipping link",
+            out_obj
+        );
+        return Ok(Some(out_obj));
+    }
+
+    // Locate or produce rt_main object. Prefer an existing top-level `rt_main.o` so
+    // the repo can ship a prebuilt small host object. Otherwise try to compile
+    // `runtime/rt_main/src/main.rs` if it exists.
+    let rt_main_obj = if emitted_host_main {
+        // host main emitted into the module; no external rt_main.o requi
+        String::new()
+    } else if Path::new("rt_main.o").exists() {
+        // Use the repo-provided object file
+        String::from("rt_main.o")
+    } else if Path::new("crates/runtime/rt_main/src/main.rs").exists() {
+        let rt_main_obj = format!("{}/rt_main.o", out_dir);
+        // Compile rt_main with rustc; check for missing rustc binary explicitly
+        let mut rustc_cmd = Command::new("rustc");
+        rustc_cmd
+            .arg("--crate-type")
+            .arg("bin")
+            .arg("--emit=obj")
+            .arg("crates/runtime/rt_main/src/main.rs")
+            .arg("-O")
+            .arg("-o")
+            .arg(&rt_main_obj);
+        match rustc_cmd.status() {
+            Ok(status) => {
+                if !status.success() {
+                    anyhow::bail!("rustc failed to compile rt_main to object");
+                }
+            }
+            Err(e) => {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    anyhow::bail!(
+                        "`rustc` not found in PATH; please install Rust toolchain or ensure `rustc` is available"
+                    );
+                } else {
+                    return Err(e.into());
+                }
+            }
+        }
+        rt_main_obj
+    } else {
+        anyhow::bail!(
+            "No rt_main.o found and no runtime/rt_main/src/main.rs available; please provide a runtime main (rt_main.o) or add a runtime/rt_main/src/main.rs"
+        );
+    };
+
+    // Link final binary. Prefer explicit linker via OATS_LINKER, otherwise
+    // use clang (with -fuse-ld=lld when available) or fall back to ld.lld/lld.
+    let oats_linker = std::env::var("OATS_LINKER").ok();
+
+    // helper to test whether a program is runnable
+    fn is_prog_available(name: &str) -> bool {
+        use std::process::Stdio;
+        // Respect TOASTY_VERBOSE to allow printing --version output
+        let verbose = std::env::var("TOASTY_VERBOSE").is_ok();
+        let status = if verbose {
+            Command::new(name).arg("--version").status()
+        } else {
+            Command::new(name)
+                .arg("--version")
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+        };
+        match status {
+            Ok(s) => s.success(),
+            Err(_) => false,
+        }
+    }
+
+    // Detect available tools
+    let clang_candidates = ["clang", "clang-18", "clang-17"];
+    let mut found_clang: Option<String> = None;
+    for &c in &clang_candidates {
+        if is_prog_available(c) {
+            found_clang = Some(c.to_string());
+            break;
+        }
+    }
+    // detect lld (prefer ld.lld then lld)
+    let lld_candidate = if is_prog_available("ld.lld") || is_prog_available("lld") {
+        Some("lld".to_string())
+    } else {
+        None
+    };
+
+    let mut linked_ok = false;
+    let mut link_run_err: Option<std::io::Error> = None;
+
+    if let Some(linker) = oats_linker {
+        // Try the user-specified linker exactly once
+        let mut cmd = Command::new(&linker);
+        if !rt_main_obj.is_empty() {
+            cmd.arg(&rt_main_obj);
+        }
+        cmd.arg(&out_obj).arg(&rust_lib).arg("-o").arg(&out_exe);
+        match cmd.status() {
+            Ok(status) => {
+                if status.success() {
+                    linked_ok = true;
+                } else {
+                    anyhow::bail!("{} failed to link final binary", linker);
+                }
+            }
+            Err(e) => link_run_err = Some(e),
+        }
+    } else if let Some(clang_bin) = found_clang.clone() {
+        // Use clang; if lld is present, prefer clang + -fuse-ld=lld so we keep clang's driver behavior
+        let mut cmd = Command::new(&clang_bin);
+        // Host-side optimization flags / LTO
+        let lto_mode = std::env::var("OATS_LTO").unwrap_or_else(|_| {
+            if build_profile == "release" {
+                "auto".to_string()
+            } else {
+                "none".to_string()
+            }
+        });
+        // opt-level env may also instruct host flags
+        if let Ok(opt_str) = std::env::var("OATS_OPT_LEVEL") {
+            if opt_str == "3" || opt_str == "aggressive" {
+                cmd.arg("-O3");
+            }
+        } else if build_profile == "release" {
+            cmd.arg("-O3");
+        }
+        // LTO handling
+        match lto_mode.as_str() {
+            "none" => {}
+            "thin" => {
+                cmd.arg("-flto=thin");
+            }
+            "fat" | "full" => {
+                cmd.arg("-flto");
+            }
+            "auto" => {
+                if build_profile == "release" {
+                    cmd.arg("-flto");
+                }
+            }
+            _ => {}
+        }
+        if let Some(ref lld) = lld_candidate {
+            // use clang driver with lld
+            cmd.arg(format!("-fuse-ld={}", lld));
+        }
+        if !rt_main_obj.is_empty() {
+            cmd.arg(&rt_main_obj);
+        }
+        cmd.arg(&out_obj).arg(&rust_lib).arg("-o").arg(&out_exe);
+        match cmd.status() {
+            Ok(status) => {
+                if status.success() {
+                    linked_ok = true;
+                } else {
+                    anyhow::bail!("{} failed to link final binary", clang_bin);
+                }
+            }
+            Err(e) => link_run_err = Some(e),
+        }
+    } else if let Some(lld_bin) = lld_candidate.clone() {
+        // Last resort: call lld directly (may not support LTO flags)
+        let mut cmd = Command::new(&lld_bin);
+        if !rt_main_obj.is_empty() {
+            cmd.arg(&rt_main_obj);
+        }
+        cmd.arg(&out_obj).arg(&rust_lib).arg("-o").arg(&out_exe);
+        match cmd.status() {
+            Ok(status) => {
+                if status.success() {
+                    linked_ok = true;
+                } else {
+                    anyhow::bail!("{} failed to link final binary", lld_bin);
+                }
+            }
+            Err(e) => link_run_err = Some(e),
+        }
+    } else {
+        anyhow::bail!(
+            "No suitable linker found: please install clang or lld, or set OATS_LINKER to a linker path"
+        );
+    }
+
+    if !linked_ok {
+        if let Some(e) = link_run_err {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                anyhow::bail!(
+                    "linker not found in PATH; install clang or lld, or set OATS_LINKER to a path"
+                );
+            } else {
+                return Err(e.into());
+            }
+        } else {
+            anyhow::bail!("failed to link final binary");
+        }
+    }
+
+    Ok(Some(out_exe))
 }

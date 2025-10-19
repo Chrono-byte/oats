@@ -96,7 +96,9 @@ fn default_debug() -> bool {
 impl Manifest {
     /// Parse a manifest from a TOML string
     pub fn from_toml(content: &str) -> Result<Self> {
-        toml::from_str(content).map_err(|e| anyhow::anyhow!("Failed to parse Oats.toml: {}", e))
+        let manifest: Self = toml::from_str(content).map_err(|e| anyhow::anyhow!("Failed to parse Oats.toml: {}", e))?;
+        manifest.validate()?;
+        Ok(manifest)
     }
 
     /// Load manifest from a file path

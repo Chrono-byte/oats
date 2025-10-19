@@ -702,35 +702,40 @@ fn main() -> Result<()> {
             let mut link_cmd = std::process::Command::new("clang");
             link_cmd.arg("-o").arg(&exe_path);
 
-            // Add all object files
-            for obj_file in compiled_modules.values() {
-                link_cmd.arg(obj_file);
-            }
+                // Add all object files
+                for obj_file in compiled_modules.values() {
+                    link_cmd.arg(obj_file);
+                }
 
             // Add runtime library
             if !no_link_runtime {
                 link_cmd.arg(runtime_lib);
             }
 
-            // Add linker if specified
-            if let Some(linker) = linker {
-                link_cmd.arg(format!("-fuse-ld={}", linker));
-            }
+                // Add linker if specified
+                if let Some(linker) = linker {
+                    link_cmd.arg(format!("-fuse-ld={}", linker));
+                }
 
-            if verbose {
-                eprintln!("Link command: {:?}", link_cmd);
-            }
+                if verbose {
+                    eprintln!("Link command: {:?}", link_cmd);
+                }
 
-            let link_status = link_cmd.status()?;
-            if !link_status.success() {
-                anyhow::bail!("Linking failed");
-            }
+                let link_status = link_cmd.status()?;
+                if !link_status.success() {
+                    anyhow::bail!("Linking failed");
+                }
 
-            if !quiet && (verbose || cfg!(debug_assertions)) {
-                eprintln!(
-                    "{}",
-                    format!("Build finished: {}", exe_path.display()).green()
-                );
+                if !quiet && (verbose || cfg!(debug_assertions)) {
+                    eprintln!(
+                        "{}",
+                        format!("Build finished: {}", exe_path.display()).green()
+                    );
+                }
+            } else {
+                if !quiet && (verbose || cfg!(debug_assertions)) {
+                    eprintln!("{}", "Object files emitted, skipping linking".blue());
+                }
             }
             Ok(())
         }

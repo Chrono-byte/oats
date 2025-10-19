@@ -1,0 +1,16 @@
+export function main(): number {
+    let x = 5;
+    let y = 0.1;
+    let s = "hello";
+    let mut arr = [1, 2, 3];
+
+    println(x);
+    println(y);
+    println(s);
+    println(arr[0]);
+
+    let x = "hello";
+    println(x);
+
+    return 0;
+}

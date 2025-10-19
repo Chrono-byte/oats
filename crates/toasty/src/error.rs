@@ -6,6 +6,10 @@
 /// Result type alias for all fallible operations
 pub type Result<T> = std::result::Result<T, Diagnostic>;
 
+/// Result type alias using boxed Diagnostic errors to avoid large error variants.
+/// Use this for functions where the Diagnostic error size causes clippy warnings.
+pub type BoxedResult<T> = std::result::Result<T, Box<Diagnostic>>;
+
 /// # Design
 ///
 /// The diagnostic system uses this container to decouple error detection
@@ -52,6 +56,11 @@ impl Diagnostic {
             note: None,
             help: None,
         }
+    }
+
+    /// Create a boxed diagnostic for use in BoxedResult error types
+    pub fn boxed(message: impl Into<String>) -> Box<Self> {
+        Box::new(Self::new(message))
     }
 
     /// Create a diagnostic with file context
@@ -110,6 +119,12 @@ impl std::fmt::Display for Diagnostic {
 
 impl std::error::Error for Diagnostic {}
 
+impl From<Box<Diagnostic>> for Diagnostic {
+    fn from(err: Box<Diagnostic>) -> Self {
+        *err
+    }
+}
+
 impl From<std::io::Error> for Diagnostic {
     fn from(err: std::io::Error) -> Self {
         Diagnostic::new(format!("IO error: {}", err))
@@ -131,5 +146,29 @@ impl From<ureq::Error> for Diagnostic {
 impl From<toml::de::Error> for Diagnostic {
     fn from(err: toml::de::Error) -> Self {
         Diagnostic::new(format!("TOML parsing error: {}", err))
+    }
+}
+
+impl From<std::io::Error> for Box<Diagnostic> {
+    fn from(err: std::io::Error) -> Self {
+        Box::new(Diagnostic::new(format!("IO error: {}", err)))
+    }
+}
+
+impl From<serde_json::Error> for Box<Diagnostic> {
+    fn from(err: serde_json::Error) -> Self {
+        Box::new(Diagnostic::new(format!("JSON error: {}", err)))
+    }
+}
+
+impl From<ureq::Error> for Box<Diagnostic> {
+    fn from(err: ureq::Error) -> Self {
+        Box::new(Diagnostic::new(format!("HTTP error: {}", err)))
+    }
+}
+
+impl From<toml::de::Error> for Box<Diagnostic> {
+    fn from(err: toml::de::Error) -> Self {
+        Box::new(Diagnostic::new(format!("TOML parsing error: {}", err)))
     }
 }

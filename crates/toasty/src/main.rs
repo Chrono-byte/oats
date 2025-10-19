@@ -4,12 +4,12 @@ use colored::Colorize;
 use std::path::PathBuf;
 use toasty::build;
 use toasty::cli::{Cli, Commands, CompileOptions, CompilerCommands, RuntimeCommands};
-use toasty::error::{Diagnostic, BoxedResult};
+use toasty::error::{Result, ToastyError};
 use toasty::fetch;
 use toasty::project;
 
 /// Perform preflight checks to ensure required tools are available
-fn preflight_check() -> BoxedResult<()> {
+fn preflight_check() -> Result<()> {
     // Check if OATS_OATSC_PATH is already set (e.g., by tests)
     if std::env::var("OATS_OATSC_PATH").is_ok() {
         return Ok(());
@@ -76,7 +76,7 @@ fn is_command_available(cmd: &str) -> bool {
 }
 
 /// Invoke oatsc compiler as external command
-fn invoke_oatsc(options: &CompileOptions) -> BoxedResult<Option<PathBuf>> {
+fn invoke_oatsc(options: &CompileOptions) -> Result<Option<PathBuf>> {
     // Get oatsc path from environment (set by preflight check)
     let oatsc_path = std::env::var("OATS_OATSC_PATH").unwrap_or_else(|_| "oatsc".to_string());
 
@@ -165,19 +165,27 @@ fn invoke_oatsc(options: &CompileOptions) -> BoxedResult<Option<PathBuf>> {
         .args(&args)
         .output()
         .map_err(|e| {
-            Diagnostic::boxed(format!(
+            ToastyError::other(format!(
                 "Failed to execute oatsc command: {} {:?}: {}",
                 oatsc_path, args, e
             ))
         })?;
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        return Err(Diagnostic::boxed(format!(
-            "oatsc compilation failed:\nSTDOUT: {}\nSTDERR: {}",
-            stdout, stderr
-        )));
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        
+        // Check if this is likely a user code error (oatsc already printed diagnostics)
+        if stderr.contains("error:") || stderr.contains("Error") || stdout.contains("error:") {
+            return Err(ToastyError::CompilationFailed);
+        }
+        
+        return Err(ToastyError::CompilerInternalError {
+            message: format!(
+                "oatsc compilation failed:\nSTDOUT:\n{}\n\nSTDERR:\n{}",
+                stdout, stderr
+            ),
+        });
     }
 
     // Parse output to get object file path if any
@@ -197,7 +205,7 @@ fn invoke_oatsc(options: &CompileOptions) -> BoxedResult<Option<PathBuf>> {
     }
 }
 
-fn main() -> BoxedResult<()> {
+fn run_main() -> Result<()> {
     // Perform preflight checks to ensure required tools are available
     preflight_check()?;
 
@@ -307,7 +315,7 @@ fn main() -> BoxedResult<()> {
             } else if let Ok(p) = std::env::var("OATS_SRC_FILE") {
                 p
             } else {
-                return Err(Diagnostic::boxed(
+                return Err(ToastyError::other(
                     "No source file provided. Pass path as argument, set OATS_SRC_FILE env var, or create Oats.toml",
                 ));
             };
@@ -517,7 +525,7 @@ fn main() -> BoxedResult<()> {
 
             let link_status = link_cmd.status()?;
             if !link_status.success() {
-                return Err(Diagnostic::boxed("Linking failed"));
+                return Err(ToastyError::other("Linking failed"));
             }
 
             if !quiet && (verbose || cfg!(debug_assertions)) {
@@ -557,7 +565,7 @@ fn main() -> BoxedResult<()> {
             } else if let Ok(p) = std::env::var("OATS_SRC_FILE") {
                 p
             } else {
-                return Err(Diagnostic::boxed(
+                return Err(ToastyError::other(
                     "No source file provided. Pass path as argument or set OATS_SRC_FILE env var.",
                 ));
             };
@@ -624,7 +632,7 @@ fn main() -> BoxedResult<()> {
             }
             let status = cmd.status()?;
             if !status.success() {
-                return Err(Diagnostic::boxed(
+                return Err(ToastyError::other(
                     "Executed program returned non-zero exit code",
                 ));
             }
@@ -635,7 +643,7 @@ fn main() -> BoxedResult<()> {
             let project_path = std::path::Path::new(&name);
 
             if project_path.exists() {
-                return Err(Diagnostic::boxed(format!(
+                return Err(ToastyError::other(format!(
                     "Directory '{}' already exists",
                     name
                 )));
@@ -783,4 +791,59 @@ export function main(): number {{
             }
         },
     }
+}
+
+/// Entry point for the CLI with clean error output handling
+fn main_wrapper() -> i32 {
+    if let Err(err) = run_toasty() {
+        // For user code compilation failures, oatsc already printed diagnostics
+        if err.is_user_code_error() {
+            return 1;
+        }
+
+        // For build system errors, provide a clean cargo-style error message
+        let red = "\x1b[31;1m";
+        let yellow = "\x1b[33;1m";
+        let green = "\x1b[32;1m";
+        let reset = "\x1b[0m";
+
+        eprintln!("{}error:{} {}", red, reset, err);
+
+        // Provide context-specific help messages
+        match &err {
+            ToastyError::ManifestNotFound { path: _ } => {
+                eprintln!("  {}help:{} Ensure you are in the root of an Oats project with Oats.toml", green, reset);
+                eprintln!("         Or specify a source file directly");
+            }
+            ToastyError::LinkerFailed { stderr, .. } => {
+                eprintln!("  {}note:{} Linker output:", yellow, reset);
+                for line in stderr.lines().take(10) {
+                    eprintln!("    {}", line);
+                }
+                if stderr.lines().count() > 10 {
+                    eprintln!("    ... (truncated)");
+                }
+            }
+            ToastyError::Io { path: _, source } => {
+                if source.kind() == std::io::ErrorKind::NotFound {
+                    eprintln!("  {}help:{} Check that the file exists and the path is correct", green, reset);
+                }
+            }
+            _ => {}
+        }
+
+        return 1;
+    }
+
+    0
+}
+
+/// Main CLI entry point
+fn run_toasty() -> Result<()> {
+    run_main()
+}
+
+#[allow(unreachable_code)]
+fn main() {
+    std::process::exit(main_wrapper());
 }

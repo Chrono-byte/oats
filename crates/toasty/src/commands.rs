@@ -7,7 +7,7 @@ use colored::Colorize;
 use std::path::PathBuf;
 
 use crate::build;
-use crate::cli::{Cli, CompileOptions, CompilerCommands, RuntimeCommands};
+use crate::cli::{Cli, CompileOptions, CompilerCommands, PackageCommands, RuntimeCommands};
 use crate::compiler;
 use crate::diagnostics::{Result, ToastyError};
 use crate::fetch;
@@ -531,6 +531,79 @@ pub fn handle_runtime(action: RuntimeCommands) -> Result<()> {
             // Uninstall a specific runtime version
             fetch::uninstall_runtime_version(&version)?;
             println!("Runtime version {} uninstalled successfully.", version);
+            Ok(())
+        }
+    }
+}
+
+/// Handle package commands
+pub fn handle_package(action: PackageCommands) -> Result<()> {
+    match action {
+        PackageCommands::List { quiet } => {
+            // List available packages
+            let packages = fetch::list_available_packages()?;
+            if packages.is_empty() {
+                if !quiet {
+                    println!("No packages found.");
+                }
+            } else {
+                if !quiet {
+                    println!("Available packages:");
+                }
+                for package in packages {
+                    println!("  - {}", package);
+                }
+            }
+            Ok(())
+        }
+        PackageCommands::Install {
+            name,
+            version,
+            quiet,
+        } => {
+            // Install a specific package
+            let version_to_install = version.unwrap_or_else(|| "latest".to_string());
+            fetch::install_package_version(&name, &version_to_install)?;
+            if !quiet {
+                println!(
+                    "Package {}@{} installed successfully.",
+                    name, version_to_install
+                );
+            }
+            Ok(())
+        }
+        PackageCommands::Uninstall { name, quiet } => {
+            // Uninstall a specific package
+            fetch::uninstall_package_version(&name)?;
+            if !quiet {
+                println!("Package {} uninstalled successfully.", name);
+            }
+            Ok(())
+        }
+        PackageCommands::Update { name, quiet } => {
+            // Update a specific package
+            fetch::update_package_version(&name)?;
+            if !quiet {
+                println!("Package {} updated successfully.", name);
+            }
+            Ok(())
+        }
+        PackageCommands::Info { name } => {
+            // Show information about a specific package
+            let info = fetch::get_package_info(&name)?;
+            println!("Package: {}", name);
+            println!("Version: {}", info.version);
+            println!(
+                "Description: {}",
+                info.description
+                    .unwrap_or_else(|| "No description".to_string())
+            );
+            if let Some(deps) = info.dependencies {
+                println!("Dependencies:");
+                for dep in deps {
+                    println!("  - {}", dep);
+                }
+            }
             Ok(())
         }
     }

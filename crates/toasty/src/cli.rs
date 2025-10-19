@@ -176,6 +176,12 @@ pub enum Commands {
         #[command(subcommand)]
         action: RuntimeCommands,
     },
+
+    /// Manage remote Oats packages
+    Package {
+        #[command(subcommand)]
+        action: PackageCommands,
+    },
 }
 
 #[derive(Subcommand, Clone)]
@@ -221,5 +227,51 @@ pub enum RuntimeCommands {
     Uninstall {
         /// Version tag to uninstall (e.g., runtime-v1.0.0)
         version: String,
+    },
+}
+
+#[derive(Subcommand, Clone)]
+pub enum PackageCommands {
+    /// List available packages
+    List {
+        /// Suppress progress output
+        #[arg(long)]
+        quiet: bool,
+    },
+    /// Install a specific package
+    Install {
+        /// Package name to install
+        name: String,
+
+        /// Version tag to install (e.g., mypackage-v1.0.0). If omitted, installs the latest version.
+        #[arg(short, long)]
+        version: Option<String>,
+
+        /// Suppress progress output
+        #[arg(long)]
+        quiet: bool,
+    },
+    /// Uninstall a specific package
+    Uninstall {
+        /// Package name to uninstall
+        name: String,
+
+        /// Suppress progress output
+        #[arg(long)]
+        quiet: bool,
+    },
+    /// Update a specific package
+    Update {
+        /// Package name to update
+        name: String,
+
+        /// Suppress progress output
+        #[arg(long)]
+        quiet: bool,
+    },
+    /// Show information about a specific package
+    Info {
+        /// Package name to show info for
+        name: String,
     },
 }

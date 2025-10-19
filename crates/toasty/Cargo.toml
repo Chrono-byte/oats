@@ -20,6 +20,8 @@ ureq = "2.9"
 dirs = "5.0"
 sha2 = "0.10"
 pathdiff = "0.2"
+flate2 = "1.0"
+tar = "0.4"
 
 [dependencies.oatsc]
 path = "../oatsc"

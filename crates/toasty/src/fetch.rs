@@ -551,200 +551,174 @@ pub fn list_available_runtimes() -> Result<Vec<String>> {
     Ok(versions)
 }
 
-/// Install a specific compiler version
-pub fn install_compiler_version(version: &str) -> Result<()> {
-    let artifact_name = get_compiler_artifact_name();
-    if artifact_name == "oatsc-unsupported" {
-        return Err(ToastyError::other(
-            "Unsupported platform for pre-built compiler",
-        ));
+/// Package information structure
+#[derive(Debug, Clone)]
+pub struct PackageInfo {
+    pub name: String,
+    pub version: String,
+    pub description: Option<String>,
+    pub dependencies: Option<Vec<String>>,
+}
+
+/// List all available packages from GitHub releases
+pub fn list_available_packages() -> Result<Vec<String>> {
+    let url = format!(
+        "https://api.github.com/repos/{}/{}/releases",
+        GITHUB_OWNER, GITHUB_REPO
+    );
+
+    let response = ureq::get(&url)
+        .set("User-Agent", "oats-compiler")
+        .call()
+        .map_err(|e| ToastyError::other(format!("Failed to fetch releases: {}", e)))?;
+
+    let releases: serde_json::Value = serde_json::from_reader(response.into_reader())
+        .map_err(|e| ToastyError::other(format!("Failed to parse releases JSON: {}", e)))?;
+
+    let mut packages = Vec::new();
+    if let Some(releases_array) = releases.as_array() {
+        for release in releases_array {
+            if let Some(tag) = release["tag_name"].as_str()
+                && tag.starts_with("pkg-")
+            {
+                // Extract package name from tag (pkg-<name>-<version>)
+                if let Some(name_end) = tag.rfind('-') {
+                    if let Some(name_start) = tag.find('-') {
+                        let package_name = &tag[name_start + 1..name_end];
+                        if !packages.contains(&package_name.to_string()) {
+                            packages.push(package_name.to_string());
+                        }
+                    }
+                }
+            }
+        }
     }
 
-    let oats_home = get_oats_home()?;
-    let cached_path = oats_home.join(version).join(artifact_name);
+    Ok(packages)
+}
 
-    // Check if already installed
-    if cached_path.exists() {
-        eprintln!("Compiler version {} is already installed.", version);
+/// Install a specific package version
+pub fn install_package_version(name: &str, version: &str) -> Result<()> {
+    let verbose = std::env::var("TOASTY_VERBOSE").is_ok();
+
+    // Get oats home directory
+    let oats_home = get_oats_home()?;
+    let loafs_dir = oats_home.join("loafs");
+    fs::create_dir_all(&loafs_dir)?;
+
+    // Determine the tag to fetch
+    let tag = if version == "latest" {
+        // Find the latest version for this package
+        get_latest_package_version(name)?
+    } else {
+        format!("pkg-{}-{}", name, version)
+    };
+
+    let artifact_name = format!("{}.tar.gz", name);
+
+    // Check if we already have this version cached
+    let package_dir = loafs_dir.join(&tag);
+    if package_dir.exists() {
+        if verbose {
+            eprintln!("Using cached package: {}", package_dir.display());
+        }
         return Ok(());
     }
 
-    // Download the compiler
-    if let Some(parent) = cached_path.parent() {
-        fs::create_dir_all(parent)?;
+    // Download the package
+    if verbose {
+        eprintln!("Cache miss, downloading package...");
     }
-    download_compiler(version, artifact_name, &cached_path)?;
+    download_package(&tag, &artifact_name, &package_dir)?;
 
-    eprintln!("Successfully installed compiler version {}", version);
+    if verbose {
+        eprintln!(
+            "Successfully downloaded package to: {}",
+            package_dir.display()
+        );
+    }
+
     Ok(())
 }
 
-/// Install a specific runtime version
-pub fn install_runtime_version(version: &str) -> Result<()> {
-    let artifact_name = get_runtime_artifact_name();
-    if artifact_name == "libruntime-unsupported.a" {
-        return Err(ToastyError::other(
-            "Unsupported platform for pre-built runtime",
-        ));
+/// Get the latest version tag for a package
+fn get_latest_package_version(name: &str) -> Result<String> {
+    let url = format!(
+        "https://api.github.com/repos/{}/{}/releases",
+        GITHUB_OWNER, GITHUB_REPO
+    );
+
+    let response = ureq::get(&url)
+        .set("User-Agent", "oats-compiler")
+        .call()
+        .map_err(|e| ToastyError::other(format!("Failed to fetch releases: {}", e)))?;
+
+    let releases: serde_json::Value = serde_json::from_reader(response.into_reader())
+        .map_err(|e| ToastyError::other(format!("Failed to parse releases JSON: {}", e)))?;
+
+    // Find the latest release for this package
+    if let Some(releases_array) = releases.as_array() {
+        for release in releases_array {
+            if let Some(tag) = release["tag_name"].as_str()
+                && tag.starts_with(&format!("pkg-{}-", name))
+            {
+                return Ok(tag.to_string());
+            }
+        }
     }
 
-    let oats_home = get_oats_home()?;
-    let cached_path = oats_home.join(version).join(artifact_name);
-
-    // Check if already installed
-    if cached_path.exists() {
-        eprintln!("Runtime version {} is already installed.", version);
-        return Ok(());
-    }
-
-    // Download the runtime
-    if let Some(parent) = cached_path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    download_runtime(version, artifact_name, &cached_path)?;
-
-    eprintln!("Successfully installed runtime version {}", version);
-    Ok(())
+    Err(ToastyError::other(format!(
+        "No releases found for package '{}'",
+        name
+    )))
 }
 
-/// Switch to using a specific compiler version
-pub fn use_compiler_version(version: &str) -> Result<()> {
-    let artifact_name = get_compiler_artifact_name();
-    if artifact_name == "oatsc-unsupported" {
-        return Err(ToastyError::other(
-            "Unsupported platform for pre-built compiler",
-        ));
+/// Download and extract a package from GitHub release
+fn download_package(tag: &str, artifact_name: &str, dest_dir: &Path) -> Result<()> {
+    let url = format!(
+        "https://github.com/{}/{}/releases/download/{}/{}",
+        GITHUB_OWNER, GITHUB_REPO, tag, artifact_name
+    );
+
+    let verbose = std::env::var("TOASTY_VERBOSE").is_ok();
+    if verbose {
+        eprintln!("Downloading package from: {}", url);
+    } else {
+        eprintln!("Downloading package...");
     }
 
-    let oats_home = get_oats_home()?;
-    let compiler_path = oats_home.join(version).join(artifact_name);
+    let response = ureq::get(&url)
+        .set("User-Agent", "oats-compiler")
+        .call()
+        .map_err(|e| ToastyError::other(format!("Failed to download package: {}", e)))?;
 
-    if !compiler_path.exists() {
+    let mut archive_data = Vec::new();
+    response.into_reader().read_to_end(&mut archive_data)?;
+
+    // Extract the tar.gz archive
+    let decoder = flate2::read::GzDecoder::new(&archive_data[..]);
+    let mut archive = tar::Archive::new(decoder);
+
+    // Create destination directory
+    fs::create_dir_all(dest_dir)?;
+
+    // Extract all files
+    archive.unpack(dest_dir)?;
+
+    // Verify the package has an Oats.toml
+    let manifest_path = dest_dir.join("Oats.toml");
+    if !manifest_path.exists() {
         return Err(ToastyError::other(format!(
-            "Compiler version {} is not installed. Install it first with 'toasty compiler install {}'",
-            version, version
+            "Package archive does not contain Oats.toml: {}",
+            dest_dir.display()
         )));
     }
 
-    // Store the selected version in a config file
-    let config_path = oats_home.join("current_version");
-    fs::write(&config_path, version)?;
+    if verbose {
+        eprintln!("Extracted {} bytes", archive_data.len());
+    }
 
-    eprintln!("Switched to compiler version {}", version);
     Ok(())
-}
-
-/// Switch to using a specific runtime version
-pub fn use_runtime_version(version: &str) -> Result<()> {
-    let artifact_name = get_runtime_artifact_name();
-    if artifact_name == "libruntime-unsupported.a" {
-        return Err(ToastyError::other(
-            "Unsupported platform for pre-built runtime",
-        ));
-    }
-
-    let oats_home = get_oats_home()?;
-    let runtime_path = oats_home.join(version).join(artifact_name);
-
-    if !runtime_path.exists() {
-        return Err(ToastyError::other(format!(
-            "Runtime version {} is not installed. Install it first with 'toasty runtime install {}'",
-            version, version
-        )));
-    }
-
-    // Store the selected version in a config file
-    let config_path = oats_home.join("current_runtime_version");
-    fs::write(&config_path, version)?;
-
-    eprintln!("Switched to runtime version {}", version);
-    Ok(())
-}
-
-/// Get the currently selected compiler version
-pub fn current_compiler_version() -> Result<String> {
-    let oats_home = get_oats_home()?;
-    let config_path = oats_home.join("current_version");
-
-    if config_path.exists() {
-        let version = fs::read_to_string(&config_path)?;
-        Ok(version.trim().to_string())
-    } else {
-        // If no version is selected, try to get the latest
-        match get_latest_compiler_tag() {
-            Ok(tag) => Ok(format!("{} (latest)", tag)),
-            Err(_) => Ok("none selected".to_string()),
-        }
-    }
-}
-
-/// Get the currently selected runtime version
-pub fn current_runtime_version() -> Result<String> {
-    let oats_home = get_oats_home()?;
-    let config_path = oats_home.join("current_runtime_version");
-
-    if config_path.exists() {
-        let version = fs::read_to_string(&config_path)?;
-        Ok(version.trim().to_string())
-    } else {
-        // If no version is selected, try to get the latest
-        match get_latest_runtime_tag() {
-            Ok(tag) => Ok(format!("{} (latest)", tag)),
-            Err(_) => Ok("none selected".to_string()),
-        }
-    }
-}
-
-/// Get the path to the currently selected compiler
-pub fn get_selected_compiler_path() -> Option<PathBuf> {
-    let oats_home = match get_oats_home() {
-        Ok(dir) => dir,
-        Err(_) => return None,
-    };
-
-    let config_path = oats_home.join("current_version");
-    let version = match fs::read_to_string(&config_path) {
-        Ok(v) => v.trim().to_string(),
-        Err(_) => return None,
-    };
-
-    let artifact_name = get_compiler_artifact_name();
-    if artifact_name == "oatsc-unsupported" {
-        return None;
-    }
-
-    let compiler_path = oats_home.join(version).join(artifact_name);
-    if compiler_path.exists() {
-        Some(compiler_path)
-    } else {
-        None
-    }
-}
-
-/// Get the path to the currently selected runtime
-pub fn get_selected_runtime_path() -> Option<PathBuf> {
-    let oats_home = match get_oats_home() {
-        Ok(dir) => dir,
-        Err(_) => return None,
-    };
-
-    let config_path = oats_home.join("current_runtime_version");
-    let version = match fs::read_to_string(&config_path) {
-        Ok(v) => v.trim().to_string(),
-        Err(_) => return None,
-    };
-
-    let artifact_name = get_runtime_artifact_name();
-    if artifact_name == "libruntime-unsupported.a" {
-        return None;
-    }
-
-    let runtime_path = oats_home.join(version).join(artifact_name);
-    if runtime_path.exists() {
-        Some(runtime_path)
-    } else {
-        None
-    }
 }
 
 /// Uninstall a specific compiler version
@@ -835,4 +809,328 @@ pub fn uninstall_runtime_version(version: &str) -> Result<()> {
 
     eprintln!("Successfully uninstalled runtime version {}", version);
     Ok(())
+}
+
+/// Uninstall a specific package version
+pub fn uninstall_package_version(name: &str) -> Result<()> {
+    let oats_home = get_oats_home()?;
+    let loafs_dir = oats_home.join("loafs");
+
+    // Find all versions of this package
+    let mut versions_to_remove = Vec::new();
+    if loafs_dir.exists() {
+        for entry in fs::read_dir(&loafs_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_dir() {
+                if let Some(dir_name) = path.file_name().and_then(|n| n.to_str()) {
+                    if dir_name.starts_with(&format!("pkg-{}-", name)) {
+                        versions_to_remove.push(path);
+                    }
+                }
+            }
+        }
+    }
+
+    if versions_to_remove.is_empty() {
+        return Err(ToastyError::other(format!(
+            "Package '{}' is not installed",
+            name
+        )));
+    }
+
+    // Remove all versions
+    for version_path in versions_to_remove {
+        fs::remove_dir_all(&version_path)?;
+        eprintln!("Removed package version: {}", version_path.display());
+    }
+
+    Ok(())
+}
+
+/// Update a specific package to the latest version
+pub fn update_package_version(name: &str) -> Result<()> {
+    let latest_version = get_latest_package_version(name)?;
+
+    // Check if we already have the latest
+    let oats_home = get_oats_home()?;
+    let loafs_dir = oats_home.join("loafs");
+    let latest_dir = loafs_dir.join(&latest_version);
+
+    if latest_dir.exists() {
+        eprintln!("Package '{}' is already up to date", name);
+        return Ok(());
+    }
+
+    // Install the latest version
+    install_package_version(name, "latest")?;
+
+    // Remove old versions
+    if loafs_dir.exists() {
+        for entry in fs::read_dir(&loafs_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_dir() {
+                if let Some(dir_name) = path.file_name().and_then(|n| n.to_str()) {
+                    if dir_name.starts_with(&format!("pkg-{}-", name)) && dir_name != latest_version
+                    {
+                        fs::remove_dir_all(&path)?;
+                        eprintln!("Removed old version: {}", path.display());
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Get information about a specific package
+pub fn get_package_info(name: &str) -> Result<PackageInfo> {
+    // Try to get info from installed package first
+    let oats_home = get_oats_home()?;
+    let loafs_dir = oats_home.join("loafs");
+
+    if loafs_dir.exists() {
+        for entry in fs::read_dir(&loafs_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_dir() {
+                if let Some(dir_name) = path.file_name().and_then(|n| n.to_str()) {
+                    if dir_name.starts_with(&format!("pkg-{}-", name)) {
+                        let manifest_path = path.join("Oats.toml");
+                        if manifest_path.exists() {
+                            let manifest = crate::project::Manifest::from_file(&manifest_path)?;
+                            return Ok(PackageInfo {
+                                name: manifest.package.name,
+                                version: manifest.package.version,
+                                description: manifest.package.description,
+                                dependencies: Some(manifest.dependencies.keys().cloned().collect()),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // If not installed, try to get info from latest release
+    let latest_tag = get_latest_package_version(name)?;
+    let url = format!(
+        "https://api.github.com/repos/{}/{}/releases/tags/{}",
+        GITHUB_OWNER, GITHUB_REPO, latest_tag
+    );
+
+    let response = ureq::get(&url)
+        .set("User-Agent", "oats-compiler")
+        .call()
+        .map_err(|e| ToastyError::other(format!("Failed to fetch release info: {}", e)))?;
+
+    let release: serde_json::Value = serde_json::from_reader(response.into_reader())
+        .map_err(|e| ToastyError::other(format!("Failed to parse release JSON: {}", e)))?;
+
+    let description = release["body"].as_str().map(|s| s.to_string());
+
+    Ok(PackageInfo {
+        name: name.to_string(),
+        version: latest_tag,
+        description,
+        dependencies: None, // Can't get dependencies without downloading
+    })
+}
+
+/// Install a specific compiler version
+pub fn install_compiler_version(version: &str) -> Result<()> {
+    let artifact_name = get_compiler_artifact_name();
+    if artifact_name == "oatsc-unsupported" {
+        return Err(ToastyError::other(
+            "Unsupported platform for pre-built compiler",
+        ));
+    }
+
+    let oats_home = get_oats_home()?;
+    let cached_path = oats_home.join(version).join(artifact_name);
+
+    // Check if already installed
+    if cached_path.exists() {
+        eprintln!("Compiler version {} is already installed.", version);
+        return Ok(());
+    }
+
+    // Download the compiler
+    if let Some(parent) = cached_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    download_compiler(version, artifact_name, &cached_path)?;
+
+    eprintln!("Successfully installed compiler version {}", version);
+    Ok(())
+}
+
+/// Switch to using a specific compiler version
+pub fn use_compiler_version(version: &str) -> Result<()> {
+    let artifact_name = get_compiler_artifact_name();
+    if artifact_name == "oatsc-unsupported" {
+        return Err(ToastyError::other(
+            "Unsupported platform for pre-built compiler",
+        ));
+    }
+
+    let oats_home = get_oats_home()?;
+    let compiler_path = oats_home.join(version).join(artifact_name);
+
+    if !compiler_path.exists() {
+        return Err(ToastyError::other(format!(
+            "Compiler version {} is not installed. Install it first with 'toasty compiler install {}'",
+            version, version
+        )));
+    }
+
+    // Store the selected version in a config file
+    let config_path = oats_home.join("current_version");
+    fs::write(&config_path, version)?;
+
+    eprintln!("Switched to compiler version {}", version);
+    Ok(())
+}
+
+/// Get the currently selected compiler version
+pub fn current_compiler_version() -> Result<String> {
+    let oats_home = get_oats_home()?;
+    let config_path = oats_home.join("current_version");
+
+    if config_path.exists() {
+        let version = fs::read_to_string(&config_path)?;
+        Ok(version.trim().to_string())
+    } else {
+        // If no version is selected, try to get the latest
+        match get_latest_compiler_tag() {
+            Ok(tag) => Ok(format!("{} (latest)", tag)),
+            Err(_) => Ok("none selected".to_string()),
+        }
+    }
+}
+
+/// Install a specific runtime version
+pub fn install_runtime_version(version: &str) -> Result<()> {
+    let artifact_name = get_runtime_artifact_name();
+    if artifact_name == "libruntime-unsupported.a" {
+        return Err(ToastyError::other(
+            "Unsupported platform for pre-built runtime",
+        ));
+    }
+
+    let oats_home = get_oats_home()?;
+    let cached_path = oats_home.join(version).join(artifact_name);
+
+    // Check if already installed
+    if cached_path.exists() {
+        eprintln!("Runtime version {} is already installed.", version);
+        return Ok(());
+    }
+
+    // Download the runtime
+    if let Some(parent) = cached_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    download_runtime(version, artifact_name, &cached_path)?;
+
+    eprintln!("Successfully installed runtime version {}", version);
+    Ok(())
+}
+
+/// Switch to using a specific runtime version
+pub fn use_runtime_version(version: &str) -> Result<()> {
+    let artifact_name = get_runtime_artifact_name();
+    if artifact_name == "libruntime-unsupported.a" {
+        return Err(ToastyError::other(
+            "Unsupported platform for pre-built runtime",
+        ));
+    }
+
+    let oats_home = get_oats_home()?;
+    let runtime_path = oats_home.join(version).join(artifact_name);
+
+    if !runtime_path.exists() {
+        return Err(ToastyError::other(format!(
+            "Runtime version {} is not installed. Install it first with 'toasty runtime install {}'",
+            version, version
+        )));
+    }
+
+    // Store the selected version in a config file
+    let config_path = oats_home.join("current_runtime_version");
+    fs::write(&config_path, version)?;
+
+    eprintln!("Switched to runtime version {}", version);
+    Ok(())
+}
+
+/// Get the currently selected runtime version
+pub fn current_runtime_version() -> Result<String> {
+    let oats_home = get_oats_home()?;
+    let config_path = oats_home.join("current_runtime_version");
+
+    if config_path.exists() {
+        let version = fs::read_to_string(&config_path)?;
+        Ok(version.trim().to_string())
+    } else {
+        // If no version is selected, try to get the latest
+        match get_latest_runtime_tag() {
+            Ok(tag) => Ok(format!("{} (latest)", tag)),
+            Err(_) => Ok("none selected".to_string()),
+        }
+    }
+}
+
+/// Get the path to the currently selected compiler
+pub fn get_selected_compiler_path() -> Option<PathBuf> {
+    let oats_home = match get_oats_home() {
+        Ok(dir) => dir,
+        Err(_) => return None,
+    };
+
+    let config_path = oats_home.join("current_version");
+    let version = match fs::read_to_string(&config_path) {
+        Ok(v) => v.trim().to_string(),
+        Err(_) => return None,
+    };
+
+    let artifact_name = get_compiler_artifact_name();
+    if artifact_name == "oatsc-unsupported" {
+        return None;
+    }
+
+    let compiler_path = oats_home.join(version).join(artifact_name);
+    if compiler_path.exists() {
+        Some(compiler_path)
+    } else {
+        None
+    }
+}
+
+/// Get the path to the currently selected runtime
+pub fn get_selected_runtime_path() -> Option<PathBuf> {
+    let oats_home = match get_oats_home() {
+        Ok(dir) => dir,
+        Err(_) => return None,
+    };
+
+    let config_path = oats_home.join("current_runtime_version");
+    let version = match fs::read_to_string(&config_path) {
+        Ok(v) => v.trim().to_string(),
+        Err(_) => return None,
+    };
+
+    let artifact_name = get_runtime_artifact_name();
+    if artifact_name == "libruntime-unsupported.a" {
+        return None;
+    }
+
+    let runtime_path = oats_home.join(version).join(artifact_name);
+    if runtime_path.exists() {
+        Some(runtime_path)
+    } else {
+        None
+    }
 }

@@ -8,6 +8,7 @@ use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use crate::diagnostics::{Result as DiagnosticsResult, ToastyError};
 use crate::manifest::{Dependency, Manifest};
 
 /// Package dependency graph
@@ -104,38 +105,59 @@ pub fn build_package_graph(
             }
 
             // Resolve dependency path
-            let dep_path = match dep_spec {
+            let dep_dir = match dep_spec {
                 Dependency::Detailed(spec) => {
                     if let Some(ref path) = spec.path {
-                        current_dir.join(path)
+                        // Local path dependency
+                        let dep_path = current_dir.join(path);
+                        if dep_path.exists() {
+                            std::fs::canonicalize(&dep_path).with_context(|| {
+                                format!("Failed to canonicalize path: {}", dep_path.display())
+                            })?
+                        } else {
+                            anyhow::bail!(
+                                "Dependency path does not exist: {} (from package '{}')",
+                                dep_path.display(),
+                                current_name
+                            );
+                        }
+                    } else if let Some(ref version) = spec.version {
+                        // Remote version dependency - check if installed
+                        match find_installed_package(dep_name, version) {
+                            Some(path) => path,
+                            None => {
+                                anyhow::bail!(
+                                    "Remote dependency '{}' version '{}' is not installed. Install it with 'toasty package install {} {}'",
+                                    dep_name,
+                                    version,
+                                    dep_name,
+                                    version
+                                );
+                            }
+                        }
                     } else {
                         anyhow::bail!(
-                            "Dependency '{}' in package '{}' has no path specified (external dependencies not yet supported)",
+                            "Dependency '{}' in package '{}' has neither path nor version specified",
                             dep_name,
                             current_name
                         );
                     }
                 }
-                Dependency::Version(_) => {
-                    anyhow::bail!(
-                        "External dependencies not yet supported (dependency '{}' in package '{}')",
-                        dep_name,
-                        current_name
-                    );
+                Dependency::Version(version) => {
+                    // Remote version dependency - check if installed
+                    match find_installed_package(dep_name, version) {
+                        Some(path) => path,
+                        None => {
+                            anyhow::bail!(
+                                "Remote dependency '{}' version '{}' is not installed. Install it with 'toasty package install {} {}'",
+                                dep_name,
+                                version,
+                                dep_name,
+                                version
+                            );
+                        }
+                    }
                 }
-            };
-
-            // Canonicalize the dependency path
-            let dep_dir = if dep_path.exists() {
-                std::fs::canonicalize(&dep_path).with_context(|| {
-                    format!("Failed to canonicalize path: {}", dep_path.display())
-                })?
-            } else {
-                anyhow::bail!(
-                    "Dependency path does not exist: {} (from package '{}')",
-                    dep_path.display(),
-                    current_name
-                );
             };
 
             // Look for Oats.toml in dependency directory
@@ -151,16 +173,16 @@ pub fn build_package_graph(
             // Check if we've already processed this package
             let dep_idx = if let Some(&existing_idx) = path_to_node.get(&dep_dir) {
                 // Verify the package name matches
-                let existing_node = &graph[existing_idx];
-                if existing_node.name != *dep_name {
+                let existing_node = &graph[existingIdx];
+                if existingNode.name != *dep_name {
                     anyhow::bail!(
                         "Dependency name mismatch: package at {} is named '{}' but referenced as '{}'",
                         dep_dir.display(),
-                        existing_node.name,
+                        existingNode.name,
                         dep_name
                     );
                 }
-                existing_idx
+                existingIdx
             } else {
                 // Load and validate the dependency manifest
                 let dep_manifest = Manifest::from_file(&dep_manifest_path).with_context(|| {
@@ -248,6 +270,45 @@ pub fn topological_sort_packages(
                 cycle.node_id()
             );
         }
+    }
+}
+
+/// Find an installed package by name and version
+fn find_installed_package(name: &str, version: &str) -> Option<PathBuf> {
+    use crate::fetch::get_oats_home;
+
+    let oats_home = get_oats_home().ok()?;
+    let loafs_dir = oats_home.join("loafs");
+
+    if !loafs_dir.exists() {
+        return None;
+    }
+
+    // For "latest", find the latest version
+    let target_version = if version == "latest" {
+        // Find all versions of this package and pick the latest
+        let mut versions = Vec::new();
+        if let Ok(entries) = std::fs::read_dir(&loafs_dir) {
+            for entry in entries.flatten() {
+                if let Some(dir_name) = entry.file_name().to_str() {
+                    if dir_name.starts_with(&format!("pkg-{}-", name)) {
+                        versions.push(dir_name.to_string());
+                    }
+                }
+            }
+        }
+        // Sort versions and pick the last one (assuming semver ordering)
+        versions.sort();
+        versions.last()?.clone()
+    } else {
+        format!("pkg-{}-{}", name, version)
+    };
+
+    let package_dir = loafs_dir.join(&target_version);
+    if package_dir.exists() {
+        Some(package_dir)
+    } else {
+        None
     }
 }
 

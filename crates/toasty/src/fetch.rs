@@ -674,9 +674,10 @@ pub fn uninstall_compiler_version(version: &str) -> Result<()> {
 
     // Remove the version directory if it's empty
     if let Some(version_dir) = compiler_path.parent()
-        && version_dir.read_dir()?.next().is_none() {
-            fs::remove_dir(version_dir)?;
-        }
+        && version_dir.read_dir()?.next().is_none()
+    {
+        fs::remove_dir(version_dir)?;
+    }
 
     // If this was the currently selected version, clear the selection
     let config_path = cache_dir.join("current_version");
@@ -718,9 +719,10 @@ pub fn uninstall_runtime_version(version: &str) -> Result<()> {
 
     // Remove the version directory if it's empty
     if let Some(version_dir) = runtime_path.parent()
-        && version_dir.read_dir()?.next().is_none() {
-            fs::remove_dir(version_dir)?;
-        }
+        && version_dir.read_dir()?.next().is_none()
+    {
+        fs::remove_dir(version_dir)?;
+    }
 
     // If this was the currently selected version, clear the selection
     let config_path = cache_dir.join("current_runtime_version");

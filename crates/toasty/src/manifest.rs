@@ -93,6 +93,37 @@ fn default_debug() -> bool {
     true
 }
 
+/// Basic semver validation (major.minor.patch with optional pre-release and build)
+fn is_valid_semver(version: &str) -> bool {
+    // Split into core version and optional pre-release/build
+    let mut parts = version.splitn(2, |c| c == '-' || c == '+');
+    let core = parts.next().unwrap();
+    let suffix = parts.next();
+
+    // Core must be major.minor.patch
+    let version_parts: Vec<&str> = core.split('.').collect();
+    if version_parts.len() != 3 {
+        return false;
+    }
+    for part in version_parts {
+        if part.is_empty() || !part.chars().all(|c| c.is_ascii_digit()) {
+            return false;
+        }
+        if part.len() > 1 && part.starts_with('0') {
+            return false; // no leading zero unless 0
+        }
+    }
+
+    // Suffix must be alphanumeric with dots, dashes, plus
+    if let Some(suf) = suffix {
+        if suf.is_empty() || !suf.chars().all(|c| c.is_alphanumeric() || c == '.' || c == '-' || c == '+') {
+            return false;
+        }
+    }
+
+    true
+}
+
 impl Manifest {
     /// Parse a manifest from a TOML string
     pub fn from_toml(content: &str) -> Result<Self> {
@@ -145,7 +176,7 @@ impl Manifest {
             );
         }
 
-        // Validate version (basic semver check)
+        // Validate version (semver format)
         if self.package.version.is_empty() {
             anyhow::bail!("Package version cannot be empty");
         }
@@ -153,6 +184,10 @@ impl Manifest {
         // Validate entry point is not empty
         if self.package.entry.is_empty() {
             anyhow::bail!("Package entry point cannot be empty");
+        }
+
+        if !is_valid_semver(&self.package.version) {
+            anyhow::bail!("Package version must be a valid semantic version (e.g., 1.0.0)");
         }
 
         // Validate dependencies
@@ -165,9 +200,16 @@ impl Manifest {
                             name
                         );
                     }
+                    if let Some(version) = &spec.version {
+                        if !is_valid_semver(version) {
+                            anyhow::bail!("Dependency '{}' version '{}' is not a valid semantic version", name, version);
+                        }
+                    }
                 }
-                Dependency::Version(_) => {
-                    // Future: validate version format
+                Dependency::Version(version) => {
+                    if !is_valid_semver(version) {
+                        anyhow::bail!("Dependency '{}' version '{}' is not a valid semantic version", name, version);
+                    }
                 }
             }
         }
@@ -212,6 +254,23 @@ mod tests {
                 description: None,
                 license: None,
                 entry: "src/main.oats".to_string(),
+            },
+            dependencies: HashMap::new(),
+            build: BuildConfig::default(),
+        };
+
+        assert!(manifest.validate().is_err());
+    }
+
+    #[test]
+    fn test_validate_invalid_version() {
+        let manifest = Manifest {
+            package: Package {
+                name: "test".to_string(),
+                version: "invalid".to_string(),
+                authors: vec![],
+                description: None,
+                license: None,
             },
             dependencies: HashMap::new(),
             build: BuildConfig::default(),

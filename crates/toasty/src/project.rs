@@ -130,9 +130,9 @@ fn is_valid_semver(version: &str) -> bool {
             || !suf
                 .chars()
                 .all(|c| c.is_alphanumeric() || c == '.' || c == '-' || c == '+'))
-        {
-            return false;
-        }
+    {
+        return false;
+    }
 
     true
 }
@@ -233,12 +233,13 @@ impl Manifest {
                         )));
                     }
                     if let Some(version) = &spec.version
-                        && !is_valid_semver(version) {
-                            return Err(Diagnostic::new(format!(
-                                "Dependency '{}' version '{}' is not a valid semantic version",
-                                name, version
-                            )));
-                        }
+                        && !is_valid_semver(version)
+                    {
+                        return Err(Diagnostic::new(format!(
+                            "Dependency '{}' version '{}' is not a valid semantic version",
+                            name, version
+                        )));
+                    }
                 }
                 Dependency::Version(version) => {
                     if !is_valid_semver(version) {
@@ -389,8 +390,20 @@ pub fn load_modules_with_verbosity(
 
         let src = std::fs::read_to_string(&path)
             .map_err(|e| Diagnostic::new(format!("Failed to read file {}: {}", path, e)))?;
-        let parsed = oatsc::parser::parse_oats_module(&src, Some(&path))
+        let (parsed_opt, parse_diags) = oatsc::parser::parse_oats_module(&src, Some(&path))
             .map_err(|e| Diagnostic::new(format!("Failed to parse module {}: {}", path, e)))?;
+
+        // Check if parsing was successful
+        let parsed = match parsed_opt {
+            Some(pm) => pm,
+            None => {
+                // Emit diagnostics for parsing failure
+                for diag in parse_diags {
+                    eprintln!("Parse error in {}: {}", path, diag.message);
+                }
+                return Err(Diagnostic::new(format!("Failed to parse module {}", path)));
+            }
+        };
 
         // Discover and enqueue relative imports from this module
         for item_ref in parsed.parsed.program_ref().body() {
@@ -464,10 +477,22 @@ pub fn build_dependency_graph(
         // Parse the current file to discover imports
         let source = std::fs::read_to_string(&current_path)
             .map_err(|e| Diagnostic::new(format!("Failed to read file {}: {}", current_path, e)))?;
-        let parsed =
+        let (parsed_opt, parse_diags) =
             oatsc::parser::parse_oats_module(&source, Some(&current_path)).map_err(|e| {
                 Diagnostic::new(format!("Failed to parse module {}: {}", current_path, e))
             })?;
+
+        // Check if parsing was successful
+        let parsed = match parsed_opt {
+            Some(pm) => pm,
+            None => {
+                // Emit diagnostics for parsing failure
+                for diag in parse_diags {
+                    eprintln!("Parse error in {}: {}", current_path, diag.message);
+                }
+                continue;
+            }
+        };
 
         // Get current node
         let current_node = *node_indices.get(&current_path).unwrap();

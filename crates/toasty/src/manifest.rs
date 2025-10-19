@@ -116,7 +116,11 @@ fn is_valid_semver(version: &str) -> bool {
 
     // Suffix must be alphanumeric with dots, dashes, plus
     if let Some(suf) = suffix {
-        if suf.is_empty() || !suf.chars().all(|c| c.is_alphanumeric() || c == '.' || c == '-' || c == '+') {
+        if suf.is_empty()
+            || !suf
+                .chars()
+                .all(|c| c.is_alphanumeric() || c == '.' || c == '-' || c == '+')
+        {
             return false;
         }
     }
@@ -127,7 +131,8 @@ fn is_valid_semver(version: &str) -> bool {
 impl Manifest {
     /// Parse a manifest from a TOML string
     pub fn from_toml(content: &str) -> Result<Self> {
-        let manifest: Self = toml::from_str(content).map_err(|e| anyhow::anyhow!("Failed to parse Oats.toml: {}", e))?;
+        let manifest: Self = toml::from_str(content)
+            .map_err(|e| anyhow::anyhow!("Failed to parse Oats.toml: {}", e))?;
         manifest.validate()?;
         Ok(manifest)
     }
@@ -202,13 +207,21 @@ impl Manifest {
                     }
                     if let Some(version) = &spec.version {
                         if !is_valid_semver(version) {
-                            anyhow::bail!("Dependency '{}' version '{}' is not a valid semantic version", name, version);
+                            anyhow::bail!(
+                                "Dependency '{}' version '{}' is not a valid semantic version",
+                                name,
+                                version
+                            );
                         }
                     }
                 }
                 Dependency::Version(version) => {
                     if !is_valid_semver(version) {
-                        anyhow::bail!("Dependency '{}' version '{}' is not a valid semantic version", name, version);
+                        anyhow::bail!(
+                            "Dependency '{}' version '{}' is not a valid semantic version",
+                            name,
+                            version
+                        );
                     }
                 }
             }

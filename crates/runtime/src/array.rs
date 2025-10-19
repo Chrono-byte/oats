@@ -4,7 +4,6 @@ use libc::{c_char, c_void};
 use std::ffi::CStr;
 use std::io::{self, Write};
 use std::mem;
-use std::process;
 use std::ptr;
 use std::sync::atomic::{AtomicPtr, AtomicU64, Ordering};
 
@@ -14,10 +13,10 @@ use crate::string::{heap_str_from_cstr, rc_dec_str};
 use crate::{ARRAY_HEADER_SIZE, MIN_ARRAY_CAPACITY, RUNTIME_LOG};
 
 /// Called when an array index is out-of-bounds. Prints a helpful message
-/// to stderr and aborts the process to avoid undefined behavior.
-fn runtime_index_oob_abort(_arr: *mut c_void, idx: usize, len: usize) -> ! {
+/// to stderr and panics the process to avoid undefined behavior.
+fn runtime_index_oob_panic(_arr: *mut c_void, idx: usize, len: usize) -> ! {
     // Try to print a best-effort diagnostic. Avoid panicking inside the
-    // runtime; just write to stderr and abort.
+    // runtime; just write to stderr and panic.
     let _ = io::stderr().write_all(b"OATS runtime: array index out of bounds\n");
     let _ = io::stderr().write_all(b"Index: ");
     let s = idx.to_string();
@@ -26,7 +25,7 @@ fn runtime_index_oob_abort(_arr: *mut c_void, idx: usize, len: usize) -> ! {
     let s2 = len.to_string();
     let _ = io::stderr().write_all(s2.as_bytes());
     let _ = io::stderr().write_all(b"\n");
-    process::abort();
+    panic!("Array index out of bounds: index={}, length={}", idx, len);
 }
 
 #[unsafe(no_mangle)]
@@ -87,10 +86,14 @@ pub extern "C" fn array_get_f64(arr: *mut c_void, idx: usize) -> f64 {
         return 0.0;
     }
     unsafe {
+        // SAFETY: arr is checked for null and plausible address before accessing memory
+        if !crate::is_plausible_addr(arr as usize) {
+            return 0.0;
+        }
         let len_ptr = (arr as *mut u8).add(mem::size_of::<u64>()) as *const u64;
         let len = *len_ptr as usize;
         if idx >= len {
-            runtime_index_oob_abort(arr, idx, len);
+            runtime_index_oob_panic(arr, idx, len);
         }
         let data_start = (arr as *mut u8).add(ARRAY_HEADER_SIZE);
         let elem_ptr = data_start.add(idx * mem::size_of::<f64>()) as *const f64;
@@ -104,10 +107,14 @@ pub extern "C" fn array_get_ptr(arr: *mut c_void, idx: usize) -> *mut c_void {
         return ptr::null_mut();
     }
     unsafe {
+        // SAFETY: arr is checked for null and plausible address before accessing memory
+        if !crate::is_plausible_addr(arr as usize) {
+            return ptr::null_mut();
+        }
         let len_ptr = (arr as *mut u8).add(mem::size_of::<u64>()) as *const u64;
         let len = *len_ptr as usize;
         if idx >= len {
-            runtime_index_oob_abort(arr, idx, len);
+            runtime_index_oob_panic(arr, idx, len);
         }
         let data_start = (arr as *mut u8).add(ARRAY_HEADER_SIZE);
         let elem_ptr = data_start.add(idx * mem::size_of::<*mut c_void>()) as *const *mut c_void;
@@ -134,10 +141,14 @@ pub extern "C" fn array_get_ptr_borrow(arr: *mut c_void, idx: usize) -> *mut c_v
         return ptr::null_mut();
     }
     unsafe {
+        // SAFETY: arr is checked for null and plausible address before accessing memory
+        if !crate::is_plausible_addr(arr as usize) {
+            return ptr::null_mut();
+        }
         let len_ptr = (arr as *mut u8).add(mem::size_of::<u64>()) as *const u64;
         let len = *len_ptr as usize;
         if idx >= len {
-            runtime_index_oob_abort(arr, idx, len);
+            runtime_index_oob_panic(arr, idx, len);
         }
         let data_start = (arr as *mut u8).add(ARRAY_HEADER_SIZE);
         let elem_ptr = data_start.add(idx * mem::size_of::<*mut c_void>()) as *const *mut c_void;
@@ -219,6 +230,10 @@ pub unsafe extern "C" fn array_set_f64(arr_ptr: *mut *mut c_void, idx: usize, v:
         if arr.is_null() {
             return;
         }
+        // SAFETY: arr is checked for null and plausible address before accessing memory
+        if !crate::is_plausible_addr(arr as usize) {
+            return;
+        }
 
         let cap_ptr = (arr as *mut u8).add(mem::size_of::<u64>() * 2) as *mut u64;
         let capacity = *cap_ptr as usize;
@@ -265,6 +280,10 @@ pub unsafe extern "C" fn array_set_ptr(arr_ptr: *mut *mut c_void, idx: usize, p:
     unsafe {
         let mut arr = *arr_ptr;
         if arr.is_null() {
+            return;
+        }
+        // SAFETY: arr is checked for null and plausible address before accessing memory
+        if !crate::is_plausible_addr(arr as usize) {
             return;
         }
 
@@ -324,10 +343,14 @@ pub unsafe extern "C" fn array_set_ptr_weak(arr: *mut c_void, idx: usize, p: *mu
         return;
     }
     unsafe {
+        // SAFETY: arr is checked for null and plausible address before accessing memory
+        if !crate::is_plausible_addr(arr as usize) {
+            return;
+        }
         let len_ptr = (arr as *mut u8).add(mem::size_of::<u64>()) as *const u64;
         let len = *len_ptr as usize;
         if idx >= len {
-            runtime_index_oob_abort(arr, idx, len);
+            runtime_index_oob_panic(arr, idx, len);
         }
         let data_start = (arr as *mut u8).add(ARRAY_HEADER_SIZE);
         let elem_ptr =
@@ -354,6 +377,10 @@ pub extern "C" fn array_push_f64(arr: *mut c_void, value: f64) {
         return;
     }
     unsafe {
+        // SAFETY: arr is checked for null and plausible address before accessing memory
+        if !crate::is_plausible_addr(arr as usize) {
+            return;
+        }
         let len_ptr = (arr as *mut u8).add(mem::size_of::<u64>()) as *mut u64;
         let len = *len_ptr as usize;
         let cap_ptr = (arr as *mut u8).add(mem::size_of::<u64>() * 2) as *const u64;
@@ -369,7 +396,10 @@ pub extern "C" fn array_push_f64(arr: *mut c_void, value: f64) {
             let _ = io::stderr().write_all(s2.as_bytes());
             let _ =
                 io::stderr().write_all(b"\nConsider using array[i] = value for dynamic growth\n");
-            process::abort();
+            panic!(
+                "Array push capacity exceeded: length={}, capacity={}",
+                len, capacity
+            );
         }
 
         let data_start = (arr as *mut u8).add(ARRAY_HEADER_SIZE);
@@ -385,6 +415,10 @@ pub extern "C" fn array_pop_f64(arr: *mut c_void) -> f64 {
         return 0.0;
     }
     unsafe {
+        // SAFETY: arr is checked for null and plausible address before accessing memory
+        if !crate::is_plausible_addr(arr as usize) {
+            return 0.0;
+        }
         let len_ptr = (arr as *mut u8).add(mem::size_of::<u64>()) as *mut u64;
         let len = *len_ptr as isize;
         if len <= 0 {
@@ -407,6 +441,10 @@ pub extern "C" fn array_push_ptr(arr: *mut c_void, value: *mut c_void) {
         return;
     }
     unsafe {
+        // SAFETY: arr is checked for null and plausible address before accessing memory
+        if !crate::is_plausible_addr(arr as usize) {
+            return;
+        }
         let len_ptr = (arr as *mut u8).add(mem::size_of::<u64>()) as *mut u64;
         let len = *len_ptr as usize;
         let data_start = (arr as *mut u8).add(ARRAY_HEADER_SIZE);
@@ -425,6 +463,10 @@ pub extern "C" fn array_push_ptr_weak(arr: *mut c_void, value: *mut c_void) {
         return;
     }
     unsafe {
+        // SAFETY: arr is checked for null and plausible address before accessing memory
+        if !crate::is_plausible_addr(arr as usize) {
+            return;
+        }
         let len_ptr = (arr as *mut u8).add(mem::size_of::<u64>()) as *mut u64;
         let len = *len_ptr as usize;
         let data_start = (arr as *mut u8).add(ARRAY_HEADER_SIZE);
@@ -443,6 +485,10 @@ pub extern "C" fn array_pop_ptr(arr: *mut c_void) -> *mut c_void {
         return ptr::null_mut();
     }
     unsafe {
+        // SAFETY: arr is checked for null and plausible address before accessing memory
+        if !crate::is_plausible_addr(arr as usize) {
+            return ptr::null_mut();
+        }
         let len_ptr = (arr as *mut u8).add(mem::size_of::<u64>()) as *mut u64;
         let len = *len_ptr as isize;
         if len <= 0 {
@@ -475,6 +521,10 @@ pub unsafe extern "C" fn array_to_string(arr: *mut c_void) -> *mut c_char {
         return ptr::null_mut();
     }
     unsafe {
+        // SAFETY: arr is checked for null and plausible address before accessing memory
+        if !crate::is_plausible_addr(arr as usize) {
+            return ptr::null_mut();
+        }
         let header_ptr = arr as *const u64;
         let header = *header_ptr;
         let flags = (header >> 32) as u32;

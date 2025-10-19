@@ -12,29 +12,45 @@ pub type Result<T> = std::result::Result<T, Diagnostic>;
 /// from error emission, allowing the compiler to collect multiple errors
 /// before deciding how to present them to the user. The optional `span_start`
 /// field enables precise error highlighting when source text is available.
+#[derive(Debug, Clone, Copy)]
+pub struct Span {
+    pub start: usize,
+    pub end: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct Label {
+    pub span: Span,
+    pub message: String,
+}
+
+/// Primary error message describing the issue
 #[derive(Debug, Clone)]
 pub struct Diagnostic {
-    /// Primary error message describing the issue
+    /// Optional error code
+    pub code: Option<String>,
+    /// Primary error message
     pub message: String,
     /// Optional file path where the error occurred
     pub file: Option<String>,
-    /// Optional additional context or suggestion
+    /// Optional labels for different error spans
+    pub labels: Vec<Label>,
+    /// Optional additional context
     pub note: Option<String>,
-    /// Optional byte offset into source text for span-aware highlighting.
-    /// When present and source text is provided to `emit_diagnostic`,
-    /// the system displays a caret-highlighted diagnostic instead of
-    /// basic file header context.
-    pub span_start: Option<usize>,
+    /// Optional help message with suggestions
+    pub help: Option<String>,
 }
 
 impl Diagnostic {
     /// Create a new diagnostic with a message
     pub fn new(message: impl Into<String>) -> Self {
-        Self {
+        Diagnostic {
+            code: None,
             message: message.into(),
             file: None,
+            labels: Vec::new(),
             note: None,
-            span_start: None,
+            help: None,
         }
     }
 
@@ -50,9 +66,24 @@ impl Diagnostic {
         self
     }
 
-    /// Set the span start position
-    pub fn with_span(mut self, span_start: usize) -> Self {
-        self.span_start = Some(span_start);
+    /// Set the span for the diagnostic
+    pub fn with_label(mut self, span: Span, message: impl Into<String>) -> Self {
+        self.labels.push(Label {
+            span,
+            message: message.into(),
+        });
+        self
+    }
+
+    /// Set the error code
+    pub fn with_code(mut self, code: impl Into<String>) -> Self {
+        self.code = Some(code.into());
+        self
+    }
+
+    /// Set the help message
+    pub fn with_help(mut self, help: impl Into<String>) -> Self {
+        self.help = Some(help.into());
         self
     }
 }
@@ -66,6 +97,12 @@ impl std::fmt::Display for Diagnostic {
         }
         if let Some(note) = &self.note {
             write!(f, "\nNote: {}", note)?;
+        }
+        if let Some(help) = &self.help {
+            write!(f, "\nHelp: {}", help)?;
+        }
+        for label in &self.labels {
+            write!(f, "\n{}: {}", label.span.start, label.message)?;
         }
         Ok(())
     }

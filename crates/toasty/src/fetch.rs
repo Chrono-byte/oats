@@ -7,6 +7,7 @@
 use crate::diagnostics::{Result, ToastyError};
 use sha2::{Digest, Sha256};
 use std::fs;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 /// GitHub repository information
@@ -155,8 +156,33 @@ fn download_compiler(tag: &str, artifact_name: &str, dest_path: &Path) -> Result
         .call()
         .map_err(|e| ToastyError::other(format!("Failed to download compiler: {}", e)))?;
 
+    let total_size = response
+        .header("content-length")
+        .and_then(|s| s.parse::<u64>().ok());
+
     let mut file = fs::File::create(dest_path)?;
-    let bytes_written = std::io::copy(&mut response.into_reader(), &mut file)?;
+    let mut reader = response.into_reader();
+    let mut buffer = [0; 8192];
+    let mut bytes_written = 0u64;
+    let mut last_progress = 0;
+
+    loop {
+        let bytes_read = reader.read(&mut buffer)?;
+        if bytes_read == 0 {
+            break;
+        }
+        file.write_all(&buffer[..bytes_read])?;
+        bytes_written += bytes_read as u64;
+
+        // Show progress every 10% or so
+        if let Some(total) = total_size {
+            let progress = (bytes_written * 100) / total;
+            if progress >= last_progress + 10 {
+                last_progress = progress;
+                eprintln!("Download progress: {}%", progress);
+            }
+        }
+    }
 
     // Make the binary executable on Unix systems
     #[cfg(unix)]
@@ -183,9 +209,10 @@ fn download_compiler(tag: &str, artifact_name: &str, dest_path: &Path) -> Result
         for asset in assets {
             if asset.get("name").and_then(|n| n.as_str()) == Some(artifact_name)
                 && let Some(digest) = asset.get("digest").and_then(|d| d.as_str())
-                    && let Some(hash) = digest.strip_prefix("sha256:") {
-                        expected_hash = Some(hash.to_string());
-                    }
+                && let Some(hash) = digest.strip_prefix("sha256:")
+            {
+                expected_hash = Some(hash.to_string());
+            }
         }
     }
     let computed_hash = compute_sha256(dest_path)?;
@@ -257,9 +284,10 @@ fn download_runtime(tag: &str, artifact_name: &str, dest_path: &Path) -> Result<
         for asset in assets {
             if asset.get("name").and_then(|n| n.as_str()) == Some(artifact_name)
                 && let Some(digest) = asset.get("digest").and_then(|d| d.as_str())
-                    && let Some(hash) = digest.strip_prefix("sha256:") {
-                        expected_hash = Some(hash.to_string());
-                    }
+                && let Some(hash) = digest.strip_prefix("sha256:")
+            {
+                expected_hash = Some(hash.to_string());
+            }
         }
     }
     let computed_hash = compute_sha256(dest_path)?;

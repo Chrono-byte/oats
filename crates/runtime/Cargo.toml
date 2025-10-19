@@ -7,7 +7,7 @@ description = "Runtime library for Oats AOT TypeScript compiler"
 repository = "https://github.com/Chrono-byte/oats"
 
 [lib]
-crate-type = ["staticlib"]
+crate-type = ["rlib", "staticlib"]
 
 [dependencies]
 libc = "0.2"

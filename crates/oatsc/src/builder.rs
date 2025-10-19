@@ -1159,15 +1159,14 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
     // conflicting with the C runtime entrypoint. The script must export
     // `main`, but we generate `oats_main` as the emitted symbol the host
     // runtime will call.
-    if let Some(ref func) = func_decl {
-        if let Some(ref sig) = func_sig {
+    if let Some(ref func) = func_decl
+        && let Some(ref sig) = func_sig {
             codegen
                 .gen_function_ir("oats_main", func, &sig.params, &sig.ret, None)
                 .map_err(|d| {
                     crate::diagnostics::emit_diagnostic(&d, Some(source.as_str()));
                     anyhow::anyhow!("{}", d.message)
                 })?;
-        }
     }
 
     // Try to emit a host `main` into the module so no external shim is

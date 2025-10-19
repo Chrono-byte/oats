@@ -724,6 +724,40 @@ pub fn infer_type_from_expr(expr: &ast::Expr) -> Option<OatsType> {
             // Parenthesized expressions have the same type as their contents
             infer_type_from_expr(&paren.expr)
         }
+        ast::Expr::Tpl(_tpl) => {
+            // Template literals are strings
+            Some(OatsType::String)
+        }
+        ast::Expr::New(new_expr) => {
+            // For new ClassName(...), infer NominalStruct("ClassName")
+            if let ast::Expr::Ident(ident) = &*new_expr.callee {
+                Some(OatsType::NominalStruct(ident.sym.to_string()))
+            } else {
+                None
+            }
+        }
+        ast::Expr::Cond(cond) => {
+            // For conditional expressions, infer from cons and alt if they have the same type
+            let cons_type = infer_type_from_expr(&cond.cons);
+            let alt_type = infer_type_from_expr(&cond.alt);
+            if cons_type == alt_type {
+                cons_type
+            } else {
+                None
+            }
+        }
+        ast::Expr::Await(await_expr) => {
+            // For await expressions, infer the unwrapped type if it's a promise
+            if let Some(inner) = infer_type_from_expr(&await_expr.arg) {
+                if let OatsType::Promise(boxed) = inner {
+                    Some(*boxed)
+                } else {
+                    Some(inner)
+                }
+            } else {
+                None
+            }
+        }
         _ => None,
     }
 }

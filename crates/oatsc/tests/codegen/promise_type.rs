@@ -86,7 +86,8 @@ fn parse_promise_number_type() -> Result<()> {
         }
     "#;
 
-    let parsed_mod = parser::parse_oats_module(src, None)?;
+    let (parsed_mod_opt, _) = parser::parse_oats_module(src, None)?;
+    let parsed_mod = parsed_mod_opt.ok_or_else(|| anyhow::anyhow!("Failed to parse source"))?;
     let parsed = &parsed_mod.parsed;
 
     // Find the function
@@ -126,7 +127,8 @@ fn parse_promise_string_type() -> Result<()> {
         }
     "#;
 
-    let parsed_mod = parser::parse_oats_module(src, None)?;
+    let (parsed_mod_opt, _) = parser::parse_oats_module(src, None)?;
+    let parsed_mod = parsed_mod_opt.ok_or_else(|| anyhow::anyhow!("Failed to parse source"))?;
     let parsed = &parsed_mod.parsed;
 
     // Find the function
@@ -159,7 +161,8 @@ fn parse_promise_void_type() -> Result<()> {
         }
     "#;
 
-    let parsed_mod = parser::parse_oats_module(src, None)?;
+    let (parsed_mod_opt, _) = parser::parse_oats_module(src, None)?;
+    let parsed_mod = parsed_mod_opt.ok_or_else(|| anyhow::anyhow!("Failed to parse source"))?;
     let parsed = &parsed_mod.parsed;
 
     // Find the function
@@ -199,7 +202,8 @@ fn parse_promise_custom_type() -> Result<()> {
         }
     "#;
 
-    let parsed_mod = parser::parse_oats_module(src, None)?;
+    let (parsed_mod_opt, _) = parser::parse_oats_module(src, None)?;
+    let parsed_mod = parsed_mod_opt.ok_or_else(|| anyhow::anyhow!("Failed to parse source"))?;
     let parsed = &parsed_mod.parsed;
 
     // Find the fetchUser function
@@ -252,7 +256,8 @@ export function main(): number {
     return 42;
 }
 "#;
-    let parsed = parser::parse_oats_module(source, None)?;
+    let (parsed_opt, _) = parser::parse_oats_module(source, None)?;
+    let parsed = parsed_opt.ok_or_else(|| anyhow::anyhow!("Failed to parse source"))?;
     let program = parsed.parsed.program_ref();
 
     // Find the return statement with literal 42
@@ -284,7 +289,8 @@ export function main(): number {
     return 0;
 }
 "#;
-    let parsed = parser::parse_oats_module(source, None)?;
+    let (parsed_opt, _) = parser::parse_oats_module(source, None)?;
+    let parsed = parsed_opt.ok_or_else(|| anyhow::anyhow!("Failed to parse source"))?;
     let program = parsed.parsed.program_ref();
 
     // Find the array literal [1, 2, 3]

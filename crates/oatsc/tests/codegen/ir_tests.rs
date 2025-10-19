@@ -11,7 +11,8 @@ use inkwell::targets::TargetMachine;
 fn gen_add_function_ir_contains_fadd() -> Result<()> {
     let source = r#"export function main(a: number, b: number): number { return a + b; }"#;
 
-    let parsed_mod = parser::parse_oats_module(source, None)?;
+    let (parsed_mod_opt, _) = parser::parse_oats_module(source, None)?;
+    let parsed_mod = parsed_mod_opt.ok_or_else(|| anyhow::anyhow!("Failed to parse source"))?;
     let parsed = &parsed_mod.parsed;
 
     // extract exported function and name
@@ -31,7 +32,8 @@ fn gen_add_function_ir_contains_fadd() -> Result<()> {
         func_decl_opt.ok_or_else(|| anyhow::anyhow!("No exported function found"))?;
 
     let mut symbols = SymbolTable::new();
-    let func_sig = check_function_strictness(&func_decl, &mut symbols)?;
+    let (func_sig_opt, _) = check_function_strictness(&func_decl, &mut symbols)?;
+    let func_sig = func_sig_opt.ok_or_else(|| anyhow::anyhow!("Failed to check function strictness"))?;
 
     let context = Context::create();
     let module = context.create_module("oats_test");

@@ -29,15 +29,6 @@ jobs:
           - os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
             artifact: toasty-linux-x86_64
-    #          - os: ubuntu-24.04
-    #            target: aarch64-unknown-linux-gnu
-    #            artifact: toasty-linux-aarch64
-    #          - os: macos-14
-    #            target: aarch64-apple-darwin
-    #            artifact: toasty-macos-aarch64
-    #          - os: macos-13
-    #            target: x86_64-apple-darwin
-    #            artifact: toasty-macos-x86_64
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout repository
@@ -48,6 +39,20 @@ jobs:
         with:
           toolchain: stable
           target: ${{ matrix.target }}
+
+      - name: Install sccache
+        run: |
+          cargo install sccache
+          echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
+          echo "SCCACHE_DIR=~/.cache/sccache" >> $GITHUB_ENV
+
+      - name: Cache sccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/sccache
+          key: sccache-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            sccache-${{ runner.os }}-
 
       - name: Cache Cargo dependencies
         uses: actions/cache@v4

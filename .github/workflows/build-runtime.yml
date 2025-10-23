@@ -29,15 +29,6 @@ jobs:
           - os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
             artifact: libruntime-linux-x86_64.a
-    #          - os: ubuntu-24.04
-    #            target: aarch64-unknown-linux-gnu
-    #            artifact: libruntime-linux-aarch64.a
-    #          - os: macos-14
-    #            target: aarch64-apple-darwin
-    #            artifact: libruntime-macos-aarch64.a
-    #          - os: macos-13
-    #            target: x86_64-apple-darwin
-    #            artifact: libruntime-macos-x86_64.a
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -50,6 +41,20 @@ jobs:
           toolchain: stable
           target: ${{ matrix.target }}
 
+      - name: Install sccache
+        run: |
+          cargo install sccache
+          echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
+          echo "SCCACHE_DIR=~/.cache/sccache" >> $GITHUB_ENV
+
+      - name: Cache sccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/sccache
+          key: sccache-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            sccache-${{ runner.os }}-
+
       - name: Cache Cargo dependencies
         uses: actions/cache@v4
         with:
@@ -59,21 +64,6 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
-
-      - name: Install cross-compilation tools (Linux ARM64)
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
-
-      - name: Create Cargo config for aarch64 linker
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
-        run: |
-          mkdir -p .cargo
-          cat > .cargo/config.toml <<'EOF'
-          [target.aarch64-unknown-linux-gnu]
-          linker = "aarch64-linux-gnu-gcc"
-          EOF
 
       - name: Build runtime
         run: |

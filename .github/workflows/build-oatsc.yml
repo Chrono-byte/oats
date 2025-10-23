@@ -5,8 +5,6 @@ on:
   push:
     branches:
       - master
-    tags:
-      - "v*"
     paths:
       - crates/oatsc/**
       - .github/workflows/build-oatsc.yml
@@ -28,8 +26,6 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             artifact: oatsc-linux-x86_64
-          # - target: aarch64-unknown-linux-gnu
-          #   artifact: oatsc-linux-aarch64
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
@@ -41,6 +37,20 @@ jobs:
           toolchain: stable
           target: ${{ matrix.target }}
 
+      - name: Install sccache
+        run: |
+          cargo install sccache
+          echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
+          echo "SCCACHE_DIR=~/.cache/sccache" >> $GITHUB_ENV
+
+      - name: Cache sccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/sccache
+          key: sccache-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            sccache-${{ runner.os }}-
+
       - name: Cache Cargo dependencies
         uses: actions/cache@v4
         with:
@@ -51,33 +61,12 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
-      - name: Install cross-compilation tools (Linux ARM64)
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
-        run: |
-          sudo dpkg --add-architecture arm64
-          sudo apt-get update
-          sudo apt-get install -y \
-            gcc-aarch64-linux-gnu \
-            binutils-aarch64-linux-gnu \
-            g++-aarch64-linux-gnu \
-            libffi-dev:arm64 \
-            llvm-18-dev:arm64
-
       - name: Install LLVM (Linux)
         run: |
           sudo apt-get update
           sudo apt-get install -y llvm-18-dev clang-18 libclang-18-dev
           echo "LLVM_SYS_181_PREFIX=/usr/lib/llvm-18" >> $GITHUB_ENV
           echo "/usr/lib/llvm-18/bin" >> $GITHUB_PATH
-
-      - name: Create Cargo config for aarch64 linker
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
-        run: |
-          mkdir -p .cargo
-          printf '%s\n' \
-            '[target.aarch64-unknown-linux-gnu]' \
-            'linker = "aarch64-linux-gnu-gcc"' \
-            > .cargo/config.toml
 
       - name: Build oatsc
         run: cargo build --release --bin oatsc --target ${{ matrix.target }}
@@ -94,62 +83,6 @@ jobs:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.artifact }}
           retention-days: 90
-
-  # build-oatsc-mac:
-  #   name: Build Oats Compiler (macOS)
-  #   strategy:
-  #     matrix:
-  #       include:
-  #         - os: macos-14
-  #           target: aarch64-apple-darwin
-  #           artifact: oatsc-macos-aarch64
-  #   runs-on: ${{ matrix.os }}
-  #   steps:
-  #     - name: Checkout repository
-  #       uses: actions/checkout@v4
-  #
-  #     - name: Install Rust toolchain
-  #       uses: actions-rust-lang/setup-rust-toolchain@v1
-  #       with:
-  #         toolchain: stable
-  #         target: ${{ matrix.target }}
-  #
-  #     - name: Cache Cargo dependencies
-  #       uses: actions/cache@v4
-  #       with:
-  #         path: |
-  #           ~/.cargo/registry
-  #           ~/.cargo/git
-  #         key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-  #         restore-keys: |
-  #           ${{ runner.os }}-cargo-
-  #
-  #     - name: Install LLVM (macOS)
-  #       run: |
-  #         brew install llvm@18
-  #         if [ "$(uname -m)" = "arm64" ]; then
-  #           LLVM_PREFIX="/opt/homebrew/opt/llvm@18"
-  #         else
-  #           LLVM_PREFIX="/usr/local/opt/llvm@18"
-  #         fi
-  #         echo "LLVM_SYS_181_PREFIX=$LLVM_PREFIX" >> $GITHUB_ENV
-  #         echo "$LLVM_PREFIX/bin" >> $GITHUB_PATH
-  #
-  #     - name: Build oatsc
-  #       run: cargo build --release --bin oatsc --target ${{ matrix.target }}
-  #
-  #     - name: Rename artifact
-  #       run: cp target/${{ matrix.target }}/release/oatsc ${{ matrix.artifact }}
-  #
-  #     - name: Make executable (Unix)
-  #       run: chmod +x ${{ matrix.artifact }}
-  #
-  #     - name: Upload artifact
-  #       uses: actions/upload-artifact@v4
-  #       with:
-  #         name: ${{ matrix.artifact }}
-  #         path: ${{ matrix.artifact }}
-  #         retention-days: 90
 
   # build-oatsc-windows:
   #   name: Build Oats Compiler (Windows)
@@ -202,7 +135,7 @@ jobs:
     needs:
       - build-oatsc-linux
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/v'))
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     permissions:
       contents: write
     steps:
@@ -217,16 +150,9 @@ jobs:
       - name: Generate version tag
         id: version
         run: |
-          if [[ $GITHUB_REF == refs/heads/master ]]; then
-            echo "tag=oatsc-nightly" >> $GITHUB_OUTPUT
-            echo "title=Oatsc Nightly Build $(date +%Y-%m-%d)" >> $GITHUB_OUTPUT
-            echo "notes=Automated nightly oatsc compiler build from commit ${{ github.sha }}" >> $GITHUB_OUTPUT
-          elif [[ $GITHUB_REF == refs/tags/* ]]; then
-            TAG_NAME=${GITHUB_REF#refs/tags/}
-            echo "tag=stable-${TAG_NAME}" >> $GITHUB_OUTPUT
-            echo "title=Stable Release ${TAG_NAME}" >> $GITHUB_OUTPUT
-            echo "notes=Stable oatsc compiler release ${TAG_NAME} from commit ${{ github.sha }}" >> $GITHUB_OUTPUT
-          fi
+          echo "tag=oatsc-nightly" >> $GITHUB_OUTPUT
+          echo "title=Oatsc Nightly Build $(date +%Y-%m-%d)" >> $GITHUB_OUTPUT
+          echo "notes=Automated nightly oatsc compiler build from commit ${{ github.sha }}" >> $GITHUB_OUTPUT
           echo "date=$(date +%Y%m%d-%H%M%S)" >> $GITHUB_OUTPUT
 
       - name: Install GitHub CLI
@@ -238,16 +164,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if [[ "${{ steps.version.outputs.tag }}" == "oatsc-nightly" ]]; then
-            gh release delete oatsc-nightly --yes || true
-            gh release create "${{ steps.version.outputs.tag }}" \
-              --title "${{ steps.version.outputs.title }}" \
-              --notes "${{ steps.version.outputs.notes }}" \
-              --prerelease \
-              $(find artifacts -type f)
-          else
-            gh release create "${{ steps.version.outputs.tag }}" \
-              --title "${{ steps.version.outputs.title }}" \
-              --notes "${{ steps.version.outputs.notes }}" \
-              $(find artifacts -type f)
-          fi
+          gh release delete oatsc-nightly --yes || true
+          gh release create "${{ steps.version.outputs.tag }}" \
+            --title "${{ steps.version.outputs.title }}" \
+            --notes "${{ steps.version.outputs.notes }}" \
+            --prerelease \
+            $(find artifacts -type f)

@@ -7,12 +7,64 @@ use colored::Colorize;
 use std::path::PathBuf;
 
 use crate::build;
-use crate::cli::{Cli, CompileOptions, CompilerCommands, PackageCommands, RuntimeCommands};
+use crate::cli::{Cli, CompileOptions, PackageCommands, VersionCommands};
 use crate::compiler;
 use crate::diagnostics::{Result, ToastyError};
 use crate::fetch;
 use crate::linker;
 use crate::project;
+
+/// Helper function to determine verbosity and color settings
+fn get_verbosity_and_color(cli: &Cli, color: Option<String>) -> bool {
+    let verbose = if cli.verbose {
+        true
+    } else {
+        std::env::var("TOASTY_VERBOSE").is_ok()
+    };
+
+    let enable_color = match color.as_deref() {
+        Some("always") => true,
+        Some("never") => false,
+        Some("auto") | None => atty::is(AtStream::Stderr),
+        _ => atty::is(AtStream::Stderr),
+    };
+    colored::control::set_override(enable_color);
+
+    verbose
+}
+
+/// Helper function to set common CompileOptions fields from CLI parameters
+fn set_compile_options_from_cli(
+    mut options: CompileOptions,
+    out_dir: Option<String>,
+    out_name: Option<String>,
+    linker: Option<String>,
+    opt_level: Option<String>,
+    lto: Option<String>,
+    target_triple: Option<String>,
+    target_cpu: Option<String>,
+    target_features: Option<String>,
+    release: bool,
+    emit_object_only: bool,
+    link_runtime: bool,
+) -> CompileOptions {
+    options.out_dir = out_dir;
+    options.out_name = out_name;
+    options.linker = linker;
+    options.opt_level = opt_level;
+    options.lto = lto;
+    options.target_triple = target_triple;
+    options.target_cpu = target_cpu;
+    options.target_features = target_features;
+    options.build_profile = if release {
+        Some("release".to_string())
+    } else {
+        None
+    };
+    options.emit_object_only = emit_object_only;
+    options.link_runtime = link_runtime;
+    options
+}
 
 /// Handle the build command
 pub fn handle_build(
@@ -32,21 +84,7 @@ pub fn handle_build(
     quiet: bool,
     color: Option<String>,
 ) -> Result<()> {
-    // determine effective verbosity: CLI flag overrides env var
-    let verbose = if cli.verbose {
-        true
-    } else {
-        std::env::var("TOASTY_VERBOSE").is_ok()
-    };
-
-    // color handling: support always/never/auto (auto=enable when stderr is a TTY)
-    let enable_color = match color.as_deref() {
-        Some("always") => true,
-        Some("never") => false,
-        Some("auto") | None => atty::is(AtStream::Stderr),
-        _ => atty::is(AtStream::Stderr),
-    };
-    colored::control::set_override(enable_color);
+    let verbose = get_verbosity_and_color(cli, color);
 
     if release {
         if !quiet && (verbose || cfg!(debug_assertions)) {
@@ -102,22 +140,20 @@ pub fn handle_build(
             );
         }
 
-        let mut options = CompileOptions::new(src_file.clone());
-        options.out_dir = out_dir.clone();
-        options.out_name = out_name.clone();
-        options.linker = linker.clone();
-        options.emit_object_only = true;
-        options.link_runtime = !no_link_runtime;
-        options.opt_level = opt_level.clone();
-        options.lto = lto.clone();
-        options.target_triple = target_triple.clone();
-        options.target_cpu = target_cpu.clone();
-        options.target_features = target_features.clone();
-        options.build_profile = if release {
-            Some("release".to_string())
-        } else {
-            None
-        };
+        let options = set_compile_options_from_cli(
+            CompileOptions::new(src_file.clone()),
+            out_dir.clone(),
+            out_name.clone(),
+            linker.clone(),
+            opt_level.clone(),
+            lto.clone(),
+            target_triple.clone(),
+            target_cpu.clone(),
+            target_features.clone(),
+            release,
+            true, // emit_object_only
+            !no_link_runtime, // link_runtime
+        );
 
         let build_out = compiler::invoke_oatsc(&options)?;
         if let Some(out_path) = build_out
@@ -181,7 +217,20 @@ pub fn handle_build(
             );
         }
 
-        let mut options = CompileOptions::new(module_path.clone());
+        let mut options = set_compile_options_from_cli(
+            CompileOptions::new(module_path.clone()),
+            out_dir.clone(),
+            Some(format!("{}_module", i)),
+            linker.clone(),
+            opt_level.clone(),
+            lto.clone(),
+            target_triple.clone(),
+            target_cpu.clone(),
+            target_features.clone(),
+            release,
+            true, // emit_object_only
+            !no_link_runtime, // link_runtime
+        );
 
         // For Phase 1: if this is not the first module, add extern_oats for previous modules
         // TODO: In Phase 2, this will be based on actual package metadata
@@ -196,22 +245,6 @@ pub fn handle_build(
                 // Add more hardcoded mappings as needed
             }
         }
-
-        options.out_dir = out_dir.clone();
-        options.out_name = Some(format!("{}_module", i));
-        options.linker = linker.clone();
-        options.emit_object_only = true; // Emit objects for linking later
-        options.link_runtime = !no_link_runtime;
-        options.opt_level = opt_level.clone();
-        options.lto = lto.clone();
-        options.target_triple = target_triple.clone();
-        options.target_cpu = target_cpu.clone();
-        options.target_features = target_features.clone();
-        options.build_profile = if release {
-            Some("release".to_string())
-        } else {
-            None
-        };
 
         // Compile this module
         let build_out = compiler::invoke_oatsc(&options)?;
@@ -274,20 +307,7 @@ pub fn handle_run(
     quiet: bool,
     color: Option<String>,
 ) -> Result<()> {
-    let verbose = if cli.verbose {
-        true
-    } else {
-        std::env::var("TOASTY_VERBOSE").is_ok()
-    };
-
-    // honor color/quiet: same auto behavior as Build
-    let enable_color = match color.as_deref() {
-        Some("always") => true,
-        Some("never") => false,
-        Some("auto") | None => atty::is(AtStream::Stderr),
-        _ => atty::is(AtStream::Stderr),
-    };
-    colored::control::set_override(enable_color);
+    let verbose = get_verbosity_and_color(cli, color);
 
     // Determine source file
     let src_file = if let Some(s) = src {
@@ -451,89 +471,13 @@ export function main(): number {{
 }
 
 /// Handle compiler commands
-pub fn handle_compiler(action: CompilerCommands) -> Result<()> {
-    match action {
-        CompilerCommands::List => {
-            // List available compiler versions
-            let versions = fetch::list_available_compilers()?;
-            if versions.is_empty() {
-                println!("No compiler versions found.");
-            } else {
-                println!("Available compiler versions:");
-                for version in versions {
-                    println!("  - {}", version);
-                }
-            }
-            Ok(())
-        }
-        CompilerCommands::Install { version } => {
-            // Install a specific compiler version
-            fetch::install_compiler_version(&version)?;
-            println!("Compiler version {} installed successfully.", version);
-            Ok(())
-        }
-        CompilerCommands::Use { version } => {
-            // Switch to a specific compiler version
-            fetch::use_compiler_version(&version)?;
-            println!("Switched to compiler version {}.", version);
-            Ok(())
-        }
-        CompilerCommands::Current => {
-            // Show current compiler version
-            let current_version = fetch::current_compiler_version()?;
-            println!("Current compiler version: {}", current_version);
-            Ok(())
-        }
-        CompilerCommands::Uninstall { version } => {
-            // Uninstall a specific compiler version
-            fetch::uninstall_compiler_version(&version)?;
-            println!("Compiler version {} uninstalled successfully.", version);
-            Ok(())
-        }
-    }
+pub fn handle_compiler(action: VersionCommands) -> Result<()> {
+    handle_version_commands(action, "compiler")
 }
 
 /// Handle runtime commands
-pub fn handle_runtime(action: RuntimeCommands) -> Result<()> {
-    match action {
-        RuntimeCommands::List => {
-            // List available runtime versions
-            let versions = fetch::list_available_runtimes()?;
-            if versions.is_empty() {
-                println!("No runtime versions found.");
-            } else {
-                println!("Available runtime versions:");
-                for version in versions {
-                    println!("  - {}", version);
-                }
-            }
-            Ok(())
-        }
-        RuntimeCommands::Install { version } => {
-            // Install a specific runtime version
-            fetch::install_runtime_version(&version)?;
-            println!("Runtime version {} installed successfully.", version);
-            Ok(())
-        }
-        RuntimeCommands::Use { version } => {
-            // Switch to a specific runtime version
-            fetch::use_runtime_version(&version)?;
-            println!("Switched to runtime version {}.", version);
-            Ok(())
-        }
-        RuntimeCommands::Current => {
-            // Show current runtime version
-            let current_version = fetch::current_runtime_version()?;
-            println!("Current runtime version: {}", current_version);
-            Ok(())
-        }
-        RuntimeCommands::Uninstall { version } => {
-            // Uninstall a specific runtime version
-            fetch::uninstall_runtime_version(&version)?;
-            println!("Runtime version {} uninstalled successfully.", version);
-            Ok(())
-        }
-    }
+pub fn handle_runtime(action: VersionCommands) -> Result<()> {
+    handle_version_commands(action, "runtime")
 }
 
 /// Handle package commands
@@ -606,6 +550,78 @@ pub fn handle_package(action: PackageCommands) -> Result<()> {
             }
             Ok(())
         }
+    }
+}
+
+/// Generic handler for version management commands (compiler/runtime)
+fn handle_version_commands(action: VersionCommands, artifact_type: &str) -> Result<()> {
+    match action {
+        VersionCommands::List => {
+            // List available versions
+            let versions = match artifact_type {
+                "compiler" => fetch::list_available_compilers()?,
+                "runtime" => fetch::list_available_runtimes()?,
+                _ => return Err(crate::diagnostics::ToastyError::other("Invalid artifact type")),
+            };
+            if versions.is_empty() {
+                println!("No {} versions found.", artifact_type);
+            } else {
+                println!("Available {} versions:", artifact_type);
+                for version in versions {
+                    println!("  - {}", version);
+                }
+            }
+            Ok(())
+        }
+        VersionCommands::Install { version } => {
+            // Install a specific version
+            match artifact_type {
+                "compiler" => fetch::install_compiler_version(&version)?,
+                "runtime" => fetch::install_runtime_version(&version)?,
+                _ => return Err(crate::diagnostics::ToastyError::other("Invalid artifact type")),
+            };
+            println!("{} version {} installed successfully.", capitalize_first(artifact_type), version);
+            Ok(())
+        }
+        VersionCommands::Use { version } => {
+            // Switch to a specific version
+            match artifact_type {
+                "compiler" => fetch::use_compiler_version(&version)?,
+                "runtime" => fetch::use_runtime_version(&version)?,
+                _ => return Err(crate::diagnostics::ToastyError::other("Invalid artifact type")),
+            };
+            println!("Switched to {} version {}.", artifact_type, version);
+            Ok(())
+        }
+        VersionCommands::Current => {
+            // Show current version
+            let current_version = match artifact_type {
+                "compiler" => fetch::current_compiler_version()?,
+                "runtime" => fetch::current_runtime_version()?,
+                _ => return Err(crate::diagnostics::ToastyError::other("Invalid artifact type")),
+            };
+            println!("Current {} version: {}", artifact_type, current_version);
+            Ok(())
+        }
+        VersionCommands::Uninstall { version } => {
+            // Uninstall a specific version
+            match artifact_type {
+                "compiler" => fetch::uninstall_compiler_version(&version)?,
+                "runtime" => fetch::uninstall_runtime_version(&version)?,
+                _ => return Err(crate::diagnostics::ToastyError::other("Invalid artifact type")),
+            };
+            println!("{} version {} uninstalled successfully.", capitalize_first(artifact_type), version);
+            Ok(())
+        }
+    }
+}
+
+/// Helper function to capitalize the first letter of a string
+fn capitalize_first(s: &str) -> String {
+    let mut chars = s.chars();
+    match chars.next() {
+        None => String::new(),
+        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
     }
 }
 

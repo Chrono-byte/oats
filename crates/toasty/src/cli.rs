@@ -168,13 +168,13 @@ pub enum Commands {
     /// Manage oatsc compiler versions
     Compiler {
         #[command(subcommand)]
-        action: CompilerCommands,
+        action: VersionCommands,
     },
 
     /// Manage Oats runtime library versions
     Runtime {
         #[command(subcommand)]
-        action: RuntimeCommands,
+        action: VersionCommands,
     },
 
     /// Manage remote Oats packages
@@ -230,6 +230,30 @@ pub enum RuntimeCommands {
     },
 }
 
+/// Generic version management commands that work for both compiler and runtime
+#[derive(Subcommand, Clone)]
+pub enum VersionCommands {
+    /// List available versions
+    List,
+    /// Install a specific version
+    Install {
+        /// Version tag to install
+        version: String,
+    },
+    /// Switch to a specific version
+    Use {
+        /// Version tag to use
+        version: String,
+    },
+    /// Show current version
+    Current,
+    /// Uninstall a specific version
+    Uninstall {
+        /// Version tag to uninstall
+        version: String,
+    },
+}
+
 #[derive(Subcommand, Clone)]
 pub enum PackageCommands {
     /// List available packages
@@ -271,7 +295,7 @@ pub enum PackageCommands {
     },
     /// Show information about a specific package
     Info {
-        /// Package name to show info for
+        /// Package name to show information for
         name: String,
     },
 }

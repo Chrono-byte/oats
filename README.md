@@ -14,6 +14,16 @@ management.
 
 ---
 
+## Table of Contents
+
+- [Features](#-features)
+- [Getting Started](#-getting-started)
+- [Project Structure](#-project-structure)
+- [Contributing](#-contributing)
+- [License](#-license)
+
+---
+
 ## ✨ Features
 
 - **TypeScript Subset**: Compiles a rich subset of TypeScript including numbers,
@@ -111,12 +121,14 @@ If you want to develop Oats or work with the full repository:
 ## 📁 Project Structure
 
 - **`crates/oatsc`**: Core compiler for parsing, type checking, and LLVM IR
-  generation. Includes the runtime fetcher for standalone operation.
+  generation.
 - **`crates/runtime`**: The safe runtime library providing ARC helpers,
   allocators, logging, and the cycle collector. Built as a static library and
   published via GitHub Actions.
 - **`crates/toasty`**: The CLI wrapper for the compiler with `build` and `run`
   commands, including package-based compilation support.
+- **`crates/std`**: The Oats standard library providing console, filesystem,
+  networking, and other system utilities.
 - **`docs/`**: Comprehensive documentation including architecture, development
   guides, memory design, and roadmap.
 - **`examples/`**: Sample programs demonstrating language features, organized
@@ -139,13 +151,7 @@ Contributions are welcome\! Start by exploring the `docs/` directory:
 
 ### Development Workflow
 
-1. **Set Up Environment**:
-
-   ```bash
-   source ./scripts/setup_env.sh
-   ```
-
-2. **Build and Test**:
+**Build and Test**:
 
    ```bash
    # Build all crates

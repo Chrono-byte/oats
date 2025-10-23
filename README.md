@@ -47,17 +47,10 @@ management.
 sudo dnf install llvm18 llvm18-devel clang18
 ```
 
-**Ubuntu/Debian**:
+**Arch Linux**:
 
 ```bash
-sudo apt update
-sudo apt install llvm-18 llvm-18-dev clang-18
-```
-
-**macOS** (with Homebrew):
-
-```bash
-brew install llvm@18
+sudo pacman -S llvm18 clang
 ```
 
 ### Standalone Toasty (Recommended)

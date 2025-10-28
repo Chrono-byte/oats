@@ -493,6 +493,7 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
         last_expr_is_boxed_union: Cell::new(false),
         global_function_signatures: RefCell::new(HashMap::new()),
         symbol_table: RefCell::new(symbols),
+        external_std_fns: RefCell::new(HashMap::new()),
         current_label: RefCell::new(None),
         rta_results: None,
         uses_async: Cell::new(false),

@@ -99,6 +99,7 @@ fn gen_add_function_ir_contains_fadd() -> Result<()> {
         last_expr_is_boxed_union: std::cell::Cell::new(false),
         global_function_signatures: std::cell::RefCell::new(std::collections::HashMap::new()),
         symbol_table: std::cell::RefCell::new(symbols),
+        external_std_fns: std::cell::RefCell::new(std::collections::HashMap::new()),
         nested_generic_fns: std::cell::RefCell::new(std::collections::HashMap::new()),
         monomorphized_map: std::cell::RefCell::new(std::collections::HashMap::new()),
         rta_results: None,

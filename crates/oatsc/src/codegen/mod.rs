@@ -148,6 +148,8 @@ pub struct CodeGen<'a> {
         RefCell<HashMap<String, (Vec<crate::types::OatsType>, crate::types::OatsType)>>,
     // Symbol table for type information
     pub symbol_table: RefCell<crate::types::SymbolTable>,
+    // Cache for declared external std functions
+    pub external_std_fns: RefCell<HashMap<String, FunctionValue<'a>>>,
     // Map for compile-time evaluated const items: name -> ConstValue
     pub const_items: RefCell<HashMap<String, ConstValue>>,
     // Emitted LLVM globals for complime-time const heap objects (strings/arrays/objects)

@@ -293,11 +293,11 @@ pub fn create_codegen<'a>(
                 match &decl.decl {
                     deno_ast::swc::ast::Decl::Class(c) => {
                         let name = c.ident.sym.to_string();
-                        symbols.insert(name.clone(), oatsc::types::OatsType::NominalStruct(name));
+                        symbols.insert(name.clone(), oatsc::types::Symbol::Variable { ty: oatsc::types::OatsType::NominalStruct(name) });
                     }
                     deno_ast::swc::ast::Decl::TsInterface(iface) => {
                         let name = iface.id.sym.to_string();
-                        symbols.insert(name.clone(), oatsc::types::OatsType::NominalStruct(name));
+                        symbols.insert(name.clone(), oatsc::types::Symbol::Variable { ty: oatsc::types::OatsType::NominalStruct(name) });
                     }
                     _ => {}
                 }
@@ -369,6 +369,7 @@ pub fn create_codegen<'a>(
         last_expr_is_boxed_union: Cell::new(false),
         global_function_signatures: RefCell::new(HashMap::new()),
         symbol_table: RefCell::new(symbols),
+        external_std_fns: RefCell::new(std::collections::HashMap::new()),
         nested_generic_fns: RefCell::new(HashMap::new()),
         monomorphized_map: RefCell::new(HashMap::new()),
         rta_results: None,

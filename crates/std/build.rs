@@ -35,6 +35,7 @@ fn generate_type_definitions() -> String {
         ("path", "src/path.rs"),
         ("net", "src/net.rs"),
         ("env", "src/env.rs"),
+        ("temporal", "src/temporal.rs"),
         ("time", "src/time.rs"),
     ];
 
@@ -85,6 +86,10 @@ fn parse_module(content: &str, _module_name: &str) -> String {
             // Look for the function signature in the next few lines
             for j in (i + 1)..lines.len().min(i + 10) {
                 let func_line = lines[j].trim();
+                if func_line.starts_with("#[no_mangle]") {
+                    // Skip the no_mangle attribute
+                    continue;
+                }
                 if func_line.starts_with("pub extern \"C\" fn ")
                     || func_line.starts_with("extern \"C\" fn ")
                 {
@@ -103,14 +108,20 @@ fn parse_module(content: &str, _module_name: &str) -> String {
 
 fn parse_function_signature(line: &str) -> Option<String> {
     // Very basic function signature parsing
-    // Format: fn function_name(param1: Type1, param2: Type2) -> ReturnType
+    // Format: [pub] extern "C" fn function_name(param1: Type1, param2: Type2) -> ReturnType
 
     let line = line.trim();
-    if !line.starts_with("fn ") {
+    let fn_start = if line.starts_with("pub extern \"C\" fn ") {
+        "pub extern \"C\" fn "
+    } else if line.starts_with("extern \"C\" fn ") {
+        "extern \"C\" fn "
+    } else if line.starts_with("fn ") {
+        "fn "
+    } else {
         return None;
-    }
+    };
 
-    let after_fn = &line[3..];
+    let after_fn = &line[fn_start.len()..];
     let paren_pos = after_fn.find('(')?;
     let func_name = after_fn[..paren_pos].trim();
 
@@ -138,28 +149,22 @@ fn parse_function_signature(line: &str) -> Option<String> {
         if param.is_empty() {
             continue;
         }
-        let parts: Vec<&str> = param.split(':').map(|p| p.trim()).collect();
-        if parts.len() == 2 {
-            let param_name = parts[0];
-            let param_type = rust_type_to_oats_type(parts[1]);
-            ts_params.push(format!("{}: {}", param_name, param_type));
-        }
+        let colon_pos = param.find(':')?;
+        let param_name = param[..colon_pos].trim();
+        let param_type = param[colon_pos + 1..].trim();
+        let ts_type = rust_type_to_oats_type(param_type);
+        ts_params.push(format!("{}: {}", param_name, ts_type));
     }
 
     let ts_return = rust_type_to_oats_type(return_type);
-
-    Some(format!(
-        "    function {}({}): {};",
-        func_name,
-        ts_params.join(", "),
-        ts_return
-    ))
+    let func_def = format!("function {}({}): {};", func_name, ts_params.join(", "), ts_return);
+    Some(func_def)
 }
 
 fn rust_type_to_oats_type(rust_type: &str) -> &str {
     match rust_type {
         "OatsString" => "string",
-        "i32" | "i64" | "f32" | "f64" => "number",
+        "i32" | "i64" | "f32" | "f64" | "c_longlong" => "number",
         "bool" => "boolean",
         "()" | "void" => "void",
         "OatsArray" => "any[]",

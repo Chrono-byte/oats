@@ -16,6 +16,7 @@ pub mod fs;
 pub mod net;
 pub mod path;
 pub mod process;
+pub mod temporal;
 pub mod time;
 
 // Re-export commonly used types

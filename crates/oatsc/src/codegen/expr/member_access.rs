@@ -385,7 +385,7 @@ impl<'a> CodeGen<'a> {
                 };
                 // Check if the object is an enum type
                 if let Some(OatsType::Enum(_, variants)) =
-                    self.symbol_table.borrow().get(&ident_name)
+                    self.symbol_table.borrow().get_type(&ident_name)
                 {
                     // Find the index of the field in the enum variants
                     if let Some(member_index) = variants.iter().position(|v| v == &field_name) {

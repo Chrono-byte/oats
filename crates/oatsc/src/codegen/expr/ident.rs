@@ -45,7 +45,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         }
 
         // Check if the identifier refers to an enum type (enums themselves are not values)
-        if let Some(OatsType::Enum(_, _)) = self.symbol_table.borrow().get(&name) {
+        if let Some(OatsType::Enum(_, _)) = self.symbol_table.borrow().get_type(&name) {
             return Err(Diagnostic::simple_with_span_boxed(
                 Severity::Error,
                 format!(

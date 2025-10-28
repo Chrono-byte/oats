@@ -92,6 +92,12 @@ pub enum OatsType {
 }
 
 #[derive(Debug, Clone)]
+pub enum Symbol {
+    Variable { ty: OatsType },
+    StdFunction { mangled_name: String, sig: FunctionSig },
+}
+
+#[derive(Debug, Clone)]
 pub struct FunctionSig {
     pub type_params: Vec<String>,
     pub params: Vec<OatsType>,
@@ -99,7 +105,7 @@ pub struct FunctionSig {
 }
 
 pub struct SymbolTable {
-    scopes: Vec<HashMap<String, OatsType>>,
+    scopes: Vec<HashMap<String, Symbol>>,
 }
 
 impl Default for SymbolTable {
@@ -130,14 +136,31 @@ impl SymbolTable {
     /// * `name` - Symbol name to look up
     ///
     /// # Returns
-    /// The `OatsType` for the symbol if found, or `None` if not present
-    pub fn get(&self, name: &str) -> Option<&OatsType> {
+    /// The `Symbol` if found, or `None` if not present
+    pub fn get(&self, name: &str) -> Option<&Symbol> {
         for scope in self.scopes.iter().rev() {
-            if let Some(ty) = scope.get(name) {
-                return Some(ty);
+            if let Some(symbol) = scope.get(name) {
+                return Some(symbol);
             }
         }
         None
+    }
+
+    /// Retrieves the type of a variable symbol from the symbol table.
+    ///
+    /// This is a convenience method for getting the OatsType of a variable.
+    /// For std functions, this returns None.
+    ///
+    /// # Arguments
+    /// * `name` - Symbol name to look up
+    ///
+    /// # Returns
+    /// The `OatsType` for the symbol if it's a variable, or `None` otherwise
+    pub fn get_type(&self, name: &str) -> Option<&OatsType> {
+        self.get(name).and_then(|symbol| match symbol {
+            Symbol::Variable { ty } => Some(ty),
+            Symbol::StdFunction { .. } => None,
+        })
     }
 
     /// Inserts a symbol into the current (innermost) scope.
@@ -148,11 +171,30 @@ impl SymbolTable {
     ///
     /// # Arguments
     /// * `name` - Symbol name to bind
-    /// * `ty` - Type information for the symbol
-    pub fn insert(&mut self, name: String, ty: OatsType) {
+    /// * `symbol` - Symbol information
+    pub fn insert(&mut self, name: String, symbol: Symbol) {
         if let Some(scope) = self.scopes.last_mut() {
-            scope.insert(name, ty);
+            scope.insert(name, symbol);
         }
+    }
+
+    /// Inserts a variable symbol into the current (innermost) scope.
+    ///
+    /// # Arguments
+    /// * `name` - Symbol name to bind
+    /// * `ty` - Type information for the variable
+    pub fn insert_variable(&mut self, name: String, ty: OatsType) {
+        self.insert(name, Symbol::Variable { ty });
+    }
+
+    /// Inserts a std function symbol into the current (innermost) scope.
+    ///
+    /// # Arguments
+    /// * `name` - Symbol name to bind
+    /// * `mangled_name` - Mangled external symbol name
+    /// * `sig` - Function signature
+    pub fn insert_std_function(&mut self, name: String, mangled_name: String, sig: FunctionSig) {
+        self.insert(name, Symbol::StdFunction { mangled_name, sig });
     }
 
     /// Returns all symbols from all scopes as a flattened collection.
@@ -162,8 +204,8 @@ impl SymbolTable {
     /// scopes that shadow outer symbols will both be included in the result.
     ///
     /// # Returns
-    /// A vector of (name, type) pairs for all symbols in the table
-    pub fn all_symbols(&self) -> Vec<(String, OatsType)> {
+    /// A vector of (name, symbol) pairs for all symbols in the table
+    pub fn all_symbols(&self) -> Vec<(String, Symbol)> {
         self.scopes
             .iter()
             .flat_map(|scope| scope.iter().map(|(k, v)| (k.clone(), v.clone())))

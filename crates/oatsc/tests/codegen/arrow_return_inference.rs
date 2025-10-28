@@ -69,6 +69,7 @@ fn create_test_codegen<'a>(context: &'a Context, source: &'a str) -> CodeGen<'a>
         last_expr_is_boxed_union: std::cell::Cell::new(false),
         global_function_signatures: std::cell::RefCell::new(std::collections::HashMap::new()),
         symbol_table: std::cell::RefCell::new(oatsc::types::SymbolTable::new()),
+        external_std_fns: std::cell::RefCell::new(std::collections::HashMap::new()),
         const_items: std::cell::RefCell::new(std::collections::HashMap::new()),
         const_globals: std::cell::RefCell::new(std::collections::HashMap::new()),
         const_interns: std::cell::RefCell::new(std::collections::HashMap::new()),

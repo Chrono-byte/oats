@@ -754,6 +754,28 @@ impl<'a> super::CodeGen<'a> {
             let ty = self.context.void_type().fn_type(&[], false);
             let _f = self.module.add_function("collector_test_enqueue", ty, None);
         }
+
+        // Declare Temporal API functions
+        if self.module.get_function("oats_std_temporal_now").is_none() {
+            let fn_type = self.i8ptr_t.fn_type(&[], false);
+            let _f = self.module.add_function("oats_std_temporal_now", fn_type, None);
+        }
+        if self.module.get_function("oats_std_temporal_now_instant").is_none() {
+            let fn_type = self.i8ptr_t.fn_type(&[], false);
+            let _f = self.module.add_function("oats_std_temporal_now_instant", fn_type, None);
+        }
+        if self.module.get_function("oats_std_temporal_instant_from_epoch_nanoseconds").is_none() {
+            let fn_type = self.i8ptr_t.fn_type(&[self.i64_t.into()], false);
+            let _f = self.module.add_function("oats_std_temporal_instant_from_epoch_nanoseconds", fn_type, None);
+        }
+        if self.module.get_function("oats_std_temporal_instant_epoch_nanoseconds").is_none() {
+            let fn_type = self.i64_t.fn_type(&[self.i8ptr_t.into()], false);
+            let _f = self.module.add_function("oats_std_temporal_instant_epoch_nanoseconds", fn_type, None);
+        }
+        if self.module.get_function("oats_std_temporal_instant_add").is_none() {
+            let fn_type = self.i8ptr_t.fn_type(&[self.i8ptr_t.into(), self.i64_t.into()], false);
+            let _f = self.module.add_function("oats_std_temporal_instant_add", fn_type, None);
+        }
     }
 
     // Emit rc_dec calls for any initialized pointer locals in the provided

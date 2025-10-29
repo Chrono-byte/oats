@@ -40,7 +40,7 @@ pub fn link_executable(
         runtime_lib
     };
 
-    // Ensure std library is available
+    // Ensure std and primitives libraries are available
     let std_lib = if let Ok(std_path) = std::env::var("OATS_STD_PATH") {
         // Use explicitly specified std path
         let std_lib = PathBuf::from(std_path);
@@ -63,6 +63,26 @@ pub fn link_executable(
         std_lib
     };
 
+    // Primitives library: optional but recommended during migration
+    let primitives_lib = if let Ok(p_path) = std::env::var("OATS_PRIMITIVES_PATH") {
+        let p = PathBuf::from(p_path);
+        if !p.exists() {
+            eprintln!(
+                "Warning: Primitives library not found at OATS_PRIMITIVES_PATH: {}",
+                p.display()
+            );
+        }
+        p
+    } else {
+        let p = PathBuf::from("liboats_primitives.a");
+        if !p.exists() {
+            eprintln!(
+                "Note: primitives library not found (liboats_primitives.a). If you're migrating std to oats, build and place it in the current directory or set OATS_PRIMITIVES_PATH."
+            );
+        }
+        p
+    };
+
     let mut link_cmd = std::process::Command::new(&linker_cmd);
     link_cmd.arg("-o").arg(exe_path);
 
@@ -76,6 +96,8 @@ pub fn link_executable(
 
     // Add the std library
     link_cmd.arg(&std_lib);
+    // Add primitives library if present
+    link_cmd.arg(&primitives_lib);
 
     if verbose {
         eprintln!("Link command: {:?}", link_cmd);

@@ -30,12 +30,21 @@ declare void @rc_dec_str(ptr)
 
 declare void @sleep_ms(double)
 
+declare ptr @oats_std_temporal_now()
+
+declare ptr @oats_std_temporal_now_instant()
+
+declare ptr @oats_std_temporal_instant_from_epoch_nanoseconds(i64)
+
+declare i64 @oats_std_temporal_instant_epoch_nanoseconds(ptr)
+
+declare ptr @oats_std_temporal_instant_add(ptr, i64)
+
 declare ptr @str_concat(ptr, ptr)
 
 define double @oats_main() {
 entry:
   %num = alloca i64, align 8
-  unreachable
   ret double 0.000000e+00
 }
 

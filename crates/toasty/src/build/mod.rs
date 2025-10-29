@@ -352,8 +352,8 @@ fn compile_package_modules(
             }
 
             // Extract exported symbols from the previous module
-            if let Ok(exported_symbols) = extract_exported_symbols(prev_module_path) {
-                if !exported_symbols.is_empty() {
+            if let Ok(exported_symbols) = extract_exported_symbols(prev_module_path)
+                && !exported_symbols.is_empty() {
                     let symbol_list = exported_symbols.join(",");
                     let module_name = format!(
                         "./{}",
@@ -364,7 +364,6 @@ fn compile_package_modules(
                     );
                     options.extern_oats.insert(module_name, symbol_list);
                 }
-            }
         }
 
         // Configure output for this module
@@ -628,15 +627,14 @@ fn extract_exported_symbols(file_path: &str) -> Result<Vec<String>> {
     // Simple regex-like parsing for "export function name("
     for line in content.lines() {
         let line = line.trim();
-        if line.starts_with("export function ") {
-            if let Some(start) = line.find("export function ") {
+        if line.starts_with("export function ")
+            && let Some(start) = line.find("export function ") {
                 let after_export = &line[start + "export function ".len()..];
                 if let Some(end) = after_export.find('(') {
                     let function_name = after_export[..end].trim();
                     exported_symbols.push(function_name.to_string());
                 }
             }
-        }
     }
 
     Ok(exported_symbols)

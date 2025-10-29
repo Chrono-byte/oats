@@ -4,85 +4,37 @@
 //! They provide low-level I/O operations.
 
 use libc::c_char;
-use std::ffi::CStr;
-use std::io::{self, Write};
 
-/// Print a C string followed by a newline
-///
-/// # Safety
-/// `s` must be a valid nul-terminated C string pointer or null.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn print_str(s: *const c_char) {
-    unsafe {
-        if s.is_null() {
-            return;
-        }
-        let cstr = CStr::from_ptr(s);
-        crate::sys::println(cstr.to_string_lossy().as_ref());
-    }
-}
+// These symbols are now provided by the `oats_primitives` crate. We keep
+// extern declarations here so other parts of `crates/std` that reference
+// the symbols continue to link while we migrate code to the new layer.
 
-/// Print a f64 followed by a newline
-#[unsafe(no_mangle)]
-pub extern "C" fn print_f64(v: f64) {
-    crate::sys::println(v);
-}
+extern "C" {
+    /// # Safety
+    /// Pointer must be a valid nul-terminated C string or null.
+    #[link_name = "print_str"]
+    pub fn print_str(s: *const c_char);
 
-/// Print an i32 followed by a newline
-#[unsafe(no_mangle)]
-pub extern "C" fn print_i32(v: i32) {
-    crate::sys::println(v);
-}
+    #[link_name = "print_f64"]
+    pub fn print_f64(v: f64);
 
-/// Print a C string without newline
-///
-/// # Safety
-/// `s` must be a valid nul-terminated C string pointer or null.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn print_str_no_nl(s: *const c_char) {
-    unsafe {
-        if s.is_null() {
-            return;
-        }
-        let cstr = CStr::from_ptr(s);
-        let _ = io::stdout().write_all(cstr.to_bytes());
-    }
-}
+    #[link_name = "print_i32"]
+    pub fn print_i32(v: i32);
 
-/// Print a f64 without newline
-#[unsafe(no_mangle)]
-pub extern "C" fn print_f64_no_nl(v: f64) {
-    let _ = io::stdout().write_all(format!("{}", v).as_bytes());
-    let _ = io::stdout().flush();
-}
+    /// # Safety
+    /// Pointer must be a valid nul-terminated C string or null.
+    #[link_name = "print_str_no_nl"]
+    pub fn print_str_no_nl(s: *const c_char);
 
-/// Print a newline
-#[unsafe(no_mangle)]
-pub extern "C" fn print_newline() {
-    crate::sys::println("");
-}
+    #[link_name = "print_f64_no_nl"]
+    pub fn print_f64_no_nl(v: f64);
 
-/// Sleep for the given number of milliseconds
-#[unsafe(no_mangle)]
-pub extern "C" fn sleep_ms(ms: f64) {
-    if ms <= 0.0 {
-        return;
-    }
-    let mut ms_clamped = ms;
-    if ms_clamped > 10_000.0 {
-        ms_clamped = 10_000.0; // cap at 10s
-    }
-    let dur = std::time::Duration::from_millis(ms_clamped as u64);
-    std::thread::sleep(dur);
-}
+    #[link_name = "print_newline"]
+    pub fn print_newline();
 
-/// Convert a number to a string
-#[allow(clippy::manual_c_str_literals)]
-#[unsafe(no_mangle)]
-pub extern "C" fn number_to_string(num: f64) -> *mut c_char {
-    let s = format!("{}", num);
-    let c = std::ffi::CString::new(s).unwrap_or_default();
-    crate::sys::create_string(&c.to_string_lossy())
-        .map(|ptr| ptr.as_ptr())
-        .unwrap_or(std::ptr::null_mut())
+    #[link_name = "sleep_ms"]
+    pub fn sleep_ms(ms: f64);
+
+    #[link_name = "number_to_string"]
+    pub fn number_to_string(num: f64) -> *mut c_char;
 }

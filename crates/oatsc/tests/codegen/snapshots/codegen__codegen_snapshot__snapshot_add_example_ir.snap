@@ -6,6 +6,8 @@ expression: ir
 ; ModuleID = 'test_module'
 source_filename = "test_module"
 
+declare ptr @number_to_string(double)
+
 declare ptr @malloc(i64)
 
 declare i64 @strlen(ptr)

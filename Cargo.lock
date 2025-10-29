@@ -1253,6 +1253,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "oats_primitives"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "runtime",
+]
+
+[[package]]
 name = "oats_std"
 version = "0.1.0"
 dependencies = [
@@ -1261,6 +1269,7 @@ dependencies = [
  "chrono",
  "dirs",
  "libc",
+ "oats_primitives",
  "proc-macro2",
  "quote",
  "regex",

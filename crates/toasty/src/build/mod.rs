@@ -353,17 +353,18 @@ fn compile_package_modules(
 
             // Extract exported symbols from the previous module
             if let Ok(exported_symbols) = extract_exported_symbols(prev_module_path)
-                && !exported_symbols.is_empty() {
-                    let symbol_list = exported_symbols.join(",");
-                    let module_name = format!(
-                        "./{}",
-                        std::path::Path::new(prev_module_path)
-                            .file_stem()
-                            .unwrap_or_default()
-                            .to_string_lossy()
-                    );
-                    options.extern_oats.insert(module_name, symbol_list);
-                }
+                && !exported_symbols.is_empty()
+            {
+                let symbol_list = exported_symbols.join(",");
+                let module_name = format!(
+                    "./{}",
+                    std::path::Path::new(prev_module_path)
+                        .file_stem()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                );
+                options.extern_oats.insert(module_name, symbol_list);
+            }
         }
 
         // Configure output for this module
@@ -628,13 +629,14 @@ fn extract_exported_symbols(file_path: &str) -> Result<Vec<String>> {
     for line in content.lines() {
         let line = line.trim();
         if line.starts_with("export function ")
-            && let Some(start) = line.find("export function ") {
-                let after_export = &line[start + "export function ".len()..];
-                if let Some(end) = after_export.find('(') {
-                    let function_name = after_export[..end].trim();
-                    exported_symbols.push(function_name.to_string());
-                }
+            && let Some(start) = line.find("export function ")
+        {
+            let after_export = &line[start + "export function ".len()..];
+            if let Some(end) = after_export.find('(') {
+                let function_name = after_export[..end].trim();
+                exported_symbols.push(function_name.to_string());
             }
+        }
     }
 
     Ok(exported_symbols)

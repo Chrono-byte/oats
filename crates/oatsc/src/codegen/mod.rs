@@ -1274,7 +1274,10 @@ impl<'a> CodeGen<'a> {
         func_name: &str,
         type_args: &[crate::types::OatsType],
     ) -> crate::diagnostics::DiagnosticResult<String> {
-        eprintln!("[debug monomorphize] func='{}' type_args={:?}", func_name, type_args);
+        eprintln!(
+            "[debug monomorphize] func='{}' type_args={:?}",
+            func_name, type_args
+        );
         // Create a unique key for this monomorphization
         let mut key_parts = vec![func_name.to_string()];
         for arg in type_args {
@@ -1303,13 +1306,14 @@ impl<'a> CodeGen<'a> {
         // Obtain type parameter names: prefer fsig.type_params, otherwise derive from AST
         let mut tp_names: Vec<String> = fsig.type_params.clone();
         if tp_names.is_empty()
-            && let Some(tp_decl) = &func_ast.type_params {
-                tp_names = tp_decl
-                    .params
-                    .iter()
-                    .map(|p| p.name.sym.to_string())
-                    .collect();
-            }
+            && let Some(tp_decl) = &func_ast.type_params
+        {
+            tp_names = tp_decl
+                .params
+                .iter()
+                .map(|p| p.name.sym.to_string())
+                .collect();
+        }
 
         if tp_names.len() != type_args.len() {
             return Err(crate::diagnostics::Diagnostic::simple_boxed(
@@ -1336,12 +1340,12 @@ impl<'a> CodeGen<'a> {
         for param in &func_ast.params {
             if let deno_ast::swc::ast::Pat::Ident(ident) = &param.pat
                 && let Some(type_ann) = &ident.type_ann
-                    && let Some(mapped) =
-                        crate::types::map_ts_type_with_subst(&type_ann.type_ann, &subst)
-                    {
-                        concrete_params.push(mapped);
-                        continue;
-                    }
+                && let Some(mapped) =
+                    crate::types::map_ts_type_with_subst(&type_ann.type_ann, &subst)
+            {
+                concrete_params.push(mapped);
+                continue;
+            }
             // fallback: use corresponding entry from fsig.params if present
             if let Some(p) = fsig.params.get(concrete_params.len()) {
                 concrete_params.push(p.clone());
@@ -1353,9 +1357,7 @@ impl<'a> CodeGen<'a> {
 
         // Compute concrete return type
         let concrete_ret = if let Some(rt) = &func_ast.return_type {
-            if let Some(mapped) =
-                crate::types::map_ts_type_with_subst(&rt.type_ann, &subst)
-            {
+            if let Some(mapped) = crate::types::map_ts_type_with_subst(&rt.type_ann, &subst) {
                 mapped
             } else {
                 fsig.ret.clone()
@@ -1379,7 +1381,12 @@ impl<'a> CodeGen<'a> {
         self.monomorphized_map
             .borrow_mut()
             .insert(key.clone(), specialized_name.clone());
-        eprintln!("[debug monomorphize] reserved '{}' (key={}) module_has_before={}", specialized_name, key, self.module.get_function(&specialized_name).is_some());
+        eprintln!(
+            "[debug monomorphize] reserved '{}' (key={}) module_has_before={}",
+            specialized_name,
+            key,
+            self.module.get_function(&specialized_name).is_some()
+        );
 
         // Emit the specialized function IR. gen_function_ir mutates the builder
         // insert point, so preserve and restore it.
@@ -1393,13 +1400,20 @@ impl<'a> CodeGen<'a> {
         ) {
             // On error, remove the reserved mapping and return the diagnostic
             self.monomorphized_map.borrow_mut().remove(&key);
-            eprintln!("[debug monomorphize] gen_function_ir failed for '{}' diag='{}'", specialized_name, diag.message);
+            eprintln!(
+                "[debug monomorphize] gen_function_ir failed for '{}' diag='{}'",
+                specialized_name, diag.message
+            );
             return Err(diag);
         }
         if let Some(pb) = prev_block {
             self.builder.position_at_end(pb);
         }
-        eprintln!("[debug monomorphize] emitted '{}' present_in_module={}", specialized_name, self.module.get_function(&specialized_name).is_some());
+        eprintln!(
+            "[debug monomorphize] emitted '{}' present_in_module={}",
+            specialized_name,
+            self.module.get_function(&specialized_name).is_some()
+        );
 
         Ok(specialized_name)
     }

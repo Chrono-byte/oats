@@ -792,8 +792,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             .borrow_mut()
                             .insert(fname.clone(), ((*fdecl.function).clone(), fsig.clone()));
                         // Eagerly create common specializations (number, string)
-                        let _ = self.monomorphize_function(&fname, &[crate::types::OatsType::Number]);
-                        let _ = self.monomorphize_function(&fname, &[crate::types::OatsType::String]);
+                        let _ =
+                            self.monomorphize_function(&fname, &[crate::types::OatsType::Number]);
+                        let _ =
+                            self.monomorphize_function(&fname, &[crate::types::OatsType::String]);
                     } else {
                         let param_types_vec = fsig.params.clone();
                         let ret_type = fsig.ret.clone();

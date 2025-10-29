@@ -7,6 +7,6 @@ export enum Color {
 export function main(): void {
     let c: Color = Color.Red;
 
-    println(c)
+    console.log(c)
     return 1;
 }

@@ -10,8 +10,8 @@ export function main(): number {
     }
     
     let result: number = getX(point);
-    println("Result:");
-    println(result);
+    console.log("Result:");
+    console.log(result);
     
     return 0;
 }

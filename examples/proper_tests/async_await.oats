@@ -7,10 +7,10 @@ export function main(): void {
     }
 
     async function runAsyncCode(): Promise<void> {
-        println("Starting...");
+        console.log("Starting...");
         let message: string = await delayedMessage(0);
-        println(message);
-        println("Finished!");
+        console.log(message);
+        console.log("Finished!");
     }
 
     // Fire-and-forget the async work (tests may instead await in a harness)

@@ -1,22 +1,22 @@
 export function main(): void {
-    println("Control Flow Tests");
+    console.log("Control Flow Tests");
 
     // Test 1: While loop
     let mut i: number = 0;
     while (i < 5) {
-        println("While loop iteration");
+        console.log("While loop iteration");
         i = i + 1;
     }
 
     // Test 2: For loop
     for (let mut k: number = 0; k < 10; k = k + 1) {
         if (k == 3) {
-            println("Breaking at k=3");
+            console.log("Breaking at k=3");
             break;
         }
-        println("For loop iteration");
+        console.log("For loop iteration");
     }
 
-    println("Control Flow Tests Completed");
+    console.log("Control Flow Tests Completed");
     return;
 }

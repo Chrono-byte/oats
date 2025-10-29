@@ -3,9 +3,9 @@
 export function main(): number {
     let point: { x: number, y: number } = { x: 100, y: 200 };
     
-    println("Object test:");
-    println(point.x);
-    println(point.y);
+    console.log("Object test:");
+    console.log(point.x);
+    console.log(point.y);
     
     return 0;
 }

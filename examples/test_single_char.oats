@@ -3,7 +3,7 @@ export function main(): void {
     let a: string = "a";
     let b: string = "b";
     let c: string = "c";
-    println(a);
-    println(b);
-    println(c);
+    console.log(a);
+    console.log(b);
+    console.log(c);
 }

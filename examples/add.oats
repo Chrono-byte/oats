@@ -5,7 +5,7 @@ function add(a: number, b: number): number {
 export function main(): number {
     let num: number = add(3, 5);
 
-    println(num);
+    console.log(num);
 
     return 0;
 }

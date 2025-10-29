@@ -53,8 +53,8 @@ export function test_reassignment(): number {
 }
 
 export function main(): void {
-    println(test_local_no_escape());       // Should print 2
+    console.log(test_local_no_escape());       // Should print 2
     test_multiple_locals();                 // Should complete without error
-    println(test_reassignment());          // Should print 2
+    console.log(test_reassignment());          // Should print 2
     return;
 }

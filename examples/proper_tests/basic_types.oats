@@ -7,11 +7,11 @@ export function main(): void {
     let explicitString: string = "This should be a string.";
     let explicitNumber: number = 42;
 
-    println(`Framework: ${framework}`);
-    println(`Version: ${version}`);
-    println(`Is it awesome? ${isAwesome}`);
-    println(`Explicit String: ${explicitString}`);
-    println(`Explicit Number: ${explicitNumber}`);
+    console.log(`Framework: ${framework}`);
+    console.log(`Version: ${version}`);
+    console.log(`Is it awesome? ${isAwesome}`);
+    console.log(`Explicit String: ${explicitString}`);
+    console.log(`Explicit Number: ${explicitNumber}`);
 
     return;
 }

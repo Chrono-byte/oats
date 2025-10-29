@@ -47,7 +47,7 @@ export function test_cyclic(): void {
 }
 
 export function main(): void {
-    println(test_acyclic());  // Should print 2
+    console.log(test_acyclic());  // Should print 2
     test_cyclic();            // Should complete without error
     return;
 }

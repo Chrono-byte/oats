@@ -2,27 +2,27 @@
 export function main(): void {
     // Test 1: Initialized with number
     let x: number | string = 42;
-    println(x);  // Should print: 42
+    console.log(x);  // Should print: 42
     
     // Test 2: Reassign to string
     x = "hello";
-    println(x);  // Should print: hello
+    console.log(x);  // Should print: hello
     
     // Test 3: Reassign back to number
     x = 3.14;
-    println(x);  // Should print: 3.14
+    console.log(x);  // Should print: 3.14
     
     // Test 4: Uninitialized then assigned
     let y: number | string;
     y = 100;
-    println(y);  // Should print: 100
+    console.log(y);  // Should print: 100
     
     y = "world";
-    println(y);  // Should print: world
+    console.log(y);  // Should print: world
     
     // Test 5: Multiple unions
     let a: number | string = 1;
     let b: number | string = "two";
-    println(a);  // Should print: 1
-    println(b);  // Should print: two
+    console.log(a);  // Should print: 1
+    console.log(b);  // Should print: two
 }

@@ -25,6 +25,6 @@ export function main(): void {
     // At function end, both `a` and `b` go out of scope and ARC leaves a cycle.
     // Give the collector a short time to inspect nodes when run as a process.
     sleep_ms(500.0);
-    println("Cycle created and function returning");
+    console.log("Cycle created and function returning");
     return;
 }

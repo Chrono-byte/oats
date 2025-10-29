@@ -3,13 +3,13 @@
 function testValueUnions(): void {
     // Test number | boolean union
     let x: number | boolean = 42;
-    println(x);  // Should print 42
+    console.log(x);  // Should print 42
     
     // Reassign to boolean
     x = true;
     // Can't directly print boolean, so we'll use a workaround
     if (x) {
-        println(1);  // Should print 1 if true
+        console.log(1);  // Should print 1 if true
     }
 }
 
@@ -17,12 +17,12 @@ function testPointerUnions(): void {
     // Test string | null (Option type)
     let name: string | null = "Alice";
     if (name !== null) {
-        println(name);
+        console.log(name);
     }
     
     name = null;
     if (name === null) {
-        println("null");
+        console.log("null");
     }
 }
 
@@ -31,12 +31,12 @@ function testTypeofGuards(): void {
     let value: number | string = 42;
     
     if (typeof value === "number") {
-        println(value);  // Should print 42
+        console.log(value);  // Should print 42
     }
     
     value = "hello";
     if (typeof value === "string") {
-        println(value);  // Should print "hello"
+        console.log(value);  // Should print "hello"
     }
 }
 
@@ -45,29 +45,29 @@ function testMixedUnions(): void {
     let mixed: number | string = 100;
     
     if (typeof mixed === "number") {
-        println(mixed);  // Should print 100
+        console.log(mixed);  // Should print 100
     }
     
     mixed = "world";
     if (typeof mixed === "string") {
-        println(mixed);  // Should print "world"
+        console.log(mixed);  // Should print "world"
     }
 }
 
 export function main(): void {
-    println("=== Union Type Tests ===");
+    console.log("=== Union Type Tests ===");
     
-    println("1. Value unions:");
+    console.log("1. Value unions:");
     testValueUnions();
     
-    println("2. Pointer unions:");
+    console.log("2. Pointer unions:");
     testPointerUnions();
     
-    println("3. Typeof guards:");
+    console.log("3. Typeof guards:");
     testTypeofGuards();
     
-    println("4. Mixed unions:");
+    console.log("4. Mixed unions:");
     testMixedUnions();
     
-    println("=== All tests complete ===");
+    console.log("=== All tests complete ===");
 }

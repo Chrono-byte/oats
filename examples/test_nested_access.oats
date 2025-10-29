@@ -8,8 +8,8 @@ export function main(): number {
     // This should work but currently fails
     let result: number = outer.data.value;
     
-    println("Nested access result:");
-    println(result);
+    console.log("Nested access result:");
+    console.log(result);
     
     return 0;
 }

@@ -3,7 +3,7 @@
 export function main(): number {
     let a: number = 1;
     let obj: { a: number } = { a };
-    println("obj created");
-    println(obj.a);
+    console.log("obj created");
+    console.log(obj.a);
     return 0;
 }

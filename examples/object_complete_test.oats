@@ -1,55 +1,55 @@
 // Comprehensive test of all object literal features
 
 export function main(): number {
-    println("=== Object Literals Test Suite ===");
+    console.log("=== Object Literals Test Suite ===");
     
     // Test 1: Basic object creation and member access
-    println("\n1. Basic objects:");
+    console.log("\n1. Basic objects:");
     let point: { x: number, y: number } = { x: 10, y: 20 };
-    println(point.x);  // 10
-    println(point.y);  // 20
+    console.log(point.x);  // 10
+    console.log(point.y);  // 20
     
     // Test 2: Shorthand properties
-    println("\n2. Shorthand properties:");
+    console.log("\n2. Shorthand properties:");
     let a: number = 5;
     let b: number = 15;
     let coords: { a: number, b: number } = { a, b };
-    println(coords.a);  // 5
-    println(coords.b);  // 15
+    console.log(coords.a);  // 5
+    console.log(coords.b);  // 15
     
     // Test 3: Nested member access (variable refs)
-    println("\n3. Nested access (via variables):");
+    console.log("\n3. Nested access (via variables):");
     let inner: { value: number } = { value: 42 };
     let outer: { data: { value: number } } = { data: inner };
-    println(outer.data.value);  // 42
+    console.log(outer.data.value);  // 42
     
     // Test 4: Inline nested objects
-    println("\n4. Inline nested objects:");
+    console.log("\n4. Inline nested objects:");
     let rect: { topLeft: { x: number, y: number }, bottomRight: { x: number, y: number } } = {
         topLeft: { x: 0, y: 0 },
         bottomRight: { x: 100, y: 50 }
     };
-    println(rect.topLeft.x);        // 0
-    println(rect.bottomRight.x);    // 100
-    println(rect.bottomRight.y);    // 50
+    console.log(rect.topLeft.x);        // 0
+    console.log(rect.bottomRight.x);    // 100
+    console.log(rect.bottomRight.y);    // 50
     
     // Test 5: Objects as function parameters (with explicit types)
-    println("\n5. Objects as function parameters:");
+    console.log("\n5. Objects as function parameters:");
     function getX(p: { x: number, y: number }): number {
         return p.x;
     }
     let result: number = getX(point);
-    println(result);  // 10
+    console.log(result);  // 10
     
     // Test 6: Mixed types in objects
-    println("\n6. Mixed types:");
+    console.log("\n6. Mixed types:");
     let person: { name: string, age: number, active: boolean } = {
         name: "Alice",
         age: 30,
         active: true
     };
-    println(person.age);  // 30
+    console.log(person.age);  // 30
     
-    println("\n=== All tests passed! ===");
+    console.log("\n=== All tests passed! ===");
     return 0;
 }

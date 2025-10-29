@@ -1,0 +1,12 @@
+[package]
+name = "oats_parser"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "oats_parser"
+path = "src/lib.rs"
+
+[dependencies]
+oats_ast = { path = "../oats_ast" }
+chumsky = "0.9"

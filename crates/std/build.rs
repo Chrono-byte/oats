@@ -13,8 +13,8 @@ fn main() {
     // Parse the source files and generate type definitions
     let type_defs = generate_type_definitions();
 
-    // Write the type definitions to dist/lib.oats.d.ts
-    fs::write("dist/lib.oats.d.ts", type_defs).expect("Failed to write type definitions");
+    // Write the type definitions to dist/lib.d.oats
+    fs::write("dist/lib.d.oats", type_defs).expect("Failed to write type definitions");
 
     // Tell cargo to rerun this script if any source files change
     println!("cargo:rerun-if-changed=src/");
@@ -95,7 +95,7 @@ fn parse_module(content: &str, _module_name: &str) -> String {
                 {
                     if let Some(func_def) = parse_function_signature(func_line) {
                         output.push_str(&func_def);
-                        output.push_str("\n");
+                        output.push('\n');
                     }
                     break;
                 }
@@ -157,7 +157,12 @@ fn parse_function_signature(line: &str) -> Option<String> {
     }
 
     let ts_return = rust_type_to_oats_type(return_type);
-    let func_def = format!("function {}({}): {};", func_name, ts_params.join(", "), ts_return);
+    let func_def = format!(
+        "function {}({}): {};",
+        func_name,
+        ts_params.join(", "),
+        ts_return
+    );
     Some(func_def)
 }
 

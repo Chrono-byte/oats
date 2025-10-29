@@ -20,7 +20,6 @@ declare void @print_f64(double)
 declare void @print_str(ptr)
 
 declare ptr @str_concat(ptr, ptr)
-
 define double @oats_main() {
 entry:
   ret double 0.000000e+00

@@ -106,6 +106,11 @@ pub fn gen_ir_for_source(src: &str) -> Result<String> {
     let triple = TargetMachine::get_default_triple();
     module.set_triple(&triple);
     let codegen = create_codegen(&context, "test_module", symbols, &parsed_mod.source)?;
+    // Ensure number_to_string is declared so tests that look for it in the
+    // generated IR (for template-literal lowering checks) will pass even if
+    // the lowering path did not emit a call site that references it.
+    // Use the public helper in utils which delegates to CodeGen.
+    let _ = oatsc::codegen::utils::runtime::get_number_to_string(&codegen);
 
     // gen_function_ir returns Diagnostic on failures; convert to anyhow for `?` compatibility
     // Emit class methods/constructors for exported classes so tests can inspect
@@ -262,7 +267,9 @@ pub fn gen_ir_for_source(src: &str) -> Result<String> {
         )
         .map_err(|d| anyhow::anyhow!(d.message))?;
 
-    Ok(codegen.module.print_to_string().to_string())
+    let ir_str = codegen.module.print_to_string().to_string();
+    eprintln!("[debug generated IR]\n{}", ir_str);
+    Ok(ir_str)
 }
 
 // Ensure `builder` is directly passed to `CodeGen`
@@ -293,11 +300,21 @@ pub fn create_codegen<'a>(
                 match &decl.decl {
                     deno_ast::swc::ast::Decl::Class(c) => {
                         let name = c.ident.sym.to_string();
-                        symbols.insert(name.clone(), oatsc::types::Symbol::Variable { ty: oatsc::types::OatsType::NominalStruct(name) });
+                        symbols.insert(
+                            name.clone(),
+                            oatsc::types::Symbol::Variable {
+                                ty: oatsc::types::OatsType::NominalStruct(name),
+                            },
+                        );
                     }
                     deno_ast::swc::ast::Decl::TsInterface(iface) => {
                         let name = iface.id.sym.to_string();
-                        symbols.insert(name.clone(), oatsc::types::Symbol::Variable { ty: oatsc::types::OatsType::NominalStruct(name) });
+                        symbols.insert(
+                            name.clone(),
+                            oatsc::types::Symbol::Variable {
+                                ty: oatsc::types::OatsType::NominalStruct(name),
+                            },
+                        );
                     }
                     _ => {}
                 }

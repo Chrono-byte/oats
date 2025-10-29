@@ -289,7 +289,7 @@ impl EscapeAnalyzer {
                         // Mark certain functions as escape-causing
                         if matches!(
                             func_name.as_str(),
-                            "println" | "console.log" | "setTimeout" | "setInterval"
+                            "console.log" | "setTimeout" | "setInterval"
                         ) {
                             self.info.mark_escape_call(func_name.clone());
                             // All arguments to escape calls are considered escaping

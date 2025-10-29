@@ -678,13 +678,6 @@ impl<'a> CodeGen<'a> {
             .unwrap_or_else(|| self.module.add_function("executor_run", fn_type, None))
     }
 
-    fn get_math_random(&self) -> FunctionValue<'a> {
-        self.module.get_function("math_random").unwrap_or_else(|| {
-            let fn_type = self.f64_t.fn_type(&[], false);
-            self.module.add_function("math_random", fn_type, None)
-        })
-    }
-
     fn get_rc_dec(&self) -> FunctionValue<'a> {
         if let Some(f) = *self.fn_rc_dec.borrow() {
             return f;
@@ -834,48 +827,6 @@ impl<'a> CodeGen<'a> {
                     .i8ptr_t
                     .fn_type(&[self.i8ptr_t.into(), self.i64_t.into()], false);
                 self.module.add_function("array_get_ptr", fn_type, None)
-            })
-    }
-
-    fn get_array_push_f64(&self) -> FunctionValue<'a> {
-        self.module
-            .get_function("array_push_f64")
-            .unwrap_or_else(|| {
-                let fn_type = self
-                    .context
-                    .void_type()
-                    .fn_type(&[self.i8ptr_t.into(), self.f64_t.into()], false);
-                self.module.add_function("array_push_f64", fn_type, None)
-            })
-    }
-
-    fn get_array_pop_f64(&self) -> FunctionValue<'a> {
-        self.module
-            .get_function("array_pop_f64")
-            .unwrap_or_else(|| {
-                let fn_type = self.f64_t.fn_type(&[self.i8ptr_t.into()], false);
-                self.module.add_function("array_pop_f64", fn_type, None)
-            })
-    }
-
-    fn get_array_push_ptr(&self) -> FunctionValue<'a> {
-        self.module
-            .get_function("array_push_ptr")
-            .unwrap_or_else(|| {
-                let fn_type = self
-                    .context
-                    .void_type()
-                    .fn_type(&[self.i8ptr_t.into(), self.i8ptr_t.into()], false);
-                self.module.add_function("array_push_ptr", fn_type, None)
-            })
-    }
-
-    fn get_array_pop_ptr(&self) -> FunctionValue<'a> {
-        self.module
-            .get_function("array_pop_ptr")
-            .unwrap_or_else(|| {
-                let fn_type = self.i8ptr_t.fn_type(&[self.i8ptr_t.into()], false);
-                self.module.add_function("array_pop_ptr", fn_type, None)
             })
     }
 
@@ -1323,20 +1274,21 @@ impl<'a> CodeGen<'a> {
         func_name: &str,
         type_args: &[crate::types::OatsType],
     ) -> crate::diagnostics::DiagnosticResult<String> {
-        // Create a unique name for this monomorphization
+        eprintln!("[debug monomorphize] func='{}' type_args={:?}", func_name, type_args);
+        // Create a unique key for this monomorphization
         let mut key_parts = vec![func_name.to_string()];
         for arg in type_args {
             key_parts.push(format!("{:?}", arg));
         }
         let key = key_parts.join("_");
 
-        // Check if we've already monomorphized this
+        // Check cache
         if let Some(existing_name) = self.monomorphized_map.borrow().get(&key) {
             return Ok(existing_name.clone());
         }
 
-        // Get the generic function
-        let (_func_ast, fsig) = self
+        // Lookup the generic function AST and its signature
+        let (func_ast, fsig) = self
             .nested_generic_fns
             .borrow()
             .get(func_name)
@@ -1348,44 +1300,106 @@ impl<'a> CodeGen<'a> {
                 )
             })?;
 
-        // Verify type args match type params
-        if type_args.len() != fsig.type_params.len() {
+        // Obtain type parameter names: prefer fsig.type_params, otherwise derive from AST
+        let mut tp_names: Vec<String> = fsig.type_params.clone();
+        if tp_names.is_empty()
+            && let Some(tp_decl) = &func_ast.type_params {
+                tp_names = tp_decl
+                    .params
+                    .iter()
+                    .map(|p| p.name.sym.to_string())
+                    .collect();
+            }
+
+        if tp_names.len() != type_args.len() {
             return Err(crate::diagnostics::Diagnostic::simple_boxed(
                 Severity::Error,
                 format!(
                     "Expected {} type arguments for generic function '{}', got {}",
-                    fsig.type_params.len(),
+                    tp_names.len(),
                     func_name,
                     type_args.len()
                 ),
             ));
         }
 
-        // Create substitution map
-        let mut subst = std::collections::HashMap::new();
-        for (param_name, arg_type) in fsig.type_params.iter().zip(type_args.iter()) {
-            subst.insert(param_name.clone(), arg_type.clone());
+        // Build substitution map name -> OatsType
+        let mut subst: std::collections::HashMap<String, crate::types::OatsType> =
+            std::collections::HashMap::new();
+        for (n, t) in tp_names.iter().zip(type_args.iter()) {
+            subst.insert(n.clone(), t.clone());
         }
 
-        // Generate specialized function name
-        let mut specialized_name = func_name.to_string();
+        // Compute concrete parameter types by applying the substitution to the
+        // AST parameter annotations. Fall back to the fsig params when needed.
+        let mut concrete_params: Vec<crate::types::OatsType> = Vec::new();
+        for param in &func_ast.params {
+            if let deno_ast::swc::ast::Pat::Ident(ident) = &param.pat
+                && let Some(type_ann) = &ident.type_ann
+                    && let Some(mapped) =
+                        crate::types::map_ts_type_with_subst(&type_ann.type_ann, &subst)
+                    {
+                        concrete_params.push(mapped);
+                        continue;
+                    }
+            // fallback: use corresponding entry from fsig.params if present
+            if let Some(p) = fsig.params.get(concrete_params.len()) {
+                concrete_params.push(p.clone());
+            } else {
+                // As a last resort, assume Number
+                concrete_params.push(crate::types::OatsType::Number);
+            }
+        }
+
+        // Compute concrete return type
+        let concrete_ret = if let Some(rt) = &func_ast.return_type {
+            if let Some(mapped) =
+                crate::types::map_ts_type_with_subst(&rt.type_ann, &subst)
+            {
+                mapped
+            } else {
+                fsig.ret.clone()
+            }
+        } else {
+            fsig.ret.clone()
+        };
+
+        // Build specialized name matching expected `_mono` pattern
+        let mut specialized_name = format!("{}_mono", func_name);
         for arg in type_args {
             specialized_name.push_str(
                 &format!("_{:?}", arg)
-                    .replace(" ", "")
-                    .replace("(", "")
-                    .replace(")", "")
-                    .replace(",", "_"),
+                    .replace(' ', "")
+                    .replace(['(', ')'], "")
+                    .replace(',', "_"),
             );
         }
 
-        // Store the mapping
+        // Reserve mapping before emission to avoid recursion
         self.monomorphized_map
             .borrow_mut()
-            .insert(key, specialized_name.clone());
+            .insert(key.clone(), specialized_name.clone());
+        eprintln!("[debug monomorphize] reserved '{}' (key={}) module_has_before={}", specialized_name, key, self.module.get_function(&specialized_name).is_some());
 
-        // TODO: Actually emit the specialized function
-        // For now, just return the name - the actual emission would need to be implemented
+        // Emit the specialized function IR. gen_function_ir mutates the builder
+        // insert point, so preserve and restore it.
+        let prev_block = self.builder.get_insert_block();
+        if let Err(diag) = self.gen_function_ir(
+            &specialized_name,
+            &func_ast,
+            &concrete_params,
+            &concrete_ret,
+            None,
+        ) {
+            // On error, remove the reserved mapping and return the diagnostic
+            self.monomorphized_map.borrow_mut().remove(&key);
+            eprintln!("[debug monomorphize] gen_function_ir failed for '{}' diag='{}'", specialized_name, diag.message);
+            return Err(diag);
+        }
+        if let Some(pb) = prev_block {
+            self.builder.position_at_end(pb);
+        }
+        eprintln!("[debug monomorphize] emitted '{}' present_in_module={}", specialized_name, self.module.get_function(&specialized_name).is_some());
 
         Ok(specialized_name)
     }

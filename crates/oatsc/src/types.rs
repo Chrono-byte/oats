@@ -93,8 +93,13 @@ pub enum OatsType {
 
 #[derive(Debug, Clone)]
 pub enum Symbol {
-    Variable { ty: OatsType },
-    StdFunction { mangled_name: String, sig: FunctionSig },
+    Variable {
+        ty: OatsType,
+    },
+    StdFunction {
+        mangled_name: String,
+        sig: FunctionSig,
+    },
 }
 
 #[derive(Debug, Clone)]

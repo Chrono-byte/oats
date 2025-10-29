@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/oatsc", "crates/runtime", "crates/toasty", "crates/std", "crates/oats_primitives"]
+members = ["crates/oatsc", "crates/runtime", "crates/toasty", "crates/std", "crates/oats_primitives", "crates/oats_ast", "crates/oats_parser"]
 exclude = ["fuzz"]
 
 [profile.dev]

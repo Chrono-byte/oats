@@ -21,6 +21,7 @@
 //! These limits provide defense-in-depth against malicious or malformed input.
 
 use crate::diagnostics;
+use crate::types::FunctionSig;
 use anyhow::Result;
 use deno_ast::swc::ast;
 use deno_ast::{MediaType, ParseParams, ParsedSource, SourceTextInfo, parse_module};
@@ -334,6 +335,19 @@ pub struct ParsedModule {
     // tokens inside each VarDecl span so downstream passes (codegen) can
     // consult mutability information without string-searching the source.
     pub mut_var_decls: std::collections::HashSet<usize>,
+    // Top-level `declare function` declarations found in the source.
+    // Each entry contains the declared name and its function signature.
+    pub declared_fns: Vec<DeclaredFn>,
+}
+
+/// Lightweight representation of a top-level `declare function` signature
+/// extracted from source text. We intentionally keep this small and textual
+/// to avoid modifying deno_ast types; the builder will convert these into
+/// compiler `FunctionSig` entries and LLVM declarations.
+#[derive(Debug, Clone)]
+pub struct DeclaredFn {
+    pub name: String,
+    pub sig: FunctionSig,
 }
 
 /// Parse a TypeScript source string into a `ParsedModule` and run
@@ -348,9 +362,6 @@ pub struct ParsedModule {
 /// # Arguments
 /// * `source_code` - source text to parse
 /// * `file_path` - optional path used to create a `file://` URL for diagnostics
-///
-/// # Security
-/// Checks source size against MAX_SOURCE_SIZE before parsing to prevent DoS.
 pub fn parse_oats_module(
     source_code: &str,
     file_path: Option<&str>,
@@ -891,6 +902,7 @@ pub fn parse_oats_module_with_options(
         parsed,
         source: source_code.to_string(),
         mut_var_decls,
+        declared_fns: Vec::new(), // (to be populated later)
     };
 
     Ok((Some(parsed_module), diags))

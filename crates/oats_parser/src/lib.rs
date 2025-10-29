@@ -200,14 +200,43 @@ fn param_parser() -> impl Parser<char, Param, Error = Simple<char>> {
         })
 }
 
-/// Parser for TypeScript types (minimal).
+/// Parser for TypeScript types.
 fn ts_type_parser() -> impl Parser<char, TsType, Error = Simple<char>> {
+    recursive(|ts_type| {
+        let array = ts_type
+            .clone()
+            .then_ignore(just('[').padded())
+            .then_ignore(just(']').padded())
+            .map(|elem_type| TsType::TsArrayType(TsArrayType {
+                elem_type: Box::new(elem_type),
+                span: 0..0, // TODO
+            }));
+        choice((
+            array,
+            ts_type_ref_parser(),
+            ts_keyword_type_parser(),
+        ))
+    })
+}
+
+/// Parser for keyword types.
+fn ts_keyword_type_parser() -> impl Parser<char, TsType, Error = Simple<char>> {
     choice((
         text::keyword("number").map(|_| TsType::TsKeywordType(TsKeywordType::TsNumberKeyword)),
         text::keyword("string").map(|_| TsType::TsKeywordType(TsKeywordType::TsStringKeyword)),
         text::keyword("boolean").map(|_| TsType::TsKeywordType(TsKeywordType::TsBooleanKeyword)),
         text::keyword("void").map(|_| TsType::TsKeywordType(TsKeywordType::TsVoidKeyword)),
     ))
+}
+
+/// Parser for type references.
+fn ts_type_ref_parser() -> impl Parser<char, TsType, Error = Simple<char>> {
+    ident_parser()
+        .map(|ident| TsType::TsTypeRef(TsTypeRef {
+            type_name: TsEntityName::Ident(ident),
+            type_params: None,
+            span: 0..0, // TODO
+        }))
 }
 
 #[cfg(test)]
@@ -324,6 +353,30 @@ mod tests {
                 assert!(matches!(
                     field_decl.ty,
                     Some(TsType::TsKeywordType(TsKeywordType::TsNumberKeyword))
+                ));
+            } else {
+                panic!("Expected FieldDecl");
+            }
+        } else {
+            panic!("Expected ClassDecl");
+        }
+    }
+
+    #[test]
+    fn test_field_decl_with_array_type() {
+        let input = "class Node { value: number[]; }";
+        let result = parse_module(input);
+        assert!(result.is_ok());
+        let module = result.unwrap();
+        assert_eq!(module.body.len(), 1);
+        if let Stmt::ClassDecl(class_decl) = &module.body[0] {
+            assert_eq!(class_decl.ident.sym, "Node");
+            assert_eq!(class_decl.body.len(), 1);
+            if let ClassMember::Field(field_decl) = &class_decl.body[0] {
+                assert_eq!(field_decl.ident.sym, "value");
+                assert!(matches!(
+                    field_decl.ty,
+                    Some(TsType::TsArrayType(TsArrayType { .. }))
                 ));
             } else {
                 panic!("Expected FieldDecl");

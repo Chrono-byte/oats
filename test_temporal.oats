@@ -1,5 +1,0 @@
-export function main(): number {
-    let now = Temporal.now();
-    console.log_number(now);
-    return 0;
-}

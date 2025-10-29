@@ -20,19 +20,19 @@ impl TemporalInstant {
         if ptr.is_null() {
             return None;
         }
-        
+
         // Initialize header (strong RC = 1, static = 0, weak RC = 0, type = 0)
         unsafe {
             let header_ptr = ptr as *mut u64;
             *header_ptr = 1; // strong RC = 1
         }
-        
+
         // Set the timestamp field at offset 16
         unsafe {
             let field_ptr = (ptr as *mut u8).add(16) as *mut i64;
             *field_ptr = timestamp_ns;
         }
-        
+
         Some(Self { ptr })
     }
 
@@ -67,7 +67,7 @@ pub extern "C" fn oats_std_temporal_now_instant() -> *mut c_void {
         .duration_since(std::time::SystemTime::UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos() as i64;
-    
+
     match TemporalInstant::new(timestamp_ns) {
         Some(instant) => {
             // Return the pointer, ownership transferred to caller
@@ -86,7 +86,7 @@ pub extern "C" fn oats_std_temporal_instant_epoch_nanoseconds(instant: *mut c_vo
     if instant.is_null() {
         return 0;
     }
-    
+
     // Read the timestamp field
     unsafe {
         let field_ptr = (instant as *mut u8).add(16) as *mut i64;
@@ -111,18 +111,21 @@ pub extern "C" fn oats_std_temporal_instant_from_epoch_nanoseconds(ns: c_longlon
 /// Add duration to instant (basic implementation)
 /// #[oats_export]
 #[no_mangle]
-pub extern "C" fn oats_std_temporal_instant_add(instant: *mut c_void, nanoseconds: c_longlong) -> *mut c_void {
+pub extern "C" fn oats_std_temporal_instant_add(
+    instant: *mut c_void,
+    nanoseconds: c_longlong,
+) -> *mut c_void {
     if instant.is_null() {
         return std::ptr::null_mut();
     }
-    
+
     let current_ns = unsafe {
         let field_ptr = (instant as *mut u8).add(16) as *mut i64;
         *field_ptr
     };
-    
+
     let new_ns = current_ns + nanoseconds;
-    
+
     match TemporalInstant::new(new_ns) {
         Some(new_instant) => {
             let ptr = new_instant.as_ptr();

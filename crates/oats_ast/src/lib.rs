@@ -542,6 +542,7 @@ pub struct ParenExpr {
 pub enum TsType {
     TsKeywordType(TsKeywordType),
     TsTypeRef(TsTypeRef),
+    TsArrayType(TsArrayType),
     // Add more as needed
 }
 
@@ -574,6 +575,13 @@ pub enum TsEntityName {
 #[derive(Debug, Clone, PartialEq)]
 pub struct TsTypeParamInstantiation {
     pub params: Vec<TsType>,
+    pub span: Span,
+}
+
+/// TypeScript array type.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TsArrayType {
+    pub elem_type: Box<TsType>,
     pub span: Span,
 }
 

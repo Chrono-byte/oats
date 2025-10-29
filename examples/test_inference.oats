@@ -4,13 +4,13 @@ export function main(): number {
     let s = "hello";
     let mut arr = [1, 2, 3];
 
-    println(x);
-    println(y);
-    println(s);
-    println(arr[0]);
+    console.log(x);
+    console.log(y);
+    console.log(s);
+    console.log(arr[0]);
 
     let x = "hello";
-    println(x);
+    console.log(x);
 
     return 0;
 }

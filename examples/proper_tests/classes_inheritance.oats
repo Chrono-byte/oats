@@ -4,7 +4,7 @@ export function main(): void {
         constructor(public name: string) {}
 
         move(distanceInMeters: number = 0): void {
-            println(`${this.name} moved ${distanceInMeters}m.`);
+            console.log(`${this.name} moved ${distanceInMeters}m.`);
         }
     }
 
@@ -14,7 +14,7 @@ export function main(): void {
         }
 
         bark(): void {
-            println("Woof! Woof!");
+            console.log("Woof! Woof!");
         }
     }
 

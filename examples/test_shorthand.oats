@@ -6,10 +6,10 @@ export function main(): number {
     let coords: { x: number, y: number } = { x, y };
     let sum2: number = coords.x + coords.y;
     
-    println("Shorthand test:");
-    println(coords.x);
-    println(coords.y);
-    println(sum2);
+    console.log("Shorthand test:");
+    console.log(coords.x);
+    console.log(coords.y);
+    console.log(sum2);
     
     return 0;
 }

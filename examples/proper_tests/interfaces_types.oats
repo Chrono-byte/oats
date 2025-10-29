@@ -23,8 +23,8 @@ export function main(): void {
     };
 
     // Print selected fields (printing raw objects may be unsupported)
-    println(`User: ${user.name} (id=${user.id})`);
-    println(`Location: ${location.x}, ${location.y}`);
+    console.log(`User: ${user.name} (id=${user.id})`);
+    console.log(`Location: ${location.x}, ${location.y}`);
 
     return;
 }

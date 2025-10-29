@@ -17,5 +17,5 @@ export function main(): void {
     let y: number | string = getString();
     
     // Direct assignment works because the functions already return boxed values
-    println("Function returns test complete");
+    console.log("Function returns test complete");
 }

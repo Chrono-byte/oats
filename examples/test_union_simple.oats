@@ -5,10 +5,10 @@ function testUnion(): void {
     let x: number | string;
     
     x = 42;
-    println(x);  // Should print: 42
+    console.log(x);  // Should print: 42
     
     x = "hello";
-    println(x);  // Should print: hello
+    console.log(x);  // Should print: hello
 }
 
 export function main(): void {

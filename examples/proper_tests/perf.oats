@@ -1,5 +1,5 @@
 export function main(): void {
-    println("Starting performance test...");
+    console.log("Starting performance test...");
 
     // A series of nonsensical calculations to test the compiler's ability to handle complex arithmetic expressions.
     let mut result: number = 0;
@@ -11,7 +11,7 @@ export function main(): void {
             result = result - 1;
         }
     }
-    println("Complex arithmetic test finished.");
+    console.log("Complex arithmetic test finished.");
 
     // A recursive function to test the compiler's ability to handle recursion and nested loops.
     function recursive(n: number): number {
@@ -25,21 +25,21 @@ export function main(): void {
         return total;
     }
     recursive(5);
-    println("Recursive function test finished.");
+    console.log("Recursive function test finished.");
 
     // A large array to test the compiler's ability to handle large data structures.
     let mut arr: number[] = [];
     for (let mut i: number = 0; i < 1000; i = i + 1) {
         arr[i] = i;
     }
-    println("Large array test finished.");
+    console.log("Large array test finished.");
 
     // A series of string manipulations to test the compiler's ability to handle string operations.
     let mut str: string = "";
     for (let mut i: number = 0; i < 100; i = i + 1) {
         str = str + "a";
     }
-    println("String manipulation test finished.");
+    console.log("String manipulation test finished.");
 
 
     // A class with a lot of methods to test the compiler's ability to handle classes.
@@ -57,8 +57,8 @@ export function main(): void {
         method10(): void {}
     }
     let manyMethods: ManyMethods = new ManyMethods();
-    println("Class with many methods test finished.");
+    console.log("Class with many methods test finished.");
 
 
-    println("Performance test finished.");
+    console.log("Performance test finished.");
 }

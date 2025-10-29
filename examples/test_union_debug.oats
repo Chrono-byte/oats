@@ -1,5 +1,5 @@
 // Debug union printing
 export function main(): void {
     let x: number | string = 42;
-    println(x);
+    console.log(x);
 }

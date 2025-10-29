@@ -5,8 +5,8 @@ function greet(name: string): string {
 let multiply = (a: number, b: number): number => a * b;
 
 export function main(): void {
-    println(greet("World"));
-    println(`5 * 7 = ${multiply(5, 7)}`);
+    console.log(greet("World"));
+    console.log(`5 * 7 = ${multiply(5, 7)}`);
 
     return;
 }

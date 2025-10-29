@@ -5,8 +5,8 @@ export function main(): void {
     // A tuple with a specific set of types
     let person: [string, number] = ["Alice", 30];
 
-    println("Fibonacci sequence: ", fibonacci);
-    println(`Person: ${person[0]}, Age: ${person[1]}`);
+    console.log("Fibonacci sequence: ", fibonacci);
+    console.log(`Person: ${person[0]}, Age: ${person[1]}`);
 
     return;
 }

@@ -5,18 +5,18 @@ export function main(): void {
     }
 
     async function testMultipleAwaits(): Promise<void> {
-        println("Starting multi-await test...");
+        console.log("Starting multi-await test...");
         
         let first: string = await getMessage("First message");
-        println(first);
+        console.log(first);
         
         let second: string = await getMessage("Second message");
-        println(second);
+        console.log(second);
         
         let third: string = await getMessage("Third message");
-        println(third);
+        console.log(third);
         
-        println("All awaits completed!");
+        console.log("All awaits completed!");
     }
 
     // Run the async function

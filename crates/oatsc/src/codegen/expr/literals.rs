@@ -119,14 +119,14 @@ pub fn lower_array<'a>(
             // ExprOrSpread has .expr
             if let Ok(ev) = codegen.lower_expr(&expr_or_spread.expr, function, param_map, locals) {
                 lowered_elems.push(ev);
-            } else {
-                // unsupported element lowering
-                return Err(Diagnostic::simple_with_span_boxed(
-                    Severity::Error,
-                    "expression lowering failed",
-                    arr.span.lo.0 as usize,
-                ));
-            }
+                } else {
+                    // unsupported element lowering
+                    return Err(Diagnostic::simple_with_span_boxed(
+                        Severity::Error,
+                        "expression lowering failed",
+                        arr.span.lo.0 as usize,
+                    ));
+                }
         } else {
             // elided element like [ , ] -> treat as undefined -> unsupported
             return Err(Diagnostic::simple_with_span_boxed(
@@ -760,6 +760,7 @@ pub fn lower_template<'a>(
             // Lower the interpolated expression and capture its origin
             // We'll also consult `last_expr_origin_local` which other
             // paths set when the lowered expr was an identifier/param.
+            eprintln!("[debug tpl] about to lower interpolated expr: {:?}", &tpl.exprs[i]);
             let expr_val = codegen.lower_expr(&tpl.exprs[i], function, param_map, locals)?;
             let mut expr_str_is_num_tmp = false;
             // Determine whether the resulting expr_str is a temporary

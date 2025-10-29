@@ -119,7 +119,6 @@ fn run_toasty() -> Result<()> {
     run_main()
 }
 
-#[allow(unreachable_code)]
 fn main() {
     std::process::exit(main_wrapper());
 }

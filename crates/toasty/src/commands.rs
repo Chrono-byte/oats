@@ -151,7 +151,7 @@ pub fn handle_build(
             target_cpu.clone(),
             target_features.clone(),
             release,
-            true, // emit_object_only
+            true,             // emit_object_only
             !no_link_runtime, // link_runtime
         );
 
@@ -228,7 +228,7 @@ pub fn handle_build(
             target_cpu.clone(),
             target_features.clone(),
             release,
-            true, // emit_object_only
+            true,             // emit_object_only
             !no_link_runtime, // link_runtime
         );
 
@@ -561,7 +561,11 @@ fn handle_version_commands(action: VersionCommands, artifact_type: &str) -> Resu
             let versions = match artifact_type {
                 "compiler" => fetch::list_available_compilers()?,
                 "runtime" => fetch::list_available_runtimes()?,
-                _ => return Err(crate::diagnostics::ToastyError::other("Invalid artifact type")),
+                _ => {
+                    return Err(crate::diagnostics::ToastyError::other(
+                        "Invalid artifact type",
+                    ));
+                }
             };
             if versions.is_empty() {
                 println!("No {} versions found.", artifact_type);
@@ -578,9 +582,17 @@ fn handle_version_commands(action: VersionCommands, artifact_type: &str) -> Resu
             match artifact_type {
                 "compiler" => fetch::install_compiler_version(&version)?,
                 "runtime" => fetch::install_runtime_version(&version)?,
-                _ => return Err(crate::diagnostics::ToastyError::other("Invalid artifact type")),
+                _ => {
+                    return Err(crate::diagnostics::ToastyError::other(
+                        "Invalid artifact type",
+                    ));
+                }
             };
-            println!("{} version {} installed successfully.", capitalize_first(artifact_type), version);
+            println!(
+                "{} version {} installed successfully.",
+                capitalize_first(artifact_type),
+                version
+            );
             Ok(())
         }
         VersionCommands::Use { version } => {
@@ -588,7 +600,11 @@ fn handle_version_commands(action: VersionCommands, artifact_type: &str) -> Resu
             match artifact_type {
                 "compiler" => fetch::use_compiler_version(&version)?,
                 "runtime" => fetch::use_runtime_version(&version)?,
-                _ => return Err(crate::diagnostics::ToastyError::other("Invalid artifact type")),
+                _ => {
+                    return Err(crate::diagnostics::ToastyError::other(
+                        "Invalid artifact type",
+                    ));
+                }
             };
             println!("Switched to {} version {}.", artifact_type, version);
             Ok(())
@@ -598,7 +614,11 @@ fn handle_version_commands(action: VersionCommands, artifact_type: &str) -> Resu
             let current_version = match artifact_type {
                 "compiler" => fetch::current_compiler_version()?,
                 "runtime" => fetch::current_runtime_version()?,
-                _ => return Err(crate::diagnostics::ToastyError::other("Invalid artifact type")),
+                _ => {
+                    return Err(crate::diagnostics::ToastyError::other(
+                        "Invalid artifact type",
+                    ));
+                }
             };
             println!("Current {} version: {}", artifact_type, current_version);
             Ok(())
@@ -608,9 +628,17 @@ fn handle_version_commands(action: VersionCommands, artifact_type: &str) -> Resu
             match artifact_type {
                 "compiler" => fetch::uninstall_compiler_version(&version)?,
                 "runtime" => fetch::uninstall_runtime_version(&version)?,
-                _ => return Err(crate::diagnostics::ToastyError::other("Invalid artifact type")),
+                _ => {
+                    return Err(crate::diagnostics::ToastyError::other(
+                        "Invalid artifact type",
+                    ));
+                }
             };
-            println!("{} version {} uninstalled successfully.", capitalize_first(artifact_type), version);
+            println!(
+                "{} version {} uninstalled successfully.",
+                capitalize_first(artifact_type),
+                version
+            );
             Ok(())
         }
     }

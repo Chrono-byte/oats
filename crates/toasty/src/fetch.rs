@@ -156,7 +156,16 @@ fn download_artifact(
     if verbose {
         eprintln!("Downloading {} from: {}", artifact_name, url);
     } else {
-        eprintln!("Downloading pre-built {}...", if artifact_name.contains("oatsc") { "compiler binary" } else if artifact_name.contains("runtime") { "runtime library" } else { "artifact" });
+        eprintln!(
+            "Downloading pre-built {}...",
+            if artifact_name.contains("oatsc") {
+                "compiler binary"
+            } else if artifact_name.contains("runtime") {
+                "runtime library"
+            } else {
+                "artifact"
+            }
+        );
     }
 
     let response = ureq::get(&url)
@@ -183,15 +192,14 @@ fn download_artifact(
         bytes_written += bytes_read as u64;
 
         // Show progress every 10% or so, if requested
-        if show_progress {
-            if let Some(total) = total_size {
+        if show_progress
+            && let Some(total) = total_size {
                 let progress = (bytes_written * 100) / total;
                 if progress >= last_progress + 10 {
                     last_progress = progress;
                     eprintln!("Download progress: {}%", progress);
                 }
             }
-        }
     }
 
     // Make the binary executable on Unix systems, if requested
@@ -241,7 +249,8 @@ fn download_artifact(
             fs::rename(dest_path, &quarantine_path)?;
             eprintln!(
                 "Unusable {} asset moved to quarantine: {}",
-                artifact_name, quarantine_path.display()
+                artifact_name,
+                quarantine_path.display()
             );
             return Err(ToastyError::HashMismatch {
                 name: artifact_name.to_string(),
@@ -250,7 +259,10 @@ fn download_artifact(
             });
         }
     } else {
-        eprintln!("Warning: No digest found for {} asset. Skipping hash verification.", artifact_name);
+        eprintln!(
+            "Warning: No digest found for {} asset. Skipping hash verification.",
+            artifact_name
+        );
     }
     if verbose {
         eprintln!("Downloaded {} bytes", bytes_written);
@@ -275,12 +287,15 @@ fn try_fetch_artifact(artifact_type: ArtifactType, skip_env_var: &str) -> Option
     // Check if we should skip remote fetch
     if std::env::var(skip_env_var).is_ok() {
         if verbose {
-            eprintln!("Skipping remote {} fetch ({} is set)", 
+            eprintln!(
+                "Skipping remote {} fetch ({} is set)",
                 match artifact_type {
                     ArtifactType::Compiler => "compiler",
                     ArtifactType::Runtime => "runtime",
                     ArtifactType::Package => "package",
-                }, skip_env_var);
+                },
+                skip_env_var
+            );
         }
         return None;
     }
@@ -294,12 +309,14 @@ fn try_fetch_artifact(artifact_type: ArtifactType, skip_env_var: &str) -> Option
 
     if is_unsupported {
         if verbose {
-            eprintln!("Platform not supported for pre-built {}, will use local build", 
+            eprintln!(
+                "Platform not supported for pre-built {}, will use local build",
                 match artifact_type {
                     ArtifactType::Compiler => "compiler",
                     ArtifactType::Runtime => "runtime",
                     ArtifactType::Package => "package",
-                });
+                }
+            );
         }
         return None; // Unsupported platform, use local
     }
@@ -311,7 +328,8 @@ fn try_fetch_artifact(artifact_type: ArtifactType, skip_env_var: &str) -> Option
                 ArtifactType::Compiler => "compiler",
                 ArtifactType::Runtime => "runtime",
                 ArtifactType::Package => "package",
-            }, artifact_name
+            },
+            artifact_name
         );
     }
 
@@ -319,12 +337,15 @@ fn try_fetch_artifact(artifact_type: ArtifactType, skip_env_var: &str) -> Option
     let oats_home = match get_oats_home() {
         Ok(dir) => {
             if verbose {
-                eprintln!("{} cache directory: {}", 
+                eprintln!(
+                    "{} cache directory: {}",
                     match artifact_type {
                         ArtifactType::Compiler => "Compiler",
                         ArtifactType::Runtime => "Runtime",
                         ArtifactType::Package => "Package",
-                    }, dir.display());
+                    },
+                    dir.display()
+                );
             }
             dir
         }
@@ -338,23 +359,29 @@ fn try_fetch_artifact(artifact_type: ArtifactType, skip_env_var: &str) -> Option
     let tag = match get_latest_tag(artifact_type, None) {
         Ok(t) => {
             if verbose {
-                eprintln!("Latest {} release: {}", 
+                eprintln!(
+                    "Latest {} release: {}",
                     match artifact_type {
                         ArtifactType::Compiler => "compiler",
                         ArtifactType::Runtime => "runtime",
                         ArtifactType::Package => "package",
-                    }, t);
+                    },
+                    t
+                );
             }
             t
         }
         Err(e) => {
             if verbose {
-                eprintln!("Warning: Failed to fetch latest {} tag: {}", 
+                eprintln!(
+                    "Warning: Failed to fetch latest {} tag: {}",
                     match artifact_type {
                         ArtifactType::Compiler => "compiler",
                         ArtifactType::Runtime => "runtime",
                         ArtifactType::Package => "package",
-                    }, e);
+                    },
+                    e
+                );
             }
             return None;
         }
@@ -363,23 +390,28 @@ fn try_fetch_artifact(artifact_type: ArtifactType, skip_env_var: &str) -> Option
     // Check if we already have this version cached
     let cached_path = oats_home.join(&tag).join(artifact_name);
     if cached_path.exists() {
-        eprintln!("Using cached {}: {}", 
+        eprintln!(
+            "Using cached {}: {}",
             match artifact_type {
                 ArtifactType::Compiler => "compiler",
                 ArtifactType::Runtime => "runtime",
                 ArtifactType::Package => "package",
-            }, cached_path.display());
+            },
+            cached_path.display()
+        );
         return Some(cached_path);
     }
 
     // Download the artifact
     if verbose {
-        eprintln!("Cache miss, downloading {}...", 
+        eprintln!(
+            "Cache miss, downloading {}...",
             match artifact_type {
                 ArtifactType::Compiler => "compiler",
                 ArtifactType::Runtime => "runtime",
                 ArtifactType::Package => "package",
-            });
+            }
+        );
     }
     if let Some(parent) = cached_path.parent() {
         fs::create_dir_all(parent).ok();
@@ -389,7 +421,7 @@ fn try_fetch_artifact(artifact_type: ArtifactType, skip_env_var: &str) -> Option
         ArtifactType::Runtime => download_runtime(&tag, artifact_name, &cached_path),
         ArtifactType::Package => unreachable!("try_fetch_artifact doesn't handle packages"),
     };
-    
+
     match download_result {
         Ok(_) => {
             eprintln!(
@@ -398,17 +430,21 @@ fn try_fetch_artifact(artifact_type: ArtifactType, skip_env_var: &str) -> Option
                     ArtifactType::Compiler => "compiler",
                     ArtifactType::Runtime => "runtime",
                     ArtifactType::Package => "package",
-                }, cached_path.display()
+                },
+                cached_path.display()
             );
             Some(cached_path)
         }
         Err(e) => {
-            eprintln!("Warning: Failed to download {}: {}", 
+            eprintln!(
+                "Warning: Failed to download {}: {}",
                 match artifact_type {
                     ArtifactType::Compiler => "compiler",
                     ArtifactType::Runtime => "runtime",
                     ArtifactType::Package => "package",
-                }, e);
+                },
+                e
+            );
             None
         }
     }
@@ -452,14 +488,13 @@ fn list_available_versions(artifact_type: ArtifactType) -> Result<Vec<String>> {
                     match artifact_type {
                         ArtifactType::Package => {
                             // Extract package name from tag (pkg-<name>-<version>)
-                            if let Some(name_end) = tag.rfind('-') {
-                                if let Some(name_start) = tag.find('-') {
+                            if let Some(name_end) = tag.rfind('-')
+                                && let Some(name_start) = tag.find('-') {
                                     let package_name = &tag[name_start + 1..name_end];
                                     if !versions.contains(&package_name.to_string()) {
                                         versions.push(package_name.to_string());
                                     }
                                 }
-                            }
                         }
                         _ => versions.push(tag.to_string()),
                     }
@@ -622,12 +657,15 @@ fn uninstall_artifact_version(artifact_type: ArtifactType, version: &str) -> Res
 
     // Check if installed
     if !artifact_path.exists() {
-        eprintln!("{} version {} is not installed.", 
+        eprintln!(
+            "{} version {} is not installed.",
             match artifact_type {
                 ArtifactType::Compiler => "Compiler",
                 ArtifactType::Runtime => "Runtime",
                 ArtifactType::Package => "Package",
-            }, version);
+            },
+            version
+        );
         return Ok(());
     }
 
@@ -657,17 +695,21 @@ fn uninstall_artifact_version(artifact_type: ArtifactType, version: &str) -> Res
                     ArtifactType::Compiler => "compiler",
                     ArtifactType::Runtime => "runtime",
                     ArtifactType::Package => "package",
-                }, version
+                },
+                version
             );
         }
     }
 
-    eprintln!("Successfully uninstalled {} version {}", 
+    eprintln!(
+        "Successfully uninstalled {} version {}",
         match artifact_type {
             ArtifactType::Compiler => "compiler",
             ArtifactType::Runtime => "runtime",
             ArtifactType::Package => "package",
-        }, version);
+        },
+        version
+    );
     Ok(())
 }
 
@@ -692,13 +734,11 @@ pub fn uninstall_package_version(name: &str) -> Result<()> {
         for entry in fs::read_dir(&loafs_dir)? {
             let entry = entry?;
             let path = entry.path();
-            if path.is_dir() {
-                if let Some(dir_name) = path.file_name().and_then(|n| n.to_str()) {
-                    if dir_name.starts_with(&format!("pkg-{}-", name)) {
+            if path.is_dir()
+                && let Some(dir_name) = path.file_name().and_then(|n| n.to_str())
+                    && dir_name.starts_with(&format!("pkg-{}-", name)) {
                         versions_to_remove.push(path);
                     }
-                }
-            }
         }
     }
 
@@ -740,15 +780,13 @@ pub fn update_package_version(name: &str) -> Result<()> {
         for entry in fs::read_dir(&loafs_dir)? {
             let entry = entry?;
             let path = entry.path();
-            if path.is_dir() {
-                if let Some(dir_name) = path.file_name().and_then(|n| n.to_str()) {
-                    if dir_name.starts_with(&format!("pkg-{}-", name)) && dir_name != latest_version
+            if path.is_dir()
+                && let Some(dir_name) = path.file_name().and_then(|n| n.to_str())
+                    && dir_name.starts_with(&format!("pkg-{}-", name)) && dir_name != latest_version
                     {
                         fs::remove_dir_all(&path)?;
                         eprintln!("Removed old version: {}", path.display());
                     }
-                }
-            }
         }
     }
 
@@ -765,9 +803,9 @@ pub fn get_package_info(name: &str) -> Result<PackageInfo> {
         for entry in fs::read_dir(&loafs_dir)? {
             let entry = entry?;
             let path = entry.path();
-            if path.is_dir() {
-                if let Some(dir_name) = path.file_name().and_then(|n| n.to_str()) {
-                    if dir_name.starts_with(&format!("pkg-{}-", name)) {
+            if path.is_dir()
+                && let Some(dir_name) = path.file_name().and_then(|n| n.to_str())
+                    && dir_name.starts_with(&format!("pkg-{}-", name)) {
                         let manifest_path = path.join("Oats.toml");
                         if manifest_path.exists() {
                             let manifest = crate::project::Manifest::from_file(&manifest_path)?;
@@ -779,8 +817,6 @@ pub fn get_package_info(name: &str) -> Result<PackageInfo> {
                             });
                         }
                     }
-                }
-            }
         }
     }
 
@@ -916,12 +952,14 @@ fn use_artifact_version(artifact_type: ArtifactType, version: &str) -> Result<()
                 ArtifactType::Compiler => "Compiler",
                 ArtifactType::Runtime => "Runtime",
                 ArtifactType::Package => "Package",
-            }, version,
+            },
+            version,
             match artifact_type {
                 ArtifactType::Compiler => "compiler",
                 ArtifactType::Runtime => "runtime",
                 ArtifactType::Package => "package",
-            }, version
+            },
+            version
         )));
     }
 
@@ -933,12 +971,15 @@ fn use_artifact_version(artifact_type: ArtifactType, version: &str) -> Result<()
     });
     fs::write(&config_path, version)?;
 
-    eprintln!("Switched to {} version {}", 
+    eprintln!(
+        "Switched to {} version {}",
         match artifact_type {
             ArtifactType::Compiler => "compiler",
             ArtifactType::Runtime => "runtime",
             ArtifactType::Package => "package",
-        }, version);
+        },
+        version
+    );
     Ok(())
 }
 
@@ -977,12 +1018,15 @@ fn install_artifact_version(artifact_type: ArtifactType, version: &str) -> Resul
 
     // Check if already installed
     if cached_path.exists() {
-        eprintln!("{} version {} is already installed.", 
+        eprintln!(
+            "{} version {} is already installed.",
             match artifact_type {
                 ArtifactType::Compiler => "Compiler",
                 ArtifactType::Runtime => "Runtime",
                 ArtifactType::Package => "Package",
-            }, version);
+            },
+            version
+        );
         return Ok(());
     }
 
@@ -998,11 +1042,14 @@ fn install_artifact_version(artifact_type: ArtifactType, version: &str) -> Resul
 
     download_result?;
 
-    eprintln!("Successfully installed {} version {}", 
+    eprintln!(
+        "Successfully installed {} version {}",
         match artifact_type {
             ArtifactType::Compiler => "compiler",
             ArtifactType::Runtime => "runtime",
             ArtifactType::Package => "package",
-        }, version);
+        },
+        version
+    );
     Ok(())
 }

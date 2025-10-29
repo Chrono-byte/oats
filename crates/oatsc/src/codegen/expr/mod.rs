@@ -87,7 +87,6 @@ impl<'a> crate::codegen::CodeGen<'a> {
     ) -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
         use deno_ast::swc::ast;
 
-
         match expr {
             // Removed duplicate `ast::Expr::Call(call)` match arm at line 482 to fix unreachable pattern warning.
             // Removed unused `parent` variable to resolve the warning.

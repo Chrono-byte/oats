@@ -27,7 +27,10 @@ impl<'a> CodeGen<'a> {
         param_map: &HashMap<String, u32>,
         locals: &mut Vec<HashMap<String, LocalEntry<'a>>>,
     ) -> crate::diagnostics::DiagnosticResult<inkwell::values::BasicValueEnum<'a>> {
-        eprintln!("[debug lower_call_expr] callee_kind={:?} span_lo={}", call.callee, call.span.lo.0 as usize);
+        eprintln!(
+            "[debug lower_call_expr] callee_kind={:?} span_lo={}",
+            call.callee, call.span.lo.0 as usize
+        );
         // Support simple identifier callees and member-callee method calls.
         //
         // We intentionally support a small set of call shapes in the
@@ -167,9 +170,9 @@ impl<'a> CodeGen<'a> {
                                             if let Ok(cs) = cs
                                                 && let inkwell::Either::Left(bv) =
                                                     cs.try_as_basic_value()
-                                                {
-                                                    return Ok(bv);
-                                                }
+                                            {
+                                                return Ok(bv);
+                                            }
                                             return Err(Diagnostic::simple_boxed(
                                                 Severity::Error,
                                                 "upgrade failed",
@@ -183,8 +186,9 @@ impl<'a> CodeGen<'a> {
                                     }
 
                                     // Lower args and attempt to call a class method if present
-                                    let mut call_args: Vec<inkwell::values::BasicMetadataValueEnum> =
-                                        Vec::new();
+                                    let mut call_args: Vec<
+                                        inkwell::values::BasicMetadataValueEnum,
+                                    > = Vec::new();
                                     call_args.push(obj_val.into());
                                     for a in &call.args {
                                         let val = match self
@@ -199,31 +203,34 @@ impl<'a> CodeGen<'a> {
                                     // Check nominal on local to resolve class method name
                                     if let Some((_, _, _, _, _, nominal_opt, _)) =
                                         self.find_local(locals, &obj_name)
-                                        && let Some(nom) = nominal_opt {
-                                            let method_fn_name = format!("{}_{}", nom, method_name);
-                                            if let Some(method_fn) = self.module.get_function(&method_fn_name) {
-                                                let cs = match self.builder.build_call(
-                                                    method_fn,
-                                                    &call_args,
-                                                    "class_method_call",
-                                                ) {
-                                                    Ok(cs) => cs,
-                                                    Err(_) => {
-                                                        return Err(Diagnostic::simple_boxed(
-                                                            Severity::Error,
-                                                            "class method call failed",
-                                                        ));
-                                                    }
-                                                };
-                                                let either = cs.try_as_basic_value();
-                                                if let inkwell::Either::Left(bv) = either {
-                                                    return Ok(bv);
-                                                } else {
-                                                    let zero = self.f64_t.const_float(0.0);
-                                                    return Ok(zero.as_basic_value_enum());
+                                        && let Some(nom) = nominal_opt
+                                    {
+                                        let method_fn_name = format!("{}_{}", nom, method_name);
+                                        if let Some(method_fn) =
+                                            self.module.get_function(&method_fn_name)
+                                        {
+                                            let cs = match self.builder.build_call(
+                                                method_fn,
+                                                &call_args,
+                                                "class_method_call",
+                                            ) {
+                                                Ok(cs) => cs,
+                                                Err(_) => {
+                                                    return Err(Diagnostic::simple_boxed(
+                                                        Severity::Error,
+                                                        "class method call failed",
+                                                    ));
                                                 }
+                                            };
+                                            let either = cs.try_as_basic_value();
+                                            if let inkwell::Either::Left(bv) = either {
+                                                return Ok(bv);
+                                            } else {
+                                                let zero = self.f64_t.const_float(0.0);
+                                                return Ok(zero.as_basic_value_enum());
                                             }
                                         }
+                                    }
 
                                     // Fallback: fall through to error (no std handler for locals)
                                     return Err(Diagnostic::simple_boxed(
@@ -325,12 +332,10 @@ impl<'a> CodeGen<'a> {
                             };
                             match cs.try_as_basic_value() {
                                 inkwell::Either::Left(bv) => Ok(bv),
-                                _ => {
-                                    Err(Diagnostic::simple_boxed(
-                                        Severity::Error,
-                                        "promise_resolve returned non-value",
-                                    ))
-                                }
+                                _ => Err(Diagnostic::simple_boxed(
+                                    Severity::Error,
+                                    "promise_resolve returned non-value",
+                                )),
                             }
                         } else {
                             let fname = format!("oats_std_{}_{}", obj_name, prop_name);
@@ -516,9 +521,9 @@ impl<'a> CodeGen<'a> {
                                         if let Ok(cs) = cs
                                             && let inkwell::Either::Left(bv) =
                                                 cs.try_as_basic_value()
-                                            {
-                                                return Ok(bv);
-                                            }
+                                        {
+                                            return Ok(bv);
+                                        }
                                         return Err(Diagnostic::simple_boxed(
                                             Severity::Error,
                                             "upgrade failed",
@@ -549,7 +554,9 @@ impl<'a> CodeGen<'a> {
                                 // Check if this is a class method call: obj is nominal type, method exists
                                 let class_name = if let ast::Expr::Ident(ident) = &*member.obj {
                                     let ident_name = ident.sym.to_string();
-                                    if let Some((_, _, _, _, _, nominal, _)) = self.find_local(locals, &ident_name) {
+                                    if let Some((_, _, _, _, _, nominal, _)) =
+                                        self.find_local(locals, &ident_name)
+                                    {
                                         nominal.clone()
                                     } else {
                                         None
@@ -561,8 +568,13 @@ impl<'a> CodeGen<'a> {
                                     let method_fn_name = format!("{}_{}", class_name, method_name);
                                     if self.module.get_function(&method_fn_name).is_some() {
                                         // Call the class method
-                                        let method_fn = self.module.get_function(&method_fn_name).unwrap();
-                                        let cs = match self.builder.build_call(method_fn, &call_args, "class_method_call") {
+                                        let method_fn =
+                                            self.module.get_function(&method_fn_name).unwrap();
+                                        let cs = match self.builder.build_call(
+                                            method_fn,
+                                            &call_args,
+                                            "class_method_call",
+                                        ) {
                                             Ok(cs) => cs,
                                             Err(_) => {
                                                 return Err(Diagnostic::simple_boxed(
@@ -669,7 +681,12 @@ impl<'a> CodeGen<'a> {
                         // to generate a specialized instance name and declare it so
                         // the IR contains the specialization name (tests look for it).
                         let has_nested = self.nested_generic_fns.borrow().contains_key(&fn_name);
-                        eprintln!("[debug call] fn='{}' has_module_fn={} has_nested_generic={}", fn_name, self.module.get_function(&fn_name).is_some(), has_nested);
+                        eprintln!(
+                            "[debug call] fn='{}' has_module_fn={} has_nested_generic={}",
+                            fn_name,
+                            self.module.get_function(&fn_name).is_some(),
+                            has_nested
+                        );
                         if has_nested {
                             // Try to infer type arguments from the first argument if it's an array
                             if !call.args.is_empty() {
@@ -677,26 +694,36 @@ impl<'a> CodeGen<'a> {
                                     crate::types::infer_type(None, Some(&call.args[0].expr));
                                 if let crate::types::OatsType::Array(elem_ty) = inferred {
                                     // Monomorphize and get specialized name
-                                    if let Ok(spec_name) = self.monomorphize_function(
-                                        &fn_name,
-                                        &[(*elem_ty).clone()],
-                                    ) {
+                                    if let Ok(spec_name) =
+                                        self.monomorphize_function(&fn_name, &[(*elem_ty).clone()])
+                                    {
                                         // Declare a placeholder function so the name appears in IR
                                         if self.module.get_function(&spec_name).is_none() {
-                                            let fn_ty = self.i8ptr_t.fn_type(&[self.i8ptr_t.into()], false);
-                                            let _ = self.module.add_function(&spec_name, fn_ty, None);
+                                            let fn_ty =
+                                                self.i8ptr_t.fn_type(&[self.i8ptr_t.into()], false);
+                                            let _ =
+                                                self.module.add_function(&spec_name, fn_ty, None);
                                         }
                                         // Now call the specialized function (pass lowered args)
-                                        let mut call_args: Vec<inkwell::values::BasicMetadataValueEnum> = Vec::new();
+                                        let mut call_args: Vec<
+                                            inkwell::values::BasicMetadataValueEnum,
+                                        > = Vec::new();
                                         for a in &call.args {
-                                            let val = match self.lower_expr(&a.expr, function, param_map, locals) {
+                                            let val = match self
+                                                .lower_expr(&a.expr, function, param_map, locals)
+                                            {
                                                 Ok(v) => v,
                                                 Err(d) => return Err(d)?,
                                             };
                                             call_args.push(val.into());
                                         }
-                                        if let Some(spec_fv) = self.module.get_function(&spec_name) {
-                                            let cs = match self.builder.build_call(spec_fv, &call_args, "generic_mono_call") {
+                                        if let Some(spec_fv) = self.module.get_function(&spec_name)
+                                        {
+                                            let cs = match self.builder.build_call(
+                                                spec_fv,
+                                                &call_args,
+                                                "generic_mono_call",
+                                            ) {
                                                 Ok(cs) => cs,
                                                 Err(_) => {
                                                     return Err(Diagnostic::simple_boxed(

@@ -192,14 +192,13 @@ fn download_artifact(
         bytes_written += bytes_read as u64;
 
         // Show progress every 10% or so, if requested
-        if show_progress
-            && let Some(total) = total_size {
-                let progress = (bytes_written * 100) / total;
-                if progress >= last_progress + 10 {
-                    last_progress = progress;
-                    eprintln!("Download progress: {}%", progress);
-                }
+        if show_progress && let Some(total) = total_size {
+            let progress = (bytes_written * 100) / total;
+            if progress >= last_progress + 10 {
+                last_progress = progress;
+                eprintln!("Download progress: {}%", progress);
             }
+        }
     }
 
     // Make the binary executable on Unix systems, if requested
@@ -489,12 +488,13 @@ fn list_available_versions(artifact_type: ArtifactType) -> Result<Vec<String>> {
                         ArtifactType::Package => {
                             // Extract package name from tag (pkg-<name>-<version>)
                             if let Some(name_end) = tag.rfind('-')
-                                && let Some(name_start) = tag.find('-') {
-                                    let package_name = &tag[name_start + 1..name_end];
-                                    if !versions.contains(&package_name.to_string()) {
-                                        versions.push(package_name.to_string());
-                                    }
+                                && let Some(name_start) = tag.find('-')
+                            {
+                                let package_name = &tag[name_start + 1..name_end];
+                                if !versions.contains(&package_name.to_string()) {
+                                    versions.push(package_name.to_string());
                                 }
+                            }
                         }
                         _ => versions.push(tag.to_string()),
                     }
@@ -736,9 +736,10 @@ pub fn uninstall_package_version(name: &str) -> Result<()> {
             let path = entry.path();
             if path.is_dir()
                 && let Some(dir_name) = path.file_name().and_then(|n| n.to_str())
-                    && dir_name.starts_with(&format!("pkg-{}-", name)) {
-                        versions_to_remove.push(path);
-                    }
+                && dir_name.starts_with(&format!("pkg-{}-", name))
+            {
+                versions_to_remove.push(path);
+            }
         }
     }
 
@@ -782,11 +783,12 @@ pub fn update_package_version(name: &str) -> Result<()> {
             let path = entry.path();
             if path.is_dir()
                 && let Some(dir_name) = path.file_name().and_then(|n| n.to_str())
-                    && dir_name.starts_with(&format!("pkg-{}-", name)) && dir_name != latest_version
-                    {
-                        fs::remove_dir_all(&path)?;
-                        eprintln!("Removed old version: {}", path.display());
-                    }
+                && dir_name.starts_with(&format!("pkg-{}-", name))
+                && dir_name != latest_version
+            {
+                fs::remove_dir_all(&path)?;
+                eprintln!("Removed old version: {}", path.display());
+            }
         }
     }
 
@@ -805,18 +807,19 @@ pub fn get_package_info(name: &str) -> Result<PackageInfo> {
             let path = entry.path();
             if path.is_dir()
                 && let Some(dir_name) = path.file_name().and_then(|n| n.to_str())
-                    && dir_name.starts_with(&format!("pkg-{}-", name)) {
-                        let manifest_path = path.join("Oats.toml");
-                        if manifest_path.exists() {
-                            let manifest = crate::project::Manifest::from_file(&manifest_path)?;
-                            return Ok(PackageInfo {
-                                name: manifest.package.name,
-                                version: manifest.package.version,
-                                description: manifest.package.description,
-                                dependencies: Some(manifest.dependencies.keys().cloned().collect()),
-                            });
-                        }
-                    }
+                && dir_name.starts_with(&format!("pkg-{}-", name))
+            {
+                let manifest_path = path.join("Oats.toml");
+                if manifest_path.exists() {
+                    let manifest = crate::project::Manifest::from_file(&manifest_path)?;
+                    return Ok(PackageInfo {
+                        name: manifest.package.name,
+                        version: manifest.package.version,
+                        description: manifest.package.description,
+                        dependencies: Some(manifest.dependencies.keys().cloned().collect()),
+                    });
+                }
+            }
         }
     }
 

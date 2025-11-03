@@ -39,8 +39,9 @@ Oats is an active AOT TypeScript compiler with good language support. We have te
 ├── crates/
 │   ├── oats/          # Compiler (parser, types, codegen)
 │   ├── runtime/       # Runtime library
-│   ├── oats_ast/       # Runtime library
-│   ├── oats_parser/       # Runtime library
+│   ├── oats_ast/      # wip home built AST library
+│   ├── oats_parser/   # wip home built parser
+│   ├── toasty/        # Test runner
 │   └── std/           # Standard library
 ├── examples/          # Test programs
 └── docs/              # Docs

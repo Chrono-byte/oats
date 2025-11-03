@@ -1,5 +1,4 @@
 use crate::diagnostics::Severity;
-use inkwell::values::FunctionValue;
 use std::collections::HashMap;
 
 type LocalEntry<'a> = (
@@ -26,8 +25,6 @@ impl<'a> crate::codegen::CodeGen<'a> {
     pub(crate) fn lower_break_stmt(
         &self,
         break_stmt: &deno_ast::swc::ast::BreakStmt,
-        function: FunctionValue<'a>,
-        param_map: &HashMap<String, u32>,
         locals_stack: &mut LocalsStackLocal<'a>,
     ) -> crate::diagnostics::DiagnosticResult<bool> {
         // Find the target loop context
@@ -65,8 +62,6 @@ impl<'a> crate::codegen::CodeGen<'a> {
     pub(crate) fn lower_continue_stmt(
         &self,
         continue_stmt: &deno_ast::swc::ast::ContinueStmt,
-        function: FunctionValue<'a>,
-        param_map: &HashMap<String, u32>,
         locals_stack: &mut LocalsStackLocal<'a>,
     ) -> crate::diagnostics::DiagnosticResult<bool> {
         // Find the target loop context

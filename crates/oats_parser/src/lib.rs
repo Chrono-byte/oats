@@ -28,7 +28,7 @@ fn module_parser() -> impl Parser<char, Module, Error = Simple<char>> {
 fn stmt_parser() -> impl Parser<char, Stmt, Error = Simple<char>> {
     choice((
         declare_fn_parser().map(Stmt::DeclareFn),
-        // class_decl_parser().map(Stmt::ClassDecl),
+        class_decl_parser().map(Stmt::ClassDecl),
         fn_decl_parser().map(Stmt::FnDecl),
     ))
 }

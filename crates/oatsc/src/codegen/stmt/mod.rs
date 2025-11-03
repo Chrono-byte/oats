@@ -86,10 +86,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 self.lower_return_stmt(ret, function, param_map, locals_stack)
             }
             deno_ast::swc::ast::Stmt::Break(break_stmt) => {
-                self.lower_break_stmt(break_stmt, function, param_map, locals_stack)
+                self.lower_break_stmt(break_stmt, locals_stack)
             }
             deno_ast::swc::ast::Stmt::Continue(continue_stmt) => {
-                self.lower_continue_stmt(continue_stmt, function, param_map, locals_stack)
+                self.lower_continue_stmt(continue_stmt, locals_stack)
             }
             deno_ast::swc::ast::Stmt::Block(block) => {
                 self.lower_block_stmt(block, function, param_map, locals_stack)

@@ -199,18 +199,16 @@ fn param_parser() -> impl Parser<char, Param, Error = Simple<char>> {
 
 /// Parser for TypeScript types.
 fn ts_type_parser() -> impl Parser<char, TsType, Error = Simple<char>> {
-    recursive(|ts_type| {
-        let array = ts_type
-            .clone()
-            .then_ignore(just('[').padded())
-            .then_ignore(just(']').padded())
-            .map(|elem_type| {
-                TsType::TsArrayType(TsArrayType {
-                    elem_type: Box::new(elem_type),
-                    span: 0..0, // TODO
-                })
+    let base = choice((ts_keyword_type_parser(), ts_type_ref_parser()));
+    let array_suffix = just('[').padded().ignore_then(just(']').padded()).repeated();
+    base.then(array_suffix).map(|(mut ty, suffixes)| {
+        for _ in suffixes {
+            ty = TsType::TsArrayType(TsArrayType {
+                elem_type: Box::new(ty),
+                span: 0..0, // TODO
             });
-        choice((array, ts_type_ref_parser(), ts_keyword_type_parser()))
+        }
+        ty
     })
 }
 
@@ -478,6 +476,36 @@ mod tests {
                 ));
             } else {
                 panic!("Expected Constructor");
+            }
+        } else {
+            panic!("Expected ClassDecl");
+        }
+    }
+
+    #[test]
+    fn test_nested_array_type() {
+        let input = "class Node { value: number[][]; }";
+        let result = parse_module(input);
+        assert!(result.is_ok());
+        let module = result.unwrap();
+        assert_eq!(module.body.len(), 1);
+        if let Stmt::ClassDecl(class_decl) = &module.body[0] {
+            assert_eq!(class_decl.ident.sym, "Node");
+            assert_eq!(class_decl.body.len(), 1);
+            if let ClassMember::Field(field_decl) = &class_decl.body[0] {
+                assert_eq!(field_decl.ident.sym, "value");
+                // Should be number[][]
+                if let Some(TsType::TsArrayType(outer)) = &field_decl.ty {
+                    if let TsType::TsArrayType(inner) = &*outer.elem_type {
+                        assert!(matches!(&*inner.elem_type, TsType::TsKeywordType(TsKeywordType::TsNumberKeyword)));
+                    } else {
+                        panic!("Expected inner array");
+                    }
+                } else {
+                    panic!("Expected outer array");
+                }
+            } else {
+                panic!("Expected FieldDecl");
             }
         } else {
             panic!("Expected ClassDecl");

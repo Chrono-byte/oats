@@ -1,24 +1,10 @@
-//! Diagnostic reporting utilities for the Oats compiler.
+//! Diagnostic reporting for the Oats compiler.
 //!
-//! This module provides lightweight, rustc-style error reporting functions
-//! that emit colored diagnostic messages to stderr. The implementation
-//! focuses on clear, actionable error messages with source context and
-//! optional span-based highlighting.
+//! This handles error messages in a rustc-like style, with colors and source context.
+//! Keeps it simple but useful for debugging.
 //!
-//! # Design Philosophy
-//!
-//! The diagnostic system is intentionally minimal to avoid complexity while
-//! providing sufficient detail for developers to understand and fix issues.
-//! All functions support optional file paths and source text for context,
-//! with fallback behavior when information is unavailable.
-//!
-//! # Error Formatting
-//!
-//! - **Error messages**: Red "error:" prefix with clear description
-//! - **File locations**: Rust-style "filename:line:column" format
-//! - **Source context**: Up to 6 lines of surrounding code
-//! - **Notes and hints**: Blue "note:" and green "help:" annotations
-//! - **Span highlighting**: Caret markers pointing to specific columns
+//! Basically, it prints errors/warnings to stderr with file locations and code snippets.
+//! Supports notes and help messages too.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -266,19 +252,11 @@ pub struct Label {
     pub message: String,
 }
 
-/// Structured diagnostic container for propagating compiler errors.
+/// Represents a compiler diagnostic (error, warning, etc.).
 ///
-/// This type provides a uniform way to collect and propagate diagnostic
-/// information through the compilation pipeline. The `Diagnostic` struct
-/// supports both simple error messages and span-aware diagnostics with
-/// precise source location information.
-///
-/// # Design
-///
-/// The diagnostic system uses this container to decouple error detection
-/// from error emission, allowing the compiler to collect multiple errors
-/// before deciding how to present them to the user. The optional `span_start`
-/// field enables precise error highlighting when source text is available.
+/// This struct holds all the info for a diagnostic message, like severity, message, file, etc.
+/// We use it to collect errors before printing them out.
+/// The optional span_start helps point to exact locations in the code.
 #[derive(Debug, Clone)]
 pub struct Diagnostic {
     /// The severity level of the diagnostic

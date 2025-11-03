@@ -19,18 +19,16 @@ use inkwell::targets::{
     CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine,
 };
 
-/// Compile a source file with explicit options.
+/// Compiles a source file with the given options.
 ///
-/// This is the primary compilation entry point that accepts a `CompileOptions`
-/// structure, providing a clean API for build orchestrators like toasty.
-/// Unlike `run_from_args`, this function does not read from environment variables
-/// or perform CLI argument parsing.
+/// This is the main entry point for compilation when you have options ready.
+/// Unlike run_from_args, it doesn't mess with environment variables or CLI parsing.
 ///
 /// # Arguments
-/// * `options` - Compilation options specifying source file and build parameters
+/// * `options` - The compilation options
 ///
 /// # Returns
-/// Path to the compiled output file on success
+/// Path to the output file on success, or None if just object emission
 pub fn compile_with_options(options: crate::CompileOptions) -> Result<Option<String>> {
     // Set environment variables from options for compatibility with existing code
     // TODO: In future, pass these through the call stack instead of env vars
@@ -83,27 +81,17 @@ pub fn compile_with_options(options: crate::CompileOptions) -> Result<Option<Str
 
 /// Executes the complete AOT compilation pipeline from source to executable.
 ///
-/// This function serves as the main entry point for the Oats AOT compiler,
-/// orchestrating parsing, type checking, code generation, and linking phases.
-/// The function accepts command-line arguments and environment variables for
-/// configuration, following standard CLI conventions for source file specification.
+/// This is the main function that handles everything: parsing, type checking, codegen, linking.
+/// It takes command-line args or uses env vars for config.
 ///
-/// # Arguments
-/// * `args` - Command-line arguments where the first argument (if present) is the source file path
+/// Basically, it goes through:
+/// - Figuring out the source file
+/// - Parsing the code
+/// - Generating LLVM IR
+/// - Compiling to object files
+/// - Linking everything together
 ///
-/// # Environment Variables
-/// * `OATS_SRC_FILE` - Alternative source file specification when not provided as argument
-///
-/// # Compilation Pipeline
-/// 1. **Source Resolution**: Determines input file from arguments or environment
-/// 2. **Parsing**: Converts TypeScript/Oats source to AST representation
-/// 3. **Arrow Function Extraction**: Identifies and processes top-level arrow functions
-/// 4. **Code Generation**: Emits LLVM IR for all functions and constructs
-/// 5. **Object Generation**: Compiles IR to native object files
-/// 6. **Linking**: Combines object files with runtime to produce executable
-///
-/// # Returns
-/// `Ok(())` on successful compilation, or an error describing the failure point
+/// Returns Ok(()) on success, or an error if something goes wrong.
 pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
     // Resolve source file location from arguments or environment
     let src_path = if args.len() > 1 {
@@ -143,6 +131,7 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
     let parsed = &parsed_mod.parsed;
 
     // Read extern_oats from environment if provided
+    // TODO: Add validation for extern_oats entries to ensure they point to valid files
     let extern_oats: std::collections::HashMap<String, String> =
         if let Ok(extern_oats_json) = std::env::var("OATS_EXTERN_OATS") {
             serde_json::from_str(&extern_oats_json)
@@ -153,15 +142,10 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
 
     /// Extracts top-level arrow function declarations from variable statements.
     ///
-    /// This helper function identifies arrow functions bound to top-level variables,
-    /// which need special handling during code generation. The function distinguishes
-    /// between exported and non-exported arrow functions for proper symbol visibility.
+    /// This looks for arrow functions assigned to const/let vars at the top level,
+    /// since they need special treatment in codegen. It separates exported vs non-exported ones.
     ///
-    /// # Arguments
-    /// * `parsed` - Parsed AST containing the module structure
-    ///
-    /// # Returns
-    /// Vector of tuples containing (function_name, arrow_expr, is_exported)
+    /// Returns a list of (name, arrow_expr, is_exported) tuples.
     fn extract_arrow_functions(
         parsed: &deno_ast::ParsedSource,
     ) -> Vec<(String, deno_ast::swc::ast::ArrowExpr, bool)> {

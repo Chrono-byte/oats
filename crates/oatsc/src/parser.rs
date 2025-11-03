@@ -1,24 +1,11 @@
 //! Oats parser utilities
 //!
-//! This module wraps `deno_ast` parsing and enforces a small set of
-//! project-specific diagnostics and stylistic constraints (for example,
-//! requiring semicolons and banning `var`). The parser returns a
-//! `ParsedModule` containing both the parsed AST and the original source
-//! text, which are used by later passes to report span-based diagnostics.
+//! This wraps deno_ast parsing with some extra checks we need, like forcing semicolons
+//! and not allowing 'var'. It gives back a ParsedModule with the AST and source text
+//! for diagnostics later.
 //!
-//! # Resource Limits (Security Hardening)
-//!
-//! To prevent denial-of-service attacks, the parser enforces the following limits:
-//!
-//! - **MAX_SOURCE_SIZE**: Maximum source file size (default: 10 MB)
-//!   - Configurable via `OATS_MAX_SOURCE_BYTES` environment variable
-//!   - Prevents memory exhaustion from extremely large input files
-//!
-//! - **Runtime Recursion Depth**: Maximum recursion depth during execution (32 levels)
-//!   - Enforced in the runtime (`crates/runtime/src/lib.rs::MAX_RECURSION_DEPTH`)
-//!   - Not configurable (hard limit)
-//!
-//! These limits provide defense-in-depth against malicious or malformed input.
+//! For security, we limit source file size (10MB default, set OATS_MAX_SOURCE_BYTES)
+//! and recursion depth (32 levels in runtime) to prevent stack overflows.
 
 use crate::diagnostics;
 use crate::types::FunctionSig;
@@ -391,6 +378,7 @@ pub fn parse_oats_module_with_options(
 
     // Strip BOM (Byte Order Mark) if present - deno_ast requires this
     // UTF-8 BOM is 0xEF 0xBB 0xBF
+    // TODO: Handle other encodings or invalid UTF-8 more gracefully
     let source_without_bom = if let Some(stripped) = source_code.strip_prefix('\u{FEFF}') {
         stripped
     } else {

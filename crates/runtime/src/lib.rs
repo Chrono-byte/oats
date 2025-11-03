@@ -48,8 +48,8 @@ thread_local! {
 /// - Infinite loops in recursive algorithms
 /// - Malicious deeply nested data structures
 ///
-/// The value of 32 provides reasonable depth for most use cases while preventing
-/// stack exhaustion on typical systems (default stack size ~8MB).
+/// The value of 128 provides reasonable depth for most use cases while preventing
+/// stack exhaustion on typical systems.
 const MAX_RECURSION_DEPTH: usize = 128;
 
 // Module placeholders for incremental refactor.

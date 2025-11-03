@@ -1,0 +1,305 @@
+---
+name: Build and Publish All
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - crates/**
+      - .github/workflows/build-all.yml
+  pull_request:
+    branches:
+      - master
+    paths:
+      - crates/**
+      - .github/workflows/build-all.yml
+  release:
+    types: [published]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: "always"
+
+jobs:
+  check-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      oatsc: ${{ steps.filter.outputs.oatsc }}
+      runtime: ${{ steps.filter.outputs.runtime }}
+      toasty: ${{ steps.filter.outputs.toasty }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            oatsc:
+              - 'crates/oatsc/**'
+            runtime:
+              - 'crates/runtime/**'
+            toasty:
+              - 'crates/toasty/**'
+
+  build-oatsc:
+    name: Build Oats Compiler
+    runs-on: ubuntu-latest
+    needs: check-changes
+    if: needs.check-changes.outputs.oatsc == 'true'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          target: x86_64-unknown-linux-gnu
+
+      - name: Install sccache
+        run: |
+          cargo install sccache
+          echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
+          echo "SCCACHE_DIR=~/.cache/sccache" >> $GITHUB_ENV
+
+      - name: Cache sccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/sccache
+          key: sccache-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            sccache-${{ runner.os }}-
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Install LLVM
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y llvm-18-dev clang-18 libclang-18-dev
+          echo "LLVM_SYS_181_PREFIX=/usr/lib/llvm-18" >> $GITHUB_ENV
+          echo "/usr/lib/llvm-18/bin" >> $GITHUB_PATH
+
+      - name: Build oatsc
+        run: cargo build --release --bin oatsc --target x86_64-unknown-linux-gnu
+
+      - name: Rename artifact
+        run: cp target/x86_64-unknown-linux-gnu/release/oatsc oatsc-linux-x86_64
+
+      - name: Make executable
+        run: chmod +x oatsc-linux-x86_64
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: oatsc-linux-x86_64
+          path: oatsc-linux-x86_64
+          retention-days: 30
+
+  build-runtime:
+    name: Build Runtime
+    runs-on: ubuntu-latest
+    needs: check-changes
+    if: needs.check-changes.outputs.runtime == 'true'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          target: x86_64-unknown-linux-gnu
+
+      - name: Install sccache
+        run: |
+          cargo install sccache
+          echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
+          echo "SCCACHE_DIR=~/.cache/sccache" >> $GITHUB_ENV
+
+      - name: Cache sccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/sccache
+          key: sccache-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            sccache-${{ runner.os }}-
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Build runtime
+        run: |
+          cd crates/runtime
+          cargo build --release --target x86_64-unknown-linux-gnu
+
+      - name: Rename artifact
+        run: cp target/x86_64-unknown-linux-gnu/release/libruntime.a libruntime-linux-x86_64.a
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: libruntime-linux-x86_64.a
+          path: libruntime-linux-x86_64.a
+          retention-days: 30
+
+  build-toasty:
+    name: Build Toasty CLI
+    runs-on: ubuntu-latest
+    needs: check-changes
+    if: needs.check-changes.outputs.toasty == 'true'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          target: x86_64-unknown-linux-gnu
+
+      - name: Install sccache
+        run: |
+          cargo install sccache
+          echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
+          echo "SCCACHE_DIR=~/.cache/sccache" >> $GITHUB_ENV
+
+      - name: Cache sccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/sccache
+          key: sccache-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Build toasty
+        run: cargo build --release --bin toasty --target x86_64-unknown-linux-gnu
+
+      - name: Rename artifact
+        run: cp target/x86_64-unknown-linux-gnu/release/toasty toasty-linux-x86_64
+
+      - name: Make executable
+        run: chmod +x toasty-linux-x86_64
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: toasty-linux-x86_64
+          path: toasty-linux-x86_64
+          retention-days: 30
+
+  create-oatsc-release:
+    name: Create Oatsc Release
+    needs: build-oatsc
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download oatsc artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: oatsc-linux-x86_64
+          path: .
+
+      - name: Install GitHub CLI
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gh
+
+      - name: Create Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete oatsc-nightly --yes || true
+          gh release create oatsc-nightly \
+            --title "Oatsc Nightly Build $(date +%Y-%m-%d)" \
+            --notes "Automated nightly oatsc compiler build from commit ${{ github.sha }}" \
+            --prerelease \
+            oatsc-linux-x86_64
+
+  create-runtime-release:
+    name: Create Runtime Release
+    needs: build-runtime
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download runtime artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: libruntime-linux-x86_64.a
+          path: .
+
+      - name: Create Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete runtime-nightly --yes || true
+          gh release create runtime-nightly \
+            --title "Runtime Nightly Build $(date +%Y-%m-%d)" \
+            --notes "Automated nightly runtime build from commit ${{ github.sha }}" \
+            --prerelease \
+            libruntime-linux-x86_64.a
+
+  create-toasty-release:
+    name: Create Toasty Release
+    needs: build-toasty
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download toasty artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: toasty-linux-x86_64
+          path: .
+
+      - name: Create Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete toasty-nightly --yes || true
+          gh release create toasty-nightly \
+            --title "Toasty Nightly Build $(date +%Y-%m-%d)" \
+            --notes "Automated nightly toasty build from commit ${{ github.sha }}" \
+            --prerelease \
+            toasty-linux-x86_64

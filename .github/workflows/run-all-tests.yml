@@ -1,0 +1,122 @@
+name: Run All Tests
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - crates/**
+      - .github/workflows/run-all-tests.yml
+  pull_request:
+    branches: [master]
+    paths:
+      - crates/**
+      - .github/workflows/run-all-tests.yml
+
+jobs:
+  check-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      oatsc: ${{ steps.filter.outputs.oatsc }}
+      runtime: ${{ steps.filter.outputs.runtime }}
+      toasty: ${{ steps.filter.outputs.toasty }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            oatsc:
+              - 'crates/oatsc/**'
+            runtime:
+              - 'crates/runtime/**'
+            toasty:
+              - 'crates/toasty/**'
+
+  test-oatsc:
+    runs-on: ubuntu-latest
+    needs: check-changes
+    if: needs.check-changes.outputs.oatsc == 'true'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Build workspace
+        run: cargo build --workspace
+
+      - name: Run oatsc tests
+        run: cargo test -p oatsc
+
+      - name: Run oatsc snapshot tests
+        run: |
+          cargo install cargo-insta
+          cargo insta test -p oatsc
+
+  test-runtime:
+    runs-on: ubuntu-latest
+    needs: check-changes
+    if: needs.check-changes.outputs.runtime == 'true'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Build workspace
+        run: cargo build --workspace
+
+      - name: Run runtime tests
+        run: cargo test -p runtime
+
+  test-toasty:
+    runs-on: ubuntu-latest
+    needs: check-changes
+    if: needs.check-changes.outputs.toasty == 'true'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Build workspace
+        run: cargo build --workspace
+
+      - name: Run toasty tests
+        run: cargo test -p toasty

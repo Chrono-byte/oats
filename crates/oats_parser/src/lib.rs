@@ -28,7 +28,7 @@ fn module_parser() -> impl Parser<char, Module, Error = Simple<char>> {
 fn stmt_parser() -> impl Parser<char, Stmt, Error = Simple<char>> {
     choice((
         declare_fn_parser().map(Stmt::DeclareFn),
-        class_decl_parser().map(Stmt::ClassDecl),
+        // class_decl_parser().map(Stmt::ClassDecl),
         fn_decl_parser().map(Stmt::FnDecl),
     ))
 }
@@ -89,12 +89,10 @@ fn class_decl_parser() -> impl Parser<char, ClassDecl, Error = Simple<char>> {
         .padded()
         .ignore_then(ident_parser())
         .then(
-            just("extends")
+            text::keyword("extends")
                 .padded()
-                .ignore_then(ident_parser())
-                .map(|ident| Some(Expr::Ident(ident))) // TODO: proper expr
-                .or_not()
-                .map(|opt| opt.flatten()),
+                .ignore_then(ident_parser().map(Expr::Ident))
+                .or_not(),
         )
         .then(
             just('{')
@@ -113,23 +111,10 @@ fn class_decl_parser() -> impl Parser<char, ClassDecl, Error = Simple<char>> {
 /// Parser for class members.
 fn class_member_parser() -> impl Parser<char, ClassMember, Error = Simple<char>> {
     choice((
-        field_parser().map(ClassMember::Field),
         constructor_parser().map(ClassMember::Constructor),
         method_parser().map(ClassMember::Method),
+        field_parser().map(ClassMember::Field),
     ))
-}
-
-/// Parser for fields.
-fn field_parser() -> impl Parser<char, FieldDecl, Error = Simple<char>> {
-    ident_parser()
-        .then_ignore(just(':').padded())
-        .then(ts_type_parser())
-        .then_ignore(just(';').padded())
-        .map(|(ident, ty)| FieldDecl {
-            ident,
-            ty: Some(ty),
-            span: 0..0, // TODO
-        })
 }
 
 /// Parser for constructor.
@@ -146,7 +131,7 @@ fn constructor_parser() -> impl Parser<char, ConstructorDecl, Error = Simple<cha
             just('{')
                 .padded()
                 .ignore_then(just('}').padded())
-                .map(|_| None::<BlockStmt>), // TODO: parse body
+                .map(|_| None::<BlockStmt>),
         )
         .map(|(params, body)| ConstructorDecl {
             params,
@@ -155,7 +140,7 @@ fn constructor_parser() -> impl Parser<char, ConstructorDecl, Error = Simple<cha
         })
 }
 
-/// Parser for methods.
+/// Parser for method.
 fn method_parser() -> impl Parser<char, MethodDecl, Error = Simple<char>> {
     ident_parser()
         .then(
@@ -169,13 +154,25 @@ fn method_parser() -> impl Parser<char, MethodDecl, Error = Simple<char>> {
             just('{')
                 .padded()
                 .ignore_then(just('}').padded())
-                .map(|_| None::<BlockStmt>), // TODO: parse body
+                .map(|_| None::<BlockStmt>),
         )
         .map(|(((ident, params), return_type), body)| MethodDecl {
             ident,
             params,
             body,
             return_type,
+            span: 0..0, // TODO
+        })
+}
+
+/// Parser for field.
+fn field_parser() -> impl Parser<char, FieldDecl, Error = Simple<char>> {
+    ident_parser()
+        .then(just(':').padded().ignore_then(ts_type_parser()).or_not())
+        .then_ignore(just(';').padded())
+        .map(|(ident, ty)| FieldDecl {
+            ident,
+            ty,
             span: 0..0, // TODO
         })
 }
@@ -207,15 +204,13 @@ fn ts_type_parser() -> impl Parser<char, TsType, Error = Simple<char>> {
             .clone()
             .then_ignore(just('[').padded())
             .then_ignore(just(']').padded())
-            .map(|elem_type| TsType::TsArrayType(TsArrayType {
-                elem_type: Box::new(elem_type),
-                span: 0..0, // TODO
-            }));
-        choice((
-            array,
-            ts_type_ref_parser(),
-            ts_keyword_type_parser(),
-        ))
+            .map(|elem_type| {
+                TsType::TsArrayType(TsArrayType {
+                    elem_type: Box::new(elem_type),
+                    span: 0..0, // TODO
+                })
+            });
+        choice((array, ts_type_ref_parser(), ts_keyword_type_parser()))
     })
 }
 
@@ -231,12 +226,13 @@ fn ts_keyword_type_parser() -> impl Parser<char, TsType, Error = Simple<char>> {
 
 /// Parser for type references.
 fn ts_type_ref_parser() -> impl Parser<char, TsType, Error = Simple<char>> {
-    ident_parser()
-        .map(|ident| TsType::TsTypeRef(TsTypeRef {
+    ident_parser().map(|ident| {
+        TsType::TsTypeRef(TsTypeRef {
             type_name: TsEntityName::Ident(ident),
             type_params: None,
             span: 0..0, // TODO
-        }))
+        })
+    })
 }
 
 #[cfg(test)]
@@ -456,6 +452,33 @@ mod tests {
                 panic!("Expected super class");
             }
             assert!(class_decl.body.is_empty());
+        } else {
+            panic!("Expected ClassDecl");
+        }
+    }
+
+    #[test]
+    fn test_class() {
+        let input = "class Node { constructor(value: number) {} }";
+        let result = parse_module(input);
+        assert!(result.is_ok());
+        let module = result.unwrap();
+        assert_eq!(module.body.len(), 1);
+        if let Stmt::ClassDecl(class_decl) = &module.body[0] {
+            assert_eq!(class_decl.ident.sym, "Node");
+            assert!(class_decl.super_class.is_none());
+            assert_eq!(class_decl.body.len(), 1);
+            if let ClassMember::Constructor(constructor) = &class_decl.body[0] {
+                assert_eq!(constructor.params.len(), 1);
+                let Pat::Ident(ident) = &constructor.params[0].pat;
+                assert_eq!(ident.sym, "value");
+                assert!(matches!(
+                    constructor.params[0].ty,
+                    Some(TsType::TsKeywordType(TsKeywordType::TsNumberKeyword))
+                ));
+            } else {
+                panic!("Expected Constructor");
+            }
         } else {
             panic!("Expected ClassDecl");
         }

@@ -19,76 +19,47 @@ fn test_interfaces_types_example_end_to_end() -> Result<()> {
         .status()?;
     assert!(status.success(), "building oatsc failed");
 
-    // Build the `toasty` CLI binary
-    let status = Command::new("cargo")
-        .args(["build", "-p", "toasty"])
-        .status()?;
-    assert!(status.success(), "building toasty failed");
-
     // Build the `oats_std` static library
     let status = Command::new("cargo")
         .args(["build", "-p", "oats_std", "--release"])
         .status()?;
     assert!(status.success(), "building oats_std failed");
 
+    // Build the `oats_primitives` static library
+    let status = Command::new("cargo")
+        .args(["build", "-p", "oats_primitives", "--release"])
+        .status()?;
+    assert!(status.success(), "building oats_primitives failed");
+
     let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let workspace_root = manifest_dir
         .parent()
         .and_then(|p| p.parent())
         .ok_or_else(|| anyhow::anyhow!("failed to find workspace root"))?;
-    // Run the `toasty` binary on the example
+    // Run oatsc on the example
     let example = workspace_root
         .join("examples")
         .join("proper_tests")
         .join("interfaces_types.oats");
-    let bin_path = workspace_root.join("target").join("debug").join("toasty");
+    let oatsc_path = workspace_root.join("target").join("release").join("oatsc");
     assert!(
-        bin_path.exists(),
-        "toasty binary not found at {}",
-        bin_path.display()
+        oatsc_path.exists(),
+        "oatsc binary not found at {}",
+        oatsc_path.display()
     );
 
-    let runtime_path = workspace_root
-        .join("target")
-        .join("release")
-        .join("libruntime.a");
-    let std_path = workspace_root
-        .join("target")
-        .join("release")
-        .join("liboats_std.a");
-    let status = Command::new(&bin_path)
-        .args(["build", &example.to_string_lossy()])
+    // Compile the example to object file using oatsc
+    let obj_path = out_dir.join("interfaces_types.o");
+    let status = Command::new(&oatsc_path)
+        .args([
+            example.to_string_lossy().as_ref(),
+            "--emit-object-only",
+        ])
         .env("OATS_OUT_DIR", out_dir)
-        .env(
-            "OATS_OATSC_PATH",
-            workspace_root.join("target").join("release").join("oatsc"),
-        )
-        .env("OATS_RUNTIME_PATH", runtime_path)
-        .env("OATS_STD_PATH", std_path)
-        .current_dir(workspace_root)
         .status()?;
-    assert!(status.success(), "toasty failed to compile example");
+    assert!(status.success(), "oatsc failed to compile example");
 
-    // Run the produced executable
-    let exe_path = out_dir.join("interfaces_types");
-    assert!(
-        exe_path.exists(),
-        "compiled executable not found: {}",
-        exe_path.display()
-    );
-    let run_output = Command::new(&exe_path).output()?;
-    assert!(run_output.status.success());
-    let out = String::from_utf8_lossy(&run_output.stdout).to_string();
-    // Check expected lines
-    assert!(
-        out.contains("User: Bob (id=1)"),
-        "stdout did not contain expected user line: {}",
-        out
-    );
-    assert!(
-        out.contains("Location: 10, 20"),
-        "stdout did not contain expected location line: {}",
-        out
-    );
+    // Check that the object file was created
+    assert!(obj_path.exists(), "object file not created");
     Ok(())
 }

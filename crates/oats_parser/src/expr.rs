@@ -26,12 +26,9 @@ pub fn expr_parser() -> impl Parser<char, Expr, Error = Simple<char>> {
     recursive(|expr| {
         let literal = common::literal_parser();
         let ident = common::ident_parser().map(Expr::Ident);
-        let this =
-            text::keyword("this")
-                .padded()
-                .map_with_span(|_, span: std::ops::Range<usize>| {
-                    Expr::This(ThisExpr { span: span.into() })
-                });
+        let this = text::keyword("this")
+            .padded()
+            .map_with_span(|_, span: std::ops::Range<usize>| Expr::This(ThisExpr { span }));
 
         // Prefix update operators (++x, --x) - parse as part of unary expressions
         // We'll handle this in the unary section to avoid clone issues
@@ -46,8 +43,8 @@ pub fn expr_parser() -> impl Parser<char, Expr, Error = Simple<char>> {
             paren_expr_parser(expr.clone()),
             array_lit_parser(expr.clone()),
             object_lit_parser(expr.clone()),
-            function::arrow_expr_parser(expr.clone(), recursive(|s| stmt::stmt_parser(s))),
-            function::fn_expr_parser(recursive(|s| stmt::stmt_parser(s))),
+            function::arrow_expr_parser(expr.clone(), recursive(stmt::stmt_parser)),
+            function::fn_expr_parser(recursive(stmt::stmt_parser)),
         ));
 
         // Member access and call expressions (postfix operators)
@@ -73,7 +70,7 @@ pub fn expr_parser() -> impl Parser<char, Expr, Error = Simple<char>> {
                                 span: 0..0,
                             })), // Will be replaced in foldl
                             prop,
-                            span: span.into(),
+                            span,
                         })
                     }),
                     // Function call: (args...)
@@ -88,7 +85,7 @@ pub fn expr_parser() -> impl Parser<char, Expr, Error = Simple<char>> {
                                     span: 0..0,
                                 }))), // Will be replaced in foldl
                                 args,
-                                span: span.into(),
+                                span,
                             })
                         }),
                 ))
@@ -141,7 +138,7 @@ pub fn expr_parser() -> impl Parser<char, Expr, Error = Simple<char>> {
                         op,
                         prefix: false,
                         arg: Box::new(expr),
-                        span: span.into(),
+                        span,
                     })
                 } else {
                     expr
@@ -159,7 +156,7 @@ pub fn expr_parser() -> impl Parser<char, Expr, Error = Simple<char>> {
                 op,
                 prefix: true,
                 arg: Box::new(arg),
-                span: span.into(),
+                span,
             })
         });
 
@@ -184,7 +181,7 @@ pub fn expr_parser() -> impl Parser<char, Expr, Error = Simple<char>> {
                         Expr::Unary(UnaryExpr {
                             op,
                             arg: Box::new(expr),
-                            span: span.into(),
+                            span,
                         })
                     } else {
                         expr
@@ -212,9 +209,7 @@ pub fn expr_parser() -> impl Parser<char, Expr, Error = Simple<char>> {
                 common::ident_parser().map(Expr::Ident),
                 text::keyword("this")
                     .padded()
-                    .map_with_span(|_, span: std::ops::Range<usize>| {
-                        Expr::This(ThisExpr { span: span.into() })
-                    }),
+                    .map_with_span(|_, span: std::ops::Range<usize>| Expr::This(ThisExpr { span })),
             ));
             // Simple postfix (only member access with identifiers)
             let postfix_rhs = simple_expr
@@ -229,7 +224,7 @@ pub fn expr_parser() -> impl Parser<char, Expr, Error = Simple<char>> {
                                     span: 0..0,
                                 })),
                                 prop: MemberProp::Ident(prop),
-                                span: span.into(),
+                                span,
                             })
                         })
                         .repeated(),
@@ -252,7 +247,7 @@ pub fn expr_parser() -> impl Parser<char, Expr, Error = Simple<char>> {
                         Expr::Unary(UnaryExpr {
                             op,
                             arg: Box::new(expr),
-                            span: span.into(),
+                            span,
                         })
                     } else {
                         expr
@@ -467,24 +462,40 @@ pub fn expr_parser() -> impl Parser<char, Expr, Error = Simple<char>> {
                 })
             });
 
+        // Assignment operators
+        let assign_op = choice((
+            just("+=").padded().to(AssignOp::PlusEq),
+            just("-=").padded().to(AssignOp::MinusEq),
+            just("*=").padded().to(AssignOp::MulEq),
+            just("/=").padded().to(AssignOp::DivEq),
+            just("%=").padded().to(AssignOp::ModEq),
+            just("<<=").padded().to(AssignOp::LShiftEq),
+            just(">>=").padded().to(AssignOp::RShiftEq),
+            just(">>>=").padded().to(AssignOp::URShiftEq),
+            just("&=").padded().to(AssignOp::BitwiseAndEq),
+            just("|=").padded().to(AssignOp::BitwiseOrEq),
+            just("^=").padded().to(AssignOp::BitwiseXorEq),
+            just("**=").padded().to(AssignOp::ExpEq),
+            just('=').padded().to(AssignOp::Eq),
+        ));
+
         // Assignment (right-associative)
         // RHS uses rebuild_logical_and to allow full expressions while avoiding infinite recursion
         // For chained assignments like a = b = c, we'd need expr.clone(), but that causes stack overflow
         // So we limit RHS to non-assignment expressions (assignments can be nested via parentheses)
         let assign = binary
             .then(
-                just('=')
-                    .padded()
-                    .ignore_then(rebuild_logical_and()) // RHS is logical_and (supports full expressions via parentheses)
-                    .map_with_span(|right, span| {
+                assign_op
+                    .then(rebuild_logical_and()) // RHS is logical_and (supports full expressions via parentheses)
+                    .map_with_span(|(op, right), span| {
                         Expr::Assign(AssignExpr {
-                            op: AssignOp::Eq,
+                            op,
                             left: AssignTarget::Pat(Pat::Ident(Ident {
                                 sym: String::new(),
                                 span: 0..0,
                             })), // Will be replaced
                             right: Box::new(right),
-                            span: span.into(),
+                            span,
                         })
                     })
                     .or_not(),
@@ -503,16 +514,9 @@ pub fn expr_parser() -> impl Parser<char, Expr, Error = Simple<char>> {
                             assign.span = lhs_span.start..assign_span.end;
                             Expr::Assign(assign)
                         }
-                        Expr::Member(_) => {
+                        Expr::Member(member) => {
                             // Member access assignment: obj.prop = ... or arr[i] = ...
-                            // Note: AST currently only supports Pat in AssignTarget, so we store
-                            // the member expression as a pattern placeholder. The AST would need
-                            // to be extended with AssignTarget::Member(MemberExpr) to fully support this.
-                            // For now, we create a placeholder pattern to avoid losing the assignment.
-                            assign.left = AssignTarget::Pat(Pat::Ident(Ident {
-                                sym: String::from("_member_assign"),
-                                span: lhs_span.clone(),
-                            }));
+                            assign.left = AssignTarget::Member(member);
                             assign.span = lhs_span.start..assign_span.end;
                             Expr::Assign(assign)
                         }
@@ -533,7 +537,8 @@ pub fn expr_parser() -> impl Parser<char, Expr, Error = Simple<char>> {
             });
 
         // Conditional (ternary) operator (right-associative)
-        let conditional = assign
+
+        assign
             .then(
                 just('?')
                     .padded()
@@ -555,9 +560,7 @@ pub fn expr_parser() -> impl Parser<char, Expr, Error = Simple<char>> {
                 } else {
                     test
                 }
-            });
-
-        conditional
+            })
     })
 }
 
@@ -594,7 +597,7 @@ fn paren_expr_parser(
         .map_with_span(|expr, span| {
             Expr::Paren(ParenExpr {
                 expr: Box::new(expr),
-                span: span.into(),
+                span,
             })
         })
 }
@@ -611,7 +614,7 @@ fn array_lit_parser(
         .map_with_span(|elems, span| {
             Expr::Array(ArrayLit {
                 elems: elems.into_iter().map(Some).collect(),
-                span: span.into(),
+                span,
             })
         })
 }
@@ -626,12 +629,7 @@ fn object_lit_parser(
         .separated_by(just(',').padded())
         .collect::<Vec<_>>()
         .delimited_by(just('{').padded(), just('}').padded())
-        .map_with_span(|props, span| {
-            Expr::Object(ObjectLit {
-                props,
-                span: span.into(),
-            })
-        })
+        .map_with_span(|props, span| Expr::Object(ObjectLit { props, span }))
 }
 
 /// Parser for properties or spread elements.
@@ -643,12 +641,7 @@ fn prop_or_spread_parser(
         just("...")
             .padded()
             .ignore_then(expr.clone())
-            .map_with_span(|expr, span| {
-                PropOrSpread::Spread(SpreadElement {
-                    expr,
-                    span: span.into(),
-                })
-            }),
+            .map_with_span(|expr, span| PropOrSpread::Spread(SpreadElement { expr, span })),
         // Property
         prop_parser(expr).map(PropOrSpread::Prop),
     ))
@@ -669,7 +662,7 @@ fn prop_parser(
                     Prop::KeyValue(KeyValueProp {
                         key: PropName::Ident(ident.clone()),
                         value,
-                        span: span.into(),
+                        span,
                     })
                 } else {
                     Prop::Shorthand(ident)
@@ -681,16 +674,10 @@ fn prop_parser(
                 .ignore_then(filter(|c| *c != '"').repeated().collect::<String>())
                 .then_ignore(just('"'))
                 .map(PropName::Str),
-            common::ident_parser().map(|i| PropName::Ident(i)),
+            common::ident_parser().map(PropName::Ident),
         ))
         .then(just(':').padded().ignore_then(expr))
-        .map_with_span(|(key, value), span| {
-            Prop::KeyValue(KeyValueProp {
-                key,
-                value,
-                span: span.into(),
-            })
-        }),
+        .map_with_span(|(key, value), span| Prop::KeyValue(KeyValueProp { key, value, span })),
     ))
 }
 
@@ -714,7 +701,7 @@ fn new_expr_parser(
             Expr::New(NewExpr {
                 callee: Box::new(callee),
                 args: args.unwrap_or_default(),
-                span: span.into(),
+                span,
             })
         })
 }
@@ -731,7 +718,7 @@ fn await_expr_parser(
         .map_with_span(|arg, span| {
             Expr::Await(AwaitExpr {
                 arg: Box::new(arg),
-                span: span.into(),
+                span,
             })
         })
 }
@@ -778,7 +765,7 @@ fn template_literal_parser(
             Expr::Tpl(TplExpr {
                 quasis,
                 exprs,
-                span: span.into(),
+                span,
             })
         })
 }

@@ -28,14 +28,11 @@ pub fn parse_module(input: &str) -> Result<Module, Vec<Simple<char>>> {
 ///
 /// A module consists of zero or more statements.
 fn module_parser() -> impl Parser<char, Module, Error = Simple<char>> {
-    recursive(|stmt| stmt::stmt_parser(stmt))
+    recursive(stmt::stmt_parser)
         .repeated()
         .collect::<Vec<_>>()
         .then_ignore(end())
-        .map_with_span(|body, span| Module {
-            body,
-            span: span.into(),
-        })
+        .map_with_span(|body, span| Module { body, span })
 }
 
 #[cfg(test)]
@@ -100,7 +97,7 @@ mod tests {
         let module = result.unwrap();
         assert_eq!(module.body.len(), 1);
         if let Stmt::VarDecl(var_decl) = &module.body[0] {
-            assert!(matches!(var_decl.kind, VarDeclKind::Let));
+            assert!(matches!(var_decl.kind, VarDeclKind::Let { mutable: false }));
             assert_eq!(var_decl.decls.len(), 1);
         } else {
             panic!("Expected VarDecl");
@@ -165,8 +162,11 @@ mod tests {
         if let Stmt::VarDecl(var_decl) = &module.body[0] {
             assert!(matches!(var_decl.kind, VarDeclKind::Let { mutable: true }));
             assert_eq!(var_decl.decls.len(), 1);
-            let Pat::Ident(ident) = &var_decl.decls[0].name;
-            assert_eq!(ident.sym, "z");
+            if let Pat::Ident(ident) = &var_decl.decls[0].name {
+                assert_eq!(ident.sym, "z");
+            } else {
+                panic!("Expected identifier pattern");
+            }
             assert!(matches!(
                 var_decl.decls[0].init,
                 Some(Expr::Lit(Lit::I64(100)))
@@ -177,7 +177,7 @@ mod tests {
     }
 
     #[test]
-    fn test_function_with_body() {
+    fn test_function_with_body_and_var() {
         let input = "function test(): void { let x = 5; }";
         let result = parse_module(input);
         assert!(result.is_ok());
@@ -197,8 +197,11 @@ mod tests {
             if let Stmt::VarDecl(var_decl) = &body.stmts[0] {
                 assert!(matches!(var_decl.kind, VarDeclKind::Let { mutable: false }));
                 assert_eq!(var_decl.decls.len(), 1);
-                let Pat::Ident(ident) = &var_decl.decls[0].name;
-                assert_eq!(ident.sym, "x");
+                if let Pat::Ident(ident) = &var_decl.decls[0].name {
+                    assert_eq!(ident.sym, "x");
+                } else {
+                    panic!("Expected identifier pattern");
+                }
                 assert!(matches!(
                     var_decl.decls[0].init,
                     Some(Expr::Lit(Lit::I64(5)))

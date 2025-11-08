@@ -37,7 +37,7 @@ pub fn class_decl_parser(
             ident,
             super_class,
             body,
-            span: span.into(),
+            span,
         })
 }
 
@@ -62,11 +62,7 @@ fn constructor_parser(
         .padded()
         .ignore_then(common::param_list_parser())
         .then(common::optional_block_parser(stmt))
-        .map_with_span(|(params, body), span| ConstructorDecl {
-            params,
-            body,
-            span: span.into(),
-        })
+        .map_with_span(|(params, body), span| ConstructorDecl { params, body, span })
 }
 
 /// Parser for methods.
@@ -84,7 +80,7 @@ fn method_parser(
             params,
             body,
             return_type,
-            span: span.into(),
+            span,
         })
 }
 
@@ -95,9 +91,5 @@ fn field_parser() -> impl Parser<char, FieldDecl, Error = Simple<char>> {
     common::ident_parser()
         .then(common::optional_type_annotation())
         .then_ignore(just(';').padded())
-        .map_with_span(|(ident, ty), span| FieldDecl {
-            ident,
-            ty,
-            span: span.into(),
-        })
+        .map_with_span(|(ident, ty), span| FieldDecl { ident, ty, span })
 }

@@ -9,15 +9,91 @@ use oats_ast::*;
 
 /// Parser for identifiers.
 pub fn ident_parser() -> impl Parser<char, Ident, Error = Simple<char>> {
-    text::ident().map_with_span(|sym, span: std::ops::Range<usize>| Ident {
-        sym,
-        span: span.into(),
-    })
+    text::ident().map_with_span(|sym, span: std::ops::Range<usize>| Ident { sym, span })
 }
 
 /// Parser for patterns.
+///
+/// Supports:
+/// - Identifiers: `x`
+/// - Array patterns: `[a, b, c]`, `[a, ...rest]`
+/// - Object patterns: `{a, b}`, `{a: x, b: y}`, `{...rest}`
+/// - Rest patterns: `...rest` (in arrays/objects)
 pub fn pat_parser() -> impl Parser<char, Pat, Error = Simple<char>> {
-    ident_parser().map(Pat::Ident)
+    recursive(|pat| {
+        let ident = ident_parser().map(Pat::Ident);
+
+        // Rest pattern: ...pat
+        let rest = just("...")
+            .padded()
+            .ignore_then(pat.clone())
+            .map_with_span(|arg, span| {
+                Pat::Rest(RestPat {
+                    arg: Box::new(arg),
+                    span,
+                })
+            });
+
+        // Array pattern: [pat1, pat2, ...rest?]
+        let array = pat
+            .clone()
+            .separated_by(just(',').padded())
+            .collect::<Vec<_>>()
+            .delimited_by(just('[').padded(), just(']').padded())
+            .map_with_span(|elems, span| {
+                Pat::Array(ArrayPat {
+                    elems: elems.into_iter().map(Some).collect(),
+                    span,
+                })
+            });
+
+        // Object pattern property: key: pat or key (shorthand)
+        let obj_prop = choice((
+            // Rest in object: ...ident
+            just("...")
+                .padded()
+                .ignore_then(ident_parser())
+                .map_with_span(|arg, span| ObjectPatProp::Rest { arg, span }),
+            // Key-value: key: pat
+            choice((
+                just('"')
+                    .ignore_then(filter(|c| *c != '"').repeated().collect::<String>())
+                    .then_ignore(just('"'))
+                    .map(PropName::Str),
+                ident_parser().map(PropName::Ident),
+            ))
+            .then(just(':').padded().ignore_then(pat.clone()))
+            .map_with_span(|(key, value), span| ObjectPatProp::KeyValue { key, value, span }),
+            // Shorthand: ident (same as ident: ident)
+            ident_parser()
+                .then(just(':').padded().ignore_then(pat.clone()).or_not())
+                .map_with_span(|(key_ident, opt_value), span| {
+                    if let Some(value) = opt_value {
+                        ObjectPatProp::KeyValue {
+                            key: PropName::Ident(key_ident.clone()),
+                            value,
+                            span,
+                        }
+                    } else {
+                        // Shorthand: just use the ident as both key and value pattern
+                        ObjectPatProp::KeyValue {
+                            key: PropName::Ident(key_ident.clone()),
+                            value: Pat::Ident(key_ident),
+                            span,
+                        }
+                    }
+                }),
+        ));
+
+        // Object pattern: {prop1, prop2, ...rest?}
+        let object = obj_prop
+            .separated_by(just(',').padded())
+            .collect::<Vec<_>>()
+            .delimited_by(just('{').padded(), just('}').padded())
+            .map_with_span(|props, span| Pat::Object(ObjectPat { props, span }));
+
+        choice((rest, array, object, ident))
+    })
 }
 
 /// Parser for function parameters.
@@ -31,11 +107,7 @@ pub fn param_parser() -> impl Parser<char, Param, Error = Simple<char>> {
                 .ignore_then(super::types::ts_type_parser())
                 .or_not(),
         )
-        .map_with_span(|(pat, ty), span| Param {
-            pat,
-            ty,
-            span: span.into(),
-        })
+        .map_with_span(|(pat, ty), span| Param { pat, ty, span })
 }
 
 /// Parser for a comma-separated list of parameters in parentheses.
@@ -95,7 +167,7 @@ pub fn literal_parser() -> impl Parser<char, Expr, Error = Simple<char>> {
                 };
                 num_str.parse::<f64>().unwrap_or(0.0)
             })
-            .map_with_span(|n, _span| Expr::Lit(Lit::Num(n))),
+            .map_with_span(|n, _span| Expr::Lit(Lit::F64(n))),
         // Boolean literals
         text::keyword("true")
             .padded()
@@ -129,10 +201,7 @@ pub fn block_parser(
     stmt.repeated()
         .collect::<Vec<_>>()
         .delimited_by(just('{').padded(), just('}').padded())
-        .map_with_span(|stmts, span| BlockStmt {
-            stmts,
-            span: span.into(),
-        })
+        .map_with_span(|stmts, span| BlockStmt { stmts, span })
 }
 
 /// Parser for an optional block statement (empty braces return None).

@@ -59,10 +59,7 @@ pub fn ts_type_parser() -> impl Parser<char, TsType, Error = Simple<char>> {
                 } else {
                     let mut types = vec![first];
                     types.extend(rest);
-                    TsType::TsIntersectionType(TsIntersectionType {
-                        types,
-                        span: span.into(),
-                    })
+                    TsType::TsIntersectionType(TsIntersectionType { types, span })
                 }
             });
 
@@ -76,10 +73,7 @@ pub fn ts_type_parser() -> impl Parser<char, TsType, Error = Simple<char>> {
                 } else {
                     let mut types = vec![first];
                     types.extend(rest);
-                    TsType::TsUnionType(TsUnionType {
-                        types,
-                        span: span.into(),
-                    })
+                    TsType::TsUnionType(TsUnionType { types, span })
                 }
             })
     })
@@ -132,12 +126,7 @@ fn ts_tuple_type_parser(
         .separated_by(just(',').padded())
         .collect::<Vec<_>>()
         .delimited_by(just('[').padded(), just(']').padded())
-        .map_with_span(|elem_types, span| {
-            TsType::TsTupleType(TsTupleType {
-                elem_types,
-                span: span.into(),
-            })
-        })
+        .map_with_span(|elem_types, span| TsType::TsTupleType(TsTupleType { elem_types, span }))
 }
 
 /// Parser for function types.
@@ -153,7 +142,7 @@ fn ts_function_type_parser(
             TsType::TsFunctionType(TsFunctionType {
                 params,
                 return_type: Box::new(return_type),
-                span: span.into(),
+                span,
             })
         })
 }

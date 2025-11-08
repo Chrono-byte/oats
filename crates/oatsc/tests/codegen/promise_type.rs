@@ -91,15 +91,12 @@ fn parse_promise_number_type() -> Result<()> {
     let parsed = &parsed_mod.parsed;
 
     // Find the function
-    for item_ref in parsed.program_ref().body() {
-        if let deno_ast::ModuleItemRef::Stmt(stmt) = item_ref
-            && let deno_ast::swc::ast::Stmt::Decl(decl) = stmt
-            && let deno_ast::swc::ast::Decl::Fn(fn_decl) = decl
-        {
+    use oats_ast::*;
+    for stmt in &parsed.body {
+        if let Stmt::FnDecl(fn_decl) = stmt {
             // Check if it has a return type annotation
-            if let Some(return_type) = &fn_decl.function.return_type {
-                let ts_type = &return_type.type_ann;
-                let oats_type = map_ts_type(ts_type);
+            if let Some(return_type) = &fn_decl.return_type {
+                let oats_type = map_ts_type(return_type);
 
                 assert!(oats_type.is_some(), "Should parse Promise<number>");
                 let oats_type =
@@ -132,14 +129,12 @@ fn parse_promise_string_type() -> Result<()> {
     let parsed = &parsed_mod.parsed;
 
     // Find the function
-    for item_ref in parsed.program_ref().body() {
-        if let deno_ast::ModuleItemRef::Stmt(stmt) = item_ref
-            && let deno_ast::swc::ast::Stmt::Decl(decl) = stmt
-            && let deno_ast::swc::ast::Decl::Fn(fn_decl) = decl
-            && let Some(return_type) = &fn_decl.function.return_type
+    use oats_ast::*;
+    for stmt in &parsed.body {
+        if let Stmt::FnDecl(fn_decl) = stmt
+            && let Some(return_type) = &fn_decl.return_type
         {
-            let ts_type = &return_type.type_ann;
-            let oats_type = map_ts_type(ts_type);
+            let oats_type = map_ts_type(return_type);
 
             assert!(oats_type.is_some());
             let oats_type = oats_type.ok_or_else(|| anyhow::anyhow!("Failed to map TS type"))?;
@@ -166,14 +161,12 @@ fn parse_promise_void_type() -> Result<()> {
     let parsed = &parsed_mod.parsed;
 
     // Find the function
-    for item_ref in parsed.program_ref().body() {
-        if let deno_ast::ModuleItemRef::Stmt(stmt) = item_ref
-            && let deno_ast::swc::ast::Stmt::Decl(decl) = stmt
-            && let deno_ast::swc::ast::Decl::Fn(fn_decl) = decl
-            && let Some(return_type) = &fn_decl.function.return_type
+    use oats_ast::*;
+    for stmt in &parsed.body {
+        if let Stmt::FnDecl(fn_decl) = stmt
+            && let Some(return_type) = &fn_decl.return_type
         {
-            let ts_type = &return_type.type_ann;
-            let oats_type = map_ts_type(ts_type);
+            let oats_type = map_ts_type(return_type);
 
             assert!(oats_type.is_some());
             let oats_type = oats_type.ok_or_else(|| anyhow::anyhow!("Failed to map TS type"))?;
@@ -196,7 +189,7 @@ fn parse_promise_custom_type() -> Result<()> {
                 this.name = name;
             }
         }
-        
+
         async function fetchUser(): Promise<User> {
             return new User("Alice");
         }
@@ -207,15 +200,13 @@ fn parse_promise_custom_type() -> Result<()> {
     let parsed = &parsed_mod.parsed;
 
     // Find the fetchUser function
-    for item_ref in parsed.program_ref().body() {
-        if let deno_ast::ModuleItemRef::Stmt(stmt) = item_ref
-            && let deno_ast::swc::ast::Stmt::Decl(decl) = stmt
-            && let deno_ast::swc::ast::Decl::Fn(fn_decl) = decl
-            && fn_decl.ident.sym.as_ref() == "fetchUser"
-            && let Some(return_type) = &fn_decl.function.return_type
+    use oats_ast::*;
+    for stmt in &parsed.body {
+        if let Stmt::FnDecl(fn_decl) = stmt
+            && fn_decl.ident.sym == "fetchUser"
+            && let Some(return_type) = &fn_decl.return_type
         {
-            let ts_type = &return_type.type_ann;
-            let oats_type = map_ts_type(ts_type);
+            let oats_type = map_ts_type(return_type);
 
             assert!(oats_type.is_some());
             let oats_type = oats_type.ok_or_else(|| anyhow::anyhow!("Failed to map TS type"))?;
@@ -258,17 +249,16 @@ export function main(): number {
 "#;
     let (parsed_opt, _) = parser::parse_oats_module(source, None)?;
     let parsed = parsed_opt.ok_or_else(|| anyhow::anyhow!("Failed to parse source"))?;
-    let program = parsed.parsed.program_ref();
+    use oats_ast::*;
 
     // Find the return statement with literal 42
-    for item in program.body() {
-        if let deno_ast::ModuleItemRef::ModuleDecl(module_decl) = item
-            && let deno_ast::swc::ast::ModuleDecl::ExportDecl(decl) = module_decl
-            && let deno_ast::swc::ast::Decl::Fn(f) = &decl.decl
-            && let Some(body) = &f.function.body
+    for stmt in &parsed.parsed.body {
+        if let Stmt::FnDecl(fn_decl) = stmt
+            && fn_decl.ident.sym == "main"
+            && let Some(body) = &fn_decl.body
         {
-            for stmt in &body.stmts {
-                if let deno_ast::swc::ast::Stmt::Return(ret) = stmt
+            for body_stmt in &body.stmts {
+                if let Stmt::Return(ret) = body_stmt
                     && let Some(expr) = &ret.arg
                 {
                     let inferred = infer_type_from_expr(expr);
@@ -291,20 +281,23 @@ export function main(): number {
 "#;
     let (parsed_opt, _) = parser::parse_oats_module(source, None)?;
     let parsed = parsed_opt.ok_or_else(|| anyhow::anyhow!("Failed to parse source"))?;
-    let program = parsed.parsed.program_ref();
+    use oats_ast::*;
 
     // Find the array literal [1, 2, 3]
-    for item in program.body() {
-        if let deno_ast::ModuleItemRef::Stmt(stmt) = item
-            && let deno_ast::swc::ast::Stmt::Decl(decl) = stmt
-            && let deno_ast::swc::ast::Decl::Var(var_decl) = decl
+    for stmt in &parsed.parsed.body {
+        if let Stmt::FnDecl(fn_decl) = stmt
+            && let Some(body) = &fn_decl.body
         {
-            for decl in &var_decl.decls {
-                if let Some(init) = &decl.init
-                    && let deno_ast::swc::ast::Expr::Array(_) = &**init
-                {
-                    let inferred = infer_type_from_expr(init);
-                    assert_eq!(inferred, Some(OatsType::Array(Box::new(OatsType::Number))));
+            for body_stmt in &body.stmts {
+                if let Stmt::VarDecl(var_decl) = body_stmt {
+                    for decl in &var_decl.decls {
+                        if let Some(init) = &decl.init
+                            && let Expr::Array(_) = init
+                        {
+                            let inferred = infer_type_from_expr(init);
+                            assert_eq!(inferred, Some(OatsType::Array(Box::new(OatsType::Number))));
+                        }
+                    }
                 }
             }
         }
@@ -317,24 +310,16 @@ export function main(): number {
 fn infer_type_combined() -> Result<(), Box<dyn std::error::Error>> {
     // Test the combined infer_type function with Oats type annotations
     // Create a simple number type annotation
-    use deno_ast::swc::ast::{TsKeywordType, TsKeywordTypeKind, TsType};
+    use oats_ast::*;
 
-    let ts_number = TsType::TsKeywordType(TsKeywordType {
-        span: Default::default(),
-        kind: TsKeywordTypeKind::TsNumberKeyword,
-    });
+    let ts_number = TsType::TsKeywordType(TsKeywordType::TsNumberKeyword);
 
     // Test with Oats type annotation only
     let inferred = infer_type(Some(&ts_number), None);
     assert_eq!(inferred, OatsType::Number);
 
     // Test with expression only (should fallback to Number)
-    use deno_ast::swc::ast::{Expr, Lit};
-    let expr = Expr::Lit(Lit::Str(deno_ast::swc::ast::Str {
-        span: Default::default(),
-        value: "hello".into(),
-        raw: None,
-    }));
+    let expr = Expr::Lit(Lit::Str("hello".to_string()));
 
     let inferred_expr = infer_type(None, Some(&expr));
     assert_eq!(inferred_expr, OatsType::String);

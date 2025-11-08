@@ -94,15 +94,13 @@ fn infer_number_return_from_block() -> Result<()> {
     let parsed = &parsed_mod.parsed;
 
     // Find the arrow function
+    use oats_ast::*;
     let mut arrow_body = None;
-    for item_ref in parsed.program_ref().body() {
-        if let deno_ast::ModuleItemRef::Stmt(stmt) = item_ref
-            && let deno_ast::swc::ast::Stmt::Decl(decl) = stmt
-            && let deno_ast::swc::ast::Decl::Var(var_decl) = decl
-        {
+    for stmt in &parsed.body {
+        if let Stmt::VarDecl(var_decl) = stmt {
             for decl in &var_decl.decls {
                 if let Some(init) = &decl.init
-                    && let deno_ast::swc::ast::Expr::Arrow(arrow) = &**init
+                    && let Expr::Arrow(arrow) = init
                 {
                     arrow_body = Some(&arrow.body);
                     break;
@@ -136,15 +134,13 @@ fn infer_string_return_from_block() -> Result<()> {
     let parsed_mod = parsed_mod_opt.ok_or_else(|| anyhow::anyhow!("Failed to parse source"))?;
     let parsed = &parsed_mod.parsed;
 
+    use oats_ast::*;
     let mut arrow_body = None;
-    for item_ref in parsed.program_ref().body() {
-        if let deno_ast::ModuleItemRef::Stmt(stmt) = item_ref
-            && let deno_ast::swc::ast::Stmt::Decl(decl) = stmt
-            && let deno_ast::swc::ast::Decl::Var(var_decl) = decl
-        {
+    for stmt in &parsed.body {
+        if let Stmt::VarDecl(var_decl) = stmt {
             for decl in &var_decl.decls {
                 if let Some(init) = &decl.init
-                    && let deno_ast::swc::ast::Expr::Arrow(arrow) = &**init
+                    && let Expr::Arrow(arrow) = init
                 {
                     arrow_body = Some(&arrow.body);
                     break;
@@ -178,15 +174,13 @@ fn infer_void_return_from_block_no_return() -> Result<()> {
     let parsed_mod = parsed_mod_opt.ok_or_else(|| anyhow::anyhow!("Failed to parse source"))?;
     let parsed = &parsed_mod.parsed;
 
+    use oats_ast::*;
     let mut arrow_body = None;
-    for item_ref in parsed.program_ref().body() {
-        if let deno_ast::ModuleItemRef::Stmt(stmt) = item_ref
-            && let deno_ast::swc::ast::Stmt::Decl(decl) = stmt
-            && let deno_ast::swc::ast::Decl::Var(var_decl) = decl
-        {
+    for stmt in &parsed.body {
+        if let Stmt::VarDecl(var_decl) = stmt {
             for decl in &var_decl.decls {
                 if let Some(init) = &decl.init
-                    && let deno_ast::swc::ast::Expr::Arrow(arrow) = &**init
+                    && let Expr::Arrow(arrow) = init
                 {
                     arrow_body = Some(&arrow.body);
                     break;
@@ -223,15 +217,13 @@ fn infer_union_return_from_block_multiple_types() -> Result<()> {
     let parsed_mod = parsed_mod_opt.ok_or_else(|| anyhow::anyhow!("Failed to parse source"))?;
     let parsed = &parsed_mod.parsed;
 
+    use oats_ast::*;
     let mut arrow_body = None;
-    for item_ref in parsed.program_ref().body() {
-        if let deno_ast::ModuleItemRef::Stmt(stmt) = item_ref
-            && let deno_ast::swc::ast::Stmt::Decl(decl) = stmt
-            && let deno_ast::swc::ast::Decl::Var(var_decl) = decl
-        {
+    for stmt in &parsed.body {
+        if let Stmt::VarDecl(var_decl) = stmt {
             for decl in &var_decl.decls {
                 if let Some(init) = &decl.init
-                    && let deno_ast::swc::ast::Expr::Arrow(arrow) = &**init
+                    && let Expr::Arrow(arrow) = init
                 {
                     arrow_body = Some(&arrow.body);
                     break;
@@ -277,15 +269,13 @@ fn infer_number_return_from_nested_if() -> Result<()> {
     let parsed_mod = parsed_mod_opt.ok_or_else(|| anyhow::anyhow!("Failed to parse source"))?;
     let parsed = &parsed_mod.parsed;
 
+    use oats_ast::*;
     let mut arrow_body = None;
-    for item_ref in parsed.program_ref().body() {
-        if let deno_ast::ModuleItemRef::Stmt(stmt) = item_ref
-            && let deno_ast::swc::ast::Stmt::Decl(decl) = stmt
-            && let deno_ast::swc::ast::Decl::Var(var_decl) = decl
-        {
+    for stmt in &parsed.body {
+        if let Stmt::VarDecl(var_decl) = stmt {
             for decl in &var_decl.decls {
                 if let Some(init) = &decl.init
-                    && let deno_ast::swc::ast::Expr::Arrow(arrow) = &**init
+                    && let Expr::Arrow(arrow) = init
                 {
                     arrow_body = Some(&arrow.body);
                     break;
@@ -318,15 +308,13 @@ fn infer_expr_body_return() -> Result<()> {
     let parsed_mod = parsed_mod_opt.ok_or_else(|| anyhow::anyhow!("Failed to parse source"))?;
     let parsed = &parsed_mod.parsed;
 
+    use oats_ast::*;
     let mut arrow_body = None;
-    for item_ref in parsed.program_ref().body() {
-        if let deno_ast::ModuleItemRef::Stmt(stmt) = item_ref
-            && let deno_ast::swc::ast::Stmt::Decl(decl) = stmt
-            && let deno_ast::swc::ast::Decl::Var(var_decl) = decl
-        {
+    for stmt in &parsed.body {
+        if let Stmt::VarDecl(var_decl) = stmt {
             for decl in &var_decl.decls {
                 if let Some(init) = &decl.init
-                    && let deno_ast::swc::ast::Expr::Arrow(arrow) = &**init
+                    && let Expr::Arrow(arrow) = init
                 {
                     arrow_body = Some(&arrow.body);
                     break;

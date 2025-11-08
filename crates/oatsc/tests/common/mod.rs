@@ -79,15 +79,19 @@ pub fn gen_ir_for_source(src: &str) -> Result<String> {
     let parsed = &parsed_mod.parsed;
 
     // Locate the exported main function required for test compilation
-    let mut func_decl_opt: Option<deno_ast::swc::ast::Function> = None;
-    for item_ref in parsed.program_ref().body() {
-        if let deno_ast::ModuleItemRef::ModuleDecl(module_decl) = item_ref
-            && let deno_ast::swc::ast::ModuleDecl::ExportDecl(decl) = module_decl
-            && let deno_ast::swc::ast::Decl::Fn(f) = &decl.decl
-        {
-            let name = f.ident.sym.to_string();
+    use oats_ast::*;
+    let mut func_decl_opt: Option<Function> = None;
+    for stmt in &parsed.body {
+        if let Stmt::FnDecl(fn_decl) = stmt {
+            let name = fn_decl.ident.sym.clone();
             if name == "main" {
-                func_decl_opt = Some((*f.function).clone());
+                func_decl_opt = Some(Function {
+                    params: fn_decl.params.clone(),
+                    body: fn_decl.body.clone(),
+                    return_type: fn_decl.return_type.clone(),
+                    span: fn_decl.span.clone(),
+                    is_async: false,
+                });
                 break;
             }
         }
@@ -118,65 +122,57 @@ pub fn gen_ir_for_source(src: &str) -> Result<String> {
     let parsed_mod_ref = parse_oats_module_for_test(src)?;
     let parsed_full = &parsed_mod_ref.parsed;
 
-    for item_ref in parsed_full.program_ref().body() {
-        if let deno_ast::ModuleItemRef::ModuleDecl(module_decl) = item_ref
-            && let deno_ast::swc::ast::ModuleDecl::ExportDecl(decl) = module_decl
-            && let deno_ast::swc::ast::Decl::Class(c) = &decl.decl
-        {
-            let class_name = c.ident.sym.to_string();
+    for stmt in &parsed_full.body {
+        if let Stmt::ClassDecl(class_decl) = stmt {
+            let class_name = class_decl.ident.sym.clone();
             // collect fields as in main.rs
             let mut fields: Vec<(String, oatsc::types::OatsType)> = Vec::new();
-            use deno_ast::swc::ast::{ClassMember, Expr, MemberProp, Stmt};
-            for member in &c.class.body {
-                if let ClassMember::ClassProp(prop) = member
-                    && let deno_ast::swc::ast::PropName::Ident(id) = &prop.key
-                {
-                    let fname = id.sym.to_string();
+            use oats_ast::*;
+            for member in &class_decl.body {
+                if let ClassMember::Field(field) = member {
+                    let fname = field.ident.sym.clone();
                     if !fields.iter().any(|(n, _)| n == &fname) {
                         fields.push((fname, oatsc::types::OatsType::Number));
                     }
                 }
             }
 
-            for member in &c.class.body {
+            for member in &class_decl.body {
                 if let ClassMember::Constructor(cons) = member {
                     for param in &cons.params {
-                        use deno_ast::swc::ast::{ParamOrTsParamProp, TsParamPropParam};
-                        if let ParamOrTsParamProp::TsParamProp(ts_param) = param
-                            && let TsParamPropParam::Ident(binding_ident) = &ts_param.param
-                        {
-                            let fname = binding_ident.id.sym.to_string();
+                        if let Pat::Ident(binding_ident) = &param.pat {
+                            let fname = binding_ident.sym.clone();
                             if fields.iter().all(|(n, _)| n != &fname) {
-                                let ty = binding_ident
-                                    .type_ann
+                                let ty = param
+                                    .ty
                                     .as_ref()
-                                    .and_then(|ann| oatsc::types::map_ts_type(&ann.type_ann))
+                                    .and_then(|ann| oatsc::types::map_ts_type(ann))
                                     .unwrap_or(oatsc::types::OatsType::Number);
                                 fields.push((fname, ty));
                             }
                         }
+                        // Destructuring patterns not yet supported in test helper
                     }
                 }
             }
 
-            for member in &c.class.body {
+            for member in &class_decl.body {
                 if let ClassMember::Constructor(cons) = member
                     && let Some(body) = &cons.body
                 {
                     for stmt in &body.stmts {
-                        if let Stmt::Expr(expr_stmt) = stmt
-                            && let Expr::Assign(assign) = &*expr_stmt.expr
-                            && let deno_ast::swc::ast::AssignTarget::Simple(simple_target) =
-                                &assign.left
-                            && let deno_ast::swc::ast::SimpleAssignTarget::Member(mem) =
-                                simple_target
-                            && matches!(&*mem.obj, Expr::This(_))
+                        if let Stmt::ExprStmt(expr_stmt) = stmt
+                            && let Expr::Assign(assign) = &expr_stmt.expr
+                            && let AssignTarget::Member(mem) = &assign.left
                             && let MemberProp::Ident(ident) = &mem.prop
                         {
-                            let name = ident.sym.to_string();
-                            let inferred = oatsc::types::infer_type(None, Some(&assign.right));
-                            if fields.iter().all(|(n, _)| n != &name) {
-                                fields.push((name, inferred));
+                            // Check if it's a this.member assignment
+                            if let Expr::This(_) = &*mem.obj {
+                                let name = ident.sym.clone();
+                                let inferred = oatsc::types::infer_type(None, Some(&assign.right));
+                                if fields.iter().all(|(n, _)| n != &name) {
+                                    fields.push((name, inferred));
+                                }
                             }
                         }
                     }
@@ -191,17 +187,19 @@ pub fn gen_ir_for_source(src: &str) -> Result<String> {
             }
 
             // emit methods & constructors
-            for member in &c.class.body {
-                use deno_ast::swc::ast::ClassMember;
+            for member in &class_decl.body {
                 match member {
                     ClassMember::Method(m) => {
-                        let mname = match &m.key {
-                            deno_ast::swc::ast::PropName::Ident(id) => id.sym.to_string(),
-                            deno_ast::swc::ast::PropName::Str(s) => s.value.to_string(),
-                            _ => continue,
+                        let mname = m.ident.sym.clone();
+                        let func = Function {
+                            params: m.params.clone(),
+                            body: m.body.clone(),
+                            return_type: m.return_type.clone(),
+                            span: m.span.clone(),
+                            is_async: false,
                         };
                         if let Ok((Some(sig), _diags)) = oatsc::types::check_function_strictness(
-                            &m.function,
+                            &func,
                             &mut oatsc::types::SymbolTable::new(),
                         ) {
                             let mut params = Vec::new();
@@ -210,13 +208,13 @@ pub fn gen_ir_for_source(src: &str) -> Result<String> {
                             let ret = sig.ret;
                             let fname = format!("{}_{}", class_name, mname);
                             codegen
-                                .gen_function_ir(&fname, &m.function, &params, &ret, Some("this"))
+                                .gen_function_ir(&fname, &func, &params, &ret, Some("this"))
                                 .map_err(|d| anyhow::anyhow!(d.message))?;
                         } else {
                             // fallback: emit with void return
                             if let Ok((Some(sig2), _diags2)) =
                                 oatsc::types::check_function_strictness(
-                                    &m.function,
+                                    &func,
                                     &mut oatsc::types::SymbolTable::new(),
                                 )
                             {
@@ -229,7 +227,7 @@ pub fn gen_ir_for_source(src: &str) -> Result<String> {
                                 codegen
                                     .gen_function_ir(
                                         &fname,
-                                        &m.function,
+                                        &func,
                                         &params,
                                         &oatsc::types::OatsType::Void,
                                         Some("this"),
@@ -293,31 +291,21 @@ pub fn create_codegen<'a>(
 
     for (_, parsed_module) in modules.iter() {
         let pm = &parsed_module.parsed;
-        for item_ref in pm.program_ref().body() {
-            if let deno_ast::ModuleItemRef::ModuleDecl(module_decl) = item_ref
-                && let deno_ast::swc::ast::ModuleDecl::ExportDecl(decl) = module_decl
-            {
-                match &decl.decl {
-                    deno_ast::swc::ast::Decl::Class(c) => {
-                        let name = c.ident.sym.to_string();
-                        symbols.insert(
-                            name.clone(),
-                            oatsc::types::Symbol::Variable {
-                                ty: oatsc::types::OatsType::NominalStruct(name),
-                            },
-                        );
-                    }
-                    deno_ast::swc::ast::Decl::TsInterface(iface) => {
-                        let name = iface.id.sym.to_string();
-                        symbols.insert(
-                            name.clone(),
-                            oatsc::types::Symbol::Variable {
-                                ty: oatsc::types::OatsType::NominalStruct(name),
-                            },
-                        );
-                    }
-                    _ => {}
+        use oats_ast::*;
+        for stmt in &pm.body {
+            match stmt {
+                Stmt::ClassDecl(class_decl) => {
+                    let name = class_decl.ident.sym.clone();
+                    symbols.insert(
+                        name.clone(),
+                        oatsc::types::Symbol::Variable {
+                            ty: oatsc::types::OatsType::NominalStruct(name),
+                        },
+                    );
                 }
+                // Note: oats_ast doesn't have separate interface declarations
+                // They would be handled differently if needed
+                _ => {}
             }
         }
     }

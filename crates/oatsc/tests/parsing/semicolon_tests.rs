@@ -25,12 +25,10 @@ fn semicolon_present_is_ok() -> Result<()> {
     let parsed_mod = parsed_mod_opt.ok_or_else(|| anyhow::anyhow!("Failed to parse source"))?;
     let parsed = &parsed_mod.parsed;
     // sanity: ensure exported function present
+    use oats_ast::*;
     let mut found = false;
-    for item in parsed.program_ref().body() {
-        if let deno_ast::ModuleItemRef::ModuleDecl(md) = item
-            && let deno_ast::swc::ast::ModuleDecl::ExportDecl(decl) = md
-            && let deno_ast::swc::ast::Decl::Fn(_f) = &decl.decl
-        {
+    for stmt in &parsed.body {
+        if let Stmt::FnDecl(_f) = stmt {
             found = true;
         }
     }

@@ -7,7 +7,7 @@ fn semicolon_after_block_comment_is_ok() -> Result<()> {
     let (parsed_mod_opt, _) = parser::parse_oats_module(source, None)?;
     let parsed_mod = parsed_mod_opt.ok_or_else(|| anyhow::anyhow!("Failed to parse source"))?;
     let parsed = &parsed_mod.parsed;
-    assert!(parsed.program_ref().body().next().is_some());
+    assert!(!parsed.body.is_empty());
     Ok(())
 }
 
@@ -17,7 +17,7 @@ fn semicolon_on_next_line_is_ok() -> Result<()> {
     let (parsed_mod_opt, _) = parser::parse_oats_module(source, None)?;
     let parsed_mod = parsed_mod_opt.ok_or_else(|| anyhow::anyhow!("Failed to parse source"))?;
     let parsed = &parsed_mod.parsed;
-    assert!(parsed.program_ref().body().next().is_some());
+    assert!(!parsed.body.is_empty());
     Ok(())
 }
 

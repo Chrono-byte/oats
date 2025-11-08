@@ -16,14 +16,21 @@ fn gen_add_function_ir_contains_fadd() -> Result<()> {
     let parsed = &parsed_mod.parsed;
 
     // extract exported function and name
-    let mut func_decl_opt: Option<(String, deno_ast::swc::ast::Function)> = None;
-    for item_ref in parsed.program_ref().body() {
-        if let deno_ast::ModuleItemRef::ModuleDecl(module_decl) = item_ref
-            && let deno_ast::swc::ast::ModuleDecl::ExportDecl(decl) = module_decl
-            && let deno_ast::swc::ast::Decl::Fn(f) = &decl.decl
-        {
-            let name = f.ident.sym.to_string();
-            func_decl_opt = Some((name, (*f.function).clone()));
+    use oats_ast::*;
+    let mut func_decl_opt: Option<(String, Function)> = None;
+    for stmt in &parsed.body {
+        if let Stmt::FnDecl(fn_decl) = stmt {
+            let name = fn_decl.ident.sym.clone();
+            func_decl_opt = Some((
+                name.clone(),
+                Function {
+                    params: fn_decl.params.clone(),
+                    body: fn_decl.body.clone(),
+                    return_type: fn_decl.return_type.clone(),
+                    span: fn_decl.span.clone(),
+                    is_async: false,
+                },
+            ));
             break;
         }
     }

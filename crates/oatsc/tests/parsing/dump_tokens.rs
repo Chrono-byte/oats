@@ -7,13 +7,9 @@ fn dump_tokens() -> Result<()> {
     let (parsed_mod_opt, _) = parser::parse_oats_module(source, None)?;
     let parsed_mod = parsed_mod_opt.ok_or_else(|| anyhow::anyhow!("Failed to parse source"))?;
     let parsed = &parsed_mod.parsed;
-    let toks = parsed.tokens();
-    eprintln!("tokens count: {}", toks.len());
-    for t in toks.iter().take(200) {
-        eprintln!(
-            "tok: span=({}-{}), dbg={:?}",
-            t.span.lo.0, t.span.hi.0, t.token
-        );
-    }
+    // Note: oats_ast doesn't expose tokens - this test is disabled
+    // Tokens are not part of the AST structure in oats_ast
+    eprintln!("Note: Token access not available in oats_ast");
+    eprintln!("Module has {} statements", parsed.body.len());
     Ok(())
 }

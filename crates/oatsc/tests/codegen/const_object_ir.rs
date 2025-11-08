@@ -19,15 +19,19 @@ export function main(): number {
     let (parsed_mod_opt, _) = parser::parse_oats_module(src, None)?;
     let parsed_mod = parsed_mod_opt.ok_or_else(|| anyhow::anyhow!("Failed to parse source"))?;
     let parsed = &parsed_mod.parsed;
-    let mut func_decl_opt: Option<deno_ast::swc::ast::Function> = None;
-    for item_ref in parsed.program_ref().body() {
-        if let deno_ast::ModuleItemRef::ModuleDecl(module_decl) = item_ref
-            && let deno_ast::swc::ast::ModuleDecl::ExportDecl(decl) = module_decl
-            && let deno_ast::swc::ast::Decl::Fn(f) = &decl.decl
-        {
-            let name = f.ident.sym.to_string();
+    use oats_ast::*;
+    let mut func_decl_opt: Option<Function> = None;
+    for stmt in &parsed.body {
+        if let Stmt::FnDecl(fn_decl) = stmt {
+            let name = fn_decl.ident.sym.clone();
             if name == "main" {
-                func_decl_opt = Some((*f.function).clone());
+                func_decl_opt = Some(Function {
+                    params: fn_decl.params.clone(),
+                    body: fn_decl.body.clone(),
+                    return_type: fn_decl.return_type.clone(),
+                    span: fn_decl.span.clone(),
+                    is_async: false,
+                });
                 break;
             }
         }
@@ -45,21 +49,20 @@ export function main(): number {
     let codegen = create_codegen(&context, "test_module", symbols, &source_str)?;
 
     // Replicate builder's top-level const pass to emit const globals
-    use deno_ast::swc::ast;
     use std::collections::{HashMap, HashSet, VecDeque};
 
-    let mut top_level_consts: Vec<(String, Box<ast::Expr>, usize)> = Vec::new();
-    for item in parsed.program_ref().body() {
-        if let deno_ast::ModuleItemRef::Stmt(ast::Stmt::Decl(ast::Decl::Var(vd))) = item
-            && matches!(vd.kind, ast::VarDeclKind::Const)
+    let mut top_level_consts: Vec<(String, Expr, usize)> = Vec::new();
+    for stmt in &parsed.body {
+        if let Stmt::VarDecl(vd) = stmt
+            && matches!(vd.kind, VarDeclKind::Const)
         {
             for decl in &vd.decls {
-                if let ast::Pat::Ident(binding) = &decl.name
-                    && let Some(init) = &decl.init
-                {
-                    let name = binding.id.sym.to_string();
-                    let span_start = vd.span.lo.0 as usize;
-                    top_level_consts.push((name, init.clone(), span_start));
+                if let Pat::Ident(binding) = &decl.name {
+                    if let Some(init) = &decl.init {
+                        let name = binding.sym.clone();
+                        let span_start = vd.span.start;
+                        top_level_consts.push((name, init.clone(), span_start));
+                    }
                 }
             }
         }
@@ -71,22 +74,19 @@ export function main(): number {
             name_to_idx.insert(n.clone(), i);
         }
 
-        fn collect_idents(e: &ast::Expr, out: &mut HashSet<String>) {
-            use deno_ast::swc::ast::*;
+        fn collect_idents(e: &Expr, out: &mut HashSet<String>) {
             match e {
                 Expr::Ident(id) => {
-                    out.insert(id.sym.to_string());
+                    out.insert(id.sym.clone());
                 }
                 Expr::Array(arr) => {
                     for el in arr.elems.iter().flatten() {
-                        collect_idents(&el.expr, out);
+                        collect_idents(el, out);
                     }
                 }
                 Expr::Object(obj) => {
                     for prop in &obj.props {
-                        if let PropOrSpread::Prop(pb) = prop
-                            && let Prop::KeyValue(kv) = pb.as_ref()
-                        {
+                        if let PropOrSpread::Prop(Prop::KeyValue(kv)) = prop {
                             collect_idents(&kv.value, out);
                         }
                     }
@@ -101,21 +101,19 @@ export function main(): number {
                         collect_idents(ec, out);
                     }
                     for a in &c.args {
-                        collect_idents(&a.expr, out);
+                        collect_idents(a, out);
                     }
                 }
                 Expr::Member(m) => {
                     collect_idents(&m.obj, out);
                     if let MemberProp::Computed(cmp) = &m.prop {
-                        collect_idents(&cmp.expr, out);
+                        collect_idents(cmp, out);
                     }
                 }
                 Expr::New(n) => {
                     collect_idents(&n.callee, out);
-                    if let Some(args) = &n.args {
-                        for a in args {
-                            collect_idents(&a.expr, out);
-                        }
+                    for a in &n.args {
+                        collect_idents(a, out);
                     }
                 }
                 Expr::Paren(p) => collect_idents(&p.expr, out),
@@ -166,7 +164,11 @@ export function main(): number {
             // Borrow const_items immutably for evaluation and drop when done to avoid
             // conflicting RefCell borrows when we later mutably insert the result.
             let const_map = codegen.const_items.borrow();
-            match oatsc::codegen::const_eval::eval_const_expr(init_expr, *span_start, &const_map) {
+            match oatsc::codegen::const_eval::eval_const_expr(
+                &Box::new(init_expr.clone()),
+                *span_start,
+                &const_map,
+            ) {
                 Ok(cv) => {
                     drop(const_map);
                     codegen
@@ -257,15 +259,19 @@ export function main(): number {
     let (parsed_mod_opt, _) = parser::parse_oats_module(src, None)?;
     let parsed_mod = parsed_mod_opt.ok_or_else(|| anyhow::anyhow!("Failed to parse source"))?;
     let parsed = &parsed_mod.parsed;
-    let mut func_decl_opt: Option<deno_ast::swc::ast::Function> = None;
-    for item_ref in parsed.program_ref().body() {
-        if let deno_ast::ModuleItemRef::ModuleDecl(module_decl) = item_ref
-            && let deno_ast::swc::ast::ModuleDecl::ExportDecl(decl) = module_decl
-            && let deno_ast::swc::ast::Decl::Fn(f) = &decl.decl
-        {
-            let name = f.ident.sym.to_string();
+    use oats_ast::*;
+    let mut func_decl_opt: Option<Function> = None;
+    for stmt in &parsed.body {
+        if let Stmt::FnDecl(fn_decl) = stmt {
+            let name = fn_decl.ident.sym.clone();
             if name == "main" {
-                func_decl_opt = Some((*f.function).clone());
+                func_decl_opt = Some(Function {
+                    params: fn_decl.params.clone(),
+                    body: fn_decl.body.clone(),
+                    return_type: fn_decl.return_type.clone(),
+                    span: fn_decl.span.clone(),
+                    is_async: false,
+                });
                 break;
             }
         }
@@ -283,20 +289,18 @@ export function main(): number {
     let codegen = create_codegen(&context, "test_module", symbols, &source_str)?;
 
     // Replicate the const evaluation process
-    use deno_ast::swc::ast;
-
-    let mut top_level_consts: Vec<(String, Box<ast::Expr>, usize)> = Vec::new();
-    for item in parsed.program_ref().body() {
-        if let deno_ast::ModuleItemRef::Stmt(ast::Stmt::Decl(ast::Decl::Var(vd))) = item
-            && matches!(vd.kind, ast::VarDeclKind::Const)
+    let mut top_level_consts: Vec<(String, Expr, usize)> = Vec::new();
+    for stmt in &parsed.body {
+        if let Stmt::VarDecl(vd) = stmt
+            && matches!(vd.kind, VarDeclKind::Const)
         {
             for decl in &vd.decls {
-                if let ast::Pat::Ident(binding) = &decl.name
-                    && let Some(init) = &decl.init
-                {
-                    let name = binding.id.sym.to_string();
-                    let span_start = vd.span.lo.0 as usize;
-                    top_level_consts.push((name, init.clone(), span_start));
+                if let Pat::Ident(binding) = &decl.name {
+                    if let Some(init) = &decl.init {
+                        let name = binding.sym.clone();
+                        let span_start = vd.span.start;
+                        top_level_consts.push((name, init.clone(), span_start));
+                    }
                 }
             }
         }
@@ -305,7 +309,11 @@ export function main(): number {
     // For simplicity, evaluate in order without dependency analysis
     for (name, init_expr, span_start) in &top_level_consts {
         let const_map = codegen.const_items.borrow();
-        match oatsc::codegen::const_eval::eval_const_expr(init_expr, *span_start, &const_map) {
+        match oatsc::codegen::const_eval::eval_const_expr(
+            &Box::new(init_expr.clone()),
+            *span_start,
+            &const_map,
+        ) {
             Ok(cv) => {
                 drop(const_map);
                 codegen

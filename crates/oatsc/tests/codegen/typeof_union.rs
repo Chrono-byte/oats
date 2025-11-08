@@ -25,14 +25,21 @@ export function main(x: number | string): string {
     let parsed = &parsed_mod.parsed;
 
     // Extract exported function
-    let mut func_decl_opt: Option<(String, deno_ast::swc::ast::Function)> = None;
-    for item_ref in parsed.program_ref().body() {
-        if let deno_ast::ModuleItemRef::ModuleDecl(module_decl) = item_ref
-            && let deno_ast::swc::ast::ModuleDecl::ExportDecl(decl) = module_decl
-            && let deno_ast::swc::ast::Decl::Fn(f) = &decl.decl
-        {
-            let name = f.ident.sym.to_string();
-            func_decl_opt = Some((name, (*f.function).clone()));
+    use oats_ast::*;
+    let mut func_decl_opt: Option<(String, Function)> = None;
+    for stmt in &parsed.body {
+        if let Stmt::FnDecl(fn_decl) = stmt {
+            let name = fn_decl.ident.sym.clone();
+            func_decl_opt = Some((
+                name.clone(),
+                Function {
+                    params: fn_decl.params.clone(),
+                    body: fn_decl.body.clone(),
+                    return_type: fn_decl.return_type.clone(),
+                    span: fn_decl.span.clone(),
+                    is_async: false,
+                },
+            ));
             break;
         }
     }
@@ -41,7 +48,8 @@ export function main(x: number | string): string {
         func_decl_opt.ok_or_else(|| anyhow::anyhow!("No exported function found"))?;
 
     let mut symbols = SymbolTable::new();
-    let func_sig = check_function_strictness(&func_decl, &mut symbols)?;
+    let (func_sig_opt, _) = check_function_strictness(&func_decl, &mut symbols)?;
+    let func_sig = func_sig_opt.ok_or_else(|| anyhow::anyhow!("Failed to check function strictness"))?;
 
     let context = Context::create();
     let module = context.create_module("oats_test");

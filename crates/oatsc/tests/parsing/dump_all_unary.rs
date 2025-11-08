@@ -1,5 +1,5 @@
 // Test to see all unary operators
-use deno_ast::{MediaType, ParseParams, parse_module};
+use oats_parser::parse_module;
 
 #[test]
 fn dump_all_unary_ops() -> Result<(), Box<dyn std::error::Error>> {
@@ -14,15 +14,8 @@ export function main(): number {
 }
 "#;
 
-    let _parsed = parse_module(ParseParams {
-        specifier: deno_ast::ModuleSpecifier::parse("file://test.ts")?,
-        text: source.into(),
-        media_type: MediaType::TypeScript,
-        capture_tokens: false,
-        scope_analysis: false,
-        maybe_syntax: None,
-    })?;
+    let _parsed = parse_module(source).map_err(|e| format!("Parse errors: {:?}", e))?;
 
-    // println!("{:#?}", _parsed.program());
+    // println!("{:#?}", _parsed);
     Ok(())
 }

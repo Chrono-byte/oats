@@ -17,7 +17,7 @@ fn parse_simple_template_literal() -> Result<()> {
     let parsed = &parsed_mod.parsed;
 
     // Verify it parses without errors
-    let body_count = parsed.program_ref().body().count();
+    let body_count = parsed.body.len();
     assert!(body_count > 0);
 
     // println!("Template literal parsed successfully");
@@ -40,7 +40,7 @@ fn parse_template_with_multiple_expressions() -> Result<()> {
     let parsed_mod = parsed_mod_opt.ok_or_else(|| anyhow::anyhow!("Failed to parse source"))?;
     let parsed = &parsed_mod.parsed;
 
-    let body_count = parsed.program_ref().body().count();
+    let body_count = parsed.body.len();
     assert!(body_count > 0);
     Ok(())
 }
@@ -60,7 +60,7 @@ fn parse_template_with_number() -> Result<()> {
     let parsed_mod = parsed_mod_opt.ok_or_else(|| anyhow::anyhow!("Failed to parse source"))?;
     let parsed = &parsed_mod.parsed;
 
-    let body_count = parsed.program_ref().body().count();
+    let body_count = parsed.body.len();
     assert!(body_count > 0);
     Ok(())
 }
@@ -81,7 +81,7 @@ Line 3`;
     let parsed_mod = parsed_mod_opt.ok_or_else(|| anyhow::anyhow!("Failed to parse source"))?;
     let parsed = &parsed_mod.parsed;
 
-    let body_count = parsed.program_ref().body().count();
+    let body_count = parsed.body.len();
     assert!(body_count > 0);
     Ok(())
 }

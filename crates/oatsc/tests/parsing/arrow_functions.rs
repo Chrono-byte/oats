@@ -5,7 +5,7 @@ use anyhow::Result;
 fn parse_simple_arrow_function() -> Result<()> {
     let src = r#"
         let add = (x: number, y: number): number => x + y;
-        
+
         export function main(): number {
             let result = add(2, 3);
             return result;
@@ -17,26 +17,22 @@ fn parse_simple_arrow_function() -> Result<()> {
     let parsed = &parsed_mod.parsed;
 
     // Verify it parses without errors
-    let body_count = parsed.program_ref().body().count();
+    use oats_ast::*;
+    let body_count = parsed.body.len();
     assert!(body_count > 0);
 
     // Find the const declaration with arrow function
     let mut found_arrow = false;
-    for item_ref in parsed.program_ref().body() {
-        if let deno_ast::ModuleItemRef::Stmt(stmt) = item_ref
-            && let deno_ast::swc::ast::Stmt::Decl(decl) = stmt
-            && let deno_ast::swc::ast::Decl::Var(var_decl) = decl
-        {
+    for stmt in &parsed.body {
+        if let Stmt::VarDecl(var_decl) = stmt {
             for decl in &var_decl.decls {
                 if let Some(init) = &decl.init {
                     // Check if init is an arrow function
-                    if let deno_ast::swc::ast::Expr::Arrow(_arrow) = &**init {
+                    if let Expr::Arrow(_arrow) = init {
                         found_arrow = true;
                         // println!("Found arrow function!");
                         // println!("  Params: {:?}", arrow.params.len());
-                        // println!("  Body is block: {}", arrow.body.is_block_stmt());
-                        // println!("  Is async: {}", arrow.is_async);
-                        // println!("  Is generator: {}", arrow.is_generator);
+                        // println!("  Body: {:?}", arrow.body);
                         break;
                     }
                 }
@@ -62,7 +58,7 @@ fn parse_arrow_with_block_body() -> Result<()> {
     let parsed = &parsed_mod.parsed;
 
     // Should parse successfully
-    let body_count = parsed.program_ref().body().count();
+    let body_count = parsed.body.len();
     assert!(body_count > 0);
     Ok(())
 }
@@ -75,7 +71,7 @@ fn parse_arrow_as_callback() -> Result<()> {
                 callback(arr[i]);
             }
         }
-        
+
         export function main(): number {
             let nums = [1, 2, 3];
             forEach(nums, (x) => print_f64(x));
@@ -88,7 +84,7 @@ fn parse_arrow_as_callback() -> Result<()> {
     let parsed = &parsed_mod.parsed;
 
     // Should parse successfully
-    let body_count = parsed.program_ref().body().count();
+    let body_count = parsed.body.len();
     assert!(body_count > 0);
     Ok(())
 }

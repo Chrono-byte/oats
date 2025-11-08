@@ -18,11 +18,8 @@ pub fn invoke_oatsc(options: &CompileOptions) -> Result<Option<PathBuf>> {
     // Add source file
     args.push(options.src_file.clone());
 
-    // Add package root if specified
-    if let Some(pkg_root) = &options.package_root {
-        args.push("--package-root".to_string());
-        args.push(pkg_root.to_string_lossy().to_string());
-    }
+    // Note: package_root is handled by toasty, not passed to oatsc.
+    // oatsc only compiles individual files; toasty handles package orchestration.
 
     // Handle output path: if both out_dir and out_name are specified,
     // compute the full path and pass via -o flag
@@ -42,10 +39,13 @@ pub fn invoke_oatsc(options: &CompileOptions) -> Result<Option<PathBuf>> {
         args.push(linker.clone());
     }
 
-    // Add external packages
-    for (name, path) in &options.extern_pkg {
-        args.push("--extern-pkg".to_string());
-        args.push(format!("{}={}", name, path));
+    // Convert external packages to extern-oats format
+    // Package metadata files are passed as extern-oats with the package name as the import path
+    for (pkg_name, meta_path) in &options.extern_pkg {
+        // Use package name as import path (e.g., "./mylib" -> meta_path)
+        let import_path = format!("./{}", pkg_name);
+        args.push("--extern-oats".to_string());
+        args.push(format!("{}={}", import_path, meta_path));
     }
 
     // Add external oats modules

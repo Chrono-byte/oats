@@ -33,20 +33,20 @@ pub fn resolve_relative_import(
 ) -> Option<String> {
     // Canonicalize the project root to ensure consistent path comparison
     let canonical_root = std::fs::canonicalize(project_root).unwrap_or_else(|_| project_root.to_path_buf());
-    
+
     let base = std::path::Path::new(from)
         .parent()
         .unwrap_or_else(|| std::path::Path::new("."));
     let candidate = base.join(spec);
-    
+
     // SECURITY: Canonicalize the candidate path to resolve any .. sequences
     let canonical_candidate = std::fs::canonicalize(&candidate).ok()?;
-    
+
     // SECURITY: Strictly check that the canonical candidate path starts with the canonical root
     if !canonical_candidate.starts_with(&canonical_root) {
         return None; // Reject paths outside the project root
     }
-    
+
     let exts = [".oats", ""]; // Prioritize .oats, then raw
 
     // Attempt direct file resolution with extension inference
@@ -143,23 +143,13 @@ pub fn load_modules_with_verbosity(
             .with_context(|| format!("Failed to parse module: {}", path))?;
 
         // Discover and enqueue relative imports from this module
-        for item_ref in parsed.parsed.program_ref().body() {
-            if let deno_ast::ModuleItemRef::ModuleDecl(module_decl) = item_ref
-                && let deno_ast::swc::ast::ModuleDecl::Import(import_decl) = module_decl
-            {
-                let src_val = import_decl.src.value.to_string();
-                // Process only relative import paths (absolute imports are not supported)
-                if (src_val.starts_with("./") || src_val.starts_with("../"))
-                    && let Some(fpath) = resolve_relative_import(&path, &src_val, project_root)
-                    && !modules.contains_key(&fpath)
-                {
-                    if verbose {
-                        eprintln!("  Discovered dependency: {}", fpath);
-                    }
-                    queue.push_back(fpath);
-                }
-            }
-        }
+        // Note: oats_ast doesn't yet support import statements in the AST
+        // TODO: Add import statement support to oats_ast and update this code
+        // For now, we skip import discovery
+        // use oats_ast::*;
+        // for stmt in &parsed.parsed.body {
+        //     // Import statements would be handled here when added to oats_ast
+        // }
         modules.insert(path.clone(), parsed);
     }
 
@@ -224,6 +214,15 @@ pub fn build_dependency_graph(
             ))?;
 
         // Discover and enqueue relative imports from this module
+        // Note: oats_ast doesn't yet support import statements in the AST
+        // TODO: Add import statement support to oats_ast and update this code
+        // For now, we skip import discovery
+        // use oats_ast::*;
+        // for stmt in &parsed.parsed.body {
+        //     // Import statements would be handled here when added to oats_ast
+        // }
+        let _ = parsed; // Suppress unused warning
+        /*
         for item_ref in parsed.parsed.program_ref().body() {
             if let deno_ast::ModuleItemRef::ModuleDecl(module_decl) = item_ref
                 && let deno_ast::swc::ast::ModuleDecl::Import(import_decl) = module_decl
@@ -253,6 +252,7 @@ pub fn build_dependency_graph(
                 }
             }
         }
+        */
     }
 
     let entry_node_index = *node_indices

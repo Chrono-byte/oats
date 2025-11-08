@@ -200,107 +200,11 @@ fn collect_mut_from_expr(_expr: &Expr, _source: &str, _out: &mut std::collection
     // This is a placeholder for future expansion
 }
 
-/// Check if a statement contains `var` declarations (which are not allowed)
-fn stmt_contains_var(stmt: &Stmt) -> bool {
-    match stmt {
-        Stmt::VarDecl(vd) => matches!(vd.kind, VarDeclKind::Var),
-        Stmt::Block(block) => {
-            for s in &block.stmts {
-                if stmt_contains_var(s) {
-                    return true;
-                }
-            }
-            false
-        }
-        Stmt::If(if_stmt) => {
-            if stmt_contains_var(&if_stmt.cons) {
-                return true;
-            }
-            if let Some(alt) = &if_stmt.alt {
-                if stmt_contains_var(alt) {
-                    return true;
-                }
-            }
-            false
-        }
-        Stmt::For(for_stmt) => {
-            if let Some(ForInit::VarDecl(vd)) = &for_stmt.init {
-                if matches!(vd.kind, VarDeclKind::Var) {
-                    return true;
-                }
-            }
-            stmt_contains_var(&for_stmt.body)
-        }
-        Stmt::ForIn(for_in) => {
-            if let ForHead::VarDecl(vd) = &for_in.left {
-                if matches!(vd.kind, VarDeclKind::Var) {
-                    return true;
-                }
-            }
-            stmt_contains_var(&for_in.body)
-        }
-        Stmt::ForOf(for_of) => {
-            if let ForHead::VarDecl(vd) = &for_of.left {
-                if matches!(vd.kind, VarDeclKind::Var) {
-                    return true;
-                }
-            }
-            stmt_contains_var(&for_of.body)
-        }
-        Stmt::While(while_stmt) => stmt_contains_var(&while_stmt.body),
-        Stmt::DoWhile(do_while) => stmt_contains_var(&do_while.body),
-        Stmt::Switch(switch) => {
-            for case in &switch.cases {
-                for s in &case.cons {
-                    if stmt_contains_var(s) {
-                        return true;
-                    }
-                }
-            }
-            false
-        }
-        Stmt::Try(try_stmt) => {
-            for s in &try_stmt.block.stmts {
-                if stmt_contains_var(s) {
-                    return true;
-                }
-            }
-            if let Some(handler) = &try_stmt.handler {
-                for s in &handler.body.stmts {
-                    if stmt_contains_var(s) {
-                        return true;
-                    }
-                }
-            }
-            if let Some(finalizer) = &try_stmt.finalizer {
-                for s in &finalizer.stmts {
-                    if stmt_contains_var(s) {
-                        return true;
-                    }
-                }
-            }
-            false
-        }
-        Stmt::FnDecl(fn_decl) => {
-            if let Some(body) = &fn_decl.body {
-                for s in &body.stmts {
-                    if stmt_contains_var(s) {
-                        return true;
-                    }
-                }
-            }
-            false
-        }
-        _ => false,
-    }
-}
-
 /// Parse an Oats source string into a `ParsedModule` and run
 /// lightweight project-specific checks.
 ///
 /// The function performs the following additional checks beyond parsing:
 /// - Enforces maximum source size limit to prevent resource exhaustion
-/// - Rejects usage of the `var` keyword in favor of `let`/`const`.
 ///
 /// # Arguments
 /// * `source_code` - source text to parse
@@ -370,20 +274,6 @@ pub fn parse_oats_module_with_options(
         }
     };
 
-    // Check for `var` declarations
-    for stmt in &module.body {
-        if stmt_contains_var(stmt) {
-            return diagnostics::report_error_and_bail(
-                file_path,
-                Some(source_code),
-                "`var` declarations are not supported. Use `let` or `const` instead.",
-                Some(
-                    "`var` has function-scoped semantics which we intentionally disallow; prefer `let` or `const`.",
-                ),
-            );
-        }
-    }
-
     // Collect mutable variable declarations
     let mut mut_var_decls = std::collections::HashSet::new();
     for stmt in &module.body {
@@ -395,14 +285,37 @@ pub fn parse_oats_module_with_options(
     for stmt in &module.body {
         if let Stmt::DeclareFn(declare_fn) = stmt {
             // Extract function signature from declare function
-            // This is a simplified version - you may need to enhance this
             let name = declare_fn.ident.sym.clone();
-            // TODO: Convert TsType to FunctionSig properly
-            // For now, create a placeholder
+
+            // Convert parameter types from TsType to OatsType
+            let mut param_types = Vec::new();
+            for param in &declare_fn.params {
+                if let Some(ref ts_type) = param.ty {
+                    // Convert TsType to OatsType
+                    if let Some(oats_type) = crate::types::map_ts_type(ts_type) {
+                        param_types.push(oats_type);
+                    } else {
+                        // If conversion fails, default to Number
+                        param_types.push(crate::types::OatsType::Number);
+                    }
+                } else {
+                    // If no type annotation, default to Number
+                    param_types.push(crate::types::OatsType::Number);
+                }
+            }
+
+            // Convert return type from TsType to OatsType
+            let ret_type = crate::types::map_ts_type(&declare_fn.return_type)
+                .unwrap_or(crate::types::OatsType::Void);
+
+            // Extract type parameters if available (DeclareFn doesn't have type params directly,
+            // but we can check the return type for generic patterns)
+            let type_params = vec![]; // Type parameters not directly available in DeclareFn
+
             let sig = FunctionSig {
-                params: vec![],
-                ret: crate::types::OatsType::Void,
-                type_params: vec![],
+                params: param_types,
+                ret: ret_type,
+                type_params,
             };
             declared_fns.push(DeclaredFn { name, sig });
         }

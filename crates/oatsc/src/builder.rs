@@ -30,59 +30,15 @@ use inkwell::targets::{
 /// # Returns
 /// Path to the output file on success, or None if just object emission
 pub fn compile_with_options(options: crate::CompileOptions) -> Result<Option<String>> {
-    // Set environment variables from options for compatibility with existing code
-    // TODO: In future, pass these through the call stack instead of env vars
-    unsafe {
-        std::env::set_var("OATS_SRC_FILE", &options.src_file);
-
-        if let Some(ref out_dir) = options.out_dir {
-            std::env::set_var("OATS_OUT_DIR", out_dir);
-        }
-
-        if let Some(ref out_name) = options.out_name {
-            std::env::set_var("OATS_OUT_NAME", out_name);
-        }
-
-        if options.emit_object_only {
-            std::env::set_var("OATS_EMIT_OBJECT_ONLY", "1");
-        }
-
-        if let Some(ref opt_level) = options.opt_level {
-            std::env::set_var("OATS_OPT_LEVEL", opt_level);
-        }
-
-        if let Some(ref lto) = options.lto {
-            std::env::set_var("OATS_LTO", lto);
-        }
-
-        if let Some(ref target_triple) = options.target_triple {
-            std::env::set_var("OATS_TARGET_TRIPLE", target_triple);
-        }
-
-        if let Some(ref target_cpu) = options.target_cpu {
-            std::env::set_var("OATS_TARGET_CPU", target_cpu);
-        }
-
-        if let Some(ref target_features) = options.target_features {
-            std::env::set_var("OATS_TARGET_FEATURES", target_features);
-        }
-
-        // Serialize extern_oats for the compilation pipeline
-        if !options.extern_oats.is_empty() {
-            let extern_oats_json = serde_json::to_string(&options.extern_oats)?;
-            std::env::set_var("OATS_EXTERN_OATS", extern_oats_json);
-        }
-    }
-
-    // Delegate to existing compilation logic
+    // Pass options directly through the call stack
     let args = vec!["oatsc".to_string(), options.src_file.clone()];
-    run_from_args(&args)
+    run_from_args(&args, Some(options))
 }
 
 /// Executes the complete AOT compilation pipeline from source to executable.
 ///
 /// This is the main function that handles everything: parsing, type checking, codegen, linking.
-/// It takes command-line args or uses env vars for config.
+/// It takes command-line args or uses options/env vars for config.
 ///
 /// Basically, it goes through:
 /// - Figuring out the source file
@@ -92,10 +48,15 @@ pub fn compile_with_options(options: crate::CompileOptions) -> Result<Option<Str
 /// - Linking everything together
 ///
 /// Returns Ok(()) on success, or an error if something goes wrong.
-pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
-    // Resolve source file location from arguments or environment
+pub fn run_from_args(
+    args: &[String],
+    options: Option<crate::CompileOptions>,
+) -> Result<Option<String>> {
+    // Resolve source file location from arguments, options, or environment
     let src_path = if args.len() > 1 {
         args[1].clone()
+    } else if let Some(ref opts) = options {
+        opts.src_file.clone()
     } else if let Ok(p) = std::env::var("OATS_SRC_FILE") {
         p
     } else {
@@ -130,15 +91,55 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
     // Arrow function extraction happens during codegen traversal.
     let parsed = &parsed_mod.parsed;
 
-    // Read extern_oats from environment if provided
-    // TODO: Add validation for extern_oats entries to ensure they point to valid files
-    let extern_oats: std::collections::HashMap<String, String> =
-        if let Ok(extern_oats_json) = std::env::var("OATS_EXTERN_OATS") {
+    // Read extern_oats from options or environment if provided
+    let extern_oats: std::collections::HashMap<String, String> = if let Some(ref opts) = options {
+        // Validate that all metadata file paths exist
+        for (import_path, meta_path) in &opts.extern_oats {
+            let path = std::path::Path::new(meta_path);
+            if !path.exists() {
+                anyhow::bail!(
+                    "extern_oats entry '{}' points to non-existent metadata file: {}",
+                    import_path,
+                    meta_path
+                );
+            }
+            if !path.is_file() {
+                anyhow::bail!(
+                    "extern_oats entry '{}' points to a non-file path: {}",
+                    import_path,
+                    meta_path
+                );
+            }
+        }
+        opts.extern_oats.clone()
+    } else if let Ok(extern_oats_json) = std::env::var("OATS_EXTERN_OATS") {
+        let map: std::collections::HashMap<String, String> =
             serde_json::from_str(&extern_oats_json)
-                .map_err(|e| anyhow::anyhow!("Failed to parse OATS_EXTERN_OATS JSON: {}", e))?
-        } else {
-            std::collections::HashMap::new()
-        };
+                .map_err(|e| anyhow::anyhow!("Failed to parse OATS_EXTERN_OATS JSON: {}", e))?;
+
+        // Validate that all metadata file paths exist
+        for (import_path, meta_path) in &map {
+            let path = std::path::Path::new(meta_path);
+            if !path.exists() {
+                anyhow::bail!(
+                    "extern_oats entry '{}' points to non-existent metadata file: {}",
+                    import_path,
+                    meta_path
+                );
+            }
+            if !path.is_file() {
+                anyhow::bail!(
+                    "extern_oats entry '{}' points to a non-file path: {}",
+                    import_path,
+                    meta_path
+                );
+            }
+        }
+
+        map
+    } else {
+        std::collections::HashMap::new()
+    };
 
     /// Extracts top-level arrow function declarations from variable statements.
     ///
@@ -153,169 +154,30 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
         let mut arrows = Vec::new();
 
         for stmt in &parsed.body {
-            match stmt {
-                // Process non-exported variable declarations: const/let foo = () => {}
-                Stmt::VarDecl(vdecl) => {
-                    if vdecl.decls.len() == 1 && !matches!(vdecl.kind, VarDeclKind::Var) {
-                        let decl = &vdecl.decls[0];
-                        if let Pat::Ident(binding_ident) = &decl.name
-                            && let Some(init_expr) = &decl.init
-                            && let Expr::Arrow(arrow) = init_expr
-                        {
-                            let name = binding_ident.sym.clone();
-                            arrows.push((name, arrow.clone(), false));
-                        }
-                    }
+            // Process non-exported variable declarations: const/let foo = () => {}
+            if let Stmt::VarDecl(vdecl) = stmt
+                && vdecl.decls.len() == 1
+            {
+                let decl = &vdecl.decls[0];
+                if let Pat::Ident(binding_ident) = &decl.name
+                    && let Some(init_expr) = &decl.init
+                    && let Expr::Arrow(arrow) = init_expr
+                {
+                    let name = binding_ident.sym.clone();
+                    arrows.push((name, arrow.clone(), false));
                 }
-                // Note: oats_ast doesn't have separate export declarations in the AST
-                // Exports are handled differently - for now we only handle non-exported
-                _ => {}
+                // Destructuring patterns not yet supported for arrow function bindings
             }
+            // Note: oats_ast doesn't have separate export declarations in the AST
+            // Exports are handled differently - for now we only handle non-exported
         }
         arrows
     }
 
     let arrow_functions = extract_arrow_functions(parsed);
 
-    // SECURITY: Perform early validation to reject `var` declarations which are
-    // not supported by the Oats type system. This provides clear error messaging
-    // rather than allowing confusing runtime behavior in later compilation phases.
-
-    /// Recursively scans statement AST nodes for prohibited `var` declarations.
-    ///
-    /// This function implements a conservative policy against `var` declarations,
-    /// which have function-scoped semantics that conflict with Oats' lexical
-    /// scoping model. The function recursively traverses nested statement
-    /// structures to ensure comprehensive detection.
-    ///
-    /// # Arguments
-    /// * `stmt` - Statement AST node to scan for `var` usage
-    ///
-    /// # Returns
-    /// `true` if any `var` declarations are found, `false` otherwise
-    fn stmt_contains_var(stmt: &oats_ast::Stmt) -> bool {
-        use oats_ast::*;
-        match stmt {
-            // Distinguish `var` (function-scoped) from `let`/`const` (block-scoped).
-            // Only true `var` declarations are rejected; `let` and `const` use the
-            // same AST node type but have different `kind` discriminators.
-            Stmt::VarDecl(vdecl) => {
-                matches!(vdecl.kind, VarDeclKind::Var)
-            }
-            Stmt::Block(block) => {
-                for s in &block.stmts {
-                    if stmt_contains_var(s) {
-                        return true;
-                    }
-                }
-                false
-            }
-            Stmt::If(ifstmt) => {
-                if stmt_contains_var(&ifstmt.cons) {
-                    return true;
-                }
-                if let Some(alt) = &ifstmt.alt
-                    && stmt_contains_var(alt)
-                {
-                    return true;
-                }
-                false
-            }
-            Stmt::For(forstmt) => {
-                if let Some(ForInit::VarDecl(vd)) = &forstmt.init {
-                    if matches!(vd.kind, VarDeclKind::Var) {
-                        return true;
-                    }
-                }
-                if stmt_contains_var(&forstmt.body) {
-                    return true;
-                }
-                false
-            }
-            Stmt::While(ws) => stmt_contains_var(&ws.body),
-            Stmt::DoWhile(dws) => stmt_contains_var(&dws.body),
-            Stmt::Switch(swt) => {
-                for case in &swt.cases {
-                    for s in &case.cons {
-                        if stmt_contains_var(s) {
-                            return true;
-                        }
-                    }
-                }
-                false
-            }
-            Stmt::Try(tr) => {
-                // tr.block is a BlockStmt
-                for s in &tr.block.stmts {
-                    if stmt_contains_var(s) {
-                        return true;
-                    }
-                }
-                if let Some(handler) = &tr.handler {
-                    for s in &handler.body.stmts {
-                        if stmt_contains_var(s) {
-                            return true;
-                        }
-                    }
-                }
-                if let Some(finalizer) = &tr.finalizer {
-                    for s in &finalizer.stmts {
-                        if stmt_contains_var(s) {
-                            return true;
-                        }
-                    }
-                }
-                false
-            }
-            Stmt::FnDecl(fn_decl) => {
-                if let Some(body) = &fn_decl.body {
-                    for s in &body.stmts {
-                        if stmt_contains_var(s) {
-                            return true;
-                        }
-                    }
-                }
-                false
-            }
-            _ => false,
-        }
-    }
-
     // Helper: infer a simple OatsType from an expression (literals and simple arrays)
     // NOTE: This function is now consolidated in crate::types::infer_type_from_expr
-
-    // Walk top-level items and examine function bodies / declarations.
-    // Note: var checking is already done in parser.rs, but we keep this for safety
-    for stmt in &parsed.body {
-        use oats_ast::*;
-        if stmt_contains_var(stmt) {
-            return diagnostics::report_error_and_bail(
-                Some(&src_path),
-                Some(&source),
-                "`var` declarations are not supported. Use `let` or `const` instead.",
-                Some(
-                    "`var` has function-scoped semantics which we intentionally disallow; prefer `let` or `const`.",
-                ),
-            );
-        }
-        // If it's a function decl, also inspect its body for var
-        if let Stmt::FnDecl(fdecl) = stmt
-            && let Some(body) = &fdecl.body
-        {
-            for s in &body.stmts {
-                if stmt_contains_var(s) {
-                    return diagnostics::report_error_and_bail(
-                        Some(&src_path),
-                        Some(&source),
-                        "`var` declarations are not supported. Use `let` or `const` instead.",
-                        Some(
-                            "`var` has function-scoped semantics which we intentionally disallow; prefer `let` or `const`.",
-                        ),
-                    );
-                }
-            }
-        }
-    }
 
     // Module-level body is parsed; do not print debug information here.
 
@@ -331,6 +193,7 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
                     body: fn_decl.body.clone(),
                     return_type: fn_decl.return_type.clone(),
                     span: fn_decl.span.clone(),
+                    is_async: false, // FnDecl doesn't have async info, assume false for now
                 });
                 break;
             }
@@ -341,7 +204,10 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
         Some(f)
     } else {
         // Check if we're in library mode (emitting object only)
-        let emit_object_only = std::env::var("OATS_EMIT_OBJECT_ONLY").is_ok();
+        let emit_object_only = options
+            .as_ref()
+            .map(|o| o.emit_object_only)
+            .unwrap_or_else(|| std::env::var("OATS_EMIT_OBJECT_ONLY").is_ok());
         if emit_object_only {
             // For library modules, we still need to compile but skip main function requirement
             // We'll continue with compilation but won't require a main function
@@ -375,13 +241,186 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
     module.set_triple(&triple);
 
     // Declare external functions for imported symbols
-    for symbols_str in extern_oats.values() {
-        let symbols: Vec<&str> = symbols_str.split(',').map(|s| s.trim()).collect();
+    // Read metadata files to extract function signatures
+    let mut external_function_signatures: std::collections::HashMap<
+        String,
+        (Vec<crate::types::OatsType>, crate::types::OatsType),
+    > = std::collections::HashMap::new();
+
+    for meta_path in extern_oats.values() {
+        // Read metadata file
+        let meta_content = match std::fs::read_to_string(meta_path) {
+            Ok(content) => content,
+            Err(e) => {
+                eprintln!("Warning: Failed to read metadata file {}: {}", meta_path, e);
+                continue;
+            }
+        };
+
+        // Parse metadata file - currently it contains package info (name, version, entry)
+        // TODO: Extend metadata format to include exported function signatures
+        // For now, we'll try to extract symbols from the file or use a fallback
+
+        // Check if the metadata file contains symbol information
+        // If not, we'll need to fall back to the old behavior or use default signatures
+        // For now, we'll parse any function declarations if they exist in the metadata
+
+        // Try to parse TypeScript-style function declarations from metadata
+        // Format: function name(param1: type1, param2: type2): returnType;
+        for line in meta_content.lines() {
+            let line = line.trim();
+            if line.starts_with("function ") && line.ends_with(";") {
+                // Parse function signature
+                // Example: function foo(x: number, y: number): number;
+                if let Some((name, func_sig)) = parse_function_signature_from_metadata(line) {
+                    external_function_signatures.insert(name, (func_sig.params, func_sig.ret));
+                }
+            }
+        }
+    }
+
+    // Declare external functions with their signatures (or defaults)
+    for meta_path in extern_oats.values() {
+        // For now, if we don't have signature info, we need to know what symbols to declare
+        // The old code treated values as comma-separated symbol strings
+        // For backward compatibility, check if the value looks like a file path or symbol list
+        let symbols: Vec<String> = if std::path::Path::new(meta_path).exists() {
+            // It's a file path - we've already read it above
+            // Extract symbols from external_function_signatures or use a default list
+            external_function_signatures.keys().cloned().collect()
+        } else {
+            // Backward compatibility: treat as comma-separated symbol list
+            meta_path.split(',').map(|s| s.trim().to_string()).collect()
+        };
+
         for symbol in symbols {
-            // Declare external function with default signature (no args, returns f64)
-            // TODO: Use actual function signatures from metadata
-            let fn_type = context.f64_type().fn_type(&[], false);
-            module.add_function(symbol, fn_type, None);
+            // Get function signature or use default
+            let (param_types, ret_type) = external_function_signatures
+                .get(&symbol)
+                .cloned()
+                .unwrap_or_else(|| (vec![], crate::types::OatsType::Number));
+
+            // Convert OatsType to LLVM types
+            let llvm_param_types: Vec<inkwell::types::BasicMetadataTypeEnum> = param_types
+                .iter()
+                .map(|ty| match ty {
+                    crate::types::OatsType::Number | crate::types::OatsType::F64 => {
+                        context.f64_type().into()
+                    }
+                    crate::types::OatsType::F32 => context.f32_type().into(),
+                    crate::types::OatsType::I64 => context.i64_type().into(),
+                    crate::types::OatsType::I32 => context.i32_type().into(),
+                    crate::types::OatsType::I8 => context.i8_type().into(),
+                    crate::types::OatsType::Boolean => context.bool_type().into(),
+                    crate::types::OatsType::String => {
+                        context.ptr_type(inkwell::AddressSpace::default()).into()
+                    }
+                    _ => context.f64_type().into(), // Default to f64 for complex types
+                })
+                .collect();
+
+            let fn_type = match ret_type {
+                crate::types::OatsType::Void => {
+                    let void_t = context.void_type();
+                    void_t.fn_type(&llvm_param_types, false)
+                }
+                crate::types::OatsType::Number | crate::types::OatsType::F64 => {
+                    let f64_t = context.f64_type();
+                    f64_t.fn_type(&llvm_param_types, false)
+                }
+                crate::types::OatsType::F32 => {
+                    let f32_t = context.f32_type();
+                    f32_t.fn_type(&llvm_param_types, false)
+                }
+                crate::types::OatsType::I64 => {
+                    let i64_t = context.i64_type();
+                    i64_t.fn_type(&llvm_param_types, false)
+                }
+                crate::types::OatsType::I32 => {
+                    let i32_t = context.i32_type();
+                    i32_t.fn_type(&llvm_param_types, false)
+                }
+                crate::types::OatsType::I8 => {
+                    let i8_t = context.i8_type();
+                    i8_t.fn_type(&llvm_param_types, false)
+                }
+                crate::types::OatsType::Boolean => {
+                    let bool_t = context.bool_type();
+                    bool_t.fn_type(&llvm_param_types, false)
+                }
+                crate::types::OatsType::String => {
+                    let ptr_t = context.ptr_type(inkwell::AddressSpace::default());
+                    ptr_t.fn_type(&llvm_param_types, false)
+                }
+                _ => {
+                    // Default to f64 for complex types
+                    let f64_t = context.f64_type();
+                    f64_t.fn_type(&llvm_param_types, false)
+                }
+            };
+            module.add_function(&symbol, fn_type, None);
+        }
+    }
+
+    // Helper function to parse function signatures from metadata
+    fn parse_function_signature_from_metadata(
+        line: &str,
+    ) -> Option<(String, crate::types::FunctionSig)> {
+        // Parse: function name(param1: type1, param2: type2): returnType;
+        let line = line.trim().strip_suffix(';')?;
+        if !line.starts_with("function ") {
+            return None;
+        }
+        let after_fn = &line[9..]; // Skip "function "
+        let paren_pos = after_fn.find('(')?;
+        let name = after_fn[..paren_pos].trim().to_string();
+
+        let after_paren = &after_fn[paren_pos + 1..];
+        let close_paren_pos = after_paren.find(')')?;
+        let params_str = &after_paren[..close_paren_pos];
+
+        // Parse return type
+        let ret_str = after_paren[close_paren_pos + 1..].trim();
+        let ret_type = if let Some(stripped) = ret_str.strip_prefix(": ") {
+            parse_oats_type(stripped)
+        } else {
+            crate::types::OatsType::Void
+        };
+
+        // Parse parameters
+        let mut param_types = Vec::new();
+        if !params_str.trim().is_empty() {
+            for param in params_str.split(',') {
+                let param = param.trim();
+                if let Some(colon_pos) = param.find(':') {
+                    let type_str = param[colon_pos + 1..].trim();
+                    param_types.push(parse_oats_type(type_str));
+                }
+            }
+        }
+
+        Some((
+            name,
+            crate::types::FunctionSig {
+                type_params: vec![],
+                params: param_types,
+                ret: ret_type,
+            },
+        ))
+    }
+
+    fn parse_oats_type(type_str: &str) -> crate::types::OatsType {
+        match type_str.trim() {
+            "number" => crate::types::OatsType::Number,
+            "f64" => crate::types::OatsType::F64,
+            "f32" => crate::types::OatsType::F32,
+            "i64" => crate::types::OatsType::I64,
+            "i32" => crate::types::OatsType::I32,
+            "i8" => crate::types::OatsType::I8,
+            "boolean" => crate::types::OatsType::Boolean,
+            "string" => crate::types::OatsType::String,
+            "void" => crate::types::OatsType::Void,
+            _ => crate::types::OatsType::Number, // Default
         }
     }
 
@@ -475,12 +514,8 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
             let class_name = c.ident.sym.clone();
             // If this class extends a parent, record the parent name so constructors
             // and `super(...)` lowering can find the parent's initializer.
-            let parent_name_opt = if let Some(sc) = &c.super_class {
-                if let Expr::Ident(id) = sc {
-                    Some(id.sym.clone())
-                } else {
-                    None
-                }
+            let parent_name_opt = if let Some(Expr::Ident(id)) = &c.super_class {
+                Some(id.sym.clone())
             } else {
                 None
             };
@@ -498,6 +533,7 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
                             body: m.body.clone(),
                             return_type: m.return_type.clone(),
                             span: m.span.clone(),
+                            is_async: false,
                         };
                         // Try to type-check the method function
                         let mut method_symbols = SymbolTable::new();
@@ -517,7 +553,7 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
                             let ret = sig.ret;
                             let fname = format!("{}_{}", class_name, mname);
                             codegen
-                                .gen_function_ir(&fname, &m.function, &params, &ret, Some("this"))
+                                .gen_function_ir(&fname, &method_func, &params, &ret, Some("this"))
                                 .map_err(|d| {
                                     diagnostics::emit_diagnostic(&d, Some(&parsed_mod.source));
                                     anyhow::anyhow!(d.message)
@@ -526,7 +562,7 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
                             // If strict check failed (e.g., missing return annotation), try to emit with Void return
                             let mut method_symbols = SymbolTable::new();
                             let (sig2_opt, type_diags2) =
-                                check_function_strictness(&m.function, &mut method_symbols)?;
+                                check_function_strictness(&method_func, &mut method_symbols)?;
 
                             for diag in &type_diags2 {
                                 diagnostics::emit_diagnostic(diag, Some(&parsed_mod.source));
@@ -542,7 +578,7 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
                                 codegen
                                     .gen_function_ir(
                                         &fname,
-                                        &m.function,
+                                        &method_func,
                                         &params,
                                         &crate::types::OatsType::Void,
                                         Some("this"),
@@ -561,23 +597,16 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
                         // Compute fields for this class from explicit props, constructor
                         // param properties, and `this.x = ...` assignments inside the ctor.
                         let mut fields: Vec<(String, crate::types::OatsType)> = Vec::new();
-                        use deno_ast::swc::ast::{
-                            ClassMember, Expr, MemberProp, ParamOrTsParamProp, Stmt,
-                            TsParamPropParam,
-                        };
+                        use oats_ast::*;
                         // explicit class properties
-                        for m in &c.class.body {
-                            if let ClassMember::ClassProp(prop) = m
-                                && let deno_ast::swc::ast::PropName::Ident(id) = &prop.key
-                            {
-                                let fname = id.sym.to_string();
+                        for m in &c.body {
+                            if let ClassMember::Field(field) = m {
+                                let fname = field.ident.sym.clone();
                                 if fields.iter().all(|(n, _)| n != &fname) {
                                     // If the class property has an Oats type annotation, map it
                                     // to an OatsType; otherwise default to Number.
-                                    let ftype = if let Some(type_ann) = &prop.type_ann {
-                                        if let Some(mt) =
-                                            crate::types::map_ts_type(&type_ann.type_ann)
-                                        {
+                                    let ftype = if let Some(type_ann) = &field.ty {
+                                        if let Some(mt) = crate::types::map_ts_type(type_ann) {
                                             mt
                                         } else {
                                             crate::types::OatsType::Number
@@ -589,86 +618,12 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
                                 }
                             }
                         }
-                        // constructor param properties
-                        for p in &ctor.params {
-                            if let ParamOrTsParamProp::TsParamProp(ts_param) = p
-                                && let TsParamPropParam::Ident(binding_ident) = &ts_param.param
-                            {
-                                let fname = binding_ident.id.sym.to_string();
-                                if fields.iter().all(|(n, _)| n != &fname) {
-                                    let ty = crate::types::infer_type(
-                                        binding_ident.type_ann.as_ref().map(|ann| &*ann.type_ann),
-                                        None,
-                                    );
-                                    fields.push((fname, ty));
-                                }
-                            }
-                        }
+                        // constructor param properties - oats_ast doesn't have param properties
+                        // so we skip this for now
                         // scan ctor body for `this.x = ...` assignments
-                        if let Some(body) = &ctor.body {
-                            for stmt in &body.stmts {
-                                if let Stmt::Expr(expr_stmt) = stmt
-                                    && let Expr::Assign(assign) = &*expr_stmt.expr
-                                    && let deno_ast::swc::ast::AssignTarget::Simple(simple_target) =
-                                        &assign.left
-                                    && let deno_ast::swc::ast::SimpleAssignTarget::Member(mem) =
-                                        simple_target
-                                    && matches!(&*mem.obj, Expr::This(_))
-                                    && let MemberProp::Ident(ident) = &mem.prop
-                                {
-                                    let name = ident.sym.to_string();
-                                    // Try to infer type from RHS expression. If the RHS is a
-                                    // constructor parameter identifier, prefer its declared
-                                    // type annotation when available.
-                                    let mut inferred =
-                                        crate::types::infer_type(None, Some(&assign.right));
-                                    // If RHS is an identifier, try to look up a matching
-                                    // constructor parameter and use its annotation.
-                                    if let crate::types::OatsType::Number = inferred
-                                        && let Expr::Ident(rhs_ident) = &*assign.right
-                                    {
-                                        for p in &ctor.params {
-                                            use deno_ast::swc::ast::{
-                                                ParamOrTsParamProp, TsParamPropParam,
-                                            };
-                                            match p {
-                                                ParamOrTsParamProp::Param(param) => {
-                                                    if let deno_ast::swc::ast::Pat::Ident(
-                                                        bind_ident,
-                                                    ) = &param.pat
-                                                        && bind_ident.id.sym == rhs_ident.sym
-                                                        && let Some(type_ann) = &bind_ident.type_ann
-                                                        && let Some(mt) = crate::types::map_ts_type(
-                                                            &type_ann.type_ann,
-                                                        )
-                                                    {
-                                                        inferred = mt;
-                                                        break;
-                                                    }
-                                                }
-                                                ParamOrTsParamProp::TsParamProp(ts_param) => {
-                                                    if let TsParamPropParam::Ident(binding_ident) =
-                                                        &ts_param.param
-                                                        && binding_ident.id.sym == rhs_ident.sym
-                                                        && let Some(type_ann) =
-                                                            &binding_ident.type_ann
-                                                        && let Some(mt) = crate::types::map_ts_type(
-                                                            &type_ann.type_ann,
-                                                        )
-                                                    {
-                                                        inferred = mt;
-                                                        break;
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                    if fields.iter().all(|(n, _)| n != &name) {
-                                        fields.push((name, inferred));
-                                    }
-                                }
-                            }
-                        }
+                        // Note: oats_ast::AssignTarget only supports Pat, not member assignments
+                        // So we can't directly detect `this.x = ...` patterns here
+                        // This functionality may need to be added to oats_ast or handled differently
                         // Register computed fields so lowering can reference them
                         codegen
                             .class_fields
@@ -686,173 +641,6 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
             // Done emitting this class; clear current parent
             codegen.current_class_parent.borrow_mut().take();
         }
-
-        // Also handle non-exported top-level class declarations: `class Foo {}`
-        if let deno_ast::ModuleItemRef::Stmt(stmt) = item_ref
-            && let deno_ast::swc::ast::Stmt::Decl(deno_ast::swc::ast::Decl::Class(c)) = stmt
-        {
-            let class_name = c.ident.sym.to_string();
-            let parent_name_opt = if let Some(sc) = &c.class.super_class {
-                if let deno_ast::swc::ast::Expr::Ident(id) = &**sc {
-                    Some(id.sym.to_string())
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
-            *codegen.current_class_parent.borrow_mut() = parent_name_opt.clone();
-            // Emit members for this class
-            use deno_ast::swc::ast::ClassMember;
-            for member in &c.class.body {
-                match member {
-                    ClassMember::Method(m) => {
-                        // method name
-                        let mname = match &m.key {
-                            deno_ast::swc::ast::PropName::Ident(id) => id.sym.to_string(),
-                            deno_ast::swc::ast::PropName::Str(s) => s.value.to_string(),
-                            _ => continue,
-                        };
-                        // Try to type-check the method function
-                        let mut method_symbols = SymbolTable::new();
-                        let (sig_opt, type_diags) =
-                            check_function_strictness(&m.function, &mut method_symbols)?;
-
-                        // Emit type checking diagnostics
-                        for diag in &type_diags {
-                            diagnostics::emit_diagnostic(diag, Some(&parsed_mod.source));
-                        }
-
-                        if let Some(sig) = sig_opt {
-                            // Prepend `this` as the first param (nominal struct pointer)
-                            let mut params = Vec::new();
-                            params.push(crate::types::OatsType::NominalStruct(class_name.clone()));
-                            params.extend(sig.params.into_iter());
-                            let ret = sig.ret;
-                            let fname = format!("{}_{}", class_name, mname);
-                            codegen
-                                .gen_function_ir(&fname, &m.function, &params, &ret, Some("this"))
-                                .map_err(|d| {
-                                    crate::diagnostics::emit_diagnostic(
-                                        &d,
-                                        Some(&parsed_mod.source),
-                                    );
-                                    anyhow::anyhow!(d.message)
-                                })?;
-                        } else {
-                            // If strict check failed (e.g., missing return annotation), try to emit with Void return
-                            let mut method_symbols = SymbolTable::new();
-                            let (sig2_opt, type_diags2) =
-                                check_function_strictness(&m.function, &mut method_symbols)?;
-
-                            for diag in &type_diags2 {
-                                diagnostics::emit_diagnostic(diag, Some(&parsed_mod.source));
-                            }
-
-                            if let Some(sig2) = sig2_opt {
-                                let mut params = Vec::new();
-                                params.push(crate::types::OatsType::NominalStruct(
-                                    class_name.clone(),
-                                ));
-                                params.extend(sig2.params.into_iter());
-                                let fname = format!("{}_{}", class_name, mname);
-                                codegen
-                                    .gen_function_ir(
-                                        &fname,
-                                        &m.function,
-                                        &params,
-                                        &crate::types::OatsType::Void,
-                                        Some("this"),
-                                    )
-                                    .map_err(|d| {
-                                        crate::diagnostics::emit_diagnostic(
-                                            &d,
-                                            Some(source.as_str()),
-                                        );
-                                        anyhow::anyhow!(d.message)
-                                    })?;
-                            }
-                        }
-                    }
-                    ClassMember::Constructor(ctor) => {
-                        // Compute fields for non-exported class similarly to exported case
-                        let mut fields: Vec<(String, crate::types::OatsType)> = Vec::new();
-                        use deno_ast::swc::ast::{
-                            ClassMember, Expr, MemberProp, ParamOrTsParamProp, Stmt,
-                            TsParamPropParam,
-                        };
-                        for m in &c.class.body {
-                            if let ClassMember::ClassProp(prop) = m
-                                && let deno_ast::swc::ast::PropName::Ident(id) = &prop.key
-                            {
-                                let fname = id.sym.to_string();
-                                if fields.iter().all(|(n, _)| n != &fname) {
-                                    let ftype = if let Some(type_ann) = &prop.type_ann {
-                                        if let Some(mt) =
-                                            crate::types::map_ts_type(&type_ann.type_ann)
-                                        {
-                                            mt
-                                        } else {
-                                            crate::types::OatsType::Number
-                                        }
-                                    } else {
-                                        crate::types::OatsType::Number
-                                    };
-                                    fields.push((fname, ftype));
-                                }
-                            }
-                        }
-                        for p in &ctor.params {
-                            if let ParamOrTsParamProp::TsParamProp(ts_param) = p
-                                && let TsParamPropParam::Ident(binding_ident) = &ts_param.param
-                            {
-                                let fname = binding_ident.id.sym.to_string();
-                                if fields.iter().all(|(n, _)| n != &fname) {
-                                    let ty = crate::types::infer_type(
-                                        binding_ident.type_ann.as_ref().map(|ann| &*ann.type_ann),
-                                        None,
-                                    );
-                                    fields.push((fname, ty));
-                                }
-                            }
-                        }
-                        // scan ctor body for `this.x = ...` assignments
-                        if let Some(body) = &ctor.body {
-                            for stmt in &body.stmts {
-                                if let Stmt::Expr(expr_stmt) = stmt
-                                    && let Expr::Assign(assign) = &*expr_stmt.expr
-                                    && let deno_ast::swc::ast::AssignTarget::Simple(simple_target) =
-                                        &assign.left
-                                    && let deno_ast::swc::ast::SimpleAssignTarget::Member(mem) =
-                                        simple_target
-                                    && matches!(&*mem.obj, Expr::This(_))
-                                    && let MemberProp::Ident(ident) = &mem.prop
-                                {
-                                    let name = ident.sym.to_string();
-                                    let inferred =
-                                        crate::types::infer_type(None, Some(&assign.right));
-                                    if fields.iter().all(|(n, _)| n != &name) {
-                                        fields.push((name, inferred));
-                                    }
-                                }
-                            }
-                        }
-                        codegen
-                            .class_fields
-                            .borrow_mut()
-                            .insert(class_name.clone(), fields.clone());
-                        if let Err(d) = codegen.gen_constructor_ir(&class_name, ctor, &fields, None)
-                        {
-                            diagnostics::emit_diagnostic(&d, Some(parsed_mod.source.as_str()));
-                            return Err(anyhow::anyhow!(d.message));
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            // Clear parent after emitting this class
-            codegen.current_class_parent.borrow_mut().take();
-        }
     }
 
     // Emit top-level helper functions (non-exported) found in the module so
@@ -866,22 +654,20 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
     // globals via `CodeGen::emit_const_global` and cached in
     // `codegen.const_globals` so expression lowering can reuse them.
     {
-        use deno_ast::swc::ast;
+        use oats_ast::*;
         use std::collections::{HashMap, HashSet, VecDeque};
 
         // Collect top-level const declarations: name -> (init_expr, span_start)
-        // We store the initializer as a boxed Expr to match AST ownership.
-        let mut top_level_consts: Vec<(String, Box<ast::Expr>, usize)> = Vec::new();
-        for item in parsed.program_ref().body() {
-            if let deno_ast::ModuleItemRef::Stmt(stmt) = item
-                && let ast::Stmt::Decl(ast::Decl::Var(vd)) = stmt
-                && matches!(vd.kind, ast::VarDeclKind::Const)
+        let mut top_level_consts: Vec<(String, Expr, usize)> = Vec::new();
+        for stmt in &parsed.body {
+            if let Stmt::VarDecl(vd) = stmt
+                && matches!(vd.kind, VarDeclKind::Const)
             {
                 for decl in &vd.decls {
-                    if let ast::Pat::Ident(binding) = &decl.name {
+                    if let Pat::Ident(binding) = &decl.name {
                         if let Some(init) = &decl.init {
-                            let name = binding.id.sym.to_string();
-                            let span_start = vd.span.lo.0 as usize;
+                            let name = binding.sym.clone();
+                            let span_start = vd.span.start;
                             top_level_consts.push((name, init.clone(), span_start));
                         } else {
                             return diagnostics::report_error_and_bail(
@@ -892,6 +678,7 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
                             );
                         }
                     }
+                    // Destructuring patterns not yet supported for top-level consts
                 }
             }
         }
@@ -904,22 +691,20 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
             }
 
             // Helper: collect identifier names referenced by an expression
-            fn collect_idents(e: &ast::Expr, out: &mut HashSet<String>) {
-                use deno_ast::swc::ast::*;
+            fn collect_idents(e: &oats_ast::Expr, out: &mut HashSet<String>) {
+                use oats_ast::*;
                 match e {
                     Expr::Ident(id) => {
-                        out.insert(id.sym.to_string());
+                        out.insert(id.sym.clone());
                     }
                     Expr::Array(arr) => {
                         for el in arr.elems.iter().flatten() {
-                            collect_idents(&el.expr, out);
+                            collect_idents(el, out);
                         }
                     }
                     Expr::Object(obj) => {
                         for prop in &obj.props {
-                            if let PropOrSpread::Prop(pb) = prop
-                                && let Prop::KeyValue(kv) = &**pb
-                            {
+                            if let PropOrSpread::Prop(Prop::KeyValue(kv)) = prop {
                                 collect_idents(&kv.value, out);
                             }
                         }
@@ -934,21 +719,19 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
                             collect_idents(ec, out);
                         }
                         for a in &c.args {
-                            collect_idents(&a.expr, out);
+                            collect_idents(a, out);
                         }
                     }
                     Expr::Member(m) => {
                         collect_idents(&m.obj, out);
                         if let MemberProp::Computed(cmp) = &m.prop {
-                            collect_idents(&cmp.expr, out);
+                            collect_idents(cmp, out);
                         }
                     }
                     Expr::New(n) => {
                         collect_idents(&n.callee, out);
-                        if let Some(args) = &n.args {
-                            for a in args {
-                                collect_idents(&a.expr, out);
-                            }
+                        for a in &n.args {
+                            collect_idents(a, out);
                         }
                     }
                     Expr::Paren(p) => collect_idents(&p.expr, out),
@@ -1055,14 +838,21 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
         }
     }
 
-    for item in parsed.program_ref().body() {
-        use deno_ast::swc::ast;
-        // non-exported function declarations: `function foo() {}`
-        if let deno_ast::ModuleItemRef::Stmt(stmt) = item
-            && let ast::Stmt::Decl(ast::Decl::Fn(fdecl)) = stmt
-        {
-            let fname = fdecl.ident.sym.to_string();
-            let inner_func = (*fdecl.function).clone();
+    // Handle non-exported function declarations: `function foo() {}`
+    // Note: oats_ast doesn't have separate export syntax - exports are handled
+    // separately via the arrow_functions collection and main function detection
+    for stmt in &parsed.body {
+        use oats_ast::*;
+        if let Stmt::FnDecl(fn_decl) = stmt {
+            let fname = fn_decl.ident.sym.clone();
+            // Convert FnDecl to Function for codegen
+            let inner_func = Function {
+                params: fn_decl.params.clone(),
+                body: fn_decl.body.clone(),
+                return_type: fn_decl.return_type.clone(),
+                span: fn_decl.span.clone(),
+                is_async: false,
+            };
             let mut inner_symbols = SymbolTable::new();
             let (sig_opt, type_diags) = check_function_strictness(&inner_func, &mut inner_symbols)?;
 
@@ -1080,32 +870,6 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
                             anyhow::anyhow!("{}", d.message)
                         })?;
                 }
-            }
-        }
-
-        // exported declarations: `export function foo() {}` — emit these too
-        if let deno_ast::ModuleItemRef::ModuleDecl(module_decl) = item
-            && let deno_ast::swc::ast::ModuleDecl::ExportDecl(decl) = module_decl
-            && let ast::Decl::Fn(fdecl) = &decl.decl
-        {
-            let fname = fdecl.ident.sym.to_string();
-            let inner_func = (*fdecl.function).clone();
-            let mut inner_symbols = SymbolTable::new();
-            let (sig_opt, type_diags) = check_function_strictness(&inner_func, &mut inner_symbols)?;
-
-            for diag in &type_diags {
-                diagnostics::emit_diagnostic(diag, Some(&parsed_mod.source));
-            }
-
-            if let Some(fsig) = sig_opt
-                && fname != "main"
-            {
-                codegen
-                    .gen_function_ir(&fname, &inner_func, &fsig.params, &fsig.ret, None)
-                    .map_err(|d| {
-                        crate::diagnostics::emit_diagnostic(&d, Some(&parsed_mod.source));
-                        anyhow::anyhow!("{}", d.message)
-                    })?;
             }
         }
     }
@@ -1164,6 +928,7 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
             body: func_body,
             return_type: arrow.return_type.clone(),
             span: arrow.span.clone(),
+            is_async: false,
         };
 
         let mut inner_symbols = SymbolTable::new();
@@ -1210,14 +975,25 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
     let ir = codegen.module.print_to_string().to_string();
 
     // determine output directory (optional)
-    let out_dir = std::env::var("OATS_OUT_DIR").unwrap_or_else(|_| ".".to_string());
+    let out_dir = options
+        .as_ref()
+        .and_then(|o| o.out_dir.as_ref())
+        .cloned()
+        .or_else(|| std::env::var("OATS_OUT_DIR").ok())
+        .unwrap_or_else(|| ".".to_string());
     let src_filename = std::path::Path::new(&src_path)
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("out");
     let out_ll = format!("{}/{}.ll", out_dir, src_filename);
-    // Allow overriding output name with OATS_OUT_NAME
-    let out_exe = if let Ok(name) = std::env::var("OATS_OUT_NAME") {
+    // Allow overriding output name with options or OATS_OUT_NAME
+    let out_exe = if let Some(ref opts) = options {
+        if let Some(ref name) = opts.out_name {
+            format!("{}/{}", out_dir, name)
+        } else {
+            format!("{}/{}", out_dir, src_filename)
+        }
+    } else if let Ok(name) = std::env::var("OATS_OUT_NAME") {
         format!("{}/{}", out_dir, name)
     } else {
         format!("{}/{}", out_dir, src_filename)
@@ -1239,11 +1015,27 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
 
     // Initialize native target and get the default target triple for LLVM
     Target::initialize_native(&InitializationConfig::default()).map_err(|e| anyhow::anyhow!(e))?;
-    let triple = TargetMachine::get_default_triple();
+    let triple = if let Some(ref opts) = options {
+        if let Some(ref triple_str) = opts.target_triple {
+            inkwell::targets::TargetTriple::create(triple_str)
+        } else {
+            TargetMachine::get_default_triple()
+        }
+    } else {
+        TargetMachine::get_default_triple()
+    };
 
     // Read overrides (optional) for CPU/features
-    let env_cpu = std::env::var("OATS_TARGET_CPU").ok();
-    let env_features = std::env::var("OATS_TARGET_FEATURES").ok();
+    let env_cpu = options
+        .as_ref()
+        .and_then(|o| o.target_cpu.as_ref())
+        .cloned()
+        .or_else(|| std::env::var("OATS_TARGET_CPU").ok());
+    let env_features = options
+        .as_ref()
+        .and_then(|o| o.target_features.as_ref())
+        .cloned()
+        .or_else(|| std::env::var("OATS_TARGET_FEATURES").ok());
     let cpu_candidates = if let Some(c) = env_cpu.clone() {
         vec![c, "".to_string()]
     } else {
@@ -1252,11 +1044,30 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
         vec!["".to_string(), "native".to_string()]
     };
     // Determine optimization level. Priority:
-    // 1. OATS_OPT_LEVEL env var (explicit)
-    // 2. OATS_BUILD_PROFILE=release -> Aggressive
-    // 3. Default -> None (fastest)
-    let build_profile = std::env::var("OATS_BUILD_PROFILE").unwrap_or_default();
-    let opt_level = if let Ok(opt_str) = std::env::var("OATS_OPT_LEVEL") {
+    // 1. Options opt_level (explicit)
+    // 2. OATS_OPT_LEVEL env var (explicit)
+    // 3. OATS_BUILD_PROFILE=release -> Aggressive
+    // 4. Default -> None (fastest)
+    let build_profile = options
+        .as_ref()
+        .and_then(|o| o.build_profile.as_ref())
+        .cloned()
+        .or_else(|| std::env::var("OATS_BUILD_PROFILE").ok())
+        .unwrap_or_default();
+    let opt_level = if let Some(ref opts) = options {
+        if let Some(ref opt_str) = opts.opt_level {
+            match opt_str.as_str() {
+                "none" | "0" => OptimizationLevel::None,
+                "1" | "default" => OptimizationLevel::Default,
+                "2" | "3" | "aggressive" => OptimizationLevel::Aggressive,
+                _ => OptimizationLevel::Default,
+            }
+        } else if build_profile == "release" {
+            OptimizationLevel::Aggressive
+        } else {
+            OptimizationLevel::None
+        }
+    } else if let Ok(opt_str) = std::env::var("OATS_OPT_LEVEL") {
         match opt_str.as_str() {
             "none" | "0" => OptimizationLevel::None,
             "1" | "default" => OptimizationLevel::Default,
@@ -1303,7 +1114,11 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
         })?;
 
     // If requested, only emit the object and skip the final host linking step.
-    if std::env::var("OATS_EMIT_OBJECT_ONLY").is_ok() {
+    let emit_object_only = options
+        .as_ref()
+        .map(|o| o.emit_object_only)
+        .unwrap_or_else(|| std::env::var("OATS_EMIT_OBJECT_ONLY").is_ok());
+    if emit_object_only {
         eprintln!(
             "OATS_EMIT_OBJECT_ONLY set; emitted {} and skipping link",
             out_obj
@@ -1381,9 +1196,13 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
         );
     };
 
-    // Link final binary. Prefer explicit linker via OATS_LINKER, otherwise
+    // Link final binary. Prefer explicit linker via options or OATS_LINKER, otherwise
     // use clang (with -fuse-ld=lld when available) or fall back to ld.lld/lld.
-    let oats_linker = std::env::var("OATS_LINKER").ok();
+    let oats_linker = options
+        .as_ref()
+        .and_then(|o| o.linker.as_ref())
+        .cloned()
+        .or_else(|| std::env::var("OATS_LINKER").ok());
 
     // helper to test whether a program is runnable
     fn is_prog_available(name: &str) -> bool {
@@ -1445,15 +1264,30 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
         // Use clang; if lld is present, prefer clang + -fuse-ld=lld so we keep clang's driver behavior
         let mut cmd = Command::new(&clang_bin);
         // Host-side optimization flags / LTO
-        let lto_mode = std::env::var("OATS_LTO").unwrap_or_else(|_| {
-            if build_profile == "release" {
-                "auto".to_string()
-            } else {
-                "none".to_string()
-            }
-        });
-        // opt-level env may also instruct host flags
-        if let Ok(opt_str) = std::env::var("OATS_OPT_LEVEL") {
+        let lto_mode = if let Some(ref opts) = options {
+            opts.lto.clone().unwrap_or_else(|| {
+                if build_profile == "release" {
+                    "auto".to_string()
+                } else {
+                    "none".to_string()
+                }
+            })
+        } else {
+            std::env::var("OATS_LTO").unwrap_or_else(|_| {
+                if build_profile == "release" {
+                    "auto".to_string()
+                } else {
+                    "none".to_string()
+                }
+            })
+        };
+        // opt-level may also instruct host flags
+        let host_opt_level = if let Some(ref opts) = options {
+            opts.opt_level.clone()
+        } else {
+            std::env::var("OATS_OPT_LEVEL").ok()
+        };
+        if let Some(opt_str) = host_opt_level {
             if opt_str == "3" || opt_str == "aggressive" {
                 cmd.arg("-O3");
             }

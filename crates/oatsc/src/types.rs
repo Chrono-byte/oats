@@ -238,8 +238,9 @@ impl SymbolTable {
 /// - Union types (converted to `OatsType::Union`)
 /// - Array types with element type inference
 /// - Function types with parameter and return type mapping
+///
 /// Helper to get span from a TsType
-fn ts_type_span(ty: &TsType) -> Span {
+fn ts_type_span(ty: &TsType) -> oats_ast::Span {
     match ty {
         TsType::TsKeywordType(_) => 0..0, // Keyword types don't have spans in oats_ast
         TsType::TsTypeRef(tr) => tr.span.clone(),
@@ -260,7 +261,8 @@ pub fn map_ts_type(ty: &TsType) -> Option<OatsType> {
             TsKeywordType::TsStringKeyword => Some(OatsType::String),
         },
         TsType::TsTypeRef(type_ref) => {
-            if let TsEntityName::Ident(ident) = &type_ref.type_name {
+            let TsEntityName::Ident(ident) = &type_ref.type_name;
+            {
                 // Check for primitive types
                 match ident.sym.as_ref() {
                     "i8" => return Some(OatsType::I8),
@@ -279,18 +281,15 @@ pub fn map_ts_type(ty: &TsType) -> Option<OatsType> {
                     _ => {}
                 }
                 // Check for generic classes or functions
-                if ident.sym.as_ref() == "Generic"
+                if ident.sym.as_str() == "Generic"
                     && let Some(type_params) = &type_ref.type_params
                 {
-                    let mapped_params: Vec<_> = type_params
-                        .params
-                        .iter()
-                        .filter_map(|param| map_ts_type(param))
-                        .collect();
+                    let mapped_params: Vec<_> =
+                        type_params.params.iter().filter_map(map_ts_type).collect();
                     return Some(OatsType::Generic(mapped_params));
                 }
                 // Check if this is a Promise<T> type
-                if ident.sym.as_ref() == "Promise" {
+                if ident.sym.as_str() == "Promise" {
                     // Extract the type parameter
                     if let Some(type_params) = &type_ref.type_params
                         && let Some(first_param) = type_params.params.first()
@@ -309,7 +308,7 @@ pub fn map_ts_type(ty: &TsType) -> Option<OatsType> {
                 // strictness checker. Generic specialization happens later in
                 // the pipeline.
                 // Support generic Array<T> written as Array<T>
-                if ident.sym.as_ref() == "Array" {
+                if ident.sym.as_str() == "Array" {
                     if let Some(type_params) = &type_ref.type_params
                         && let Some(first_param) = type_params.params.first()
                     {
@@ -320,7 +319,7 @@ pub fn map_ts_type(ty: &TsType) -> Option<OatsType> {
                     return Some(OatsType::Array(Box::new(OatsType::Number)));
                 }
                 // Support Weak<T> and Option<T> as language-level generics
-                if ident.sym.as_ref() == "Weak" {
+                if ident.sym.as_str() == "Weak" {
                     if let Some(type_params) = &type_ref.type_params
                         && let Some(first_param) = type_params.params.first()
                     {
@@ -329,7 +328,7 @@ pub fn map_ts_type(ty: &TsType) -> Option<OatsType> {
                     }
                     return None;
                 }
-                if ident.sym.as_ref() == "Unowned" {
+                if ident.sym.as_str() == "Unowned" {
                     if let Some(type_params) = &type_ref.type_params
                         && let Some(first_param) = type_params.params.first()
                     {
@@ -338,7 +337,7 @@ pub fn map_ts_type(ty: &TsType) -> Option<OatsType> {
                     }
                     return None;
                 }
-                if ident.sym.as_ref() == "Option" {
+                if ident.sym.as_str() == "Option" {
                     if let Some(type_params) = &type_ref.type_params
                         && let Some(first_param) = type_params.params.first()
                     {
@@ -354,9 +353,8 @@ pub fn map_ts_type(ty: &TsType) -> Option<OatsType> {
                     return Some(OatsType::NominalStruct(ident.sym.to_string()));
                 }
                 // Bare generic type parameter (e.g. `T`) -> placeholder
-                return Some(OatsType::Generic(vec![]));
+                Some(OatsType::Generic(vec![]))
             }
-            None
         }
         TsType::TsUnionType(ut) => {
             // Special-case common pattern: `T | null` -> Option<T>
@@ -364,10 +362,10 @@ pub fn map_ts_type(ty: &TsType) -> Option<OatsType> {
                 // Try to detect `null` or `undefined` in one of the union
                 // arms and map the other arm to an OatsType; if
                 // successful, return Option<that_type>.
-                let mut seen_nullish = false;
+                let seen_nullish = false;
                 let mut other: Option<&TsType> = None;
                 for t in &ut.types {
-                    if let TsType::TsKeywordType(k) = t {
+                    if matches!(t, TsType::TsKeywordType(_)) {
                         // Note: oats_ast doesn't have null/undefined keywords yet
                         // This will need to be updated when those are added
                         // For now, skip this optimization
@@ -390,7 +388,7 @@ pub fn map_ts_type(ty: &TsType) -> Option<OatsType> {
                     return None;
                 }
             }
-            return Some(OatsType::Union(parts));
+            Some(OatsType::Union(parts))
         }
         TsType::TsArrayType(arr) => {
             // element type
@@ -415,11 +413,16 @@ pub fn map_ts_type(ty: &TsType) -> Option<OatsType> {
             }
             Some(OatsType::Tuple(elems))
         }
-        // TODO: Object literal types not yet supported in oats_ast
+        // Object literal types (TsTypeLit) are not yet supported in oats_ast.
+        // When TsTypeLit is added to oats_ast, implement mapping here:
         // TsType::TsTypeLit(typelit) => {
-        //     // Object literal type: collect property signatures where possible
+        //     // Object literal type: collect property signatures
+        //     // Map to StructLiteral variant with field names and types
+        //     // Example: { x: number, y: string } -> StructLiteral(vec![("x".to_string(), OatsType::Number), ("y".to_string(), OatsType::String)])
         //     None
         // }
+        // Note: Object literal types can be inferred from expressions (Expr::Object)
+        // and are already supported via StructLiteral in that context.
         _ => None,
     }
 }
@@ -429,15 +432,15 @@ pub fn map_ts_type(ty: &TsType) -> Option<OatsType> {
 /// names (e.g. "T") to concrete `OatsType` values. When a TsTypeRef refers
 /// to a name present in `subst` it will be replaced with the mapped type.
 pub fn map_ts_type_with_subst(
-    ty: &ast::TsType,
+    ty: &TsType,
     subst: &std::collections::HashMap<String, OatsType>,
 ) -> Option<OatsType> {
-    use deno_ast::swc::ast;
     match ty {
-        ast::TsType::TsKeywordType(_) => map_ts_type(ty),
-        ast::TsType::TsTypeRef(type_ref) => {
-            if let Some(ident) = type_ref.type_name.as_ident() {
-                let name = ident.sym.to_string();
+        TsType::TsKeywordType(_) => map_ts_type(ty),
+        TsType::TsTypeRef(type_ref) => {
+            let TsEntityName::Ident(ident) = &type_ref.type_name;
+            {
+                let name = ident.sym.clone();
                 // If this ident is a substituted type-parameter, return it
                 if let Some(mapped) = subst.get(&name) {
                     return Some(mapped.clone());
@@ -445,7 +448,7 @@ pub fn map_ts_type_with_subst(
                 // Otherwise fall back to existing map rules for known generics
                 // and nominal types. If there are type arguments, map them
                 // recursively using the same substitution map.
-                if ident.sym.as_ref() == "Promise" {
+                if ident.sym.as_str() == "Promise" {
                     if let Some(type_params) = &type_ref.type_params
                         && let Some(first_param) = type_params.params.first()
                     {
@@ -454,7 +457,7 @@ pub fn map_ts_type_with_subst(
                     }
                     return Some(OatsType::Promise(Box::new(OatsType::Void)));
                 }
-                if ident.sym.as_ref() == "Array" {
+                if ident.sym.as_str() == "Array" {
                     if let Some(type_params) = &type_ref.type_params
                         && let Some(first_param) = type_params.params.first()
                     {
@@ -463,7 +466,7 @@ pub fn map_ts_type_with_subst(
                     }
                     return Some(OatsType::Array(Box::new(OatsType::Number)));
                 }
-                if ident.sym.as_ref() == "Weak" {
+                if ident.sym.as_str() == "Weak" {
                     if let Some(type_params) = &type_ref.type_params
                         && let Some(first_param) = type_params.params.first()
                     {
@@ -472,7 +475,7 @@ pub fn map_ts_type_with_subst(
                     }
                     return None;
                 }
-                if ident.sym.as_ref() == "Option" {
+                if ident.sym.as_str() == "Option" {
                     if let Some(type_params) = &type_ref.type_params
                         && let Some(first_param) = type_params.params.first()
                     {
@@ -487,28 +490,26 @@ pub fn map_ts_type_with_subst(
                 // special generic we fallback to a placeholder Generic so
                 // downstream phases can represent nested generics.
                 if type_ref.type_params.is_none() {
-                    return Some(OatsType::NominalStruct(name));
+                    Some(OatsType::NominalStruct(name))
+                } else {
+                    Some(OatsType::Generic(vec![]))
                 }
-                return Some(OatsType::Generic(vec![]));
             }
-            None
         }
-        ast::TsType::TsUnionOrIntersectionType(ut) => {
+        TsType::TsUnionType(un) => {
             // Handle union types like `T | undefined` by applying substitution
             // to each arm. This mirrors `map_ts_type` but uses the provided
             // `subst` map so named type parameters are replaced.
-            if let ast::TsUnionOrIntersectionType::TsUnionType(un) = ut {
+            {
                 // Special-case `T | null` or `T | undefined` -> Option<T>
                 if un.types.len() == 2 {
                     let mut seen_nullish = false;
-                    let mut other: Option<&ast::TsType> = None;
-                    for tbox in &un.types {
-                        let t = &**tbox;
-                        if let ast::TsType::TsKeywordType(k) = t {
-                            use deno_ast::swc::ast::TsKeywordTypeKind;
-                            if matches!(k.kind, TsKeywordTypeKind::TsNullKeyword)
-                                || matches!(k.kind, TsKeywordTypeKind::TsUndefinedKeyword)
-                            {
+                    let mut other: Option<&TsType> = None;
+                    for t in &un.types {
+                        if matches!(t, TsType::TsKeywordType(_)) {
+                            // Note: oats_ast doesn't have TsNullKeyword or TsUndefinedKeyword yet
+                            // For now, skip null/undefined handling
+                            if false {
                                 seen_nullish = true;
                                 continue;
                             }
@@ -532,16 +533,15 @@ pub fn map_ts_type_with_subst(
                         return None;
                     }
                 }
-                return Some(OatsType::Union(parts));
+                Some(OatsType::Union(parts))
             }
-            None
         }
-        ast::TsType::TsArrayType(arr) => map_ts_type_with_subst(&arr.elem_type, subst)
+        TsType::TsArrayType(arr) => map_ts_type_with_subst(&arr.elem_type, subst)
             .map(|elem| OatsType::Array(Box::new(elem))),
-        ast::TsType::TsTupleType(tuple) => {
+        TsType::TsTupleType(tuple) => {
             let mut elems: Vec<OatsType> = Vec::new();
             for elem in &tuple.elem_types {
-                if let Some(mapped) = map_ts_type_with_subst(&elem.ty, subst) {
+                if let Some(mapped) = map_ts_type_with_subst(elem, subst) {
                     elems.push(mapped);
                 } else {
                     return None;
@@ -552,25 +552,12 @@ pub fn map_ts_type_with_subst(
             }
             Some(OatsType::Tuple(elems))
         }
-        ast::TsType::TsTypeLit(typelit) => {
-            let mut fields: Vec<(String, OatsType)> = Vec::new();
-            for member in &typelit.members {
-                if let ast::TsTypeElement::TsPropertySignature(prop) = member
-                    && let ast::Expr::Ident(id) = &*prop.key
-                {
-                    let fname = id.sym.to_string();
-                    if let Some(type_ann) = &prop.type_ann
-                        && let Some(mapped) = map_ts_type_with_subst(&type_ann.type_ann, subst)
-                    {
-                        fields.push((fname, mapped));
-                        continue;
-                    }
-                    fields.push((fname, OatsType::Number));
-                }
-            }
-            Some(OatsType::StructLiteral(fields))
+        // Note: TsTypeLit doesn't exist in oats_ast, use TsTypeRef instead
+        // TsTypeRef is already handled above, so this pattern is unreachable
+        _ => {
+            // Placeholder for other types
+            None
         }
-        _ => None,
     }
 }
 
@@ -589,7 +576,13 @@ pub fn check_function_strictness(
                 Diagnostic::error("Unsupported return type")
                     .with_code("E1001")
                     .with_label(Label {
-                        span: ts_type_span(return_type),
+                        span: {
+                            let r = ts_type_span(return_type);
+                            Span {
+                                start: r.start,
+                                end: r.end,
+                            }
+                        },
                         message: "This return type is not supported".into(),
                     }),
             );
@@ -600,7 +593,10 @@ pub fn check_function_strictness(
             Diagnostic::error("Missing return type annotation")
                 .with_code("E1002")
                 .with_label(Label {
-                    span: func_decl.span.clone(),
+                    span: Span {
+                        start: func_decl.span.start,
+                        end: func_decl.span.end,
+                    },
                     message: "Function return type annotation is required".into(),
                 }),
         );
@@ -611,84 +607,81 @@ pub fn check_function_strictness(
     let mut param_types = Vec::new();
     for param in &func_decl.params {
         match &param.pat {
-            Pat::Ident(ident) => {
-                if let Some(ty) = &param.ty {
-                    if let Some(mapped) = map_ts_type(ty) {
-                        param_types.push(mapped);
-                        continue;
-                    }
+            Pat::Ident(_ident) => {
+                if let Some(ty) = &param.ty
+                    && let Some(mapped) = map_ts_type(ty)
+                {
+                    param_types.push(mapped);
+                    continue;
                 }
                 // If no type annotation, default to Number for now
                 param_types.push(OatsType::Number);
+            } // oats_ast only supports Ident patterns for parameters
+            Pat::Array(_) => {
+                param_types.push(OatsType::Array(Box::new(OatsType::Number)));
             }
-            _ => {
-                diagnostics.push(
-                    Diagnostic::error("Unsupported parameter pattern")
-                        .with_code("E1004")
-                        .with_label(Label {
-                            span: param.span.clone(),
-                            message: "This parameter pattern is not supported".into(),
-                        }),
-                );
+            Pat::Object(_) => {
+                param_types.push(OatsType::StructLiteral(Vec::new()));
+            }
+            Pat::Rest(_) => {
+                param_types.push(OatsType::Array(Box::new(OatsType::Number)));
             }
         }
     }
 
     Ok((
         Some(FunctionSig {
-            ret: ret_type,
-            params: param_types,
             type_params: Vec::new(),
+            params: param_types,
+            ret: ret_type,
         }),
         diagnostics,
     ))
 }
 
-/// Infers an Oats type from AST expression patterns and literal values.
-///
-/// This function provides type inference for expressions where explicit type
-/// annotations are not present. It analyzes literal values, array construction
-/// patterns, and other expression forms to determine the most appropriate type
-/// representation in the Oats type system.
-///
-/// # Arguments
-/// * `expr` - AST expression to analyze for type inference
-///
-/// # Returns
-/// The inferred `OatsType` if successful, or `None` if the expression type
-/// cannot be determined through static analysis
-///
-/// # Inference Strategy
 /// - **Literals**: Direct mapping from literal type to `OatsType`
 /// - **Arrays**: Element type inferred from first non-null element
 /// - **Complex expressions**: Currently unsupported, returns `None`
-pub fn infer_type_from_expr(expr: &ast::Expr) -> Option<OatsType> {
+pub fn infer_type_from_expr(expr: &Expr) -> Option<OatsType> {
     match expr {
-        ast::Expr::Lit(lit) => match lit {
-            ast::Lit::Num(_) => Some(OatsType::Number),
-            ast::Lit::Str(_) => Some(OatsType::String),
-            ast::Lit::Bool(_) => Some(OatsType::Boolean),
+        Expr::Lit(lit) => match lit {
+            Lit::F64(_)
+            | Lit::F32(_)
+            | Lit::I8(_)
+            | Lit::I16(_)
+            | Lit::I32(_)
+            | Lit::I64(_)
+            | Lit::I128(_)
+            | Lit::ISize(_)
+            | Lit::U8(_)
+            | Lit::U16(_)
+            | Lit::U32(_)
+            | Lit::U64(_)
+            | Lit::U128(_)
+            | Lit::USize(_) => Some(OatsType::Number),
+            Lit::Str(_) => Some(OatsType::String),
+            Lit::Bool(_) => Some(OatsType::Boolean),
             _ => None,
         },
-        ast::Expr::Array(arr) => {
+        Expr::Array(arr) => {
             // Infer array element type from first non-null element
             if let Some(Some(first_elem)) = arr.elems.first() {
-                infer_type_from_expr(&first_elem.expr)
+                infer_type_from_expr(first_elem)
                     .map(|elem_type| OatsType::Array(Box::new(elem_type)))
             } else {
                 None
             }
         }
-        ast::Expr::Object(obj) => {
+        Expr::Object(obj) => {
             // Infer object literal type
             let mut fields = Vec::new();
             for prop in &obj.props {
-                if let ast::PropOrSpread::Prop(prop) = prop
-                    && let ast::Prop::KeyValue(kv) = &**prop
-                    && let ast::PropName::Ident(ident) = &kv.key
+                if let PropOrSpread::Prop(prop) = prop
+                    && let Prop::KeyValue(kv) = prop
+                    && let PropName::Ident(ident) = &kv.key
                     && let Some(field_type) = infer_type_from_expr(&kv.value)
                 {
-                    fields.push((ident.sym.to_string(), field_type));
+                    fields.push((ident.sym.clone(), field_type));
                 }
             }
             if !fields.is_empty() {
@@ -697,28 +690,28 @@ pub fn infer_type_from_expr(expr: &ast::Expr) -> Option<OatsType> {
                 None
             }
         }
-        ast::Expr::Call(_call) => {
+        Expr::Call(_call) => {
             // For function calls, we can't infer the return type without knowing the function
             // This would require a more sophisticated analysis
             None
         }
-        ast::Expr::Member(_member) => {
+        Expr::Member(_member) => {
             // For property access, we can't infer the type without knowing the object
             None
         }
-        ast::Expr::Unary(unary) => {
+        Expr::Unary(unary) => {
             // Unary operations generally preserve the operand type
             infer_type_from_expr(&unary.arg)
         }
-        ast::Expr::Bin(bin) => {
+        Expr::Bin(bin) => {
             // Binary operations: most return numbers, but some might return other types
             match bin.op {
-                ast::BinaryOp::EqEq
-                | ast::BinaryOp::NotEq
-                | ast::BinaryOp::Lt
-                | ast::BinaryOp::LtEq
-                | ast::BinaryOp::Gt
-                | ast::BinaryOp::GtEq => {
+                BinaryOp::EqEq
+                | BinaryOp::NotEq
+                | BinaryOp::Lt
+                | BinaryOp::LtEq
+                | BinaryOp::Gt
+                | BinaryOp::GtEq => {
                     // Comparison operations return boolean
                     Some(OatsType::Boolean)
                 }
@@ -728,23 +721,23 @@ pub fn infer_type_from_expr(expr: &ast::Expr) -> Option<OatsType> {
                 }
             }
         }
-        ast::Expr::Paren(paren) => {
+        Expr::Paren(paren) => {
             // Parenthesized expressions have the same type as their contents
             infer_type_from_expr(&paren.expr)
         }
-        ast::Expr::Tpl(_tpl) => {
+        Expr::Tpl(_tpl) => {
             // Template literals are strings
             Some(OatsType::String)
         }
-        ast::Expr::New(new_expr) => {
+        Expr::New(new_expr) => {
             // For new ClassName(...), infer NominalStruct("ClassName")
-            if let ast::Expr::Ident(ident) = &*new_expr.callee {
+            if let Expr::Ident(ident) = &*new_expr.callee {
                 Some(OatsType::NominalStruct(ident.sym.to_string()))
             } else {
                 None
             }
         }
-        ast::Expr::Cond(cond) => {
+        Expr::Cond(cond) => {
             // For conditional expressions, infer from cons and alt if they have the same type
             let cons_type = infer_type_from_expr(&cond.cons);
             let alt_type = infer_type_from_expr(&cond.alt);
@@ -754,7 +747,7 @@ pub fn infer_type_from_expr(expr: &ast::Expr) -> Option<OatsType> {
                 None
             }
         }
-        ast::Expr::Await(await_expr) => {
+        Expr::Await(await_expr) => {
             // For await expressions, infer the unwrapped type if it's a promise
             if let Some(inner) = infer_type_from_expr(&await_expr.arg) {
                 if let OatsType::Promise(boxed) = inner {
@@ -788,7 +781,7 @@ pub fn infer_type_from_expr(expr: &ast::Expr) -> Option<OatsType> {
 /// 1. **Oats type annotations**: Explicit type information (highest priority)
 /// 2. **Expression inference**: Types derived from literal values and patterns
 /// 3. **Generic fallback**: Conservative `Generic` type when inference fails
-pub fn infer_type(ts_type: Option<&ast::TsType>, expr: Option<&ast::Expr>) -> OatsType {
+pub fn infer_type(ts_type: Option<&TsType>, expr: Option<&Expr>) -> OatsType {
     // First priority: explicit Oats type annotation
     if let Some(ts_ty) = ts_type
         && let Some(oats_type) = map_ts_type(ts_ty)

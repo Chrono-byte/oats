@@ -109,8 +109,14 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     }
 
                     // Determine effective type: declared takes precedence, then inferred
-                    let effective_type =
-                        declared_mapped.as_ref().or(init_inferred.as_ref()).unwrap();
+                    // At least one must be Some due to the check above
+                    let effective_type = declared_mapped
+                        .as_ref()
+                        .or(init_inferred.as_ref())
+                        .ok_or_else(|| crate::diagnostics::Diagnostic::simple_boxed(
+                            Severity::Error,
+                            "Internal error: variable type resolution failed (this should not happen)",
+                        ))?;
 
                     // If no explicit type annotation, set flags from inferred type
                     if declared_mapped.is_none() {
@@ -179,7 +185,13 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         // call-site monomorphization to see concrete types for
                         // locals (e.g., `Array(String)`) when no explicit
                         // annotation was provided.
-                        let init_inferred = init_inferred.as_ref().unwrap().clone();
+                        let init_inferred = init_inferred
+                            .as_ref()
+                            .ok_or_else(|| crate::diagnostics::Diagnostic::simple_boxed(
+                                Severity::Error,
+                                "Internal error: failed to infer type from initializer (this should not happen)",
+                            ))?
+                            .clone();
                         // If the initializer is an object literal and the
                         // declared local carries a nominal struct name
                         // (for example `const user: User = { ... }`),

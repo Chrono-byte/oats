@@ -216,7 +216,12 @@ pub fn build_dependency_graph(
             .with_context(|| format!("Failed to parse module: {}", current_path))?;
 
         // Get current node
-        let current_node = *node_indices.get(&current_path).unwrap();
+        let current_node = *node_indices
+            .get(&current_path)
+            .with_context(|| format!(
+                "Internal error: node not found in dependency graph for path: {}",
+                current_path
+            ))?;
 
         // Discover and enqueue relative imports from this module
         for item_ref in parsed.parsed.program_ref().body() {
@@ -250,7 +255,12 @@ pub fn build_dependency_graph(
         }
     }
 
-    let entry_node_index = *node_indices.get(&entry_str).unwrap();
+    let entry_node_index = *node_indices
+        .get(&entry_str)
+        .with_context(|| format!(
+            "Internal error: entry node not found in dependency graph for path: {}",
+            entry_str
+        ))?;
     Ok((graph, node_indices, entry_node_index))
 }
 

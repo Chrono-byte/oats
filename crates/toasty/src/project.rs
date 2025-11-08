@@ -106,8 +106,12 @@ fn default_debug() -> bool {
 /// Basic semver validation (major.minor.patch with optional pre-release and build)
 fn is_valid_semver(version: &str) -> bool {
     // Split into core version and optional pre-release/build
+    // splitn always returns at least one element, so unwrap_or_default is safe
     let mut parts = version.splitn(2, ['-', '+']);
-    let core = parts.next().unwrap();
+    let core = parts.next().unwrap_or_default();
+    if core.is_empty() {
+        return false;
+    }
     let suffix = parts.next();
 
     // Core must be major.minor.patch
@@ -499,7 +503,12 @@ pub fn build_dependency_graph(
         };
 
         // Get current node
-        let current_node = *node_indices.get(&current_path).unwrap();
+        let current_node = *node_indices
+            .get(&current_path)
+            .ok_or_else(|| ToastyError::other(format!(
+                "Internal error: node not found in dependency graph for path: {}",
+                current_path
+            )))?;
 
         // Discover and enqueue relative imports from this module
         for item_ref in parsed.parsed.program_ref().body() {
@@ -533,7 +542,12 @@ pub fn build_dependency_graph(
         }
     }
 
-    let entry_node_index = *node_indices.get(&entry_str).unwrap();
+    let entry_node_index = *node_indices
+        .get(&entry_str)
+        .ok_or_else(|| ToastyError::other(format!(
+            "Internal error: entry node not found in dependency graph for path: {}",
+            entry_str
+        )))?;
     Ok((graph, node_indices, entry_node_index))
 }
 

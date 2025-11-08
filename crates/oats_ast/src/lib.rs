@@ -24,6 +24,8 @@ pub enum Stmt {
     ExprStmt(ExprStmt),
     If(IfStmt),
     For(ForStmt),
+    ForIn(ForInStmt),
+    ForOf(ForOfStmt),
     While(WhileStmt),
     DoWhile(DoWhileStmt),
     Switch(SwitchStmt),
@@ -77,6 +79,7 @@ pub enum VarDeclKind {
 #[derive(Debug, Clone)]
 pub struct VarDeclarator {
     pub name: Pat,
+    pub ty: Option<TsType>,
     pub init: Option<Expr>,
     pub span: Span,
 }
@@ -110,6 +113,15 @@ pub struct ForStmt {
 /// For-of statement.
 #[derive(Debug, Clone)]
 pub struct ForOfStmt {
+    pub left: ForHead,
+    pub right: Expr,
+    pub body: Box<Stmt>,
+    pub span: Span,
+}
+
+/// For-in statement.
+#[derive(Debug, Clone)]
+pub struct ForInStmt {
     pub left: ForHead,
     pub right: Expr,
     pub body: Box<Stmt>,
@@ -327,6 +339,10 @@ pub enum Expr {
     Assign(AssignExpr),
     Seq(SeqExpr),
     Paren(ParenExpr),
+    New(NewExpr),
+    Update(UpdateExpr),
+    Await(AwaitExpr),
+    Tpl(TplExpr),
     // Add more as needed
 }
 
@@ -359,7 +375,10 @@ pub enum UnaryOp {
     Plus,
     Minus,
     Not,
-    // Add more
+    TypeOf,
+    Void,
+    Delete,
+    BitwiseNot, // ~
 }
 
 /// Binary expression.
@@ -384,7 +403,17 @@ pub enum BinaryOp {
     Minus,
     Mul,
     Div,
-    // Add more
+    Mod,             // %
+    And,             // &&
+    Or,              // ||
+    BitwiseAnd,      // &
+    BitwiseOr,       // |
+    BitwiseXor,      // ^
+    LShift,          // <<
+    RShift,          // >>
+    URShift,         // >>>
+    Exp,             // **
+    NullishCoalesce, // ??
 }
 
 /// Conditional expression.
@@ -537,12 +566,63 @@ pub struct ParenExpr {
     pub span: Span,
 }
 
+/// New expression.
+#[derive(Debug, Clone)]
+pub struct NewExpr {
+    pub callee: Box<Expr>,
+    pub args: Vec<Expr>,
+    pub span: Span,
+}
+
+/// Update expression (++x, x++, --x, x--).
+#[derive(Debug, Clone)]
+pub struct UpdateExpr {
+    pub op: UpdateOp,
+    pub prefix: bool,
+    pub arg: Box<Expr>,
+    pub span: Span,
+}
+
+/// Update operator.
+#[derive(Debug, Clone)]
+pub enum UpdateOp {
+    Inc, // ++
+    Dec, // --
+}
+
+/// Await expression.
+#[derive(Debug, Clone)]
+pub struct AwaitExpr {
+    pub arg: Box<Expr>,
+    pub span: Span,
+}
+
+/// Template literal expression.
+#[derive(Debug, Clone)]
+pub struct TplExpr {
+    pub quasis: Vec<TplElement>,
+    pub exprs: Vec<Expr>,
+    pub span: Span,
+}
+
+/// Template literal element (quasi or expression).
+#[derive(Debug, Clone)]
+pub struct TplElement {
+    pub raw: String,
+    pub cooked: Option<String>,
+    pub span: Span,
+}
+
 /// TypeScript type annotations.
 #[derive(Debug, Clone, PartialEq)]
 pub enum TsType {
     TsKeywordType(TsKeywordType),
     TsTypeRef(TsTypeRef),
     TsArrayType(TsArrayType),
+    TsUnionType(TsUnionType),
+    TsIntersectionType(TsIntersectionType),
+    TsFunctionType(TsFunctionType),
+    TsTupleType(TsTupleType),
     // Add more as needed
 }
 
@@ -582,6 +662,35 @@ pub struct TsTypeParamInstantiation {
 #[derive(Debug, Clone, PartialEq)]
 pub struct TsArrayType {
     pub elem_type: Box<TsType>,
+    pub span: Span,
+}
+
+/// TypeScript union type.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TsUnionType {
+    pub types: Vec<TsType>,
+    pub span: Span,
+}
+
+/// TypeScript intersection type.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TsIntersectionType {
+    pub types: Vec<TsType>,
+    pub span: Span,
+}
+
+/// TypeScript function type.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TsFunctionType {
+    pub params: Vec<Param>,
+    pub return_type: Box<TsType>,
+    pub span: Span,
+}
+
+/// TypeScript tuple type.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TsTupleType {
+    pub elem_types: Vec<TsType>,
     pub span: Span,
 }
 

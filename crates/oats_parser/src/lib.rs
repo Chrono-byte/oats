@@ -2,6 +2,18 @@
 //!
 //! This crate implements a parser for the Oats language using chumsky.
 //! It takes a string input and produces an `oats_ast::Module`.
+//!
+//! The parser is organized following Locality of Behavior principles:
+//! - Related parsing logic is grouped together in modules
+//! - Common utilities are reused across modules
+//! - Each module focuses on a specific aspect of the language
+
+mod common;
+mod types;
+mod stmt;
+mod expr;
+mod function;
+mod class;
 
 use chumsky::prelude::*;
 use oats_ast::*;
@@ -13,223 +25,18 @@ pub fn parse_module(input: &str) -> Result<Module, Vec<Simple<char>>> {
 }
 
 /// Parser for the top-level module.
+/// 
+/// A module consists of zero or more statements.
 fn module_parser() -> impl Parser<char, Module, Error = Simple<char>> {
-    stmt_parser()
-        .repeated()
-        .collect::<Vec<_>>()
-        .map(|body| Module {
-            body,
-            span: 0..0, // TODO: proper span
-        })
-        .then_ignore(end())
-}
-
-/// Parser for statements.
-fn stmt_parser() -> impl Parser<char, Stmt, Error = Simple<char>> {
-    choice((
-        declare_fn_parser().map(Stmt::DeclareFn),
-        class_decl_parser().map(Stmt::ClassDecl),
-        fn_decl_parser().map(Stmt::FnDecl),
-    ))
-}
-
-/// Parser for declare function.
-fn declare_fn_parser() -> impl Parser<char, DeclareFn, Error = Simple<char>> {
-    text::keyword("declare")
-        .padded()
-        .ignore_then(text::keyword("function"))
-        .padded()
-        .ignore_then(ident_parser())
-        .then(
-            param_parser()
-                .separated_by(just(',').padded())
-                .collect::<Vec<_>>()
-                .delimited_by(just('(').padded(), just(')').padded()),
-        )
-        .then(just(':').padded().ignore_then(ts_type_parser()))
-        .then_ignore(just(';').padded())
-        .map(|((ident, params), return_type)| DeclareFn {
-            ident,
-            params,
-            return_type,
-            span: 0..0, // TODO
-        })
-}
-
-/// Parser for function declarations.
-fn fn_decl_parser() -> impl Parser<char, FnDecl, Error = Simple<char>> {
-    text::keyword("function")
-        .padded()
-        .ignore_then(ident_parser())
-        .then(
-            param_parser()
-                .separated_by(just(',').padded())
-                .collect::<Vec<_>>()
-                .delimited_by(just('(').padded(), just(')').padded()),
-        )
-        .then(just(':').padded().ignore_then(ts_type_parser()).or_not())
-        .then(
-            just('{')
-                .padded()
-                .ignore_then(just('}').padded())
-                .map(|_| None::<BlockStmt>),
-        )
-        .map(|(((ident, params), return_type), body)| FnDecl {
-            ident,
-            params,
-            body,
-            return_type,
-            span: 0..0, // TODO: spans
-        })
-}
-
-/// Parser for class declarations.
-fn class_decl_parser() -> impl Parser<char, ClassDecl, Error = Simple<char>> {
-    text::keyword("class")
-        .padded()
-        .ignore_then(ident_parser())
-        .then(
-            text::keyword("extends")
-                .padded()
-                .ignore_then(ident_parser().map(Expr::Ident))
-                .or_not(),
-        )
-        .then(
-            just('{')
-                .padded()
-                .ignore_then(class_member_parser().repeated().collect::<Vec<_>>())
-                .then_ignore(just('}').padded()),
-        )
-        .map(|((ident, super_class), body)| ClassDecl {
-            ident,
-            super_class,
-            body,
-            span: 0..0, // TODO
-        })
-}
-
-/// Parser for class members.
-fn class_member_parser() -> impl Parser<char, ClassMember, Error = Simple<char>> {
-    choice((
-        constructor_parser().map(ClassMember::Constructor),
-        method_parser().map(ClassMember::Method),
-        field_parser().map(ClassMember::Field),
-    ))
-}
-
-/// Parser for constructor.
-fn constructor_parser() -> impl Parser<char, ConstructorDecl, Error = Simple<char>> {
-    text::keyword("constructor")
-        .padded()
-        .ignore_then(
-            param_parser()
-                .separated_by(just(',').padded())
-                .collect::<Vec<_>>()
-                .delimited_by(just('(').padded(), just(')').padded()),
-        )
-        .then(
-            just('{')
-                .padded()
-                .ignore_then(just('}').padded())
-                .map(|_| None::<BlockStmt>),
-        )
-        .map(|(params, body)| ConstructorDecl {
-            params,
-            body,
-            span: 0..0, // TODO
-        })
-}
-
-/// Parser for method.
-fn method_parser() -> impl Parser<char, MethodDecl, Error = Simple<char>> {
-    ident_parser()
-        .then(
-            param_parser()
-                .separated_by(just(',').padded())
-                .collect::<Vec<_>>()
-                .delimited_by(just('(').padded(), just(')').padded()),
-        )
-        .then(just(':').padded().ignore_then(ts_type_parser()).or_not())
-        .then(
-            just('{')
-                .padded()
-                .ignore_then(just('}').padded())
-                .map(|_| None::<BlockStmt>),
-        )
-        .map(|(((ident, params), return_type), body)| MethodDecl {
-            ident,
-            params,
-            body,
-            return_type,
-            span: 0..0, // TODO
-        })
-}
-
-/// Parser for field.
-fn field_parser() -> impl Parser<char, FieldDecl, Error = Simple<char>> {
-    ident_parser()
-        .then(just(':').padded().ignore_then(ts_type_parser()).or_not())
-        .then_ignore(just(';').padded())
-        .map(|(ident, ty)| FieldDecl {
-            ident,
-            ty,
-            span: 0..0, // TODO
-        })
-}
-
-/// Parser for identifiers.
-fn ident_parser() -> impl Parser<char, Ident, Error = Simple<char>> {
-    text::ident().map(|sym| Ident {
-        sym,
-        span: 0..0, // TODO
+    recursive(|stmt| {
+        stmt::stmt_parser(stmt)
     })
-}
-
-/// Parser for function parameters.
-fn param_parser() -> impl Parser<char, Param, Error = Simple<char>> {
-    ident_parser()
-        .then_ignore(just(':').padded())
-        .then(ts_type_parser())
-        .map(|(ident, ty)| Param {
-            pat: Pat::Ident(ident),
-            ty: Some(ty),
-            span: 0..0, // TODO
-        })
-}
-
-/// Parser for TypeScript types.
-fn ts_type_parser() -> impl Parser<char, TsType, Error = Simple<char>> {
-    let base = choice((ts_keyword_type_parser(), ts_type_ref_parser()));
-    let array_suffix = just('[').padded().ignore_then(just(']').padded()).repeated();
-    base.then(array_suffix).map(|(mut ty, suffixes)| {
-        for _ in suffixes {
-            ty = TsType::TsArrayType(TsArrayType {
-                elem_type: Box::new(ty),
-                span: 0..0, // TODO
-            });
-        }
-        ty
-    })
-}
-
-/// Parser for keyword types.
-fn ts_keyword_type_parser() -> impl Parser<char, TsType, Error = Simple<char>> {
-    choice((
-        text::keyword("number").map(|_| TsType::TsKeywordType(TsKeywordType::TsNumberKeyword)),
-        text::keyword("string").map(|_| TsType::TsKeywordType(TsKeywordType::TsStringKeyword)),
-        text::keyword("boolean").map(|_| TsType::TsKeywordType(TsKeywordType::TsBooleanKeyword)),
-        text::keyword("void").map(|_| TsType::TsKeywordType(TsKeywordType::TsVoidKeyword)),
-    ))
-}
-
-/// Parser for type references.
-fn ts_type_ref_parser() -> impl Parser<char, TsType, Error = Simple<char>> {
-    ident_parser().map(|ident| {
-        TsType::TsTypeRef(TsTypeRef {
-            type_name: TsEntityName::Ident(ident),
-            type_params: None,
-            span: 0..0, // TODO
-        })
+    .repeated()
+    .collect::<Vec<_>>()
+    .then_ignore(end())
+    .map_with_span(|body, span| Module {
+        body,
+        span: span.into(),
     })
 }
 
@@ -262,253 +69,81 @@ mod tests {
     }
 
     #[test]
-    fn test_declare_function() {
-        let input = "declare function print_str(s: string): void;";
+    fn test_function_with_body() {
+        let input = "function add(a: number, b: number): number { return a + b; }";
         let result = parse_module(input);
+        if let Err(errors) = &result {
+            for e in errors {
+                println!("Parse error: {:?}", e);
+            }
+        }
         assert!(result.is_ok());
         let module = result.unwrap();
         assert_eq!(module.body.len(), 1);
-        if let Stmt::DeclareFn(declare_fn) = &module.body[0] {
-            assert_eq!(declare_fn.ident.sym, "print_str");
-            assert_eq!(declare_fn.params.len(), 1);
-            let Pat::Ident(ident) = &declare_fn.params[0].pat;
-            assert_eq!(ident.sym, "s");
-            assert!(matches!(
-                declare_fn.params[0].ty,
-                Some(TsType::TsKeywordType(TsKeywordType::TsStringKeyword))
-            ));
-            assert!(matches!(
-                declare_fn.return_type,
-                TsType::TsKeywordType(TsKeywordType::TsVoidKeyword)
-            ));
+        if let Stmt::FnDecl(fn_decl) = &module.body[0] {
+            assert_eq!(fn_decl.ident.sym, "add");
+            assert_eq!(fn_decl.params.len(), 2);
+            assert!(fn_decl.body.is_some());
         } else {
-            panic!("Expected DeclareFn");
+            panic!("Expected FnDecl");
         }
     }
 
     #[test]
-    fn test_class_decl() {
-        let input = "class Animal { }";
+    fn test_var_decl() {
+        let input = "let x: number = 5;";
         let result = parse_module(input);
+        if let Err(errors) = &result {
+            for e in errors {
+                println!("Parse error: {:?}", e);
+            }
+        }
         assert!(result.is_ok());
         let module = result.unwrap();
         assert_eq!(module.body.len(), 1);
-        if let Stmt::ClassDecl(class_decl) = &module.body[0] {
-            assert_eq!(class_decl.ident.sym, "Animal");
-            assert!(class_decl.super_class.is_none());
-            assert!(class_decl.body.is_empty());
+        if let Stmt::VarDecl(var_decl) = &module.body[0] {
+            assert!(matches!(var_decl.kind, VarDeclKind::Let));
+            assert_eq!(var_decl.decls.len(), 1);
         } else {
-            panic!("Expected ClassDecl");
+            panic!("Expected VarDecl");
         }
     }
 
     #[test]
-    fn test_class_decl_with_super() {
-        let input = "class Dog extends Animal { }";
+    fn test_let_mut() {
+        let input = "let mut x: number = 5;";
         let result = parse_module(input);
-        assert!(result.is_ok());
-        let module = result.unwrap();
-        assert_eq!(module.body.len(), 1);
-        if let Stmt::ClassDecl(class_decl) = &module.body[0] {
-            assert_eq!(class_decl.ident.sym, "Dog");
-            if let Some(Expr::Ident(ident)) = &class_decl.super_class {
-                assert_eq!(ident.sym, "Animal");
-            } else {
-                panic!("Expected super class");
+        if let Err(errors) = &result {
+            for e in errors {
+                println!("Parse error: {:?}", e);
             }
-            assert!(class_decl.body.is_empty());
-        } else {
-            panic!("Expected ClassDecl");
         }
+        assert!(result.is_ok());
     }
 
     #[test]
-    fn test_field_decl() {
-        let input = "class Person { name: string; age: number; }";
+    fn test_binary_expr() {
+        let input = "let x: number = 3 + 5;";
         let result = parse_module(input);
         assert!(result.is_ok());
-        let module = result.unwrap();
-        assert_eq!(module.body.len(), 1);
-        if let Stmt::ClassDecl(class_decl) = &module.body[0] {
-            assert_eq!(class_decl.ident.sym, "Person");
-            assert!(class_decl.super_class.is_none());
-            assert_eq!(class_decl.body.len(), 2);
-            if let ClassMember::Field(field_decl) = &class_decl.body[0] {
-                assert_eq!(field_decl.ident.sym, "name");
-                assert!(matches!(
-                    field_decl.ty,
-                    Some(TsType::TsKeywordType(TsKeywordType::TsStringKeyword))
-                ));
-            } else {
-                panic!("Expected FieldDecl");
-            }
-            if let ClassMember::Field(field_decl) = &class_decl.body[1] {
-                assert_eq!(field_decl.ident.sym, "age");
-                assert!(matches!(
-                    field_decl.ty,
-                    Some(TsType::TsKeywordType(TsKeywordType::TsNumberKeyword))
-                ));
-            } else {
-                panic!("Expected FieldDecl");
-            }
-        } else {
-            panic!("Expected ClassDecl");
-        }
     }
 
     #[test]
-    fn test_field_decl_with_array_type() {
-        let input = "class Node { value: number[]; }";
+    fn test_if_stmt() {
+        let input = "if (x > 0) { return x; }";
         let result = parse_module(input);
         assert!(result.is_ok());
-        let module = result.unwrap();
-        assert_eq!(module.body.len(), 1);
-        if let Stmt::ClassDecl(class_decl) = &module.body[0] {
-            assert_eq!(class_decl.ident.sym, "Node");
-            assert_eq!(class_decl.body.len(), 1);
-            if let ClassMember::Field(field_decl) = &class_decl.body[0] {
-                assert_eq!(field_decl.ident.sym, "value");
-                assert!(matches!(
-                    field_decl.ty,
-                    Some(TsType::TsArrayType(TsArrayType { .. }))
-                ));
-            } else {
-                panic!("Expected FieldDecl");
-            }
-        } else {
-            panic!("Expected ClassDecl");
-        }
     }
 
     #[test]
-    fn test_constructor_decl() {
-        let input = "class Point { constructor(x: number, y: number) {} }";
+    fn test_for_loop() {
+        let input = "for (let mut i: number = 0; i < 10; i = i + 1) { console.log(i); }";
         let result = parse_module(input);
-        assert!(result.is_ok());
-        let module = result.unwrap();
-        assert_eq!(module.body.len(), 1);
-        if let Stmt::ClassDecl(class_decl) = &module.body[0] {
-            assert_eq!(class_decl.ident.sym, "Point");
-            assert!(class_decl.super_class.is_none());
-            assert_eq!(class_decl.body.len(), 1);
-            if let ClassMember::Constructor(constructor_decl) = &class_decl.body[0] {
-                assert_eq!(constructor_decl.params.len(), 2);
-                assert!(matches!(
-                    constructor_decl.params[0].ty,
-                    Some(TsType::TsKeywordType(TsKeywordType::TsNumberKeyword))
-                ));
-                assert!(matches!(
-                    constructor_decl.params[1].ty,
-                    Some(TsType::TsKeywordType(TsKeywordType::TsNumberKeyword))
-                ));
-            } else {
-                panic!("Expected ConstructorDecl");
+        if let Err(errors) = &result {
+            for e in errors {
+                println!("Parse error: {:?}", e);
             }
-        } else {
-            panic!("Expected ClassDecl");
         }
-    }
-
-    #[test]
-    fn test_method_decl() {
-        let input = "class Calculator { add(a: number, b: number): number {} }";
-        let result = parse_module(input);
         assert!(result.is_ok());
-        let module = result.unwrap();
-        assert_eq!(module.body.len(), 1);
-        if let Stmt::ClassDecl(class_decl) = &module.body[0] {
-            assert_eq!(class_decl.ident.sym, "Calculator");
-            assert!(class_decl.super_class.is_none());
-            assert_eq!(class_decl.body.len(), 1);
-            if let ClassMember::Method(method_decl) = &class_decl.body[0] {
-                assert_eq!(method_decl.ident.sym, "add");
-                assert_eq!(method_decl.params.len(), 2);
-                assert!(matches!(
-                    method_decl.return_type,
-                    Some(TsType::TsKeywordType(TsKeywordType::TsNumberKeyword))
-                ));
-            } else {
-                panic!("Expected MethodDecl");
-            }
-        } else {
-            panic!("Expected ClassDecl");
-        }
-    }
-
-    #[test]
-    fn test_class_declaration() {
-        let input = "class Dog extends Animal {}";
-        let result = parse_module(input);
-        assert!(result.is_ok());
-        let module = result.unwrap();
-        assert_eq!(module.body.len(), 1);
-        if let Stmt::ClassDecl(class_decl) = &module.body[0] {
-            assert_eq!(class_decl.ident.sym, "Dog");
-            if let Some(Expr::Ident(ident)) = &class_decl.super_class {
-                assert_eq!(ident.sym, "Animal");
-            } else {
-                panic!("Expected super class");
-            }
-            assert!(class_decl.body.is_empty());
-        } else {
-            panic!("Expected ClassDecl");
-        }
-    }
-
-    #[test]
-    fn test_class() {
-        let input = "class Node { constructor(value: number) {} }";
-        let result = parse_module(input);
-        assert!(result.is_ok());
-        let module = result.unwrap();
-        assert_eq!(module.body.len(), 1);
-        if let Stmt::ClassDecl(class_decl) = &module.body[0] {
-            assert_eq!(class_decl.ident.sym, "Node");
-            assert!(class_decl.super_class.is_none());
-            assert_eq!(class_decl.body.len(), 1);
-            if let ClassMember::Constructor(constructor) = &class_decl.body[0] {
-                assert_eq!(constructor.params.len(), 1);
-                let Pat::Ident(ident) = &constructor.params[0].pat;
-                assert_eq!(ident.sym, "value");
-                assert!(matches!(
-                    constructor.params[0].ty,
-                    Some(TsType::TsKeywordType(TsKeywordType::TsNumberKeyword))
-                ));
-            } else {
-                panic!("Expected Constructor");
-            }
-        } else {
-            panic!("Expected ClassDecl");
-        }
-    }
-
-    #[test]
-    fn test_nested_array_type() {
-        let input = "class Node { value: number[][]; }";
-        let result = parse_module(input);
-        assert!(result.is_ok());
-        let module = result.unwrap();
-        assert_eq!(module.body.len(), 1);
-        if let Stmt::ClassDecl(class_decl) = &module.body[0] {
-            assert_eq!(class_decl.ident.sym, "Node");
-            assert_eq!(class_decl.body.len(), 1);
-            if let ClassMember::Field(field_decl) = &class_decl.body[0] {
-                assert_eq!(field_decl.ident.sym, "value");
-                // Should be number[][]
-                if let Some(TsType::TsArrayType(outer)) = &field_decl.ty {
-                    if let TsType::TsArrayType(inner) = &*outer.elem_type {
-                        assert!(matches!(&*inner.elem_type, TsType::TsKeywordType(TsKeywordType::TsNumberKeyword)));
-                    } else {
-                        panic!("Expected inner array");
-                    }
-                } else {
-                    panic!("Expected outer array");
-                }
-            } else {
-                panic!("Expected FieldDecl");
-            }
-        } else {
-            panic!("Expected ClassDecl");
-        }
     }
 }

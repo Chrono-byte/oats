@@ -70,8 +70,7 @@ pub struct VarDecl {
 /// Variable declaration kind.
 #[derive(Debug, Clone)]
 pub enum VarDeclKind {
-    Var,
-    Let,
+    Let { mutable: bool },
     Const,
 }
 
@@ -357,8 +356,21 @@ pub struct ThisExpr {
 #[derive(Debug, Clone)]
 pub enum Lit {
     Str(String),
+    I8(i8),
+    I16(i16),
+    I32(i32),
+    I64(i64),
+    I128(i128),
+    ISize(isize),
+    U8(u8),
+    U16(u16),
+    U32(u32),
+    U64(u64),
+    U128(u128),
+    USize(usize),
+    F32(f32),
+    F64(f64),
     Bool(bool),
-    Num(f64),
     Null,
 }
 

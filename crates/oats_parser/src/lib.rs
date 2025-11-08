@@ -123,6 +123,11 @@ mod tests {
     fn test_binary_expr() {
         let input = "let x: number = 3 + 5;";
         let result = parse_module(input);
+        if let Err(errors) = &result {
+            for e in errors {
+                println!("Parse error: {:?}", e);
+            }
+        }
         assert!(result.is_ok());
     }
 
@@ -130,6 +135,11 @@ mod tests {
     fn test_if_stmt() {
         let input = "if (x > 0) { return x; }";
         let result = parse_module(input);
+        if let Err(errors) = &result {
+            for e in errors {
+                println!("Parse error: {:?}", e);
+            }
+        }
         assert!(result.is_ok());
     }
 
@@ -143,5 +153,61 @@ mod tests {
             }
         }
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_var_decl_let_mut() {
+        let input = "let mut z = 100;";
+        let result = parse_module(input);
+        assert!(result.is_ok());
+        let module = result.unwrap();
+        assert_eq!(module.body.len(), 1);
+        if let Stmt::VarDecl(var_decl) = &module.body[0] {
+            assert!(matches!(var_decl.kind, VarDeclKind::Let { mutable: true }));
+            assert_eq!(var_decl.decls.len(), 1);
+            let Pat::Ident(ident) = &var_decl.decls[0].name;
+            assert_eq!(ident.sym, "z");
+            assert!(matches!(
+                var_decl.decls[0].init,
+                Some(Expr::Lit(Lit::I64(100)))
+            ));
+        } else {
+            panic!("Expected VarDecl");
+        }
+    }
+
+    #[test]
+    fn test_function_with_body() {
+        let input = "function test(): void { let x = 5; }";
+        let result = parse_module(input);
+        assert!(result.is_ok());
+        let module = result.unwrap();
+        assert_eq!(module.body.len(), 1);
+        if let Stmt::FnDecl(fn_decl) = &module.body[0] {
+            assert_eq!(fn_decl.ident.sym, "test");
+            assert!(fn_decl.params.is_empty());
+            assert!(matches!(
+                fn_decl.return_type,
+                Some(TsType::TsKeywordType(TsKeywordType::TsVoidKeyword))
+            ));
+            // Check that the body contains a statement
+            assert!(fn_decl.body.is_some());
+            let body = fn_decl.body.as_ref().unwrap();
+            assert_eq!(body.stmts.len(), 1);
+            if let Stmt::VarDecl(var_decl) = &body.stmts[0] {
+                assert!(matches!(var_decl.kind, VarDeclKind::Let { mutable: false }));
+                assert_eq!(var_decl.decls.len(), 1);
+                let Pat::Ident(ident) = &var_decl.decls[0].name;
+                assert_eq!(ident.sym, "x");
+                assert!(matches!(
+                    var_decl.decls[0].init,
+                    Some(Expr::Lit(Lit::I64(5)))
+                ));
+            } else {
+                panic!("Expected VarDecl in function body");
+            }
+        } else {
+            panic!("Expected FnDecl");
+        }
     }
 }

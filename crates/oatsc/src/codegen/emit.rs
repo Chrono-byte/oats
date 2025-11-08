@@ -244,6 +244,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
         res
     }
+
     /// Generates LLVM IR for a function declaration.
     ///
     /// This is the main entry point for compiling a user function into LLVM

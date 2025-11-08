@@ -38,6 +38,7 @@ pub enum Stmt {
     Debugger(DebuggerStmt),
     Labeled(LabeledStmt),
     DeclareFn(DeclareFn),
+    Import(ImportStmt),
 }
 
 /// Function declaration.
@@ -47,6 +48,7 @@ pub struct FnDecl {
     pub params: Vec<Param>,
     pub body: Option<BlockStmt>,
     pub return_type: Option<TsType>,
+    pub is_async: bool,
     pub span: Span,
 }
 
@@ -241,6 +243,32 @@ pub struct DeclareFn {
     pub span: Span,
 }
 
+/// Import statement.
+#[derive(Debug, Clone)]
+pub struct ImportStmt {
+    pub specifiers: Vec<ImportSpecifier>,
+    pub source: String,
+    pub span: Span,
+}
+
+/// Import specifier.
+#[derive(Debug, Clone)]
+pub enum ImportSpecifier {
+    Named {
+        local: Ident,
+        imported: Option<Ident>, // None means same as local
+        span: Span,
+    },
+    Namespace {
+        local: Ident,
+        span: Span,
+    },
+    Default {
+        local: Ident,
+        span: Span,
+    },
+}
+
 /// Class member.
 #[derive(Debug, Clone)]
 pub enum ClassMember {
@@ -282,6 +310,7 @@ pub struct Function {
     pub body: Option<BlockStmt>,
     pub return_type: Option<TsType>,
     pub span: Span,
+    pub is_async: bool,
 }
 
 /// Function parameter.
@@ -296,6 +325,44 @@ pub struct Param {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Pat {
     Ident(Ident),
+    Array(ArrayPat),
+    Object(ObjectPat),
+    Rest(RestPat),
+}
+
+/// Array pattern.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ArrayPat {
+    pub elems: Vec<Option<Pat>>,
+    pub span: Span,
+}
+
+/// Object pattern.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ObjectPat {
+    pub props: Vec<ObjectPatProp>,
+    pub span: Span,
+}
+
+/// Object pattern property.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ObjectPatProp {
+    KeyValue {
+        key: PropName,
+        value: Pat,
+        span: Span,
+    },
+    Rest {
+        arg: Ident,
+        span: Span,
+    },
+}
+
+/// Rest pattern.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RestPat {
+    pub arg: Box<Pat>,
+    pub span: Span,
 }
 
 /// Identifier.
@@ -306,7 +373,7 @@ pub struct Ident {
 }
 
 /// Property name.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum PropName {
     Ident(Ident),
     Str(String),
@@ -555,15 +622,26 @@ pub struct AssignExpr {
 /// Assignment operator.
 #[derive(Debug, Clone)]
 pub enum AssignOp {
-    Eq,
-    // Add more
+    Eq,           // =
+    PlusEq,       // +=
+    MinusEq,      // -=
+    MulEq,        // *=
+    DivEq,        // /=
+    ModEq,        // %=
+    LShiftEq,     // <<=
+    RShiftEq,     // >>=
+    URShiftEq,    // >>>=
+    BitwiseAndEq, // &=
+    BitwiseOrEq,  // |=
+    BitwiseXorEq, // ^=
+    ExpEq,        // **=
 }
 
 /// Assignment target.
 #[derive(Debug, Clone)]
 pub enum AssignTarget {
     Pat(Pat),
-    // Add more
+    Member(MemberExpr),
 }
 
 /// Sequence expression.

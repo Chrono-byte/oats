@@ -86,5 +86,5 @@ pub extern "C" fn number_to_string(num: f64) -> *mut c_char {
     let s = format!("{}", num);
     let c = std::ffi::CString::new(s).unwrap_or_default();
     // Use runtime helper to create a heap string and return its data pointer
-    runtime::string::heap_str_from_cstr_pub(c.as_ptr()) as *mut c_char
+    (unsafe { runtime::string::heap_str_from_cstr_pub(c.as_ptr()) }) as *mut c_char
 }

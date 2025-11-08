@@ -7,11 +7,11 @@ description = "Oats compiler"
 repository = "https://github.com/Chrono-byte/oats"
 
 [dependencies]
-deno_ast = "0.50.3"
+oats_parser = { path = "../oats_parser" }
+oats_ast = { path = "../oats_ast" }
 inkwell = { version = "0.6.0", features = ["llvm18-1", "llvm18-1-prefer-dynamic"] }
 anyhow = "1.0"
 url = "2.4"
-swc_ecma_lexer = "23.0.2"
 clap = { version = "4.4", features = ["derive"] }
 ureq = { version = "2.9", features = ["json"] }
 serde_json = "1.0"

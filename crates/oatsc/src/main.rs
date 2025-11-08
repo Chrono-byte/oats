@@ -1,13 +1,13 @@
 //! Main entry point for the Oats AOT compiler.
 //!
 //! This module implements the primary compilation driver that orchestrates
-//! the complete pipeline from TypeScript/Oats source files to native executables.
+//! the complete pipeline from Oats source files to native executables.
 //! The compiler supports both single-file and package-based compilation modes.
 //!
 //! # Compilation Pipeline
 //!
 //! 1. **Module Resolution**: Discovers and loads all modules from the package
-//! 2. **Parsing**: Converts source text to AST using the deno_ast TypeScript parser
+//! 2. **Parsing**: Converts source text to AST using the deno_ast parser
 //! 3. **Type Analysis**: Performs type checking and validates function signatures
 //! 4. **Code Generation**: Emits LLVM IR for all functions and top-level constructs
 //! 5. **Object Compilation**: Compiles IR to native object files via LLVM

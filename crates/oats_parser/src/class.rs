@@ -3,13 +3,13 @@
 //! This module groups all class parsing logic together for Locality of Behavior.
 //! Includes class declarations, constructors, methods, and fields.
 
-use chumsky::prelude::*;
-use oats_ast::*;
 use super::common;
 use super::expr;
+use chumsky::prelude::*;
+use oats_ast::*;
 
 /// Parser for class declarations.
-/// 
+///
 /// Pattern: `class Name extends SuperClass? { members }`
 pub fn class_decl_parser(
     stmt: impl Parser<char, Stmt, Error = Simple<char>> + Clone,
@@ -26,7 +26,11 @@ pub fn class_decl_parser(
         .then(
             just('{')
                 .padded()
-                .ignore_then(class_member_parser(stmt.clone()).repeated().collect::<Vec<_>>())
+                .ignore_then(
+                    class_member_parser(stmt.clone())
+                        .repeated()
+                        .collect::<Vec<_>>(),
+                )
                 .then_ignore(just('}').padded()),
         )
         .map_with_span(|((ident, super_class), body), span| ClassDecl {
@@ -49,7 +53,7 @@ pub fn class_member_parser(
 }
 
 /// Parser for constructors.
-/// 
+///
 /// Pattern: `constructor(params) { body }`
 fn constructor_parser(
     stmt: impl Parser<char, Stmt, Error = Simple<char>> + Clone,
@@ -66,7 +70,7 @@ fn constructor_parser(
 }
 
 /// Parser for methods.
-/// 
+///
 /// Pattern: `methodName(params): returnType? { body }`
 fn method_parser(
     stmt: impl Parser<char, Stmt, Error = Simple<char>> + Clone,
@@ -85,7 +89,7 @@ fn method_parser(
 }
 
 /// Parser for fields.
-/// 
+///
 /// Pattern: `fieldName: type?;`
 fn field_parser() -> impl Parser<char, FieldDecl, Error = Simple<char>> {
     common::ident_parser()
@@ -97,4 +101,3 @@ fn field_parser() -> impl Parser<char, FieldDecl, Error = Simple<char>> {
             span: span.into(),
         })
 }
-

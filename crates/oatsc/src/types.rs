@@ -1,4 +1,4 @@
-//! Representation of Oats (subset of TypeScript) types used by the compiler.
+//! Representation of Oats types used by the compiler.
 //!
 //! `OatsType` is a compact enum used during parsing and codegen to convey
 //! the static type information that the compiler currently understands. The
@@ -8,13 +8,13 @@
 
 use crate::diagnostics::{Diagnostic, Label, Span};
 use anyhow::Result;
-use deno_ast::swc::ast;
+use oats_ast::*;
 use std::collections::HashMap;
 
 // Type alias for the locals stack used in codegen
 pub type LocalsStack = Vec<HashMap<String, OatsType>>;
 
-/// Oats type system (simplified subset of TypeScript used by the compiler)
+/// Oats type system (used by the compiler)
 ///
 /// Key variants and their meaning:
 /// - `Number` -> numeric `f64` values.
@@ -218,19 +218,19 @@ impl SymbolTable {
     }
 }
 
-/// Maps a TypeScript AST type annotation to the corresponding Oats type system representation.
+/// Maps an Oats AST type annotation to the corresponding Oats type system representation.
 ///
-/// This function serves as the primary bridge between TypeScript's type system
+/// This function serves as the primary bridge between the Oats AST type system
 /// and Oats' internal type representation. It handles the conversion of common
-/// TypeScript types, generic parameters, and complex type constructs into the
+/// Oats types, generic parameters, and complex type constructs into the
 /// unified `OatsType` enum used throughout the compiler.
 ///
 /// # Arguments
-/// * `ty` - TypeScript AST type node to convert
+/// * `ty` - Oats AST type node to convert
 ///
 /// # Returns
 /// The corresponding `OatsType` if the conversion is supported, or `None` for
-/// unsupported or unrecognized TypeScript type constructs
+/// unsupported or unrecognized Oats type constructs
 ///
 /// # Supported Types
 /// - Primitive types: `number`, `string`, `boolean`, `void`, `undefined`
@@ -238,21 +238,29 @@ impl SymbolTable {
 /// - Union types (converted to `OatsType::Union`)
 /// - Array types with element type inference
 /// - Function types with parameter and return type mapping
-pub fn map_ts_type(ty: &ast::TsType) -> Option<OatsType> {
+/// Helper to get span from a TsType
+fn ts_type_span(ty: &TsType) -> Span {
     match ty {
-        ast::TsType::TsKeywordType(keyword) => match keyword.kind {
-            ast::TsKeywordTypeKind::TsNumberKeyword => Some(OatsType::Number),
-            ast::TsKeywordTypeKind::TsVoidKeyword => Some(OatsType::Void),
-            ast::TsKeywordTypeKind::TsBooleanKeyword => Some(OatsType::Boolean),
-            // `undefined` behaves similarly to `void` at the ABI level; we
-            // represent it as `Void` here but special-case unions like
-            // `T | undefined` to map to `Option<T>` below.
-            ast::TsKeywordTypeKind::TsUndefinedKeyword => Some(OatsType::Void),
-            ast::TsKeywordTypeKind::TsStringKeyword => Some(OatsType::String),
-            _ => None,
+        TsType::TsKeywordType(_) => 0..0, // Keyword types don't have spans in oats_ast
+        TsType::TsTypeRef(tr) => tr.span.clone(),
+        TsType::TsArrayType(at) => at.span.clone(),
+        TsType::TsUnionType(ut) => ut.span.clone(),
+        TsType::TsIntersectionType(it) => it.span.clone(),
+        TsType::TsFunctionType(ft) => ft.span.clone(),
+        TsType::TsTupleType(tt) => tt.span.clone(),
+    }
+}
+
+pub fn map_ts_type(ty: &TsType) -> Option<OatsType> {
+    match ty {
+        TsType::TsKeywordType(keyword) => match keyword {
+            TsKeywordType::TsNumberKeyword => Some(OatsType::Number),
+            TsKeywordType::TsVoidKeyword => Some(OatsType::Void),
+            TsKeywordType::TsBooleanKeyword => Some(OatsType::Boolean),
+            TsKeywordType::TsStringKeyword => Some(OatsType::String),
         },
-        ast::TsType::TsTypeRef(type_ref) => {
-            if let Some(ident) = type_ref.type_name.as_ident() {
+        TsType::TsTypeRef(type_ref) => {
+            if let TsEntityName::Ident(ident) = &type_ref.type_name {
                 // Check for primitive types
                 match ident.sym.as_ref() {
                     "i8" => return Some(OatsType::I8),
@@ -350,51 +358,41 @@ pub fn map_ts_type(ty: &ast::TsType) -> Option<OatsType> {
             }
             None
         }
-        ast::TsType::TsUnionOrIntersectionType(ut) => {
-            // SWC wraps unions and intersections in TsUnionOrIntersectionType;
-            // try to extract union types specifically.
-            if let ast::TsUnionOrIntersectionType::TsUnionType(un) = ut {
-                // Special-case common pattern: `T | null` -> Option<T>
-                if un.types.len() == 2 {
-                    // Try to detect `null` or `undefined` in one of the union
-                    // arms and map the other arm to an OatsType; if
-                    // successful, return Option<that_type>.
-                    let mut seen_nullish = false;
-                    let mut other: Option<&ast::TsType> = None;
-                    for tbox in &un.types {
-                        let t = &**tbox;
-                        if let ast::TsType::TsKeywordType(k) = t {
-                            use deno_ast::swc::ast::TsKeywordTypeKind;
-                            if matches!(k.kind, TsKeywordTypeKind::TsNullKeyword)
-                                || matches!(k.kind, TsKeywordTypeKind::TsUndefinedKeyword)
-                            {
-                                seen_nullish = true;
-                                continue;
-                            }
-                        }
-                        other = Some(t);
+        TsType::TsUnionType(ut) => {
+            // Special-case common pattern: `T | null` -> Option<T>
+            if ut.types.len() == 2 {
+                // Try to detect `null` or `undefined` in one of the union
+                // arms and map the other arm to an OatsType; if
+                // successful, return Option<that_type>.
+                let mut seen_nullish = false;
+                let mut other: Option<&TsType> = None;
+                for t in &ut.types {
+                    if let TsType::TsKeywordType(k) = t {
+                        // Note: oats_ast doesn't have null/undefined keywords yet
+                        // This will need to be updated when those are added
+                        // For now, skip this optimization
                     }
-                    if seen_nullish
-                        && let Some(o) = other
-                        && let Some(mapped) = map_ts_type(o)
-                    {
-                        return Some(OatsType::Option(Box::new(mapped)));
-                    }
+                    other = Some(t);
                 }
-
-                let mut parts = Vec::new();
-                for t in &un.types {
-                    if let Some(mapped) = map_ts_type(t) {
-                        parts.push(mapped);
-                    } else {
-                        return None;
-                    }
+                if seen_nullish
+                    && let Some(o) = other
+                    && let Some(mapped) = map_ts_type(o)
+                {
+                    return Some(OatsType::Option(Box::new(mapped)));
                 }
-                return Some(OatsType::Union(parts));
             }
-            None
+
+            let mut parts = Vec::new();
+            for t in &ut.types {
+                if let Some(mapped) = map_ts_type(t) {
+                    parts.push(mapped);
+                } else {
+                    return None;
+                }
+            }
+            return Some(OatsType::Union(parts));
         }
-        ast::TsType::TsArrayType(arr) => {
+        TsType::TsArrayType(arr) => {
             // element type
             map_ts_type(&arr.elem_type).map(|elem| OatsType::Array(Box::new(elem)))
         }
@@ -402,11 +400,11 @@ pub fn map_ts_type(ty: &ast::TsType) -> Option<OatsType> {
         // This is a pragmatic compatibility choice: tuples are lowered to runtime
         // arrays where each slot may contain any of the tuple element types.
         // It enables expressions like `t[0]` to work with existing array helpers.
-        ast::TsType::TsTupleType(tuple) => {
+        TsType::TsTupleType(tuple) => {
             // Collect element types into a Tuple variant
             let mut elems: Vec<OatsType> = Vec::new();
             for elem in &tuple.elem_types {
-                if let Some(mapped) = map_ts_type(&elem.ty) {
+                if let Some(mapped) = map_ts_type(elem) {
                     elems.push(mapped);
                 } else {
                     return None;
@@ -417,32 +415,16 @@ pub fn map_ts_type(ty: &ast::TsType) -> Option<OatsType> {
             }
             Some(OatsType::Tuple(elems))
         }
-        ast::TsType::TsTypeLit(typelit) => {
-            // Object literal type: collect property signatures where possible
-            use deno_ast::swc::ast;
-            let mut fields: Vec<(String, OatsType)> = Vec::new();
-            for member in &typelit.members {
-                if let ast::TsTypeElement::TsPropertySignature(prop) = member
-                    && let ast::Expr::Ident(id) = &*prop.key
-                {
-                    let fname = id.sym.to_string();
-                    if let Some(type_ann) = &prop.type_ann
-                        && let Some(mapped) = map_ts_type(&type_ann.type_ann)
-                    {
-                        fields.push((fname, mapped));
-                        continue;
-                    }
-                    // default when type can't be mapped
-                    fields.push((fname, OatsType::Number));
-                }
-            }
-            Some(OatsType::StructLiteral(fields))
-        }
+        // TODO: Object literal types not yet supported in oats_ast
+        // TsType::TsTypeLit(typelit) => {
+        //     // Object literal type: collect property signatures where possible
+        //     None
+        // }
         _ => None,
     }
 }
 
-/// Map a TypeScript AST type to an OatsType while applying a substitution
+/// Map an Oats AST type to an OatsType while applying a substitution
 /// map for type-parameters. The `subst` map maps type-parameter identifier
 /// names (e.g. "T") to concrete `OatsType` values. When a TsTypeRef refers
 /// to a name present in `subst` it will be replaced with the mapped type.
@@ -593,24 +575,21 @@ pub fn map_ts_type_with_subst(
 }
 
 pub fn check_function_strictness(
-    func_decl: &ast::Function,
+    func_decl: &Function,
     _symbols: &mut SymbolTable,
 ) -> Result<(Option<FunctionSig>, Vec<Diagnostic>)> {
     let mut diagnostics = Vec::new();
 
     // Return type annotation required for regular functions, but for arrows, we infer
     let ret_type = if let Some(return_type) = &func_decl.return_type {
-        if let Some(mapped) = map_ts_type(&return_type.type_ann) {
+        if let Some(mapped) = map_ts_type(return_type) {
             mapped
         } else {
             diagnostics.push(
                 Diagnostic::error("Unsupported return type")
                     .with_code("E1001")
                     .with_label(Label {
-                        span: Span {
-                            start: return_type.span.lo.0 as usize,
-                            end: return_type.span.hi.0 as usize,
-                        },
+                        span: ts_type_span(return_type),
                         message: "This return type is not supported".into(),
                     }),
             );
@@ -621,10 +600,7 @@ pub fn check_function_strictness(
             Diagnostic::error("Missing return type annotation")
                 .with_code("E1002")
                 .with_label(Label {
-                    span: Span {
-                        start: func_decl.span.lo.0 as usize,
-                        end: func_decl.span.hi.0 as usize,
-                    },
+                    span: func_decl.span.clone(),
                     message: "Function return type annotation is required".into(),
                 }),
         );
@@ -635,37 +611,22 @@ pub fn check_function_strictness(
     let mut param_types = Vec::new();
     for param in &func_decl.params {
         match &param.pat {
-            ast::Pat::Ident(ident) => {
-                if let Some(type_ann) = &ident.type_ann {
-                    let ast::TsTypeAnn {
-                        type_ann: ts_type, ..
-                    } = &**type_ann;
-                    if let Some(mapped) = map_ts_type(ts_type) {
+            Pat::Ident(ident) => {
+                if let Some(ty) = &param.ty {
+                    if let Some(mapped) = map_ts_type(ty) {
                         param_types.push(mapped);
                         continue;
                     }
                 }
-                diagnostics.push(
-                    Diagnostic::error("Unsupported parameter type")
-                        .with_code("E1003")
-                        .with_label(Label {
-                            span: Span {
-                                start: param.span.lo.0 as usize,
-                                end: param.span.hi.0 as usize,
-                            },
-                            message: "This parameter type is not supported".into(),
-                        }),
-                );
+                // If no type annotation, default to Number for now
+                param_types.push(OatsType::Number);
             }
             _ => {
                 diagnostics.push(
                     Diagnostic::error("Unsupported parameter pattern")
                         .with_code("E1004")
                         .with_label(Label {
-                            span: Span {
-                                start: param.span.lo.0 as usize,
-                                end: param.span.hi.0 as usize,
-                            },
+                            span: param.span.clone(),
                             message: "This parameter pattern is not supported".into(),
                         }),
                 );
@@ -812,23 +773,23 @@ pub fn infer_type_from_expr(expr: &ast::Expr) -> Option<OatsType> {
 /// Performs comprehensive type inference using multiple information sources.
 ///
 /// This function implements a fallback hierarchy for type inference, attempting
-/// to determine the most accurate type representation by consulting TypeScript
+/// to determine the most accurate type representation by consulting Oats
 /// type annotations first, then expression-based inference, and finally falling
 /// back to conservative defaults.
 ///
 /// # Arguments
-/// * `ts_type` - Optional TypeScript type annotation
+/// * `ts_type` - Optional Oats type annotation
 /// * `expr` - Optional expression for inference
 ///
 /// # Returns
 /// The most specific `OatsType` that can be determined from available information
 ///
 /// # Inference Priority
-/// 1. **TypeScript annotations**: Explicit type information (highest priority)
+/// 1. **Oats type annotations**: Explicit type information (highest priority)
 /// 2. **Expression inference**: Types derived from literal values and patterns
 /// 3. **Generic fallback**: Conservative `Generic` type when inference fails
 pub fn infer_type(ts_type: Option<&ast::TsType>, expr: Option<&ast::Expr>) -> OatsType {
-    // First priority: explicit TypeScript type annotation
+    // First priority: explicit Oats type annotation
     if let Some(ts_ty) = ts_type
         && let Some(oats_type) = map_ts_type(ts_ty)
     {

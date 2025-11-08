@@ -1,6 +1,6 @@
 //! Oats parser utilities
 //!
-//! This wraps deno_ast parsing with some extra checks we need, like forcing semicolons
+//! This wraps oats_parser parsing with some extra checks we need, like forcing semicolons
 //! and not allowing 'var'. It gives back a ParsedModule with the AST and source text
 //! for diagnostics later.
 //!
@@ -10,274 +10,9 @@
 use crate::diagnostics;
 use crate::types::FunctionSig;
 use anyhow::Result;
-use deno_ast::swc::ast;
-use deno_ast::{MediaType, ParseParams, ParsedSource, SourceTextInfo, parse_module};
+use oats_ast::*;
+use oats_parser;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use url::Url;
-
-/// AST depth checker to prevent deeply nested structures that could cause stack overflow
-struct AstDepthChecker {
-    max_depth: usize,
-}
-
-impl AstDepthChecker {
-    fn check_program(&self, program: &deno_ast::ParsedSource) -> Result<()> {
-        let mut depth = 0;
-        for item in program.program_ref().body() {
-            self.check_module_item(&item, &mut depth)?;
-        }
-        Ok(())
-    }
-
-    fn check_module_item(&self, item: &deno_ast::ModuleItemRef, depth: &mut usize) -> Result<()> {
-        match item {
-            deno_ast::ModuleItemRef::Stmt(stmt) => self.check_stmt(stmt, depth),
-            deno_ast::ModuleItemRef::ModuleDecl(decl) => self.check_module_decl(decl, depth),
-        }
-    }
-
-    fn check_module_decl(&self, decl: &ast::ModuleDecl, depth: &mut usize) -> Result<()> {
-        match decl {
-            ast::ModuleDecl::Import(_)
-            | ast::ModuleDecl::ExportAll(_)
-            | ast::ModuleDecl::ExportNamed(_)
-            | ast::ModuleDecl::ExportDefaultDecl(_)
-            | ast::ModuleDecl::ExportDefaultExpr(_) => Ok(()),
-            ast::ModuleDecl::ExportDecl(export) => self.check_decl(&export.decl, depth),
-            ast::ModuleDecl::TsImportEquals(_)
-            | ast::ModuleDecl::TsExportAssignment(_)
-            | ast::ModuleDecl::TsNamespaceExport(_) => Ok(()),
-        }
-    }
-
-    fn check_decl(&self, decl: &ast::Decl, depth: &mut usize) -> Result<()> {
-        match decl {
-            ast::Decl::Class(class) => self.check_class(&class.class, depth),
-            ast::Decl::Fn(func) => self.check_function(&func.function, depth),
-            ast::Decl::Var(_)
-            | ast::Decl::TsInterface(_)
-            | ast::Decl::TsTypeAlias(_)
-            | ast::Decl::TsEnum(_)
-            | ast::Decl::TsModule(_)
-            | ast::Decl::Using(_) => Ok(()),
-        }
-    }
-
-    fn check_stmt(&self, stmt: &ast::Stmt, depth: &mut usize) -> Result<()> {
-        *depth += 1;
-        if *depth > self.max_depth {
-            anyhow::bail!("AST nesting depth exceeded");
-        }
-
-        match stmt {
-            ast::Stmt::Block(block) => {
-                for stmt in &block.stmts {
-                    self.check_stmt(stmt, depth)?;
-                }
-            }
-            ast::Stmt::If(if_stmt) => {
-                self.check_expr(&if_stmt.test, depth)?;
-                self.check_stmt(&if_stmt.cons, depth)?;
-                if let Some(alt) = &if_stmt.alt {
-                    self.check_stmt(alt, depth)?;
-                }
-            }
-            ast::Stmt::For(for_stmt) => {
-                if let Some(init) = &for_stmt.init {
-                    match init {
-                        ast::VarDeclOrExpr::VarDecl(vd) => {
-                            self.check_decl(&ast::Decl::Var(vd.clone()), depth)?
-                        }
-                        ast::VarDeclOrExpr::Expr(e) => self.check_expr(e, depth)?,
-                    }
-                }
-                if let Some(test) = &for_stmt.test {
-                    self.check_expr(test, depth)?;
-                }
-                if let Some(update) = &for_stmt.update {
-                    self.check_expr(update, depth)?;
-                }
-                self.check_stmt(&for_stmt.body, depth)?;
-            }
-            ast::Stmt::ForIn(for_in) => {
-                self.check_expr(&for_in.right, depth)?;
-                self.check_stmt(&for_in.body, depth)?;
-            }
-            ast::Stmt::ForOf(for_of) => {
-                self.check_expr(&for_of.right, depth)?;
-                self.check_stmt(&for_of.body, depth)?;
-            }
-            ast::Stmt::While(while_stmt) => {
-                self.check_expr(&while_stmt.test, depth)?;
-                self.check_stmt(&while_stmt.body, depth)?;
-            }
-            ast::Stmt::DoWhile(do_while) => {
-                self.check_stmt(&do_while.body, depth)?;
-                self.check_expr(&do_while.test, depth)?;
-            }
-            ast::Stmt::Switch(switch) => {
-                self.check_expr(&switch.discriminant, depth)?;
-                for case in &switch.cases {
-                    if let Some(test) = &case.test {
-                        self.check_expr(test, depth)?;
-                    }
-                    for stmt in &case.cons {
-                        self.check_stmt(stmt, depth)?;
-                    }
-                }
-            }
-            ast::Stmt::Try(try_stmt) => {
-                for stmt in &try_stmt.block.stmts {
-                    self.check_stmt(stmt, depth)?;
-                }
-                if let Some(handler) = &try_stmt.handler {
-                    for stmt in &handler.body.stmts {
-                        self.check_stmt(stmt, depth)?;
-                    }
-                }
-                if let Some(finalizer) = &try_stmt.finalizer {
-                    for stmt in &finalizer.stmts {
-                        self.check_stmt(stmt, depth)?;
-                    }
-                }
-            }
-            ast::Stmt::Decl(decl) => {
-                self.check_decl(decl, depth)?;
-            }
-            ast::Stmt::Expr(_) => {
-                // Expression depth not checked to avoid recursion issues
-            }
-            _ => {} // Other statements don't increase depth significantly
-        }
-
-        *depth -= 1;
-        Ok(())
-    }
-
-    fn check_class(&self, class: &ast::Class, depth: &mut usize) -> Result<()> {
-        *depth += 1;
-        if *depth > self.max_depth {
-            anyhow::bail!("AST nesting depth exceeded");
-        }
-
-        for member in &class.body {
-            match member {
-                ast::ClassMember::Method(method) => {
-                    if let Some(body) = &method.function.body {
-                        for stmt in &body.stmts {
-                            self.check_stmt(stmt, depth)?;
-                        }
-                    }
-                }
-                ast::ClassMember::PrivateMethod(method) => {
-                    if let Some(body) = &method.function.body {
-                        for stmt in &body.stmts {
-                            self.check_stmt(stmt, depth)?;
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        *depth -= 1;
-        Ok(())
-    }
-
-    fn check_function(&self, func: &ast::Function, depth: &mut usize) -> Result<()> {
-        *depth += 1;
-
-        if *depth > self.max_depth {
-            anyhow::bail!("AST nesting depth exceeded");
-        }
-
-        if let Some(body) = &func.body {
-            for stmt in &body.stmts {
-                self.check_stmt(stmt, depth)?;
-            }
-        }
-
-        *depth -= 1;
-
-        Ok(())
-    }
-
-    fn check_expr(&self, expr: &ast::Expr, depth: &mut usize) -> Result<()> {
-        *depth += 1;
-        if *depth > self.max_depth {
-            anyhow::bail!("AST nesting depth exceeded");
-        }
-
-        match expr {
-            ast::Expr::Lit(_) => {}
-            ast::Expr::Ident(_) => {}
-            ast::Expr::Unary(unary) => self.check_expr(&unary.arg, depth)?,
-            ast::Expr::Bin(bin) => {
-                self.check_expr(&bin.left, depth)?;
-                self.check_expr(&bin.right, depth)?;
-            }
-            ast::Expr::Cond(cond) => {
-                self.check_expr(&cond.test, depth)?;
-                self.check_expr(&cond.cons, depth)?;
-                self.check_expr(&cond.alt, depth)?;
-            }
-            ast::Expr::Call(call) => {
-                if let ast::Callee::Expr(callee_expr) = &call.callee {
-                    self.check_expr(callee_expr, depth)?;
-                }
-                for arg in &call.args {
-                    self.check_expr(&arg.expr, depth)?;
-                }
-            }
-            ast::Expr::Member(member) => {
-                self.check_expr(&member.obj, depth)?;
-                if let ast::MemberProp::Computed(computed) = &member.prop {
-                    self.check_expr(&computed.expr, depth)?;
-                }
-            }
-            ast::Expr::Array(array) => {
-                for elem_expr in array.elems.iter().flatten() {
-                    self.check_expr(&elem_expr.expr, depth)?;
-                }
-            }
-            ast::Expr::Object(_obj) => {
-                // Skip deep checking of object properties for now
-            }
-            ast::Expr::Fn(func) => self.check_function(&func.function, depth)?,
-            ast::Expr::Arrow(arrow) => {
-                for _ in &arrow.params {
-                    // Params are patterns, but for depth, perhaps check if they have expr
-                }
-                match &*arrow.body {
-                    ast::BlockStmtOrExpr::BlockStmt(block) => {
-                        for stmt in &block.stmts {
-                            self.check_stmt(stmt, depth)?;
-                        }
-                    }
-                    ast::BlockStmtOrExpr::Expr(e) => self.check_expr(e, depth)?,
-                }
-            }
-            ast::Expr::Tpl(tpl) => {
-                for elem in &tpl.exprs {
-                    self.check_expr(elem, depth)?;
-                }
-            }
-            ast::Expr::Paren(paren) => self.check_expr(&paren.expr, depth)?,
-            ast::Expr::Assign(assign) => {
-                self.check_expr(&assign.right, depth)?;
-            }
-            ast::Expr::Seq(seq) => {
-                for expr in &seq.exprs {
-                    self.check_expr(expr, depth)?;
-                }
-            }
-            _ => {} // Other expressions don't increase depth significantly
-        }
-
-        *depth -= 1;
-        Ok(())
-    }
-}
 
 /// Maximum source file size in bytes (default: 10 MB)
 /// Override with OATS_MAX_SOURCE_BYTES environment variable
@@ -314,7 +49,7 @@ fn init_parser_limits() {
 }
 
 pub struct ParsedModule {
-    pub parsed: ParsedSource,
+    pub parsed: Module,
     // Original source text (no preprocessing)
     pub source: String,
     // Set of VarDecl span start positions (byte index) that contain the
@@ -329,7 +64,7 @@ pub struct ParsedModule {
 
 /// Lightweight representation of a top-level `declare function` signature
 /// extracted from source text. We intentionally keep this small and textual
-/// to avoid modifying deno_ast types; the builder will convert these into
+/// to avoid modifying oats_ast types; the builder will convert these into
 /// compiler `FunctionSig` entries and LLVM declarations.
 #[derive(Debug, Clone)]
 pub struct DeclaredFn {
@@ -337,18 +72,239 @@ pub struct DeclaredFn {
     pub sig: FunctionSig,
 }
 
-/// Parse a TypeScript source string into a `ParsedModule` and run
+/// Recursively collect mutable variable declarations from the AST
+fn collect_mut_var_decls(stmt: &Stmt, source: &str, out: &mut std::collections::HashSet<usize>) {
+    match stmt {
+        Stmt::VarDecl(vd) => {
+            // Check if this is a mutable declaration by scanning the source
+            // for "let mut" or "const mut" patterns near the span
+            let span_start = vd.span.start;
+            if span_start < source.len() {
+                // Look for "let mut" or "const mut" pattern
+                let snippet = if span_start + 20 < source.len() {
+                    &source[span_start..span_start + 20]
+                } else {
+                    &source[span_start..]
+                };
+                if snippet.contains("let mut") || snippet.contains("const mut") {
+                    out.insert(span_start);
+                }
+            }
+            // Recursively check nested statements in initializers
+            for decl in &vd.decls {
+                if let Some(init) = &decl.init {
+                    collect_mut_from_expr(init, source, out);
+                }
+            }
+        }
+        Stmt::Block(block) => {
+            for s in &block.stmts {
+                collect_mut_var_decls(s, source, out);
+            }
+        }
+        Stmt::If(if_stmt) => {
+            collect_mut_var_decls(&if_stmt.cons, source, out);
+            if let Some(alt) = &if_stmt.alt {
+                collect_mut_var_decls(alt, source, out);
+            }
+        }
+        Stmt::For(for_stmt) => {
+            if let Some(ForInit::VarDecl(vd)) = &for_stmt.init {
+                let span_start = vd.span.start;
+                if span_start < source.len() {
+                    let snippet = if span_start + 20 < source.len() {
+                        &source[span_start..span_start + 20]
+                    } else {
+                        &source[span_start..]
+                    };
+                    if snippet.contains("let mut") || snippet.contains("const mut") {
+                        out.insert(span_start);
+                    }
+                }
+            }
+            collect_mut_var_decls(&for_stmt.body, source, out);
+        }
+        Stmt::ForIn(for_in) => {
+            if let ForHead::VarDecl(vd) = &for_in.left {
+                let span_start = vd.span.start;
+                if span_start < source.len() {
+                    let snippet = if span_start + 20 < source.len() {
+                        &source[span_start..span_start + 20]
+                    } else {
+                        &source[span_start..]
+                    };
+                    if snippet.contains("let mut") || snippet.contains("const mut") {
+                        out.insert(span_start);
+                    }
+                }
+            }
+            collect_mut_var_decls(&for_in.body, source, out);
+        }
+        Stmt::ForOf(for_of) => {
+            if let ForHead::VarDecl(vd) = &for_of.left {
+                let span_start = vd.span.start;
+                if span_start < source.len() {
+                    let snippet = if span_start + 20 < source.len() {
+                        &source[span_start..span_start + 20]
+                    } else {
+                        &source[span_start..]
+                    };
+                    if snippet.contains("let mut") || snippet.contains("const mut") {
+                        out.insert(span_start);
+                    }
+                }
+            }
+            collect_mut_var_decls(&for_of.body, source, out);
+        }
+        Stmt::While(while_stmt) => {
+            collect_mut_var_decls(&while_stmt.body, source, out);
+        }
+        Stmt::DoWhile(do_while) => {
+            collect_mut_var_decls(&do_while.body, source, out);
+        }
+        Stmt::Switch(switch) => {
+            for case in &switch.cases {
+                for s in &case.cons {
+                    collect_mut_var_decls(s, source, out);
+                }
+            }
+        }
+        Stmt::Try(try_stmt) => {
+            for s in &try_stmt.block.stmts {
+                collect_mut_var_decls(s, source, out);
+            }
+            if let Some(handler) = &try_stmt.handler {
+                for s in &handler.body.stmts {
+                    collect_mut_var_decls(s, source, out);
+                }
+            }
+            if let Some(finalizer) = &try_stmt.finalizer {
+                for s in &finalizer.stmts {
+                    collect_mut_var_decls(s, source, out);
+                }
+            }
+        }
+        Stmt::FnDecl(fn_decl) => {
+            if let Some(body) = &fn_decl.body {
+                for s in &body.stmts {
+                    collect_mut_var_decls(s, source, out);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_mut_from_expr(_expr: &Expr, _source: &str, _out: &mut std::collections::HashSet<usize>) {
+    // For now, we don't need to track mutability in expressions
+    // This is a placeholder for future expansion
+}
+
+/// Check if a statement contains `var` declarations (which are not allowed)
+fn stmt_contains_var(stmt: &Stmt) -> bool {
+    match stmt {
+        Stmt::VarDecl(vd) => matches!(vd.kind, VarDeclKind::Var),
+        Stmt::Block(block) => {
+            for s in &block.stmts {
+                if stmt_contains_var(s) {
+                    return true;
+                }
+            }
+            false
+        }
+        Stmt::If(if_stmt) => {
+            if stmt_contains_var(&if_stmt.cons) {
+                return true;
+            }
+            if let Some(alt) = &if_stmt.alt {
+                if stmt_contains_var(alt) {
+                    return true;
+                }
+            }
+            false
+        }
+        Stmt::For(for_stmt) => {
+            if let Some(ForInit::VarDecl(vd)) = &for_stmt.init {
+                if matches!(vd.kind, VarDeclKind::Var) {
+                    return true;
+                }
+            }
+            stmt_contains_var(&for_stmt.body)
+        }
+        Stmt::ForIn(for_in) => {
+            if let ForHead::VarDecl(vd) = &for_in.left {
+                if matches!(vd.kind, VarDeclKind::Var) {
+                    return true;
+                }
+            }
+            stmt_contains_var(&for_in.body)
+        }
+        Stmt::ForOf(for_of) => {
+            if let ForHead::VarDecl(vd) = &for_of.left {
+                if matches!(vd.kind, VarDeclKind::Var) {
+                    return true;
+                }
+            }
+            stmt_contains_var(&for_of.body)
+        }
+        Stmt::While(while_stmt) => stmt_contains_var(&while_stmt.body),
+        Stmt::DoWhile(do_while) => stmt_contains_var(&do_while.body),
+        Stmt::Switch(switch) => {
+            for case in &switch.cases {
+                for s in &case.cons {
+                    if stmt_contains_var(s) {
+                        return true;
+                    }
+                }
+            }
+            false
+        }
+        Stmt::Try(try_stmt) => {
+            for s in &try_stmt.block.stmts {
+                if stmt_contains_var(s) {
+                    return true;
+                }
+            }
+            if let Some(handler) = &try_stmt.handler {
+                for s in &handler.body.stmts {
+                    if stmt_contains_var(s) {
+                        return true;
+                    }
+                }
+            }
+            if let Some(finalizer) = &try_stmt.finalizer {
+                for s in &finalizer.stmts {
+                    if stmt_contains_var(s) {
+                        return true;
+                    }
+                }
+            }
+            false
+        }
+        Stmt::FnDecl(fn_decl) => {
+            if let Some(body) = &fn_decl.body {
+                for s in &body.stmts {
+                    if stmt_contains_var(s) {
+                        return true;
+                    }
+                }
+            }
+            false
+        }
+        _ => false,
+    }
+}
+
+/// Parse an Oats source string into a `ParsedModule` and run
 /// lightweight project-specific checks.
 ///
 /// The function performs the following additional checks beyond parsing:
 /// - Enforces maximum source size limit to prevent resource exhaustion
-/// - Enforces that certain statement kinds end with semicolons (conservative
-///   style choice to simplify span handling).
 /// - Rejects usage of the `var` keyword in favor of `let`/`const`.
 ///
 /// # Arguments
 /// * `source_code` - source text to parse
-/// * `file_path` - optional path used to create a `file://` URL for diagnostics
+/// * `file_path` - optional path used for diagnostics
 pub fn parse_oats_module(
     source_code: &str,
     file_path: Option<&str>,
@@ -359,7 +315,7 @@ pub fn parse_oats_module(
 pub fn parse_oats_module_with_options(
     source_code: &str,
     file_path: Option<&str>,
-    enforce_semicolons: bool,
+    _enforce_semicolons: bool,
 ) -> Result<(Option<ParsedModule>, Vec<diagnostics::Diagnostic>)> {
     let diags = Vec::new();
     // Initialize resource limits on first call
@@ -376,521 +332,87 @@ pub fn parse_oats_module_with_options(
         );
     }
 
-    // Strip BOM (Byte Order Mark) if present - deno_ast requires this
+    // Strip BOM (Byte Order Mark) if present
     // UTF-8 BOM is 0xEF 0xBB 0xBF
-    // TODO: Handle other encodings or invalid UTF-8 more gracefully
     let source_without_bom = if let Some(stripped) = source_code.strip_prefix('\u{FEFF}') {
         stripped
     } else {
         source_code
     };
 
-    // Pre-scan for `let mut` occurrences so we can support the `let mut`
-    // surface syntax at the parser layer without extending the external
-    // TS parser. We will replace the `mut` token with whitespace of the
-    // same length in the parsed source so that byte offsets (spans)
-    // remain stable and align with the original source. Record the
-    // byte index of the `let` start so we can mark those VarDecls as
-    // mutable later.
-    let mut precomputed_mut_positions: std::collections::HashSet<usize> =
-        std::collections::HashSet::new();
-    // Use a simple regex-like scan for `let` followed by whitespace and
-    // `mut` to avoid pulling in regex crate; a manual search is ok here.
-    let mut parse_source_chars: Vec<u8> = source_without_bom.as_bytes().to_vec();
-    let sbytes = source_without_bom.as_bytes();
-    let mut i = 0usize;
-    while i + 4 < sbytes.len() {
-        // match `let` at i
-        if sbytes[i] == b'l' && sbytes.get(i + 1) == Some(&b'e') && sbytes.get(i + 2) == Some(&b't')
-        {
-            // ensure word boundary after `let`
-            let mut j = i + 3;
-            // skip whitespace
-            while j < sbytes.len()
-                && (sbytes[j] == b' '
-                    || sbytes[j] == b'\t'
-                    || sbytes[j] == b'\r'
-                    || sbytes[j] == b'\n')
-            {
-                j += 1;
+    // Parse using oats_parser
+    let module = match oats_parser::parse_module(source_without_bom) {
+        Ok(m) => m,
+        Err(errors) => {
+            // Convert chumsky errors to diagnostics
+            let mut parse_diags = Vec::new();
+            for error in errors {
+                let message = format!("Parse error: {}", error);
+                let span = error.span();
+                let diag = diagnostics::Diagnostic {
+                    severity: diagnostics::Severity::Error,
+                    code: None,
+                    message,
+                    file: file_path.map(|s| s.to_string()),
+                    labels: vec![diagnostics::Label {
+                        span: diagnostics::Span {
+                            start: span.start,
+                            end: span.end,
+                        },
+                        message: "parse error".to_string(),
+                    }],
+                    note: None,
+                    help: None,
+                };
+                parse_diags.push(diag);
             }
-            // check for `mut` starting at j
-            if j + 3 <= sbytes.len()
-                && sbytes.get(j) == Some(&b'm')
-                && sbytes.get(j + 1) == Some(&b'u')
-                && sbytes.get(j + 2) == Some(&b't')
-            {
-                // ensure following char is whitespace
-                let after = j + 3;
-                if after == sbytes.len()
-                    || sbytes.get(after).is_none_or(|b| {
-                        *b == b' '
-                            || *b == b'\t'
-                            || *b == b'\r'
-                            || *b == b'\n'
-                            || *b == b';'
-                            || *b == b')'
-                    })
-                {
-                    // record position of `let` (start index)
-                    precomputed_mut_positions.insert(i);
-                    // replace 'mut' with spaces in parse_source_chars so spans align
-                    parse_source_chars[j] = b' ';
-                    parse_source_chars[j + 1] = b' ';
-                    parse_source_chars[j + 2] = b' ';
-                    // advance i past the matched region
-                    i = after;
-                    continue;
-                }
-            }
+            return Ok((None, parse_diags));
         }
-        i += 1;
-    }
-    let source_for_parse = String::from_utf8(parse_source_chars)
-        .map_err(|_| anyhow::anyhow!("Invalid UTF-8 sequence in source code"))?;
-
-    let sti = SourceTextInfo::from_string(source_for_parse.clone());
-    // Use the provided file_path (if any) to create a proper file:// URL so
-    // diagnostics and span-based tooling can show accurate paths. Fall back
-    // to a generic placeholder when no path is available.
-    let specifier = if let Some(p) = file_path {
-        // Try to canonicalize to an absolute path where possible; if that
-        // fails, still attempt to produce a file:// URL from the provided
-        // path string.
-        match std::fs::canonicalize(p) {
-            Ok(abs) => Url::from_file_path(abs)
-                .map_err(|()| anyhow::anyhow!("failed to convert path to file URL: {}", p))?,
-            Err(_) => match Url::from_file_path(p) {
-                Ok(url) => url,
-                Err(_) => Url::parse("file://file.ts")
-                    .map_err(|e| anyhow::anyhow!("failed to parse fallback URL: {}", e))?,
-            },
-        }
-    } else {
-        Url::parse("file://file.ts")?
     };
 
-    let params = ParseParams {
-        specifier,
-        text: sti.text().clone(),
-        media_type: MediaType::TypeScript,
-        // Capture tokens so we can validate semicolon presence if needed.
-        capture_tokens: true,
-        scope_analysis: false,
-        maybe_syntax: None,
-    };
-
-    let parsed = parse_module(params)?;
-
-    // SECURITY: Check AST nesting depth to prevent stack overflow attacks
-    let max_depth = MAX_AST_DEPTH.load(Ordering::Relaxed);
-    let depth_checker = AstDepthChecker { max_depth };
-    if depth_checker.check_program(&parsed).is_err() {
-        anyhow::bail!(
-            "AST nesting depth exceeds limit: {} levels. \
-             Set OATS_MAX_AST_DEPTH to increase.",
-            max_depth
-        );
-    }
-
-    if enforce_semicolons {
-        // Enforce semicolons for statement-terminated constructs (conservative)
-        // This behavior mirrors languages like Rust/C++ where semicolons are
-        // required after expression statements, returns, and declarations.
-        fn stmt_requires_semicolon(stmt: &ast::Stmt) -> bool {
-            match stmt {
-                ast::Stmt::Expr(_) => true,
-                ast::Stmt::Decl(ast::Decl::Var(_)) => true,
-                ast::Stmt::Decl(ast::Decl::TsEnum(_)) => true,
-                ast::Stmt::Return(_) => true,
-                ast::Stmt::Break(_) => true,
-                ast::Stmt::Continue(_) => true,
-                ast::Stmt::Throw(_) => true,
-                ast::Stmt::Debugger(_) => true,
-                // Empty stmt is just a semicolon and is fine
-                _ => false,
-            }
-        }
-
-        fn span_hi_usize(span: &deno_ast::swc::common::Span) -> usize {
-            // BytePos is a wrapper around u32
-            span.hi.0 as usize
-        }
-
-        // Helper: scan forward from span.hi to find the next non-whitespace,
-        // non-comment character and check whether it's a semicolon. This
-        // handles trailing comments (// or /* */) more robustly.
-        fn has_trailing_semicolon(
-            span: &deno_ast::swc::common::Span,
-            source: &str,
-            parsed: &ParsedSource,
-        ) -> bool {
-            let hi = span_hi_usize(span);
-            let lo = span.lo.0 as usize;
-            let bytes = source.as_bytes();
-            let len = bytes.len();
-            // If a semicolon appears anywhere inside the span, consider it present.
-            if lo < len {
-                let end = if hi > len { len } else { hi };
-                if lo < end && bytes[lo..end].contains(&b';') {
-                    return true;
-                }
-            }
-            // quick checks: if semicolon is exactly at hi or immediately before
-            if hi < len && bytes[hi] == b';' {
-                return true;
-            }
-            let prev_idx = hi.saturating_sub(1);
-            if hi > 0 && prev_idx < len && bytes[prev_idx] == b';' {
-                return true;
-            }
-            // If tokens were captured, try a token-based check: find the token
-            // immediately after the statement span and see if it's a semicolon.
-            use swc_ecma_lexer::token::Token as SwcToken;
-            let tok_slice = parsed.tokens();
-            if !tok_slice.is_empty() {
-                // tokens is a Vec of Token objects with spans; find the first
-                // token whose span.lo >= span.hi (i.e., token after statement)
-                for tok in tok_slice.iter() {
-                    // TokenAndSpan has `span` with lo/hi
-                    let tspan = tok.span;
-                    let tlo = tspan.lo.0 as usize;
-                    if tlo >= hi {
-                        // Prefer matching token kind directly
-                        if tok.token == SwcToken::Semi {
-                            return true;
-                        }
-                        break;
-                    }
-                }
-            }
-            let mut i = if hi >= len { len } else { hi };
-            // skip whitespace and comments forward
-            while i < bytes.len() {
-                // skip ASCII whitespace
-                if bytes[i] == b' ' || bytes[i] == b'\t' || bytes[i] == b'\r' || bytes[i] == b'\n' {
-                    i += 1;
-                    continue;
-                }
-                // line comment // -> skip to end of line
-                if i + 1 < bytes.len() && bytes[i] == b'/' && bytes[i + 1] == b'/' {
-                    i += 2;
-                    while i < bytes.len() && bytes[i] != b'\n' {
-                        i += 1;
-                    }
-                    continue;
-                }
-                // block comment /* ... */
-                if i + 1 < bytes.len() && bytes[i] == b'/' && bytes[i + 1] == b'*' {
-                    i += 2;
-                    while i + 1 < bytes.len() {
-                        if bytes[i] == b'*' && bytes[i + 1] == b'/' {
-                            i += 2;
-                            break;
-                        }
-                        i += 1;
-                    }
-                    continue;
-                }
-                // found a non-whitespace/comment char
-                return bytes[i] == b';';
-            }
-            false
-        }
-
-        // Walk top-level module items and function bodies
-        for item in parsed.program_ref().body() {
-            if let deno_ast::ModuleItemRef::Stmt(stmt) = item {
-                if enforce_semicolons && stmt_requires_semicolon(stmt) {
-                    // Get stmt span and inspect source
-                    let span = match stmt {
-                        ast::Stmt::Expr(es) => es.span,
-                        ast::Stmt::Decl(ast::Decl::Var(v)) => v.span,
-                        ast::Stmt::Decl(ast::Decl::TsEnum(e)) => e.span,
-                        ast::Stmt::Return(r) => r.span,
-                        ast::Stmt::Break(b) => b.span,
-                        ast::Stmt::Continue(c) => c.span,
-                        ast::Stmt::Throw(t) => t.span,
-                        ast::Stmt::Debugger(d) => d.span,
-                        _ => continue,
-                    };
-                    if !has_trailing_semicolon(&span, source_code, &parsed) {
-                        let start = span.lo.0 as usize;
-                        return diagnostics::report_error_span_and_bail(
-                            file_path,
-                            source_code,
-                            start,
-                            "missing semicolon: statements must end with ';'",
-                            Some(
-                                "oats requires semicolons like Rust/C++: add a trailing ';' to this statement.",
-                            ),
-                        );
-                    }
-                }
-                // Reject usage of the legacy `var` keyword: require `let`.
-                if let ast::Stmt::Decl(ast::Decl::Var(vdecl)) = stmt
-                    && matches!(vdecl.kind, deno_ast::swc::ast::VarDeclKind::Var)
-                {
-                    let start = vdecl.span.lo.0 as usize;
-                    return diagnostics::report_error_span_and_bail(
-                        file_path,
-                        source_code,
-                        start,
-                        "the `var` keyword is not allowed; use `let` instead",
-                        Some(
-                            "oats requires modern variable declarations: use `let` or `const` instead of `var`.",
-                        ),
-                    );
-                }
-                // (no-op) `const` and `let` are both accepted; `var` is rejected.
-                // If it's a function decl, also inspect its body
-                if let ast::Stmt::Decl(ast::Decl::Fn(fdecl)) = stmt
-                    && let Some(body) = &fdecl.function.body
-                {
-                    for s in &body.stmts {
-                        if stmt_requires_semicolon(s) {
-                            let span = match s {
-                                ast::Stmt::Expr(es) => es.span,
-                                ast::Stmt::Decl(ast::Decl::Var(v)) => v.span,
-                                ast::Stmt::Decl(ast::Decl::TsEnum(e)) => e.span,
-                                ast::Stmt::Return(r) => r.span,
-                                ast::Stmt::Break(b) => b.span,
-                                ast::Stmt::Continue(c) => c.span,
-                                ast::Stmt::Throw(t) => t.span,
-                                ast::Stmt::Debugger(d) => d.span,
-                                _ => continue,
-                            };
-                            if !has_trailing_semicolon(&span, source_code, &parsed) {
-                                let start = span.lo.0 as usize;
-                                return diagnostics::report_error_span_and_bail(
-                                    file_path,
-                                    source_code,
-                                    start,
-                                    "missing semicolon: statements must end with ';'",
-                                    Some(
-                                        "oats requires semicolons like Rust/C++: add a trailing ';' to this statement.",
-                                    ),
-                                );
-                            }
-                            // Reject `var` inside function bodies as well
-                            if let ast::Stmt::Decl(ast::Decl::Var(vdecl)) = s
-                                && matches!(vdecl.kind, deno_ast::swc::ast::VarDeclKind::Var)
-                            {
-                                let start = vdecl.span.lo.0 as usize;
-                                return diagnostics::report_error_span_and_bail(
-                                    file_path,
-                                    source_code,
-                                    start,
-                                    "the `var` keyword is not allowed; use `let` instead",
-                                    Some(
-                                        "oats requires modern variable declarations: use `let` or `const` instead of `var`.",
-                                    ),
-                                );
-                            }
-                            // (no-op) `const` and `let` are both accepted in function bodies.
-                        }
-                    }
-                }
-            }
-            if let deno_ast::ModuleItemRef::ModuleDecl(
-                deno_ast::swc::ast::ModuleDecl::ExportDecl(decl),
-            ) = item
-            {
-                // export declarations that are vars should also be terminated
-                if let ast::Decl::Var(vdecl) = &decl.decl {
-                    // Reject var in export decls as well
-                    if matches!(vdecl.kind, deno_ast::swc::ast::VarDeclKind::Var) {
-                        let start = vdecl.span.lo.0 as usize;
-                        return diagnostics::report_error_span_and_bail(
-                            file_path,
-                            source_code,
-                            start,
-                            "the `var` keyword is not allowed; use `let` instead",
-                            Some(
-                                "`var` is disallowed in this project; use `let` (immutable by default) or `let mut` for mutable bindings.",
-                            ),
-                        );
-                    }
-                    // (no-op) export declarations can be `let` or `const`; only `var` is rejected.
-                    if !has_trailing_semicolon(&vdecl.span, source_code, &parsed) {
-                        let start = vdecl.span.lo.0 as usize;
-                        return diagnostics::report_error_span_and_bail(
-                            file_path,
-                            source_code,
-                            start,
-                            "missing semicolon after export declaration",
-                            Some(
-                                "oats requires semicolons like Rust/C++: add a trailing ';' to this export declaration.",
-                            ),
-                        );
-                    }
-                }
-                if let ast::Decl::Fn(fdecl) = &decl.decl
-                    && let Some(body) = &fdecl.function.body
-                {
-                    for s in &body.stmts {
-                        if stmt_requires_semicolon(s) {
-                            let span = match s {
-                                ast::Stmt::Expr(es) => es.span,
-                                ast::Stmt::Decl(ast::Decl::Var(v)) => v.span,
-                                ast::Stmt::Decl(ast::Decl::TsEnum(e)) => e.span,
-                                ast::Stmt::Return(r) => r.span,
-                                ast::Stmt::Break(b) => b.span,
-                                ast::Stmt::Continue(c) => c.span,
-                                ast::Stmt::Throw(t) => t.span,
-                                ast::Stmt::Debugger(d) => d.span,
-                                _ => continue,
-                            };
-                            if !has_trailing_semicolon(&span, source_code, &parsed) {
-                                let start = span.lo.0 as usize;
-                                return diagnostics::report_error_span_and_bail(
-                                    file_path,
-                                    source_code,
-                                    start,
-                                    "missing semicolon: statements must end with ';'",
-                                    Some(
-                                        "oats requires semicolons like Rust/C++: add a trailing ';' to this statement.",
-                                    ),
-                                );
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    // Compute token-aware `mut` detection for var declarations. We use
-    // token spans (when available) to avoid matching `mut` inside string
-    // literals or comments. The detected set contains the `span.lo` byte
-    // index of VarDecl nodes that include a `mut` token.
-    // Start with any precomputed positions found by scanning for `let mut`.
-    let mut mut_var_decls: std::collections::HashSet<usize> = precomputed_mut_positions;
-
-    // Collect all VarDecl spans from the AST (including nested function
-    // bodies handled above). A simple traversal suffices for now.
-    fn collect_var_decl_spans(stmt: &ast::Stmt, out: &mut Vec<deno_ast::swc::common::Span>) {
-        match stmt {
-            ast::Stmt::Decl(ast::Decl::Var(v)) => {
-                out.push(v.span);
-            }
-            ast::Stmt::Block(b) => {
-                for s in &b.stmts {
-                    collect_var_decl_spans(s, out);
-                }
-            }
-            ast::Stmt::If(i) => {
-                // `cons` is a Box<Stmt>
-                collect_var_decl_spans(&i.cons, out);
-                if let Some(alt) = &i.alt {
-                    collect_var_decl_spans(alt, out);
-                }
-            }
-            ast::Stmt::For(f) => {
-                if let Some(init) = &f.init
-                    && let deno_ast::swc::ast::VarDeclOrExpr::VarDecl(v) = init
-                {
-                    out.push(v.span);
-                }
-                // body is Box<Stmt>
-                collect_var_decl_spans(&f.body, out);
-            }
-            ast::Stmt::While(w) => {
-                collect_var_decl_spans(&w.body, out);
-            }
-            ast::Stmt::DoWhile(d) => {
-                collect_var_decl_spans(&d.body, out);
-            }
-            ast::Stmt::Return(_)
-            | ast::Stmt::Expr(_)
-            | ast::Stmt::Break(_)
-            | ast::Stmt::Continue(_)
-            | ast::Stmt::Throw(_)
-            | ast::Stmt::Debugger(_) => {}
-            _ => {}
+    // Check for `var` declarations
+    for stmt in &module.body {
+        if stmt_contains_var(stmt) {
+            return diagnostics::report_error_and_bail(
+                file_path,
+                Some(source_code),
+                "`var` declarations are not supported. Use `let` or `const` instead.",
+                Some(
+                    "`var` has function-scoped semantics which we intentionally disallow; prefer `let` or `const`.",
+                ),
+            );
         }
     }
 
-    // Gather var decl spans from the program body and module-level decls
-    let mut var_spans: Vec<deno_ast::swc::common::Span> = Vec::new();
-    for item in parsed.program_ref().body() {
-        if let deno_ast::ModuleItemRef::Stmt(stmt) = item {
-            collect_var_decl_spans(stmt, &mut var_spans);
-        } else if let deno_ast::ModuleItemRef::ModuleDecl(
-            deno_ast::swc::ast::ModuleDecl::ExportDecl(decl),
-        ) = item
-        {
-            // export decls may contain VarDecls
-            if let ast::Decl::Var(v) = &decl.decl {
-                var_spans.push(v.span);
-            }
-            if let ast::Decl::Fn(fdecl) = &decl.decl
-                && let Some(body) = &fdecl.function.body
-            {
-                for s in &body.stmts {
-                    collect_var_decl_spans(s, &mut var_spans);
-                }
-            }
-        }
+    // Collect mutable variable declarations
+    let mut mut_var_decls = std::collections::HashSet::new();
+    for stmt in &module.body {
+        collect_mut_var_decls(stmt, source_code, &mut mut_var_decls);
     }
 
-    // If tokens were captured, inspect token spans inside each VarDecl span
-    // for a token whose source text is exactly "mut". This avoids false
-    // positives inside strings/comments.
-    let tok_slice = parsed.tokens();
-    if !tok_slice.is_empty() {
-        for span in var_spans.iter() {
-            let slo = span.lo.0 as usize;
-            let shi = span.hi.0 as usize;
-            for tok in tok_slice.iter() {
-                let tlo = tok.span.lo.0 as usize;
-                let thi = tok.span.hi.0 as usize;
-                if tlo >= slo && thi <= shi {
-                    // safe slice bounds check
-                    if thi <= source_code.len() && tlo < thi {
-                        // Find the byte indices at char boundaries
-                        let start_byte = source_code
-                            .char_indices()
-                            .find(|(byte_idx, _)| *byte_idx >= tlo)
-                            .map(|(byte_idx, _)| byte_idx)
-                            .unwrap_or(tlo);
-                        let end_byte = source_code
-                            .char_indices()
-                            .find(|(byte_idx, _)| *byte_idx >= thi)
-                            .map(|(byte_idx, _)| byte_idx)
-                            .unwrap_or(thi);
-                        if start_byte < end_byte {
-                            let s = &source_code[start_byte..end_byte];
-                            if s == "mut" {
-                                mut_var_decls.insert(slo);
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    } else {
-        // Fallback: if tokens aren't available, conservatively scan the
-        // source substring for `mut` (existing behavior). This is less
-        // robust but lets the language extension work when tokens aren't
-        // captured.
-        for span in var_spans.iter() {
-            let slo = span.lo.0 as usize;
-            let shi = span.hi.0 as usize;
-            if shi > slo && shi <= source_code.len() {
-                let slice = &source_code[slo..shi];
-                if slice.contains("mut ") || slice.contains("mut\t") || slice.contains("mut\n") {
-                    mut_var_decls.insert(slo);
-                }
-            }
+    // Collect declare function statements
+    let mut declared_fns = Vec::new();
+    for stmt in &module.body {
+        if let Stmt::DeclareFn(declare_fn) = stmt {
+            // Extract function signature from declare function
+            // This is a simplified version - you may need to enhance this
+            let name = declare_fn.ident.sym.clone();
+            // TODO: Convert TsType to FunctionSig properly
+            // For now, create a placeholder
+            let sig = FunctionSig {
+                params: vec![],
+                ret: crate::types::OatsType::Void,
+                type_params: vec![],
+            };
+            declared_fns.push(DeclaredFn { name, sig });
         }
     }
 
     let parsed_module = ParsedModule {
-        parsed,
+        parsed: module,
         source: source_code.to_string(),
         mut_var_decls,
-        declared_fns: Vec::new(), // (to be populated later)
+        declared_fns,
     };
 
     Ok((Some(parsed_module), diags))

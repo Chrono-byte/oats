@@ -566,7 +566,9 @@ impl<'a> CodeGen<'a> {
                                 };
                                 if let Some(class_name) = class_name {
                                     let method_fn_name = format!("{}_{}", class_name, method_name);
-                                    if let Some(method_fn) = self.module.get_function(&method_fn_name) {
+                                    if let Some(method_fn) =
+                                        self.module.get_function(&method_fn_name)
+                                    {
                                         // Call the class method
                                         let cs = match self.builder.build_call(
                                             method_fn,

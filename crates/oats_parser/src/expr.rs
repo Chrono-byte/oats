@@ -3,14 +3,14 @@
 //! This module groups all expression parsing logic together for Locality of Behavior.
 //! Expressions include literals, operators, function calls, member access, etc.
 
-use chumsky::prelude::*;
-use oats_ast::*;
 use super::common;
 use super::function;
 use super::stmt;
+use chumsky::prelude::*;
+use oats_ast::*;
 
 /// Parser for expressions with proper precedence.
-/// 
+///
 /// Precedence order (highest to lowest):
 /// 1. Primary (literals, identifiers, parentheses, function calls, member access)
 /// 2. Unary operators (+, -, !)
@@ -19,18 +19,19 @@ use super::stmt;
 /// 5. Comparison (==, !=, <, <=, >, >=)
 /// 6. Assignment (=)
 /// 7. Conditional (ternary: ? :)
-/// 
+///
 /// Strategy: Use recursive parser with proper precedence handling. Binary operators
 /// use the recursive expr for right-hand sides to support full expressions.
 pub fn expr_parser() -> impl Parser<char, Expr, Error = Simple<char>> {
     recursive(|expr| {
         let literal = common::literal_parser();
         let ident = common::ident_parser().map(Expr::Ident);
-        let this = text::keyword("this").padded().map_with_span(|_, span: std::ops::Range<usize>| {
-            Expr::This(ThisExpr {
-                span: span.into(),
-            })
-        });
+        let this =
+            text::keyword("this")
+                .padded()
+                .map_with_span(|_, span: std::ops::Range<usize>| {
+                    Expr::This(ThisExpr { span: span.into() })
+                });
 
         // Prefix update operators (++x, --x) - parse as part of unary expressions
         // We'll handle this in the unary section to avoid clone issues
@@ -55,12 +56,22 @@ pub fn expr_parser() -> impl Parser<char, Expr, Error = Simple<char>> {
                 choice((
                     // Member access: .ident or [expr]
                     choice((
-                        just('.').padded().ignore_then(common::ident_parser()).map(MemberProp::Ident),
-                        just('[').padded().ignore_then(expr.clone()).then_ignore(just(']').padded()).map(|e| MemberProp::Computed(Box::new(e))),
+                        just('.')
+                            .padded()
+                            .ignore_then(common::ident_parser())
+                            .map(MemberProp::Ident),
+                        just('[')
+                            .padded()
+                            .ignore_then(expr.clone())
+                            .then_ignore(just(']').padded())
+                            .map(|e| MemberProp::Computed(Box::new(e))),
                     ))
                     .map_with_span(|prop, span| {
                         Expr::Member(MemberExpr {
-                            obj: Box::new(Expr::Ident(Ident { sym: String::new(), span: 0..0 })), // Will be replaced in foldl
+                            obj: Box::new(Expr::Ident(Ident {
+                                sym: String::new(),
+                                span: 0..0,
+                            })), // Will be replaced in foldl
                             prop,
                             span: span.into(),
                         })
@@ -72,7 +83,10 @@ pub fn expr_parser() -> impl Parser<char, Expr, Error = Simple<char>> {
                         .delimited_by(just('(').padded(), just(')').padded())
                         .map_with_span(|args, span| {
                             Expr::Call(CallExpr {
-                                callee: Callee::Expr(Box::new(Expr::Ident(Ident { sym: String::new(), span: 0..0 }))), // Will be replaced in foldl
+                                callee: Callee::Expr(Box::new(Expr::Ident(Ident {
+                                    sym: String::new(),
+                                    span: 0..0,
+                                }))), // Will be replaced in foldl
                                 args,
                                 span: span.into(),
                             })
@@ -133,7 +147,7 @@ pub fn expr_parser() -> impl Parser<char, Expr, Error = Simple<char>> {
                     expr
                 }
             });
-        
+
         // Prefix update operators (++x, --x) - use recursive expr
         let prefix_update = choice((
             just("++").padded().to(UpdateOp::Inc),
@@ -159,7 +173,7 @@ pub fn expr_parser() -> impl Parser<char, Expr, Error = Simple<char>> {
             text::keyword("delete").padded().to(UnaryOp::Delete),
             just('~').padded().to(UnaryOp::BitwiseNot),
         ));
-        
+
         let unary = choice((
             prefix_update,
             unary_op
@@ -182,7 +196,7 @@ pub fn expr_parser() -> impl Parser<char, Expr, Error = Simple<char>> {
         // Strategy: Rebuild parsers at each level to avoid cloning
         // For left-associative operators, RHS uses the next lower precedence level
         // This allows full expressions via parentheses (e.g., `a * (b + c)`)
-        
+
         // Helper to rebuild unary parser (simplified to avoid infinite recursion)
         // Only supports simple expressions - full expressions must use the main parser chain
         let rebuild_unary = || {
@@ -196,45 +210,56 @@ pub fn expr_parser() -> impl Parser<char, Expr, Error = Simple<char>> {
             let simple_expr = choice((
                 common::literal_parser(),
                 common::ident_parser().map(Expr::Ident),
-                text::keyword("this").padded().map_with_span(|_, span: std::ops::Range<usize>| {
-                    Expr::This(ThisExpr { span: span.into() })
-                }),
+                text::keyword("this")
+                    .padded()
+                    .map_with_span(|_, span: std::ops::Range<usize>| {
+                        Expr::This(ThisExpr { span: span.into() })
+                    }),
             ));
             // Simple postfix (only member access with identifiers)
             let postfix_rhs = simple_expr
                 .then(
-                    just('.').padded()
+                    just('.')
+                        .padded()
                         .ignore_then(common::ident_parser())
                         .map_with_span(|prop, span| {
                             Expr::Member(MemberExpr {
-                                obj: Box::new(Expr::Ident(Ident { sym: String::new(), span: 0..0 })),
+                                obj: Box::new(Expr::Ident(Ident {
+                                    sym: String::new(),
+                                    span: 0..0,
+                                })),
                                 prop: MemberProp::Ident(prop),
                                 span: span.into(),
                             })
                         })
                         .repeated(),
                 )
-                .foldl(|lhs, op| {
-                    match op {
-                        Expr::Member(mut m) => {
-                            let lhs_span = get_expr_span(&lhs);
-                            let m_span = m.span.clone();
-                            m.obj = Box::new(lhs);
-                            m.span = lhs_span.start..m_span.end;
-                            Expr::Member(m)
-                        }
-                        _ => lhs,
+                .foldl(|lhs, op| match op {
+                    Expr::Member(mut m) => {
+                        let lhs_span = get_expr_span(&lhs);
+                        let m_span = m.span.clone();
+                        m.obj = Box::new(lhs);
+                        m.span = lhs_span.start..m_span.end;
+                        Expr::Member(m)
                     }
+                    _ => lhs,
                 });
-            unary_op.or_not().then(postfix_rhs).map_with_span(|(opt_op, expr), span| {
-                if let Some(op) = opt_op {
-                    Expr::Unary(UnaryExpr { op, arg: Box::new(expr), span: span.into() })
-                } else {
-                    expr
-                }
-            })
+            unary_op
+                .or_not()
+                .then(postfix_rhs)
+                .map_with_span(|(opt_op, expr), span| {
+                    if let Some(op) = opt_op {
+                        Expr::Unary(UnaryExpr {
+                            op,
+                            arg: Box::new(expr),
+                            span: span.into(),
+                        })
+                    } else {
+                        expr
+                    }
+                })
         };
-        
+
         // Multiplication/division/modulo (left-associative, highest precedence)
         // RHS uses unary - this supports full expressions via parentheses in primary
         let mul_expr = unary
@@ -257,7 +282,7 @@ pub fn expr_parser() -> impl Parser<char, Expr, Error = Simple<char>> {
                     span: lhs_span.start..rhs_span.end,
                 })
             });
-        
+
         // Helper to rebuild mul_expr parser
         let rebuild_mul_expr = || {
             rebuild_unary()
@@ -281,7 +306,7 @@ pub fn expr_parser() -> impl Parser<char, Expr, Error = Simple<char>> {
                     })
                 })
         };
-        
+
         // Addition/subtraction (left-associative)
         // RHS uses mul_expr - this supports full expressions via parentheses
         let add_expr = mul_expr
@@ -303,7 +328,7 @@ pub fn expr_parser() -> impl Parser<char, Expr, Error = Simple<char>> {
                     span: lhs_span.start..rhs_span.end,
                 })
             });
-        
+
         // Helper to rebuild add_expr parser
         let rebuild_add_expr = || {
             rebuild_mul_expr()
@@ -326,7 +351,7 @@ pub fn expr_parser() -> impl Parser<char, Expr, Error = Simple<char>> {
                     })
                 })
         };
-        
+
         // Comparison operators (left-associative)
         // RHS uses add_expr - this supports full expressions via parentheses
         let comparison = add_expr
@@ -454,7 +479,10 @@ pub fn expr_parser() -> impl Parser<char, Expr, Error = Simple<char>> {
                     .map_with_span(|right, span| {
                         Expr::Assign(AssignExpr {
                             op: AssignOp::Eq,
-                            left: AssignTarget::Pat(Pat::Ident(Ident { sym: String::new(), span: 0..0 })), // Will be replaced
+                            left: AssignTarget::Pat(Pat::Ident(Ident {
+                                sym: String::new(),
+                                span: 0..0,
+                            })), // Will be replaced
                             right: Box::new(right),
                             span: span.into(),
                         })
@@ -466,7 +494,7 @@ pub fn expr_parser() -> impl Parser<char, Expr, Error = Simple<char>> {
                     // Extract the left-hand side pattern from the expression
                     let lhs_span = get_expr_span(&lhs);
                     let assign_span = assign.span.clone();
-                    
+
                     // Handle different assignment target types
                     match lhs {
                         Expr::Ident(ident) => {
@@ -559,9 +587,10 @@ fn get_expr_span(expr: &Expr) -> std::ops::Range<usize> {
 }
 
 /// Parser for parenthesized expressions.
-fn paren_expr_parser(expr: impl Parser<char, Expr, Error = Simple<char>>) -> impl Parser<char, Expr, Error = Simple<char>> {
-    expr
-        .delimited_by(just('(').padded(), just(')').padded())
+fn paren_expr_parser(
+    expr: impl Parser<char, Expr, Error = Simple<char>>,
+) -> impl Parser<char, Expr, Error = Simple<char>> {
+    expr.delimited_by(just('(').padded(), just(')').padded())
         .map_with_span(|expr, span| {
             Expr::Paren(ParenExpr {
                 expr: Box::new(expr),
@@ -571,11 +600,12 @@ fn paren_expr_parser(expr: impl Parser<char, Expr, Error = Simple<char>>) -> imp
 }
 
 /// Parser for array literals.
-/// 
+///
 /// Pattern: `[elem1, elem2, ...]`
-fn array_lit_parser(expr: impl Parser<char, Expr, Error = Simple<char>>) -> impl Parser<char, Expr, Error = Simple<char>> {
-    expr
-        .separated_by(just(',').padded())
+fn array_lit_parser(
+    expr: impl Parser<char, Expr, Error = Simple<char>>,
+) -> impl Parser<char, Expr, Error = Simple<char>> {
+    expr.separated_by(just(',').padded())
         .collect::<Vec<_>>()
         .delimited_by(just('[').padded(), just(']').padded())
         .map_with_span(|elems, span| {
@@ -587,9 +617,11 @@ fn array_lit_parser(expr: impl Parser<char, Expr, Error = Simple<char>>) -> impl
 }
 
 /// Parser for object literals.
-/// 
+///
 /// Pattern: `{ key1: value1, key2: value2, ... }`
-fn object_lit_parser(expr: impl Parser<char, Expr, Error = Simple<char>> + Clone) -> impl Parser<char, Expr, Error = Simple<char>> {
+fn object_lit_parser(
+    expr: impl Parser<char, Expr, Error = Simple<char>> + Clone,
+) -> impl Parser<char, Expr, Error = Simple<char>> {
     prop_or_spread_parser(expr.clone())
         .separated_by(just(',').padded())
         .collect::<Vec<_>>()
@@ -603,7 +635,9 @@ fn object_lit_parser(expr: impl Parser<char, Expr, Error = Simple<char>> + Clone
 }
 
 /// Parser for properties or spread elements.
-fn prop_or_spread_parser(expr: impl Parser<char, Expr, Error = Simple<char>> + Clone) -> impl Parser<char, PropOrSpread, Error = Simple<char>> {
+fn prop_or_spread_parser(
+    expr: impl Parser<char, Expr, Error = Simple<char>> + Clone,
+) -> impl Parser<char, PropOrSpread, Error = Simple<char>> {
     choice((
         // Spread element
         just("...")
@@ -621,9 +655,11 @@ fn prop_or_spread_parser(expr: impl Parser<char, Expr, Error = Simple<char>> + C
 }
 
 /// Parser for properties.
-/// 
+///
 /// Pattern: `key: value` or `key` (shorthand)
-fn prop_parser(expr: impl Parser<char, Expr, Error = Simple<char>> + Clone) -> impl Parser<char, Prop, Error = Simple<char>> {
+fn prop_parser(
+    expr: impl Parser<char, Expr, Error = Simple<char>> + Clone,
+) -> impl Parser<char, Prop, Error = Simple<char>> {
     choice((
         // Shorthand property: ident
         common::ident_parser()
@@ -659,9 +695,11 @@ fn prop_parser(expr: impl Parser<char, Expr, Error = Simple<char>> + Clone) -> i
 }
 
 /// Parser for new expressions.
-/// 
+///
 /// Pattern: `new ClassName(args...)`
-fn new_expr_parser(expr: impl Parser<char, Expr, Error = Simple<char>> + Clone) -> impl Parser<char, Expr, Error = Simple<char>> {
+fn new_expr_parser(
+    expr: impl Parser<char, Expr, Error = Simple<char>> + Clone,
+) -> impl Parser<char, Expr, Error = Simple<char>> {
     text::keyword("new")
         .padded()
         .ignore_then(expr.clone())
@@ -670,7 +708,7 @@ fn new_expr_parser(expr: impl Parser<char, Expr, Error = Simple<char>> + Clone) 
                 .separated_by(just(',').padded())
                 .collect::<Vec<_>>()
                 .delimited_by(just('(').padded(), just(')').padded())
-                .or_not()
+                .or_not(),
         )
         .map_with_span(|(callee, args), span| {
             Expr::New(NewExpr {
@@ -682,9 +720,11 @@ fn new_expr_parser(expr: impl Parser<char, Expr, Error = Simple<char>> + Clone) 
 }
 
 /// Parser for await expressions.
-/// 
+///
 /// Pattern: `await promise`
-fn await_expr_parser(expr: impl Parser<char, Expr, Error = Simple<char>> + Clone) -> impl Parser<char, Expr, Error = Simple<char>> {
+fn await_expr_parser(
+    expr: impl Parser<char, Expr, Error = Simple<char>> + Clone,
+) -> impl Parser<char, Expr, Error = Simple<char>> {
     text::keyword("await")
         .padded()
         .ignore_then(expr)
@@ -697,20 +737,22 @@ fn await_expr_parser(expr: impl Parser<char, Expr, Error = Simple<char>> + Clone
 }
 
 /// Parser for template literals.
-/// 
+///
 /// Pattern: `` `string ${expr} string` ``
-fn template_literal_parser(expr: impl Parser<char, Expr, Error = Simple<char>> + Clone) -> impl Parser<char, Expr, Error = Simple<char>> {
+fn template_literal_parser(
+    expr: impl Parser<char, Expr, Error = Simple<char>> + Clone,
+) -> impl Parser<char, Expr, Error = Simple<char>> {
     just('`')
         .ignore_then(
             template_content_parser(expr.clone())
                 .repeated()
-                .collect::<Vec<_>>()
+                .collect::<Vec<_>>(),
         )
         .then_ignore(just('`'))
         .map_with_span(|parts, span| {
             let mut quasis = Vec::new();
             let mut exprs = Vec::new();
-            
+
             for part in parts {
                 match part {
                     TemplatePart::Quasi(q) => quasis.push(q),
@@ -725,14 +767,14 @@ fn template_literal_parser(expr: impl Parser<char, Expr, Error = Simple<char>> +
                     }
                 }
             }
-            
+
             // Add final quasi
             quasis.push(TplElement {
                 raw: String::new(),
                 cooked: Some(String::new()),
                 span: 0..0,
             });
-            
+
             Expr::Tpl(TplExpr {
                 quasis,
                 exprs,
@@ -746,7 +788,9 @@ enum TemplatePart {
     Expr(Expr),
 }
 
-fn template_content_parser(expr: impl Parser<char, Expr, Error = Simple<char>> + Clone) -> impl Parser<char, TemplatePart, Error = Simple<char>> {
+fn template_content_parser(
+    expr: impl Parser<char, Expr, Error = Simple<char>> + Clone,
+) -> impl Parser<char, TemplatePart, Error = Simple<char>> {
     choice((
         // Expression: ${expr}
         just("${")

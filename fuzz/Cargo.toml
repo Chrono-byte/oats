@@ -13,7 +13,7 @@ libfuzzer-sys = "0.4"
 [dependencies.oatsc]
 path = "../crates/oatsc"
 
-# Fuzz target for parser - tests TypeScript/Oats source code parsing
+# Fuzz target for parser - tests Oats source code parsing
 [[bin]]
 name = "fuzz_parser"
 path = "fuzz_targets/fuzz_parser.rs"

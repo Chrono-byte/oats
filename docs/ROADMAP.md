@@ -1,6 +1,6 @@
 # Oats Roadmap
 
-Oats is a systems programming language with low-level control. Currently supports classes, async/await, generics, etc. Parser at ~90% TypeScript compatibility.
+Oats is a systems programming language with low-level control. Currently supports classes, async/await, generics, etc. Parser maintains ~90% syntax compatibility with TypeScript for migration purposes.
 
 ## Phase 1: Core Features
 

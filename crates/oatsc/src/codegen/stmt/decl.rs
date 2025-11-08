@@ -139,7 +139,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
                     // If there is an initializer, lower it and allocate a
                     // matching alloca for its type. If the declared identifier
-                    // has a TypeScript type annotation that maps to a union,
+                    // has an Oats type annotation that maps to a union,
                     // allocate the ABI slot accordingly and box numeric
                     // payloads into union objects.
                     eprintln!(
@@ -897,7 +897,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             }
 
             // Also collect parameter properties from the constructor
-            // (TypeScript shorthand `constructor(public x: T)`) so methods
+            // (Oats shorthand `constructor(public x: T)`) so methods
             // can see these fields during lowering. We scan ctor.params
             // for `ParamOrTsParamProp::TsParamProp` entries and add them.
             use deno_ast::swc::ast::{ParamOrTsParamProp, TsParamPropParam};

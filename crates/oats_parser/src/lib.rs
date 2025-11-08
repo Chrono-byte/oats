@@ -8,12 +8,12 @@
 //! - Common utilities are reused across modules
 //! - Each module focuses on a specific aspect of the language
 
+mod class;
 mod common;
-mod types;
-mod stmt;
 mod expr;
 mod function;
-mod class;
+mod stmt;
+mod types;
 
 use chumsky::prelude::*;
 use oats_ast::*;
@@ -25,19 +25,17 @@ pub fn parse_module(input: &str) -> Result<Module, Vec<Simple<char>>> {
 }
 
 /// Parser for the top-level module.
-/// 
+///
 /// A module consists of zero or more statements.
 fn module_parser() -> impl Parser<char, Module, Error = Simple<char>> {
-    recursive(|stmt| {
-        stmt::stmt_parser(stmt)
-    })
-    .repeated()
-    .collect::<Vec<_>>()
-    .then_ignore(end())
-    .map_with_span(|body, span| Module {
-        body,
-        span: span.into(),
-    })
+    recursive(|stmt| stmt::stmt_parser(stmt))
+        .repeated()
+        .collect::<Vec<_>>()
+        .then_ignore(end())
+        .map_with_span(|body, span| Module {
+            body,
+            span: span.into(),
+        })
 }
 
 #[cfg(test)]

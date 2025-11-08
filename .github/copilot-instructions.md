@@ -14,7 +14,7 @@ This guide provides the critical patterns, conventions, and architectural detail
 
 #### **Project Architecture**
 
-Oats is an experimental Ahead-of-Time (AOT) compiler that transforms a subset of TypeScript into native code using LLVM.
+Oats is an experimental Ahead-of-Time (AOT) compiler that compiles the Oats language into native code using LLVM.
 
 - **Workspace Crates**:
 
@@ -23,8 +23,8 @@ Oats is an experimental Ahead-of-Time (AOT) compiler that transforms a subset of
   - `crates/toasty`: A thin CLI wrapper for the compiler.
 
 - **Compilation Pipeline**:
-  1. **Parsing**: `deno_ast` parses TypeScript source into an Abstract Syntax Tree (AST). (`oatsc/src/parser.rs`)
-  2. **Type Checking**: The AST is traversed to map TypeScript types to the internal `OatsType` representation. (`oatsc/src/types.rs`)
+  1. **Parsing**: `deno_ast` parses Oats source into an Abstract Syntax Tree (AST). (`oatsc/src/parser.rs`)
+  2. **Type Checking**: The AST is traversed to map Oats type annotations to the internal `OatsType` representation. (`oatsc/src/types.rs`)
   3. **Code Generation**: The typed AST is lowered into LLVM IR using the `inkwell` crate. (`oatsc/src/codegen/*.rs`)
   4. **Linking**: The final object file is linked with the Oats runtime library to produce a standalone executable.
 

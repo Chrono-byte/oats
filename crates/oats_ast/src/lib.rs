@@ -281,6 +281,7 @@ pub struct ConstructorDecl {
 pub struct Function {
     pub params: Vec<Param>,
     pub body: Option<BlockStmt>,
+    pub return_type: Option<TsType>,
     pub span: Span,
 }
 
@@ -519,6 +520,7 @@ pub struct FnExpr {
 pub struct ArrowExpr {
     pub params: Vec<Pat>,
     pub body: ArrowBody,
+    pub return_type: Option<TsType>,
     pub span: Span,
 }
 
@@ -613,7 +615,7 @@ pub struct TplElement {
     pub span: Span,
 }
 
-/// TypeScript type annotations.
+/// Oats type annotations.
 #[derive(Debug, Clone, PartialEq)]
 pub enum TsType {
     TsKeywordType(TsKeywordType),
@@ -626,7 +628,7 @@ pub enum TsType {
     // Add more as needed
 }
 
-/// TypeScript keyword type.
+/// Oats keyword type.
 #[derive(Debug, Clone, PartialEq)]
 pub enum TsKeywordType {
     TsNumberKeyword,
@@ -636,7 +638,7 @@ pub enum TsKeywordType {
     // Add more
 }
 
-/// TypeScript type reference.
+/// Oats type reference.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TsTypeRef {
     pub type_name: TsEntityName,
@@ -644,42 +646,42 @@ pub struct TsTypeRef {
     pub span: Span,
 }
 
-/// TypeScript entity name.
+/// Oats entity name.
 #[derive(Debug, Clone, PartialEq)]
 pub enum TsEntityName {
     Ident(Ident),
     // Add more
 }
 
-/// TypeScript type parameter instantiation.
+/// Oats type parameter instantiation.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TsTypeParamInstantiation {
     pub params: Vec<TsType>,
     pub span: Span,
 }
 
-/// TypeScript array type.
+/// Oats array type.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TsArrayType {
     pub elem_type: Box<TsType>,
     pub span: Span,
 }
 
-/// TypeScript union type.
+/// Oats union type.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TsUnionType {
     pub types: Vec<TsType>,
     pub span: Span,
 }
 
-/// TypeScript intersection type.
+/// Oats intersection type.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TsIntersectionType {
     pub types: Vec<TsType>,
     pub span: Span,
 }
 
-/// TypeScript function type.
+/// Oats function type.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TsFunctionType {
     pub params: Vec<Param>,
@@ -687,7 +689,7 @@ pub struct TsFunctionType {
     pub span: Span,
 }
 
-/// TypeScript tuple type.
+/// Oats tuple type.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TsTupleType {
     pub elem_types: Vec<TsType>,

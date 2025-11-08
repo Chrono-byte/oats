@@ -79,7 +79,7 @@ fn promise_type_unwrap_none_for_non_promise() -> Result<(), Box<dyn std::error::
 
 #[test]
 fn parse_promise_number_type() -> Result<()> {
-    // Test parsing Promise<number> from TypeScript source
+    // Test parsing Promise<number> from Oats source
     let src = r#"
         async function test(): Promise<number> {
             return 42;
@@ -120,7 +120,7 @@ fn parse_promise_number_type() -> Result<()> {
 
 #[test]
 fn parse_promise_string_type() -> Result<()> {
-    // Test parsing Promise<string> from TypeScript source
+    // Test parsing Promise<string> from Oats source
     let src = r#"
         async function fetchData(): Promise<string> {
             return "hello";
@@ -154,7 +154,7 @@ fn parse_promise_string_type() -> Result<()> {
 
 #[test]
 fn parse_promise_void_type() -> Result<()> {
-    // Test parsing Promise<void> from TypeScript source
+    // Test parsing Promise<void> from Oats source
     let src = r#"
         async function doSomething(): Promise<void> {
             return;
@@ -188,7 +188,7 @@ fn parse_promise_void_type() -> Result<()> {
 
 #[test]
 fn parse_promise_custom_type() -> Result<()> {
-    // Test parsing Promise<CustomType> from TypeScript source
+    // Test parsing Promise<CustomType> from Oats source
     let src = r#"
         class User {
             name: string;
@@ -315,7 +315,7 @@ export function main(): number {
 
 #[test]
 fn infer_type_combined() -> Result<(), Box<dyn std::error::Error>> {
-    // Test the combined infer_type function with TypeScript annotations
+    // Test the combined infer_type function with Oats type annotations
     // Create a simple number type annotation
     use deno_ast::swc::ast::{TsKeywordType, TsKeywordTypeKind, TsType};
 
@@ -324,7 +324,7 @@ fn infer_type_combined() -> Result<(), Box<dyn std::error::Error>> {
         kind: TsKeywordTypeKind::TsNumberKeyword,
     });
 
-    // Test with TypeScript type only
+    // Test with Oats type annotation only
     let inferred = infer_type(Some(&ts_number), None);
     assert_eq!(inferred, OatsType::Number);
 

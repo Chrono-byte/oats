@@ -268,7 +268,7 @@ impl Manifest {
 /// Resolves relative import specifiers to absolute file paths.
 ///
 /// This function implements the module resolution algorithm for relative imports,
-/// supporting common TypeScript/JavaScript conventions including file extension
+/// supporting common Oats/JavaScript conventions including file extension
 /// inference and index file fallbacks for directory imports.
 ///
 /// # Arguments
@@ -503,12 +503,12 @@ pub fn build_dependency_graph(
         };
 
         // Get current node
-        let current_node = *node_indices
-            .get(&current_path)
-            .ok_or_else(|| ToastyError::other(format!(
+        let current_node = *node_indices.get(&current_path).ok_or_else(|| {
+            ToastyError::other(format!(
                 "Internal error: node not found in dependency graph for path: {}",
                 current_path
-            )))?;
+            ))
+        })?;
 
         // Discover and enqueue relative imports from this module
         for item_ref in parsed.parsed.program_ref().body() {
@@ -542,12 +542,12 @@ pub fn build_dependency_graph(
         }
     }
 
-    let entry_node_index = *node_indices
-        .get(&entry_str)
-        .ok_or_else(|| ToastyError::other(format!(
+    let entry_node_index = *node_indices.get(&entry_str).ok_or_else(|| {
+        ToastyError::other(format!(
             "Internal error: entry node not found in dependency graph for path: {}",
             entry_str
-        )))?;
+        ))
+    })?;
     Ok((graph, node_indices, entry_node_index))
 }
 

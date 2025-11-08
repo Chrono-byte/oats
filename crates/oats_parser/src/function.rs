@@ -3,13 +3,13 @@
 //! This module groups all function parsing logic together for Locality of Behavior.
 //! Includes function declarations, function expressions, and arrow functions.
 
-use chumsky::prelude::*;
-use oats_ast::*;
 use super::common;
 use super::types;
+use chumsky::prelude::*;
+use oats_ast::*;
 
 /// Parser for declare function statements.
-/// 
+///
 /// Pattern: `declare function name(params): returnType;`
 pub fn declare_fn_parser() -> impl Parser<char, DeclareFn, Error = Simple<char>> {
     text::keyword("declare")
@@ -29,7 +29,7 @@ pub fn declare_fn_parser() -> impl Parser<char, DeclareFn, Error = Simple<char>>
 }
 
 /// Parser for function declarations.
-/// 
+///
 /// Pattern: `function name(params): returnType? { body }`
 pub fn fn_decl_parser(
     stmt: impl Parser<char, Stmt, Error = Simple<char>> + Clone,
@@ -50,7 +50,7 @@ pub fn fn_decl_parser(
 }
 
 /// Parser for function expressions.
-/// 
+///
 /// Pattern: `function name?(params): returnType? { body }`
 pub fn fn_expr_parser(
     stmt: impl Parser<char, Stmt, Error = Simple<char>> + Clone,
@@ -61,13 +61,14 @@ pub fn fn_expr_parser(
         .then(common::param_list_parser())
         .then(common::optional_type_annotation())
         .then(common::optional_block_parser(stmt))
-        .map_with_span(|(((ident, params), _return_type), body), span| {
+        .map_with_span(|(((ident, params), return_type), body), span| {
             let span_range: std::ops::Range<usize> = span.into();
             Expr::Fn(FnExpr {
                 ident,
                 function: Function {
                     params,
                     body,
+                    return_type,
                     span: span_range.clone(),
                 },
                 span: span_range,
@@ -76,7 +77,7 @@ pub fn fn_expr_parser(
 }
 
 /// Parser for arrow function expressions.
-/// 
+///
 /// Pattern: `(params) => body` or `param => body`
 pub fn arrow_expr_parser(
     expr: impl Parser<char, Expr, Error = Simple<char>>,
@@ -98,12 +99,12 @@ pub fn arrow_expr_parser(
             // Expression body
             expr.map(|e| ArrowBody::Expr(Box::new(e))),
         )))
-        .map_with_span(|(((params, _return_type), _), body), span| {
+        .map_with_span(|(((params, return_type), _), body), span| {
             Expr::Arrow(ArrowExpr {
                 params,
                 body,
+                return_type,
                 span: span.into(),
             })
         })
 }
-

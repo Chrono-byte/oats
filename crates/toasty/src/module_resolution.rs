@@ -10,7 +10,7 @@ pub type NodeIndex = petgraph::graph::NodeIndex;
 /// Resolves relative import specifiers to absolute file paths.
 ///
 /// This function implements the module resolution algorithm for relative imports,
-/// supporting common TypeScript/JavaScript conventions including file extension
+/// supporting common Oats/JavaScript conventions including file extension
 /// inference and index file fallbacks for directory imports.
 ///
 /// # Arguments

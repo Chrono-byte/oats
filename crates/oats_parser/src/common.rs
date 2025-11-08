@@ -21,11 +21,16 @@ pub fn pat_parser() -> impl Parser<char, Pat, Error = Simple<char>> {
 }
 
 /// Parser for function parameters.
-/// 
+///
 /// Parameters follow the pattern: `ident: type?`
 pub fn param_parser() -> impl Parser<char, Param, Error = Simple<char>> {
     pat_parser()
-        .then(just(':').padded().ignore_then(super::types::ts_type_parser()).or_not())
+        .then(
+            just(':')
+                .padded()
+                .ignore_then(super::types::ts_type_parser())
+                .or_not(),
+        )
         .map_with_span(|(pat, ty), span| Param {
             pat,
             ty,
@@ -34,7 +39,7 @@ pub fn param_parser() -> impl Parser<char, Param, Error = Simple<char>> {
 }
 
 /// Parser for a comma-separated list of parameters in parentheses.
-/// 
+///
 /// Reusable pattern: `(param1, param2, ...)`
 pub fn param_list_parser() -> impl Parser<char, Vec<Param>, Error = Simple<char>> {
     param_parser()
@@ -50,32 +55,30 @@ pub fn literal_parser() -> impl Parser<char, Expr, Error = Simple<char>> {
         just('"')
             .ignore_then(
                 filter(|c| *c != '"' && *c != '\\')
-                    .or(just('\\').ignore_then(
-                        choice((
-                            just('"').to('"'),
-                            just('\\').to('\\'),
-                            just('/').to('/'),
-                            just('n').to('\n'),
-                            just('r').to('\r'),
-                            just('t').to('\t'),
-                            just('b').to('\x08'),
-                            just('f').to('\x0C'),
-                            // Unicode escape sequences: \uXXXX
-                            just('u')
-                                .ignore_then(
-                                    filter(|c: &char| c.is_ascii_hexdigit())
-                                        .repeated()
-                                        .exactly(4)
-                                        .collect::<String>(),
-                                )
-                                .try_map(|hex, span| {
-                                    u32::from_str_radix(&hex, 16)
-                                        .ok()
-                                        .and_then(char::from_u32)
-                                        .ok_or(Simple::custom(span, "Invalid unicode escape sequence"))
-                                }),
-                        )),
-                    ))
+                    .or(just('\\').ignore_then(choice((
+                        just('"').to('"'),
+                        just('\\').to('\\'),
+                        just('/').to('/'),
+                        just('n').to('\n'),
+                        just('r').to('\r'),
+                        just('t').to('\t'),
+                        just('b').to('\x08'),
+                        just('f').to('\x0C'),
+                        // Unicode escape sequences: \uXXXX
+                        just('u')
+                            .ignore_then(
+                                filter(|c: &char| c.is_ascii_hexdigit())
+                                    .repeated()
+                                    .exactly(4)
+                                    .collect::<String>(),
+                            )
+                            .try_map(|hex, span| {
+                                u32::from_str_radix(&hex, 16)
+                                    .ok()
+                                    .and_then(char::from_u32)
+                                    .ok_or(Simple::custom(span, "Invalid unicode escape sequence"))
+                            }),
+                    ))))
                     .repeated()
                     .collect::<String>(),
             )
@@ -94,28 +97,36 @@ pub fn literal_parser() -> impl Parser<char, Expr, Error = Simple<char>> {
             })
             .map_with_span(|n, _span| Expr::Lit(Lit::Num(n))),
         // Boolean literals
-        text::keyword("true").padded().map_with_span(|_, _span| Expr::Lit(Lit::Bool(true))),
-        text::keyword("false").padded().map_with_span(|_, _span| Expr::Lit(Lit::Bool(false))),
+        text::keyword("true")
+            .padded()
+            .map_with_span(|_, _span| Expr::Lit(Lit::Bool(true))),
+        text::keyword("false")
+            .padded()
+            .map_with_span(|_, _span| Expr::Lit(Lit::Bool(false))),
         // Null literal
-        text::keyword("null").padded().map_with_span(|_, _span| Expr::Lit(Lit::Null)),
+        text::keyword("null")
+            .padded()
+            .map_with_span(|_, _span| Expr::Lit(Lit::Null)),
     ))
 }
 
 /// Parser for an optional type annotation followed by a colon.
-/// 
+///
 /// Pattern: `: type?`
 pub fn optional_type_annotation() -> impl Parser<char, Option<TsType>, Error = Simple<char>> {
-    just(':').padded().ignore_then(super::types::ts_type_parser()).or_not()
+    just(':')
+        .padded()
+        .ignore_then(super::types::ts_type_parser())
+        .or_not()
 }
 
 /// Parser for a block statement (statements in braces).
-/// 
+///
 /// Reusable pattern for parsing `{ stmt1; stmt2; ... }`
 pub fn block_parser(
     stmt: impl Parser<char, Stmt, Error = Simple<char>> + Clone,
 ) -> impl Parser<char, BlockStmt, Error = Simple<char>> {
-    stmt
-        .repeated()
+    stmt.repeated()
         .collect::<Vec<_>>()
         .delimited_by(just('{').padded(), just('}').padded())
         .map_with_span(|stmts, span| BlockStmt {
@@ -128,8 +139,8 @@ pub fn block_parser(
 pub fn optional_block_parser(
     stmt: impl Parser<char, Stmt, Error = Simple<char>> + Clone,
 ) -> impl Parser<char, Option<BlockStmt>, Error = Simple<char>> {
-    block_parser(stmt.clone())
-        .map(Some)
-        .or(just('{').padded().ignore_then(just('}').padded()).map(|_| None))
+    block_parser(stmt.clone()).map(Some).or(just('{')
+        .padded()
+        .ignore_then(just('}').padded())
+        .map(|_| None))
 }
-

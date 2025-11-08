@@ -3,15 +3,15 @@
 //! This module groups all statement parsing logic together for Locality of Behavior.
 //! Statements are the top-level constructs in the language.
 
-use chumsky::prelude::*;
-use oats_ast::*;
+use super::class;
 use super::common;
 use super::expr;
 use super::function;
-use super::class;
+use chumsky::prelude::*;
+use oats_ast::*;
 
 /// Parser for statements.
-/// 
+///
 /// This is the main dispatcher that routes to specific statement parsers.
 pub fn stmt_parser(
     stmt: impl Parser<char, Stmt, Error = Simple<char>> + Clone,
@@ -42,21 +42,19 @@ pub fn stmt_parser(
 }
 
 /// Parser for export statements.
-/// 
+///
 /// Pattern: `export function ...` or `export let ...`
 pub fn export_stmt_parser(
     stmt: impl Parser<char, Stmt, Error = Simple<char>> + Clone,
 ) -> impl Parser<char, Stmt, Error = Simple<char>> {
-    text::keyword("export")
-        .padded()
-        .ignore_then(choice((
-            function::fn_decl_parser(stmt).map(Stmt::FnDecl),
-            var_decl_parser().map(Stmt::VarDecl),
-        )))
+    text::keyword("export").padded().ignore_then(choice((
+        function::fn_decl_parser(stmt).map(Stmt::FnDecl),
+        var_decl_parser().map(Stmt::VarDecl),
+    )))
 }
 
 /// Parser for variable declarations.
-/// 
+///
 /// Pattern: `let|const|var|let mut name: type? = value?;`
 pub fn var_decl_parser() -> impl Parser<char, VarDecl, Error = Simple<char>> {
     let kind = choice((
@@ -88,7 +86,7 @@ pub fn var_decl_parser() -> impl Parser<char, VarDecl, Error = Simple<char>> {
 }
 
 /// Parser for variable declarators.
-/// 
+///
 /// Pattern: `name: type? = value?`
 fn var_declarator_parser() -> impl Parser<char, VarDeclarator, Error = Simple<char>> {
     common::pat_parser()
@@ -103,7 +101,7 @@ fn var_declarator_parser() -> impl Parser<char, VarDeclarator, Error = Simple<ch
 }
 
 /// Parser for return statements.
-/// 
+///
 /// Pattern: `return expr?;`
 pub fn return_stmt_parser() -> impl Parser<char, ReturnStmt, Error = Simple<char>> {
     text::keyword("return")
@@ -117,7 +115,7 @@ pub fn return_stmt_parser() -> impl Parser<char, ReturnStmt, Error = Simple<char
 }
 
 /// Parser for break statements.
-/// 
+///
 /// Pattern: `break label?;`
 pub fn break_stmt_parser() -> impl Parser<char, BreakStmt, Error = Simple<char>> {
     text::keyword("break")
@@ -131,7 +129,7 @@ pub fn break_stmt_parser() -> impl Parser<char, BreakStmt, Error = Simple<char>>
 }
 
 /// Parser for continue statements.
-/// 
+///
 /// Pattern: `continue label?;`
 pub fn continue_stmt_parser() -> impl Parser<char, ContinueStmt, Error = Simple<char>> {
     text::keyword("continue")
@@ -145,7 +143,7 @@ pub fn continue_stmt_parser() -> impl Parser<char, ContinueStmt, Error = Simple<
 }
 
 /// Parser for if statements.
-/// 
+///
 /// Pattern: `if (condition) stmt else stmt?`
 pub fn if_stmt_parser(
     stmt: impl Parser<char, Stmt, Error = Simple<char>> + Clone,
@@ -154,7 +152,12 @@ pub fn if_stmt_parser(
         .padded()
         .ignore_then(expr::expr_parser().delimited_by(just('(').padded(), just(')').padded()))
         .then(stmt.clone().map(Box::new))
-        .then(text::keyword("else").padded().ignore_then(stmt.map(Box::new)).or_not())
+        .then(
+            text::keyword("else")
+                .padded()
+                .ignore_then(stmt.map(Box::new))
+                .or_not(),
+        )
         .map_with_span(|((test, cons), alt), span| IfStmt {
             test,
             cons,
@@ -164,7 +167,7 @@ pub fn if_stmt_parser(
 }
 
 /// Parser for for statements.
-/// 
+///
 /// Pattern: `for (init?; test?; update?) stmt`
 pub fn for_stmt_parser(
     stmt: impl Parser<char, Stmt, Error = Simple<char>> + Clone,
@@ -177,7 +180,7 @@ pub fn for_stmt_parser(
                 var_decl_parser().map(ForInit::VarDecl),
                 expr::expr_parser().map(ForInit::Expr),
             ))
-        .or_not()
+            .or_not(),
         )
         .then_ignore(just(';').padded())
         .then(expr::expr_parser().or_not())
@@ -195,7 +198,7 @@ pub fn for_stmt_parser(
 }
 
 /// Parser for while statements.
-/// 
+///
 /// Pattern: `while (condition) stmt`
 pub fn while_stmt_parser(
     stmt: impl Parser<char, Stmt, Error = Simple<char>> + Clone,
@@ -212,7 +215,7 @@ pub fn while_stmt_parser(
 }
 
 /// Parser for do-while statements.
-/// 
+///
 /// Pattern: `do stmt while (condition);`
 pub fn do_while_stmt_parser(
     stmt: impl Parser<char, Stmt, Error = Simple<char>> + Clone,
@@ -221,9 +224,9 @@ pub fn do_while_stmt_parser(
         .padded()
         .ignore_then(stmt.map(Box::new))
         .then(
-            text::keyword("while")
-                .padded()
-                .ignore_then(expr::expr_parser().delimited_by(just('(').padded(), just(')').padded())),
+            text::keyword("while").padded().ignore_then(
+                expr::expr_parser().delimited_by(just('(').padded(), just(')').padded()),
+            ),
         )
         .then_ignore(just(';').padded())
         .map_with_span(|(body, test), span| DoWhileStmt {
@@ -234,7 +237,7 @@ pub fn do_while_stmt_parser(
 }
 
 /// Parser for for-in statements.
-/// 
+///
 /// Pattern: `for (left in right) stmt`
 pub fn for_in_stmt_parser(
     stmt: impl Parser<char, Stmt, Error = Simple<char>> + Clone,
@@ -242,12 +245,10 @@ pub fn for_in_stmt_parser(
     text::keyword("for")
         .padded()
         .ignore_then(just('(').padded())
-        .ignore_then(
-            choice((
-                var_decl_parser().map(ForHead::VarDecl),
-                common::pat_parser().map(ForHead::Pat),
-            ))
-        )
+        .ignore_then(choice((
+            var_decl_parser().map(ForHead::VarDecl),
+            common::pat_parser().map(ForHead::Pat),
+        )))
         .then_ignore(text::keyword("in").padded())
         .then(expr::expr_parser())
         .then_ignore(just(')').padded())
@@ -261,7 +262,7 @@ pub fn for_in_stmt_parser(
 }
 
 /// Parser for for-of statements.
-/// 
+///
 /// Pattern: `for (left of right) stmt`
 pub fn for_of_stmt_parser(
     stmt: impl Parser<char, Stmt, Error = Simple<char>> + Clone,
@@ -269,12 +270,10 @@ pub fn for_of_stmt_parser(
     text::keyword("for")
         .padded()
         .ignore_then(just('(').padded())
-        .ignore_then(
-            choice((
-                var_decl_parser().map(ForHead::VarDecl),
-                common::pat_parser().map(ForHead::Pat),
-            ))
-        )
+        .ignore_then(choice((
+            var_decl_parser().map(ForHead::VarDecl),
+            common::pat_parser().map(ForHead::Pat),
+        )))
         .then_ignore(text::keyword("of").padded())
         .then(expr::expr_parser())
         .then_ignore(just(')').padded())
@@ -288,7 +287,7 @@ pub fn for_of_stmt_parser(
 }
 
 /// Parser for switch statements.
-/// 
+///
 /// Pattern: `switch (expr) { case ... default: ... }`
 pub fn switch_stmt_parser(
     stmt: impl Parser<char, Stmt, Error = Simple<char>> + Clone,
@@ -297,11 +296,14 @@ pub fn switch_stmt_parser(
         .padded()
         .ignore_then(expr::expr_parser().delimited_by(just('(').padded(), just(')').padded()))
         .then(
-            just('{').padded().ignore_then(
-                switch_case_parser(stmt.clone())
-                    .repeated()
-                    .collect::<Vec<_>>()
-            ).then_ignore(just('}').padded())
+            just('{')
+                .padded()
+                .ignore_then(
+                    switch_case_parser(stmt.clone())
+                        .repeated()
+                        .collect::<Vec<_>>(),
+                )
+                .then_ignore(just('}').padded()),
         )
         .map_with_span(|(discriminant, cases), span| SwitchStmt {
             discriminant,
@@ -311,7 +313,7 @@ pub fn switch_stmt_parser(
 }
 
 /// Parser for switch cases.
-/// 
+///
 /// Pattern: `case expr: stmts` or `default: stmts`
 fn switch_case_parser(
     stmt: impl Parser<char, Stmt, Error = Simple<char>> + Clone,
@@ -336,7 +338,7 @@ fn switch_case_parser(
 }
 
 /// Parser for try statements.
-/// 
+///
 /// Pattern: `try { } catch (e?) { } finally { }?`
 pub fn try_stmt_parser(
     stmt: impl Parser<char, Stmt, Error = Simple<char>> + Clone,
@@ -348,9 +350,10 @@ pub fn try_stmt_parser(
             text::keyword("catch")
                 .padded()
                 .ignore_then(
-                    just('(').padded()
+                    just('(')
+                        .padded()
                         .ignore_then(common::pat_parser().or_not())
-                        .then_ignore(just(')').padded())
+                        .then_ignore(just(')').padded()),
                 )
                 .then(common::block_parser(stmt.clone()))
                 .map_with_span(|(param, body), span| CatchClause {
@@ -358,13 +361,13 @@ pub fn try_stmt_parser(
                     body,
                     span: span.into(),
                 })
-                .or_not()
+                .or_not(),
         )
         .then(
             text::keyword("finally")
                 .padded()
                 .ignore_then(common::block_parser(stmt.clone()))
-                .or_not()
+                .or_not(),
         )
         .map_with_span(|((block, handler), finalizer), span| TryStmt {
             block,
@@ -375,7 +378,7 @@ pub fn try_stmt_parser(
 }
 
 /// Parser for throw statements.
-/// 
+///
 /// Pattern: `throw expr;`
 pub fn throw_stmt_parser() -> impl Parser<char, ThrowStmt, Error = Simple<char>> {
     text::keyword("throw")
@@ -389,19 +392,17 @@ pub fn throw_stmt_parser() -> impl Parser<char, ThrowStmt, Error = Simple<char>>
 }
 
 /// Parser for debugger statements.
-/// 
+///
 /// Pattern: `debugger;`
 pub fn debugger_stmt_parser() -> impl Parser<char, DebuggerStmt, Error = Simple<char>> {
     text::keyword("debugger")
         .padded()
         .then_ignore(just(';').padded())
-        .map_with_span(|_, span: std::ops::Range<usize>| DebuggerStmt {
-            span: span.into(),
-        })
+        .map_with_span(|_, span: std::ops::Range<usize>| DebuggerStmt { span: span.into() })
 }
 
 /// Parser for labeled statements.
-/// 
+///
 /// Pattern: `label: stmt`
 pub fn labeled_stmt_parser(
     stmt: impl Parser<char, Stmt, Error = Simple<char>> + Clone,
@@ -417,7 +418,7 @@ pub fn labeled_stmt_parser(
 }
 
 /// Parser for expression statements.
-/// 
+///
 /// Pattern: `expr;`
 pub fn expr_stmt_parser() -> impl Parser<char, ExprStmt, Error = Simple<char>> {
     expr::expr_parser()
@@ -427,4 +428,3 @@ pub fn expr_stmt_parser() -> impl Parser<char, ExprStmt, Error = Simple<char>> {
             span: span.into(),
         })
 }
-

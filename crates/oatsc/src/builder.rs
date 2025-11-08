@@ -147,46 +147,29 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
     ///
     /// Returns a list of (name, arrow_expr, is_exported) tuples.
     fn extract_arrow_functions(
-        parsed: &deno_ast::ParsedSource,
-    ) -> Vec<(String, deno_ast::swc::ast::ArrowExpr, bool)> {
-        use deno_ast::swc::ast;
+        parsed: &oats_ast::Module,
+    ) -> Vec<(String, oats_ast::ArrowExpr, bool)> {
+        use oats_ast::*;
         let mut arrows = Vec::new();
 
-        for item in parsed.program_ref().body() {
-            match item {
+        for stmt in &parsed.body {
+            match stmt {
                 // Process non-exported variable declarations: const/let foo = () => {}
-                deno_ast::ModuleItemRef::Stmt(stmt) => {
-                    if let ast::Stmt::Decl(ast::Decl::Var(vdecl)) = stmt
-                        && vdecl.decls.len() == 1
-                        && !matches!(vdecl.kind, ast::VarDeclKind::Var)
-                    {
+                Stmt::VarDecl(vdecl) => {
+                    if vdecl.decls.len() == 1 && !matches!(vdecl.kind, VarDeclKind::Var) {
                         let decl = &vdecl.decls[0];
-                        if let ast::Pat::Ident(binding_ident) = &decl.name
+                        if let Pat::Ident(binding_ident) = &decl.name
                             && let Some(init_expr) = &decl.init
-                            && let ast::Expr::Arrow(arrow) = &**init_expr
+                            && let Expr::Arrow(arrow) = init_expr
                         {
-                            let name = binding_ident.id.sym.to_string();
-                            arrows.push((name, (*arrow).clone(), false));
+                            let name = binding_ident.sym.clone();
+                            arrows.push((name, arrow.clone(), false));
                         }
                     }
                 }
-                // Process exported variable declarations: export const foo = () => {}
-                deno_ast::ModuleItemRef::ModuleDecl(module_decl) => {
-                    if let ast::ModuleDecl::ExportDecl(decl) = module_decl
-                        && let ast::Decl::Var(vdecl) = &decl.decl
-                        && vdecl.decls.len() == 1
-                        && !matches!(vdecl.kind, ast::VarDeclKind::Var)
-                    {
-                        let declarator = &vdecl.decls[0];
-                        if let ast::Pat::Ident(binding_ident) = &declarator.name
-                            && let Some(init_expr) = &declarator.init
-                            && let ast::Expr::Arrow(arrow) = &**init_expr
-                        {
-                            let name = binding_ident.id.sym.to_string();
-                            arrows.push((name, (*arrow).clone(), true));
-                        }
-                    }
-                }
+                // Note: oats_ast doesn't have separate export declarations in the AST
+                // Exports are handled differently - for now we only handle non-exported
+                _ => {}
             }
         }
         arrows
@@ -210,16 +193,16 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
     ///
     /// # Returns
     /// `true` if any `var` declarations are found, `false` otherwise
-    fn stmt_contains_var(stmt: &deno_ast::swc::ast::Stmt) -> bool {
-        use deno_ast::swc::ast;
+    fn stmt_contains_var(stmt: &oats_ast::Stmt) -> bool {
+        use oats_ast::*;
         match stmt {
             // Distinguish `var` (function-scoped) from `let`/`const` (block-scoped).
             // Only true `var` declarations are rejected; `let` and `const` use the
             // same AST node type but have different `kind` discriminators.
-            ast::Stmt::Decl(ast::Decl::Var(vdecl)) => {
-                matches!(vdecl.kind, ast::VarDeclKind::Var)
+            Stmt::VarDecl(vdecl) => {
+                matches!(vdecl.kind, VarDeclKind::Var)
             }
-            ast::Stmt::Block(block) => {
+            Stmt::Block(block) => {
                 for s in &block.stmts {
                     if stmt_contains_var(s) {
                         return true;
@@ -227,7 +210,7 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
                 }
                 false
             }
-            ast::Stmt::If(ifstmt) => {
+            Stmt::If(ifstmt) => {
                 if stmt_contains_var(&ifstmt.cons) {
                     return true;
                 }
@@ -238,15 +221,20 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
                 }
                 false
             }
-            ast::Stmt::For(forstmt) => {
+            Stmt::For(forstmt) => {
+                if let Some(ForInit::VarDecl(vd)) = &forstmt.init {
+                    if matches!(vd.kind, VarDeclKind::Var) {
+                        return true;
+                    }
+                }
                 if stmt_contains_var(&forstmt.body) {
                     return true;
                 }
                 false
             }
-            ast::Stmt::While(ws) => stmt_contains_var(&ws.body),
-            ast::Stmt::DoWhile(dws) => stmt_contains_var(&dws.body),
-            ast::Stmt::Switch(swt) => {
+            Stmt::While(ws) => stmt_contains_var(&ws.body),
+            Stmt::DoWhile(dws) => stmt_contains_var(&dws.body),
+            Stmt::Switch(swt) => {
                 for case in &swt.cases {
                     for s in &case.cons {
                         if stmt_contains_var(s) {
@@ -256,7 +244,7 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
                 }
                 false
             }
-            ast::Stmt::Try(tr) => {
+            Stmt::Try(tr) => {
                 // tr.block is a BlockStmt
                 for s in &tr.block.stmts {
                     if stmt_contains_var(s) {
@@ -279,6 +267,16 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
                 }
                 false
             }
+            Stmt::FnDecl(fn_decl) => {
+                if let Some(body) = &fn_decl.body {
+                    for s in &body.stmts {
+                        if stmt_contains_var(s) {
+                            return true;
+                        }
+                    }
+                }
+                false
+            }
             _ => false,
         }
     }
@@ -287,66 +285,33 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
     // NOTE: This function is now consolidated in crate::types::infer_type_from_expr
 
     // Walk top-level items and examine function bodies / declarations.
-    for item in parsed.program_ref().body() {
-        use deno_ast::swc::ast;
-        if let deno_ast::ModuleItemRef::Stmt(stmt) = item {
-            if stmt_contains_var(stmt) {
-                return diagnostics::report_error_and_bail(
-                    Some(&src_path),
-                    Some(&source),
-                    "`var` declarations are not supported. Use `let` or `const` instead.",
-                    Some(
-                        "`var` has function-scoped semantics which we intentionally disallow; prefer `let` or `const`.",
-                    ),
-                );
-            }
-            // If it's a function decl, also inspect its body for var
-            if let ast::Stmt::Decl(ast::Decl::Fn(fdecl)) = stmt
-                && let Some(body) = &fdecl.function.body
-            {
-                for s in &body.stmts {
-                    if stmt_contains_var(s) {
-                        return diagnostics::report_error_and_bail(
-                            Some(&src_path),
-                            Some(&source),
-                            "`var` declarations are not supported. Use `let` or `const` instead.",
-                            Some(
-                                "`var` has function-scoped semantics which we intentionally disallow; prefer `let` or `const`.",
-                            ),
-                        );
-                    }
-                }
-            }
+    // Note: var checking is already done in parser.rs, but we keep this for safety
+    for stmt in &parsed.body {
+        use oats_ast::*;
+        if stmt_contains_var(stmt) {
+            return diagnostics::report_error_and_bail(
+                Some(&src_path),
+                Some(&source),
+                "`var` declarations are not supported. Use `let` or `const` instead.",
+                Some(
+                    "`var` has function-scoped semantics which we intentionally disallow; prefer `let` or `const`.",
+                ),
+            );
         }
-        if let deno_ast::ModuleItemRef::ModuleDecl(module_decl) = item
-            && let deno_ast::swc::ast::ModuleDecl::ExportDecl(decl) = module_decl
+        // If it's a function decl, also inspect its body for var
+        if let Stmt::FnDecl(fdecl) = stmt
+            && let Some(body) = &fdecl.body
         {
-            if let deno_ast::swc::ast::Decl::Var(vdecl) = &decl.decl
-                && matches!(vdecl.kind, ast::VarDeclKind::Var)
-            {
-                return diagnostics::report_error_and_bail(
-                    Some(&src_path),
-                    Some(&source),
-                    "`var` declarations are not supported. Use `let` or `const` instead.",
-                    Some(
-                        "`var` has function-scoped semantics which we intentionally disallow; prefer `let` or `const`.",
-                    ),
-                );
-            }
-            if let ast::Decl::Fn(fdecl) = &decl.decl
-                && let Some(body) = &fdecl.function.body
-            {
-                for s in &body.stmts {
-                    if stmt_contains_var(s) {
-                        return diagnostics::report_error_and_bail(
-                            Some(&src_path),
-                            Some(&source),
-                            "`var` declarations are not supported. Use `let` or `const` instead.",
-                            Some(
-                                "`var` has function-scoped semantics which we intentionally disallow; prefer `let` or `const`.",
-                            ),
-                        );
-                    }
+            for s in &body.stmts {
+                if stmt_contains_var(s) {
+                    return diagnostics::report_error_and_bail(
+                        Some(&src_path),
+                        Some(&source),
+                        "`var` declarations are not supported. Use `let` or `const` instead.",
+                        Some(
+                            "`var` has function-scoped semantics which we intentionally disallow; prefer `let` or `const`.",
+                        ),
+                    );
                 }
             }
         }
@@ -355,21 +320,24 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
     // Module-level body is parsed; do not print debug information here.
 
     // Require the user script to export a `main` function as the program entrypoint
-    let mut func_decl_opt: Option<deno_ast::swc::ast::Function> = None;
-    for item_ref in parsed.program_ref().body() {
-        if let deno_ast::ModuleItemRef::ModuleDecl(module_decl) = item_ref
-            && let deno_ast::swc::ast::ModuleDecl::ExportDecl(decl) = module_decl
-            && let deno_ast::swc::ast::Decl::Fn(f) = &decl.decl
-        {
-            let name = f.ident.sym.to_string();
+    let mut func_decl_opt: Option<oats_ast::Function> = None;
+    for stmt in &parsed.body {
+        use oats_ast::*;
+        if let Stmt::FnDecl(fn_decl) = stmt {
+            let name = fn_decl.ident.sym.clone();
             if name == "main" {
-                func_decl_opt = Some((*f.function).clone());
+                func_decl_opt = Some(Function {
+                    params: fn_decl.params.clone(),
+                    body: fn_decl.body.clone(),
+                    return_type: fn_decl.return_type.clone(),
+                    span: fn_decl.span.clone(),
+                });
                 break;
             }
         }
     }
 
-    let func_decl: Option<deno_ast::swc::ast::Function> = if let Some(f) = func_decl_opt {
+    let func_decl: Option<oats_ast::Function> = if let Some(f) = func_decl_opt {
         Some(f)
     } else {
         // Check if we're in library mode (emitting object only)
@@ -421,7 +389,11 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
     // console.log functions
     let void_t = context.void_type();
     let i8ptr_t = context.ptr_type(inkwell::AddressSpace::default());
-    module.add_function("oats_std_console_log", void_t.fn_type(&[i8ptr_t.into()], false), None);
+    module.add_function(
+        "oats_std_console_log",
+        void_t.fn_type(&[i8ptr_t.into()], false),
+        None,
+    );
 
     let builder = context.create_builder();
     let codegen = CodeGen {
@@ -496,18 +468,16 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
     // Emit IR for class methods/constructors. Emit for both exported and
     // non-exported class declarations so constructors are available for
     // `new` expressions regardless of export status.
-    for item_ref in parsed.program_ref().body() {
-        // Handle exported class declarations: `export class Foo {}`
-        if let deno_ast::ModuleItemRef::ModuleDecl(module_decl) = item_ref
-            && let deno_ast::swc::ast::ModuleDecl::ExportDecl(decl) = module_decl
-            && let deno_ast::swc::ast::Decl::Class(c) = &decl.decl
-        {
-            let class_name = c.ident.sym.to_string();
+    for stmt in &parsed.body {
+        use oats_ast::*;
+        // Handle class declarations: `class Foo {}`
+        if let Stmt::ClassDecl(c) = stmt {
+            let class_name = c.ident.sym.clone();
             // If this class extends a parent, record the parent name so constructors
             // and `super(...)` lowering can find the parent's initializer.
-            let parent_name_opt = if let Some(sc) = &c.class.super_class {
-                if let deno_ast::swc::ast::Expr::Ident(id) = &**sc {
-                    Some(id.sym.to_string())
+            let parent_name_opt = if let Some(sc) = &c.super_class {
+                if let Expr::Ident(id) = sc {
+                    Some(id.sym.clone())
                 } else {
                     None
                 }
@@ -517,20 +487,22 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
             *codegen.current_class_parent.borrow_mut() = parent_name_opt.clone();
 
             // Emit members for this class
-            use deno_ast::swc::ast::ClassMember;
-            for member in &c.class.body {
+            for member in &c.body {
                 match member {
                     ClassMember::Method(m) => {
                         // method name
-                        let mname = match &m.key {
-                            deno_ast::swc::ast::PropName::Ident(id) => id.sym.to_string(),
-                            deno_ast::swc::ast::PropName::Str(s) => s.value.to_string(),
-                            _ => continue,
+                        let mname = m.ident.sym.clone();
+                        // Convert MethodDecl to Function for type checking
+                        let method_func = Function {
+                            params: m.params.clone(),
+                            body: m.body.clone(),
+                            return_type: m.return_type.clone(),
+                            span: m.span.clone(),
                         };
                         // Try to type-check the method function
                         let mut method_symbols = SymbolTable::new();
                         let (sig_opt, type_diags) =
-                            check_function_strictness(&m.function, &mut method_symbols)?;
+                            check_function_strictness(&method_func, &mut method_symbols)?;
 
                         // Emit type checking diagnostics
                         for diag in &type_diags {
@@ -600,7 +572,7 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
                             {
                                 let fname = id.sym.to_string();
                                 if fields.iter().all(|(n, _)| n != &fname) {
-                                    // If the class property has a TypeScript type annotation, map it
+                                    // If the class property has an Oats type annotation, map it
                                     // to an OatsType; otherwise default to Number.
                                     let ftype = if let Some(type_ann) = &prop.type_ann {
                                         if let Some(mt) =
@@ -1152,31 +1124,36 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
 
         // Convert arrow function to regular function format that gen_function_ir expects
         // Arrow functions need special handling because their structure differs slightly
-        use deno_ast::swc::ast::{BlockStmt, BlockStmtOrExpr, Function, Param};
+        use oats_ast::*;
 
         // Convert arrow params (Vec<Pat>) to function params (Vec<Param>)
+        // For now, we need to extract type annotations from the patterns
+        // This is a simplified version - in a full implementation, we'd need to
+        // handle type annotations properly from the arrow function parameters
         let func_params: Vec<Param> = arrow
             .params
             .iter()
-            .map(|pat| Param {
-                span: Default::default(),
-                decorators: vec![],
-                pat: pat.clone(),
+            .map(|pat| {
+                // Extract type from pattern if available
+                // For now, create a param with no type annotation
+                Param {
+                    pat: pat.clone(),
+                    ty: None, // TODO: Extract type annotation from arrow param
+                    span: arrow.span.clone(),
+                }
             })
             .collect();
 
         // Convert arrow body to function body (BlockStmt)
-        let func_body = match &*arrow.body {
-            BlockStmtOrExpr::BlockStmt(block) => Some(block.clone()),
-            BlockStmtOrExpr::Expr(expr) => {
+        let func_body = match &arrow.body {
+            ArrowBody::Block(block) => Some(block.clone()),
+            ArrowBody::Expr(expr) => {
                 // Wrap expression in a return statement
-                use deno_ast::swc::ast::{ReturnStmt, Stmt};
                 Some(BlockStmt {
-                    span: arrow.span,
-                    ctxt: Default::default(),
+                    span: arrow.span.clone(),
                     stmts: vec![Stmt::Return(ReturnStmt {
-                        span: arrow.span,
-                        arg: Some(expr.clone()),
+                        span: arrow.span.clone(),
+                        arg: Some(expr.as_ref().clone()),
                     })],
                 })
             }
@@ -1184,14 +1161,9 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
 
         let func = Function {
             params: func_params,
-            decorators: vec![],
-            span: arrow.span,
-            ctxt: Default::default(),
             body: func_body,
-            is_generator: false,
-            is_async: arrow.is_async,
-            type_params: arrow.type_params.clone(),
             return_type: arrow.return_type.clone(),
+            span: arrow.span.clone(),
         };
 
         let mut inner_symbols = SymbolTable::new();

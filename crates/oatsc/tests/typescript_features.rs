@@ -1,7 +1,7 @@
-//! Test that all high-priority TypeScript features parse correctly
+//! Test that all high-priority Oats language features parse correctly
 //!
 //! This test validates that the Oats parser correctly handles all the critical
-//! TypeScript language features mentioned in the project roadmap:
+//! Oats language features mentioned in the project roadmap:
 //! - async/await syntax
 //! - Classes with all modifiers
 //! - Destructuring (arrays and objects)

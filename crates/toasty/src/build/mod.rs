@@ -436,12 +436,11 @@ fn link_package_modules(
 
     // If only one module, just copy it
     if compiled_modules.len() == 1 {
-        let (_module_path, obj_path) = compiled_modules
-            .iter()
-            .next()
-            .ok_or_else(|| ToastyError::other(
-                "Internal error: expected exactly one compiled module but iterator is empty"
-            ))?;
+        let (_module_path, obj_path) = compiled_modules.iter().next().ok_or_else(|| {
+            ToastyError::other(
+                "Internal error: expected exactly one compiled module but iterator is empty",
+            )
+        })?;
         std::fs::copy(obj_path, output_path).map_err(|e| ToastyError::io(output_path, e))?;
         return Ok(());
     }

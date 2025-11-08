@@ -1,13 +1,13 @@
 //! Type annotation parsers
 //!
-//! This module contains parsers for TypeScript-style type annotations.
+//! This module contains parsers for Oats type annotations.
 //! All type-related parsing logic is grouped here for Locality of Behavior.
 
 use chumsky::prelude::*;
 use oats_ast::*;
 
-/// Parser for TypeScript types.
-/// 
+/// Parser for Oats types.
+///
 /// Supports:
 /// - Keyword types: `number`, `string`, `boolean`, `void`
 /// - Type references: `MyType`, `MyType<T, U>`
@@ -22,17 +22,20 @@ pub fn ts_type_parser() -> impl Parser<char, TsType, Error = Simple<char>> {
             ts_type_ref_parser(ty.clone()),
             ts_tuple_type_parser(ty.clone()),
             ts_function_type_parser(ty.clone()),
-            just('(').padded().ignore_then(ty.clone()).then_ignore(just(')').padded()),
+            just('(')
+                .padded()
+                .ignore_then(ty.clone())
+                .then_ignore(just(')').padded()),
         ));
-        
+
         // Array suffix: [] or [][]
         let array_suffix = just('[')
             .padded()
             .ignore_then(just(']').padded())
             .map_with_span(|_, span| span);
-        
-        let with_array = base.then(array_suffix.repeated())
-            .map_with_span(|(mut base_ty, suffixes), base_span| {
+
+        let with_array = base.then(array_suffix.repeated()).map_with_span(
+            |(mut base_ty, suffixes), base_span| {
                 let mut current_span = base_span;
                 for suffix_span in suffixes {
                     // Update span to include the array suffix
@@ -43,17 +46,13 @@ pub fn ts_type_parser() -> impl Parser<char, TsType, Error = Simple<char>> {
                     });
                 }
                 base_ty
-            });
+            },
+        );
 
         // Intersection types: T & U (higher precedence than union)
         // Use recursive ty parser to avoid clone
         let intersection = with_array
-            .then(
-                just('&')
-                    .padded()
-                    .ignore_then(ty.clone())
-                    .repeated()
-            )
+            .then(just('&').padded().ignore_then(ty.clone()).repeated())
             .map_with_span(|(first, rest), span| {
                 if rest.is_empty() {
                     first
@@ -70,12 +69,7 @@ pub fn ts_type_parser() -> impl Parser<char, TsType, Error = Simple<char>> {
         // Union types: T | U (lowest precedence)
         // Use recursive ty parser to avoid clone
         intersection
-            .then(
-                just('|')
-                    .padded()
-                    .ignore_then(ty.clone())
-                    .repeated()
-            )
+            .then(just('|').padded().ignore_then(ty.clone()).repeated())
             .map_with_span(|(first, rest), span| {
                 if rest.is_empty() {
                     first
@@ -102,7 +96,7 @@ fn ts_keyword_type_parser() -> impl Parser<char, TsType, Error = Simple<char>> {
 }
 
 /// Parser for type references (user-defined types).
-/// 
+///
 /// Pattern: `MyType` or `MyType<T, U>`
 fn ts_type_ref_parser(
     ty: impl Parser<char, TsType, Error = Simple<char>> + Clone,
@@ -114,7 +108,7 @@ fn ts_type_ref_parser(
                 .separated_by(just(',').padded())
                 .collect::<Vec<_>>()
                 .delimited_by(just('<').padded(), just('>').padded())
-                .or_not()
+                .or_not(),
         )
         .map_with_span(|(ident, type_params), span| {
             TsType::TsTypeRef(TsTypeRef {
@@ -129,7 +123,7 @@ fn ts_type_ref_parser(
 }
 
 /// Parser for tuple types.
-/// 
+///
 /// Pattern: `[T, U, V]`
 fn ts_tuple_type_parser(
     ty: impl Parser<char, TsType, Error = Simple<char>> + Clone,
@@ -147,7 +141,7 @@ fn ts_tuple_type_parser(
 }
 
 /// Parser for function types.
-/// 
+///
 /// Pattern: `(a: number, b: string) => number`
 fn ts_function_type_parser(
     ty: impl Parser<char, TsType, Error = Simple<char>> + Clone,
@@ -163,4 +157,3 @@ fn ts_function_type_parser(
             })
         })
 }
-

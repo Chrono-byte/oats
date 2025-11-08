@@ -6,28 +6,28 @@ This reference summarizes the current compiler architecture, runtime object mode
 
 ## Current Implementation Status
 
-**October 18, 2025:** Oats implements a substantial TypeScript subset with the following key features:
+**October 18, 2025:** Oats implements a substantial language surface with the following key features:
 
 - **Language**: Classes, async/await, generics, unions, interfaces, enums, destructuring, template literals
 - **Types**: Full primitive set (integers, floats, char), tuples, promises, weak/unowned references
 - **Memory**: ARC with cycle collection, escape analysis for RC elimination
 - **Runtime**: C-callable with helpers for strings, arrays, RC operations
-- **Parser**: ~90.43% TypeScript conformance test success rate
+- **Parser**: ~90.43% syntax compatibility with TypeScript (for migration purposes)
 
 ## Overview
 
-Oats is an ahead-of-time compiler that lowers a TypeScript-based language to native executables via LLVM. It targets predictable performance, a small safe runtime, and a compact language surface suitable for systems programming. The language surface and type system follow TypeScript conventions where practical; the memory model and ownership semantics are inspired by Swift's ARC (Automatic Reference Counting) adapted for a deterministic, low-level runtime.
+Oats is an ahead-of-time compiler that compiles the Oats language to native executables via LLVM. It targets predictable performance, a small safe runtime, and a compact language surface suitable for systems programming. The language surface and type system use syntax similar to TypeScript for familiarity; the memory model and ownership semantics are inspired by Swift's ARC (Automatic Reference Counting) adapted for a deterministic, low-level runtime.
 
 ## Design Goals
 
 - Predictable performance and memory layout for interop with native code.
 - Clear, small semantics that map well to LLVM and a C-callable runtime.
 - Safe, deterministic reference-counted memory management with weak refs and cycle collector support.
-- Developer ergonomics inspired by TypeScript syntax and types, but trimmed for AOT compilation.
+- Developer ergonomics with familiar syntax, but trimmed for AOT compilation.
 
 ## Source Model & Syntax
 
-- Syntax is a restricted subset of TypeScript:
+- Syntax is similar to TypeScript but tailored for AOT compilation:
   - `let` / `let mut`, `function`, `class`, `import`/`export`. Semicolons are enforced; `var` is rejected. `const` is supported as an immutable binding (preferred for values that should not change). The language also includes an explicit `let mut` form to declare mutable bindings when needed.
   - Source size limits apply (enforced in parser).
 - No dynamic eval. Modules are statically resolved at compile time.
@@ -43,7 +43,7 @@ Oats is an ahead-of-time compiler that lowers a TypeScript-based language to nat
   - Union (either numeric-only or pointer)
   - Weak`T` (zeroing weak references)
   - Nominal typing metadata retained for runtime semantics
-  - Optional/nullable values are represented using TypeScript-style unions (for example `T | null` / `T | undefined`) and are lowered according to the target `OatsType` semantics.
+  - Optional/nullable values are represented using union syntax (for example `T | null` / `T | undefined`) and are lowered according to the target `OatsType` semantics.
 - Mapping to LLVM:
   - Number → `f64`
   - Boolean → `i1` or `i8` as needed
@@ -52,7 +52,7 @@ Oats is an ahead-of-time compiler that lowers a TypeScript-based language to nat
 ## Workspace Overview
 
 - `crates/oats` – Ahead-of-time compiler (parser, type checker, codegen).
-  - `parser.rs` – TypeScript subset parsing via `deno_ast`.
+  - `parser.rs` – Oats language parsing via `deno_ast`.
   - `types.rs` – `OatsType` representation and type inference helpers.
   - `codegen/` – LLVM IR lowering (`emit.rs`, `expr.rs`, `stmt.rs`, `helpers.rs`, `const_eval.rs`, `escape.rs`).
   - `builder.rs` – Entry point that wires parsing, type checking, and codegen.
@@ -63,7 +63,7 @@ Oats is an ahead-of-time compiler that lowers a TypeScript-based language to nat
 ## Compilation Pipeline
 
 ```text
-TypeScript-like source (.oats)
+Oats source (.oats)
   ↓  parser.rs (deno_ast)
 Abstract Syntax Tree (AST)
   ↓  types.rs (type checking / OatsType mapping)
@@ -172,7 +172,7 @@ Pointer rules and ARC semantics:
 ## Compiler Pipeline
 
 1. Parse: `deno_ast` → AST (parser enforces semicolons, rejects `var`, enforces size limits).
-2. Type check: map TypeScript-like types to `OatsType`.
+2. Type check: map Oats type annotations to `OatsType`.
 3. Codegen:
    - `CodeGen` struct holds LLVM context, cached runtime function declarations, and helper types (`i8ptr_t`, `i64_t`, etc.).
    - Lowering is split:
@@ -185,7 +185,7 @@ Pointer rules and ARC semantics:
 ## Modules & Imports
 
 - Entry point resolves transitive imports.
-- Relative imports resolved with `.ts` / `.oats` extensions; directory imports try `index.ts` / `index.oats`.
+- Relative imports resolved with `.oats` extensions; directory imports try `index.oats`.
 - Paths are canonicalized to avoid duplicate compilation and cycles.
 - Compiled modules stored in a `HashMap<String, ParsedModule>`.
 

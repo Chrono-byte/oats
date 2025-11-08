@@ -25,24 +25,41 @@ type LocalsStackLocal<'a> = Vec<HashMap<String, LocalEntry<'a>>>;
 impl<'a> crate::codegen::CodeGen<'a> {
     pub(crate) fn lower_for_of_stmt(
         &self,
-        forof: &deno_ast::swc::ast::ForOfStmt,
+        forof: &oats_ast::ForOfStmt,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals_stack: &mut LocalsStackLocal<'a>,
     ) -> crate::diagnostics::DiagnosticResult<bool> {
+        use oats_ast::*;
         // Only handle the case where the left-hand side is a var
         // declaration (e.g., `for (let v of rhs)`).
         // forof.left can be either a VarDecl or a Pat; we match on VarDecl
-        if let deno_ast::swc::ast::ForHead::VarDecl(var_decl) = &forof.left
+        if let ForHead::VarDecl(var_decl) = &forof.left
             && var_decl.decls.len() == 1
         {
             let decl = &var_decl.decls[0];
-            if let deno_ast::swc::ast::Pat::Ident(ident) = &decl.name {
-                let loop_var_name = ident.id.sym.to_string();
+            let loop_var_name = match &decl.name {
+                Pat::Ident(ident) => ident.sym.clone(),
+                _ => {
+                    return Err(crate::diagnostics::Diagnostic::error(
+                        "Destructuring patterns not yet supported in for-of loops",
+                    )
+                    .with_code("E1005")
+                    .with_label(crate::diagnostics::Label {
+                        span: crate::diagnostics::Span {
+                            start: decl.span.start,
+                            end: decl.span.end,
+                        },
+                        message: "Only simple identifier patterns are supported".into(),
+                    })
+                    .into());
+                }
+            };
+            {
                 // capture nominal type for the loop variable if annotated
                 let mut declared_nominal: Option<String> = None;
-                if let Some(type_ann) = &ident.type_ann
-                    && let Some(mapped) = crate::types::map_ts_type(&type_ann.type_ann)
+                if let Some(ty) = &decl.ty
+                    && let Some(mapped) = crate::types::map_ts_type(ty)
                     && let crate::types::OatsType::NominalStruct(n) = &mapped
                 {
                     declared_nominal = Some(n.clone());
@@ -221,7 +238,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
                     // Lower the loop body: handle a Block or single statement
                     let terminated = match &*forof.body {
-                        deno_ast::swc::ast::Stmt::Block(block) => {
+                        oats_ast::Stmt::Block(block) => {
                             self.lower_stmts(&block.stmts, function, param_map, locals_stack)?
                         }
                         other => self.lower_stmt(other, function, param_map, locals_stack)?,

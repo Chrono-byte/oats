@@ -24,7 +24,7 @@ type LocalsStackLocal<'a> = Vec<HashMap<String, LocalEntry<'a>>>;
 impl<'a> crate::codegen::CodeGen<'a> {
     pub(crate) fn lower_return_stmt(
         &self,
-        ret: &deno_ast::swc::ast::ReturnStmt,
+        ret: &oats_ast::ReturnStmt,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals_stack: &mut LocalsStackLocal<'a>,

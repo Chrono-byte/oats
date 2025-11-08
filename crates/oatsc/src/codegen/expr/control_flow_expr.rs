@@ -3,7 +3,6 @@ use inkwell::values::BasicValueEnum;
 use inkwell::values::FunctionValue;
 use std::collections::HashMap;
 
-use deno_ast::swc::ast;
 use inkwell::types::{BasicType, BasicTypeEnum};
 use inkwell::values::{BasicValue, PointerValue};
 
@@ -24,7 +23,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
     #[allow(clippy::result_large_err)]
     pub(super) fn lower_cond_expr(
         &self,
-        cond: &deno_ast::swc::ast::CondExpr,
+        cond: &oats_ast::CondExpr,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals: &mut LocalsStackLocal<'a>,
@@ -215,7 +214,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         let else_val = match else_val {
             Ok(v) => Ok(v),
             Err(_) => {
-                if let ast::Expr::Ident(id) = &*cond.alt {
+                if let oats_ast::Expr::Ident(id) = &*cond.alt {
                     if id.sym == "undefined" {
                         let null_ptr = self.i8ptr_t.const_null();
                         eprintln!(
@@ -504,7 +503,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         Err(Diagnostic::simple_with_span_boxed(
             Severity::Error,
             "unsupported conditional expression (ternary) form",
-            cond.span.lo.0 as usize,
+            cond.span.start,
         ))
     }
 }

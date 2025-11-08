@@ -23,7 +23,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
     #[allow(clippy::result_large_err)]
     pub(super) fn lower_await_expr(
         &self,
-        await_expr: &deno_ast::swc::ast::AwaitExpr,
+        await_expr: &oats_ast::AwaitExpr,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals: &mut LocalsStackLocal<'a>,
@@ -51,7 +51,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             return Err(Diagnostic::simple_with_span_boxed(
                 Severity::Error,
                 "`await` used outside of async lowering context",
-                await_expr.span.lo.0 as usize,
+                await_expr.span.start,
             ));
         };
 

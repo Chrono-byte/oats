@@ -1,7 +1,6 @@
 use crate::codegen::CodeGen;
 use crate::diagnostics::{Diagnostic, Severity};
 use crate::types::OatsType;
-use deno_ast::swc::ast;
 use inkwell::types::BasicTypeEnum;
 use inkwell::values::{BasicValue, BasicValueEnum, FunctionValue};
 use std::collections::HashMap;
@@ -23,25 +22,23 @@ impl<'a> CodeGen<'a> {
     #[allow(clippy::result_large_err)]
     pub(super) fn lower_new_expr(
         &self,
-        new_expr: &ast::NewExpr,
+        new_expr: &oats_ast::NewExpr,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals: &mut LocalsStackLocal<'a>,
     ) -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
-        if let ast::Expr::Ident(ident) = &*new_expr.callee {
+        if let oats_ast::Expr::Ident(ident) = &*new_expr.callee {
             let ctor_name = format!("{}_ctor", ident.sym);
             if let Some(fv) = self.module.get_function(&ctor_name) {
                 let mut lowered_args: Vec<inkwell::values::BasicMetadataValueEnum> = Vec::new();
-                if let Some(args) = &new_expr.args {
-                    for a in args {
-                        if let Ok(val) = self.lower_expr(&a.expr, function, param_map, locals) {
-                            lowered_args.push(val.into());
-                        } else {
-                            return Err(Diagnostic::simple_boxed(
-                                Severity::Error,
-                                "expression lowering failed",
-                            ))?;
-                        }
+                for arg in &new_expr.args {
+                    if let Ok(val) = self.lower_expr(arg, function, param_map, locals) {
+                        lowered_args.push(val.into());
+                    } else {
+                        return Err(Diagnostic::simple_boxed(
+                            Severity::Error,
+                            "expression lowering failed",
+                        ))?;
                     }
                 }
                 // Ensure the number of arguments matches the constructor's
@@ -76,14 +73,14 @@ impl<'a> CodeGen<'a> {
                 Err(Diagnostic::simple_with_span_boxed(
                     Severity::Error,
                     "unknown constructor or missing `<Name>_ctor` function",
-                    new_expr.span.lo.0 as usize,
+                    new_expr.span.start,
                 ))
             }
         } else {
             Err(Diagnostic::simple_with_span_boxed(
                 Severity::Error,
                 "unsupported `new` callee: only identifier constructors are supported",
-                new_expr.span.lo.0 as usize,
+                new_expr.span.start,
             ))
         }
     }

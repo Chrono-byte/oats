@@ -15,7 +15,6 @@
 //! these helpers and avoids duplicate declarations.
 
 use crate::diagnostics::Severity;
-use deno_ast::swc::ast;
 use inkwell::AddressSpace;
 use inkwell::basic_block::BasicBlock;
 use inkwell::builder::Builder;
@@ -162,7 +161,7 @@ pub struct CodeGen<'a> {
     // declared name. Value is the AST `Function` and its strictness
     // `FunctionSig` so we can monomorphize per-call-site.
     pub nested_generic_fns:
-        RefCell<HashMap<String, (deno_ast::swc::ast::Function, crate::types::FunctionSig)>>,
+        RefCell<HashMap<String, (oats_ast::Function, crate::types::FunctionSig)>>,
     // Map of monomorphized specialized function keys -> generated name so
     // we avoid regenerating the same specialization multiple times.
     pub monomorphized_map: RefCell<HashMap<String, String>>,
@@ -830,6 +829,16 @@ impl<'a> CodeGen<'a> {
             })
     }
 
+    fn get_array_get_length(&self) -> FunctionValue<'a> {
+        self.module
+            .get_function("array_get_length")
+            .unwrap_or_else(|| {
+                // array_get_length(arr_ptr: i8*) -> i64
+                let fn_type = self.i64_t.fn_type(&[self.i8ptr_t.into()], false);
+                self.module.add_function("array_get_length", fn_type, None)
+            })
+    }
+
     fn get_array_set_f64(&self) -> FunctionValue<'a> {
         self.module
             .get_function("array_set_f64")
@@ -942,7 +951,7 @@ impl<'a> CodeGen<'a> {
     fn create_param_allocas(
         &self,
         function: FunctionValue<'a>,
-        func_decl: &ast::Function,
+        func_decl: &oats_ast::Function,
         llvm_param_types: &[BasicTypeEnum<'a>],
         receiver_name: Option<&str>,
     ) -> crate::diagnostics::DiagnosticResult<(HashMap<String, u32>, LocalsStackLocal<'a>)> {
@@ -951,22 +960,16 @@ impl<'a> CodeGen<'a> {
             param_map.insert(rname.to_string(), 0u32);
         }
         for (i, p) in func_decl.params.iter().enumerate() {
-            use deno_ast::swc::ast;
+            use oats_ast::*;
             match &p.pat {
-                ast::Pat::Ident(ident) => {
-                    let name = ident.id.sym.to_string();
+                Pat::Ident(ident) => {
+                    let name = ident.sym.clone();
                     let idx = (i + receiver_name.map_or(0, |_| 1)) as u32;
                     param_map.insert(name, idx);
                 }
-                // Support default parameters like `x = 0` where the pattern is an Assign
-                ast::Pat::Assign(assign) => {
-                    if let ast::Pat::Ident(ident) = &*assign.left {
-                        let name = ident.id.sym.to_string();
-                        let idx = (i + receiver_name.map_or(0, |_| 1)) as u32;
-                        param_map.insert(name, idx);
-                    }
+                _ => {
+                    // Destructuring parameters not yet supported in parameter mapping
                 }
-                _ => {}
             }
         }
 
@@ -1258,7 +1261,7 @@ impl<'a> CodeGen<'a> {
     pub fn specialize_generic(
         &self,
         _type_params: &[crate::types::OatsType],
-        _args: &[deno_ast::swc::ast::ExprOrSpread],
+        _args: &[oats_ast::Expr],
     ) -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
         // Logic to specialize the generic type
         Ok(self
@@ -1303,17 +1306,8 @@ impl<'a> CodeGen<'a> {
                 )
             })?;
 
-        // Obtain type parameter names: prefer fsig.type_params, otherwise derive from AST
-        let mut tp_names: Vec<String> = fsig.type_params.clone();
-        if tp_names.is_empty()
-            && let Some(tp_decl) = &func_ast.type_params
-        {
-            tp_names = tp_decl
-                .params
-                .iter()
-                .map(|p| p.name.sym.to_string())
-                .collect();
-        }
+        // Obtain type parameter names: prefer fsig.type_params
+        let tp_names: Vec<String> = fsig.type_params.clone();
 
         if tp_names.len() != type_args.len() {
             return Err(crate::diagnostics::Diagnostic::simple_boxed(
@@ -1338,10 +1332,14 @@ impl<'a> CodeGen<'a> {
         // AST parameter annotations. Fall back to the fsig params when needed.
         let mut concrete_params: Vec<crate::types::OatsType> = Vec::new();
         for param in &func_ast.params {
-            if let deno_ast::swc::ast::Pat::Ident(ident) = &param.pat
-                && let Some(type_ann) = &ident.type_ann
-                && let Some(mapped) =
-                    crate::types::map_ts_type_with_subst(&type_ann.type_ann, &subst)
+            use oats_ast::*;
+            // Only handle simple identifier parameters for now
+            if !matches!(&param.pat, Pat::Ident(_)) {
+                continue; // Skip destructuring parameters
+            }
+            let type_ann_opt = param.ty.as_ref();
+            if let Some(type_ann) = type_ann_opt
+                && let Some(mapped) = crate::types::map_ts_type_with_subst(type_ann, &subst)
             {
                 concrete_params.push(mapped);
                 continue;
@@ -1357,7 +1355,7 @@ impl<'a> CodeGen<'a> {
 
         // Compute concrete return type
         let concrete_ret = if let Some(rt) = &func_ast.return_type {
-            if let Some(mapped) = crate::types::map_ts_type_with_subst(&rt.type_ann, &subst) {
+            if let Some(mapped) = crate::types::map_ts_type_with_subst(rt, &subst) {
                 mapped
             } else {
                 fsig.ret.clone()
@@ -1421,14 +1419,14 @@ impl<'a> CodeGen<'a> {
     /// Infer return type from arrow function body
     pub fn infer_return_type_from_arrow_body(
         &self,
-        body: &deno_ast::swc::ast::BlockStmtOrExpr,
+        body: &oats_ast::ArrowBody,
     ) -> crate::diagnostics::DiagnosticResult<crate::types::OatsType> {
         match body {
-            deno_ast::swc::ast::BlockStmtOrExpr::Expr(expr) => {
+            oats_ast::ArrowBody::Expr(expr) => {
                 // Simple inference for single expression body
                 self.infer_type_from_expr(expr)
             }
-            deno_ast::swc::ast::BlockStmtOrExpr::BlockStmt(block) => {
+            oats_ast::ArrowBody::Block(block) => {
                 // Collect all return expressions from the block
                 let mut return_exprs = Vec::new();
                 self.collect_return_exprs(&block.stmts, &mut return_exprs);
@@ -1468,26 +1466,18 @@ impl<'a> CodeGen<'a> {
     }
 
     /// Collect all return expressions from a list of statements
-    fn collect_return_exprs(
-        &self,
-        stmts: &[deno_ast::swc::ast::Stmt],
-        out: &mut Vec<deno_ast::swc::ast::Expr>,
-    ) {
+    fn collect_return_exprs(&self, stmts: &[oats_ast::Stmt], out: &mut Vec<oats_ast::Expr>) {
         for stmt in stmts {
             self.collect_return_exprs_from_stmt(stmt, out);
         }
     }
 
-    fn collect_return_exprs_from_stmt(
-        &self,
-        stmt: &deno_ast::swc::ast::Stmt,
-        out: &mut Vec<deno_ast::swc::ast::Expr>,
-    ) {
-        use deno_ast::swc::ast::*;
+    fn collect_return_exprs_from_stmt(&self, stmt: &oats_ast::Stmt, out: &mut Vec<oats_ast::Expr>) {
+        use oats_ast::*;
         match stmt {
             Stmt::Return(ret) => {
                 if let Some(expr) = &ret.arg {
-                    out.push((**expr).clone());
+                    out.push(expr.clone());
                 }
             }
             Stmt::Block(block) => {
@@ -1529,16 +1519,29 @@ impl<'a> CodeGen<'a> {
     /// Simple type inference from expression
     fn infer_type_from_expr(
         &self,
-        expr: &deno_ast::swc::ast::Expr,
+        expr: &oats_ast::Expr,
     ) -> crate::diagnostics::DiagnosticResult<crate::types::OatsType> {
         match expr {
-            deno_ast::swc::ast::Expr::Lit(lit) => match lit {
-                deno_ast::swc::ast::Lit::Num(_) => Ok(crate::types::OatsType::Number),
-                deno_ast::swc::ast::Lit::Str(_) => Ok(crate::types::OatsType::String),
-                deno_ast::swc::ast::Lit::Bool(_) => Ok(crate::types::OatsType::Number), // bool as number
-                _ => Ok(crate::types::OatsType::Number),                                // default
+            oats_ast::Expr::Lit(lit) => match lit {
+                oats_ast::Lit::F64(_)
+                | oats_ast::Lit::F32(_)
+                | oats_ast::Lit::I8(_)
+                | oats_ast::Lit::I16(_)
+                | oats_ast::Lit::I32(_)
+                | oats_ast::Lit::I64(_)
+                | oats_ast::Lit::I128(_)
+                | oats_ast::Lit::ISize(_)
+                | oats_ast::Lit::U8(_)
+                | oats_ast::Lit::U16(_)
+                | oats_ast::Lit::U32(_)
+                | oats_ast::Lit::U64(_)
+                | oats_ast::Lit::U128(_)
+                | oats_ast::Lit::USize(_) => Ok(crate::types::OatsType::Number),
+                oats_ast::Lit::Str(_) => Ok(crate::types::OatsType::String),
+                oats_ast::Lit::Bool(_) => Ok(crate::types::OatsType::Boolean),
+                _ => Ok(crate::types::OatsType::Number), // default
             },
-            deno_ast::swc::ast::Expr::Ident(_) => Ok(crate::types::OatsType::Number), // unknown
+            oats_ast::Expr::Ident(_) => Ok(crate::types::OatsType::Number), // unknown
             _ => Ok(crate::types::OatsType::Number), // default for complex expr
         }
     }

@@ -1,9 +1,9 @@
 use crate::codegen::CodeGen;
 use crate::diagnostics::{Diagnostic, Severity};
 use crate::types::OatsType;
-use deno_ast::swc::ast;
 use inkwell::types::{BasicType, BasicTypeEnum};
 use inkwell::values::{BasicValue, BasicValueEnum, FunctionValue};
+use oats_ast::*;
 use std::collections::HashMap;
 
 // LocalEntry now includes an Option<String> for an optional nominal type name
@@ -23,7 +23,7 @@ impl<'a> CodeGen<'a> {
     #[allow(clippy::result_large_err)]
     pub(super) fn lower_arrow_expr(
         &self,
-        arrow: &deno_ast::swc::ast::ArrowExpr,
+        arrow: &ArrowExpr,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals: &mut LocalsStackLocal<'a>,
@@ -34,69 +34,63 @@ impl<'a> CodeGen<'a> {
         // Diagnostic: capture listing is emitted here. Full closure
         // lowering will be implemented separately.
         // (boxed environments + trampolines) is planned in Phase 2.
-        fn collect_idents_in_expr(
-            expr: &deno_ast::swc::ast::Expr,
-            out: &mut std::collections::HashSet<String>,
-        ) {
-            use deno_ast::swc::ast;
+        fn collect_idents_in_expr(expr: &Expr, out: &mut std::collections::HashSet<String>) {
             match expr {
-                ast::Expr::Ident(id) => {
-                    out.insert(id.sym.to_string());
+                Expr::Ident(id) => {
+                    out.insert(id.sym.clone());
                 }
-                ast::Expr::Bin(b) => {
+                Expr::Bin(b) => {
                     collect_idents_in_expr(&b.left, out);
                     collect_idents_in_expr(&b.right, out);
                 }
-                ast::Expr::Unary(u) => {
+                Expr::Unary(u) => {
                     collect_idents_in_expr(&u.arg, out);
                 }
-                ast::Expr::Call(c) => {
-                    use deno_ast::swc::ast::Callee;
+                Expr::Call(c) => {
                     match &c.callee {
                         Callee::Expr(e) => collect_idents_in_expr(e, out),
-                        Callee::Super(_) => {}
-                        Callee::Import(_) => {}
+                        Callee::Super(_) => {} // Callee::Import doesn't exist in oats_ast
                     }
                     for a in &c.args {
-                        collect_idents_in_expr(&a.expr, out);
+                        collect_idents_in_expr(a, out);
                     }
                 }
-                ast::Expr::Member(m) => {
+                Expr::Member(m) => {
                     collect_idents_in_expr(&m.obj, out);
                 }
-                ast::Expr::Arrow(a) => {
+                Expr::Arrow(a) => {
                     // nested arrow: scan body
-                    if a.body.is_block_stmt() {
-                        if let deno_ast::swc::ast::BlockStmtOrExpr::BlockStmt(b) = &*a.body {
+                    match &a.body {
+                        ArrowBody::Block(b) => {
                             for s in &b.stmts {
-                                use deno_ast::swc::ast::Stmt;
-                                if let Stmt::Expr(es) = s {
+                                if let Stmt::ExprStmt(es) = s {
                                     collect_idents_in_expr(&es.expr, out);
                                 }
                             }
                         }
-                    } else if let deno_ast::swc::ast::BlockStmtOrExpr::Expr(e) = &*a.body {
-                        collect_idents_in_expr(e, out);
+                        ArrowBody::Expr(e) => {
+                            collect_idents_in_expr(e, out);
+                        }
                     }
                 }
-                ast::Expr::Object(o) => {
+                Expr::Object(o) => {
                     for prop in &o.props {
-                        if let deno_ast::swc::ast::PropOrSpread::Prop(p) = prop
-                            && let deno_ast::swc::ast::Prop::KeyValue(kv) = &**p
+                        if let PropOrSpread::Prop(p) = prop
+                            && let Prop::KeyValue(kv) = p
                         {
                             collect_idents_in_expr(&kv.value, out);
                         }
                     }
                 }
-                ast::Expr::Array(a) => {
+                Expr::Array(a) => {
                     for elem in a.elems.iter().flatten() {
-                        collect_idents_in_expr(&elem.expr, out);
+                        collect_idents_in_expr(elem, out);
                     }
                 }
-                ast::Expr::Assign(asg) => {
+                Expr::Assign(asg) => {
                     collect_idents_in_expr(&asg.right, out);
                 }
-                ast::Expr::Cond(cnd) => {
+                Expr::Cond(cnd) => {
                     collect_idents_in_expr(&cnd.test, out);
                     collect_idents_in_expr(&cnd.cons, out);
                     collect_idents_in_expr(&cnd.alt, out);
@@ -115,23 +109,28 @@ impl<'a> CodeGen<'a> {
 
         // Collect idents used in the arrow body
         let mut used: std::collections::HashSet<String> = std::collections::HashSet::new();
-        if arrow.body.is_block_stmt() {
-            if let deno_ast::swc::ast::BlockStmtOrExpr::BlockStmt(block) = &*arrow.body {
+        match &arrow.body {
+            ArrowBody::Block(block) => {
                 for stmt in &block.stmts {
-                    use deno_ast::swc::ast::Stmt;
-                    if let Stmt::Expr(es) = stmt {
+                    if let Stmt::ExprStmt(es) = stmt {
                         collect_idents_in_expr(&es.expr, &mut used);
                     }
                 }
             }
-        } else if let deno_ast::swc::ast::BlockStmtOrExpr::Expr(expr) = &*arrow.body {
-            collect_idents_in_expr(expr, &mut used);
+            ArrowBody::Expr(expr) => {
+                collect_idents_in_expr(expr, &mut used);
+            }
         }
 
         // Remove arrow params from used
         for param in &arrow.params {
-            if let deno_ast::swc::ast::Pat::Ident(ident) = param {
-                used.remove(&ident.id.sym.to_string());
+            match param {
+                Pat::Ident(ident) => {
+                    used.remove(&ident.sym);
+                }
+                _ => {
+                    // Destructuring parameters not yet supported in capture analysis
+                }
             }
         }
 
@@ -148,38 +147,21 @@ impl<'a> CodeGen<'a> {
         self.next_str_id.set(self.next_str_id.get() + 1);
 
         // Extract parameter types from arrow.params
+        // NOTE: ArrowExpr.params is Vec<Pat>, not Vec<Param>, so type annotations
+        // are not directly available in the AST. This requires AST changes to support.
+        // For now, we default to Number type for all parameters.
+        // TODO: Update oats_ast to support type annotations on arrow function parameters
         let mut param_types = Vec::new();
-        for param in &arrow.params {
-            match param {
-                ast::Pat::Ident(ident) => {
-                    if let Some(type_ann) = &ident.type_ann {
-                        if let Some(mapped) = crate::types::map_ts_type(&type_ann.type_ann) {
-                            param_types.push(mapped);
-                        } else {
-                            return Err(Diagnostic::simple_boxed(
-                                Severity::Error,
-                                "Arrow parameter has unsupported type annotation",
-                            ));
-                        }
-                    } else {
-                        return Err(Diagnostic::simple_boxed(
-                            Severity::Error,
-                            "Arrow parameter missing type annotation",
-                        ));
-                    }
-                }
-                _ => {
-                    return Err(Diagnostic::simple_boxed(
-                        Severity::Error,
-                        "Arrow function parameter pattern not supported",
-                    ));
-                }
-            }
+        for _param in &arrow.params {
+            // Since Pat doesn't have type information, we default to Number
+            // In the future, this should extract types from the Param structure
+            // when ArrowExpr is updated to use Vec<Param> instead of Vec<Pat>
+            param_types.push(crate::types::OatsType::Number);
         }
 
         // Determine return type from arrow.return_type or infer from body
         let ret_type = if let Some(return_type) = &arrow.return_type {
-            if let Some(mapped) = crate::types::map_ts_type(&return_type.type_ann) {
+            if let Some(mapped) = crate::types::map_ts_type(return_type) {
                 mapped
             } else {
                 return Err(Diagnostic::simple_boxed(
@@ -225,13 +207,18 @@ impl<'a> CodeGen<'a> {
         // shift user parameters by +1.
         let mut arrow_param_map = HashMap::new();
         for (idx, param) in arrow.params.iter().enumerate() {
-            if let ast::Pat::Ident(ident) = param {
-                let mapped_idx = if !captures.is_empty() {
-                    (idx as u32) + 1
-                } else {
-                    idx as u32
-                };
-                arrow_param_map.insert(ident.id.sym.to_string(), mapped_idx);
+            match param {
+                Pat::Ident(ident) => {
+                    let mapped_idx = if !captures.is_empty() {
+                        (idx as u32) + 1
+                    } else {
+                        idx as u32
+                    };
+                    arrow_param_map.insert(ident.sym.clone(), mapped_idx);
+                }
+                _ => {
+                    // Destructuring parameters not yet supported in arrow function parameter mapping
+                }
             }
         }
 
@@ -608,9 +595,8 @@ impl<'a> CodeGen<'a> {
         }
 
         // Lower the body
-        if arrow.body.is_block_stmt() {
-            // Block body: { statements }
-            if let ast::BlockStmtOrExpr::BlockStmt(block) = &*arrow.body {
+        match &arrow.body {
+            ArrowBody::Block(block) => {
                 let terminated =
                     self.lower_stmts(&block.stmts, arrow_fn, &arrow_param_map, &mut arrow_locals)?;
 
@@ -632,15 +618,8 @@ impl<'a> CodeGen<'a> {
                         }
                     }
                 }
-            } else {
-                return Err(Diagnostic::simple_boxed(
-                    Severity::Error,
-                    "Arrow body type mismatch",
-                ));
             }
-        } else {
-            // Expression body: => expr (implicit return)
-            if let ast::BlockStmtOrExpr::Expr(expr) = &*arrow.body {
+            ArrowBody::Expr(expr) => {
                 let result =
                     self.lower_expr(expr, arrow_fn, &arrow_param_map, &mut arrow_locals)?;
 
@@ -648,11 +627,6 @@ impl<'a> CodeGen<'a> {
                 self.emit_rc_dec_for_locals(&arrow_locals);
 
                 let _ = self.builder.build_return(Some(&result));
-            } else {
-                return Err(Diagnostic::simple_boxed(
-                    Severity::Error,
-                    "Arrow body type mismatch",
-                ));
             }
         }
 

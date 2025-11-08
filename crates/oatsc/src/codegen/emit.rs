@@ -15,9 +15,9 @@
 //!   helpers (rc_inc/rc_dec, box/unbox) to manage lifetimes.
 
 use crate::diagnostics::Severity;
-use deno_ast::swc::ast;
 use inkwell::values::BasicValue;
 use inkwell::values::FunctionValue;
+use oats_ast::*;
 use std::collections::HashMap;
 
 // Type alias for the `locals_stack` used during statement lowering.
@@ -62,10 +62,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
     /// Notes: we intentionally do NOT traverse into nested function/arrow
     /// bodies so identifiers captured only by inner functions don't count
     /// as live for the outer function. This is a conservative pass that
-    fn compute_await_live_sets(
-        &self,
-        func: &ast::Function,
-    ) -> Vec<std::collections::HashSet<String>> {
+    fn compute_await_live_sets(&self, func: &Function) -> Vec<std::collections::HashSet<String>> {
         use std::collections::HashSet;
 
         enum Node {
@@ -73,22 +70,21 @@ impl<'a> crate::codegen::CodeGen<'a> {
             AwaitMarker,
         }
 
-        fn flatten_expr(e: &ast::Expr, out: &mut Vec<Node>) {
-            use deno_ast::swc::ast::*;
+        fn flatten_expr(e: &Expr, out: &mut Vec<Node>) {
             match e {
-                Expr::Ident(id) => out.push(Node::Ident(id.sym.to_string())),
+                Expr::Ident(id) => out.push(Node::Ident(id.sym.clone())),
                 Expr::Call(c) => {
                     if let Callee::Expr(ec) = &c.callee {
                         flatten_expr(ec, out);
                     }
                     for a in &c.args {
-                        flatten_expr(&a.expr, out);
+                        flatten_expr(a, out);
                     }
                 }
                 Expr::Member(m) => {
                     flatten_expr(&m.obj, out);
                     if let MemberProp::Computed(cmp) = &m.prop {
-                        flatten_expr(&cmp.expr, out);
+                        flatten_expr(cmp, out);
                     }
                 }
                 Expr::Bin(b) => {
@@ -106,15 +102,13 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 Expr::Paren(p) => flatten_expr(&p.expr, out),
                 Expr::Array(arr) => {
                     for el in arr.elems.iter().flatten() {
-                        flatten_expr(&el.expr, out);
+                        flatten_expr(el, out);
                     }
                 }
                 Expr::New(n) => {
                     flatten_expr(&n.callee, out);
-                    if let Some(args) = &n.args {
-                        for a in args {
-                            flatten_expr(&a.expr, out);
-                        }
+                    for a in &n.args {
+                        flatten_expr(a, out);
                     }
                 }
                 Expr::Assign(asg) => {
@@ -140,16 +134,15 @@ impl<'a> crate::codegen::CodeGen<'a> {
             }
         }
 
-        fn flatten_stmt(s: &ast::Stmt, out: &mut Vec<Node>) {
-            use deno_ast::swc::ast::*;
+        fn flatten_stmt(s: &Stmt, out: &mut Vec<Node>) {
             match s {
-                Stmt::Expr(es) => flatten_expr(&es.expr, out),
+                Stmt::ExprStmt(es) => flatten_expr(&es.expr, out),
                 Stmt::Return(r) => {
                     if let Some(arg) = &r.arg {
                         flatten_expr(arg, out);
                     }
                 }
-                Stmt::Decl(ast::Decl::Var(vd)) => {
+                Stmt::VarDecl(vd) => {
                     for decl in &vd.decls {
                         if let Some(init) = &decl.init {
                             flatten_expr(init, out);
@@ -160,7 +153,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     flatten_expr(&ifst.test, out);
                     // shallow: if cons/alt are simple expr statements, flatten
                     match &*ifst.cons {
-                        Stmt::Expr(e) => flatten_expr(&e.expr, out),
+                        Stmt::ExprStmt(e) => flatten_expr(&e.expr, out),
                         Stmt::Block(b) => {
                             for st in &b.stmts {
                                 flatten_stmt(st, out);
@@ -169,8 +162,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         _ => {}
                     }
                     if let Some(alt) = &ifst.alt {
-                        match &**alt {
-                            Stmt::Expr(e) => flatten_expr(&e.expr, out),
+                        match alt.as_ref() {
+                            Stmt::ExprStmt(e) => flatten_expr(&e.expr, out),
                             Stmt::Block(b) => {
                                 for st in &b.stmts {
                                     flatten_stmt(st, out);
@@ -192,8 +185,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 Stmt::For(f) => {
                     if let Some(init) = &f.init {
                         match init {
-                            deno_ast::swc::ast::VarDeclOrExpr::Expr(e) => flatten_expr(e, out),
-                            deno_ast::swc::ast::VarDeclOrExpr::VarDecl(vd) => {
+                            ForInit::Expr(e) => flatten_expr(e, out),
+                            ForInit::VarDecl(vd) => {
                                 for decl in &vd.decls {
                                     if let Some(init) = &decl.init {
                                         flatten_expr(init, out);
@@ -275,7 +268,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
     pub fn gen_function_ir(
         &self,
         func_name: &str,
-        func_decl: &ast::Function,
+        func_decl: &Function,
         param_types: &[crate::types::OatsType],
         ret_type: &crate::types::OatsType,
         receiver_name: Option<&str>,
@@ -522,8 +515,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
             // Load each parameter from state and create allocas
             for (i, param) in func_decl.params.iter().enumerate() {
                 let param_name = match &param.pat {
-                    ast::Pat::Ident(id) => id.sym.to_string(),
-                    _ => format!("param_{}", i),
+                    Pat::Ident(id) => id.sym.clone(),
+                    _ => {
+                        // Destructuring parameters not yet supported in codegen
+                        format!("_param_{}", i)
+                    }
                 };
 
                 let llvm_ty = llvm_param_types[i];
@@ -1488,7 +1484,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
     pub fn gen_constructor_ir(
         &self,
         class_name: &str,
-        ctor: &deno_ast::swc::ast::Constructor,
+        ctor: &ConstructorDecl,
         fields: &[(String, crate::types::OatsType)],
         decorators: Option<Vec<String>>,
     ) -> crate::diagnostics::DiagnosticResult<()> {
@@ -1513,32 +1509,21 @@ impl<'a> crate::codegen::CodeGen<'a> {
         let mut param_names: Vec<String> = Vec::new();
 
         for param in &ctor.params {
-            use deno_ast::swc::ast::{ParamOrTsParamProp, TsParamPropParam};
-            match param {
-                ParamOrTsParamProp::TsParamProp(ts_param) => {
-                    if let TsParamPropParam::Ident(binding_ident) = &ts_param.param {
-                        let pname = binding_ident.id.sym.to_string();
-                        let pty = binding_ident
-                            .type_ann
-                            .as_ref()
-                            .and_then(|ann| crate::types::map_ts_type(&ann.type_ann))
-                            .unwrap_or(OatsType::Number);
-                        param_types_vec.push(pty);
-                        param_names.push(pname);
-                    }
+            let pname = match &param.pat {
+                Pat::Ident(ident) => ident.sym.clone(),
+                _ => {
+                    // Destructuring parameters not yet supported in constructors
+                    format!("_param_{}", param.span.start)
                 }
-                ParamOrTsParamProp::Param(p) => {
-                    if let deno_ast::swc::ast::Pat::Ident(bind_ident) = &p.pat {
-                        let pname = bind_ident.id.sym.to_string();
-                        let pty = bind_ident
-                            .type_ann
-                            .as_ref()
-                            .and_then(|ann| crate::types::map_ts_type(&ann.type_ann))
-                            .unwrap_or(OatsType::Number);
-                        param_types_vec.push(pty);
-                        param_names.push(pname);
-                    }
-                }
+            };
+            {
+                let pty = param
+                    .ty
+                    .as_ref()
+                    .and_then(crate::types::map_ts_type)
+                    .unwrap_or(OatsType::Number);
+                param_types_vec.push(pty);
+                param_names.push(pname);
             }
         }
 

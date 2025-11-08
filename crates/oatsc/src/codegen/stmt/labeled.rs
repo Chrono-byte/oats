@@ -23,13 +23,13 @@ type LocalsStackLocal<'a> = Vec<HashMap<String, LocalEntry<'a>>>;
 impl<'a> crate::codegen::CodeGen<'a> {
     pub(crate) fn lower_labeled_stmt(
         &self,
-        labeled: &deno_ast::swc::ast::LabeledStmt,
+        labeled: &oats_ast::LabeledStmt,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals_stack: &mut LocalsStackLocal<'a>,
     ) -> crate::diagnostics::DiagnosticResult<bool> {
         // Set the current label for labeled statements
-        let label_str = labeled.label.sym.to_string();
+        let label_str = labeled.label.sym.clone();
         *self.current_label.borrow_mut() = Some(label_str);
         let result = self.lower_stmt(&labeled.body, function, param_map, locals_stack);
         *self.current_label.borrow_mut() = None;

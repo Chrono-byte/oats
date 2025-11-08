@@ -3,10 +3,10 @@ use inkwell::values::BasicValueEnum;
 use inkwell::values::FunctionValue;
 use std::collections::HashMap;
 
-use deno_ast::swc::ast;
 use inkwell::builder::Builder;
 use inkwell::types::BasicTypeEnum;
 use inkwell::values::{BasicValue, PointerValue};
+use oats_ast::*;
 
 // LocalEntry now includes an Option<String> for an optional nominal type name
 // LocalEntry now includes an Option<OatsType> for union tracking
@@ -25,12 +25,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
     #[allow(clippy::result_large_err)]
     pub(super) fn lower_binary_expr(
         &self,
-        bin: &deno_ast::swc::ast::BinExpr,
+        bin: &oats_ast::BinExpr,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals: &mut LocalsStackLocal<'a>,
     ) -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
-        use deno_ast::swc::ast::BinaryOp;
         use inkwell::FloatPredicate;
 
         // Special-case: typeof <expr> === "string"/"number" patterns
@@ -41,9 +40,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
         // discriminant instead of performing a heavier dynamic check.
         // This keeps the emitted IR small for the common guarded
         // branches used in tests and examples.
-        if let ast::Expr::Unary(unary) = &*bin.left
-            && let deno_ast::swc::ast::UnaryOp::TypeOf = unary.op
-            && let ast::Expr::Lit(deno_ast::swc::ast::Lit::Str(s)) = &*bin.right
+        if let Expr::Unary(unary) = &*bin.left
+            && let UnaryOp::TypeOf = unary.op
+            && let Expr::Lit(Lit::Str(s)) = &*bin.right
         {
             // Lower inner expression and then check union discriminant if it's a pointer
             let inner = self.lower_expr(&unary.arg, function, param_map, locals)?;
@@ -62,7 +61,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     && let inkwell::Either::Left(bv) = cs.try_as_basic_value()
                 {
                     let disc = bv.into_int_value();
-                    let expected = match s.value.as_ref() {
+                    let expected = match s.as_str() {
                         "number" => self.i64_t.const_int(0, false),
                         "string" => self.i64_t.const_int(1, false),
                         _ => self.i64_t.const_int(2, false),
@@ -88,7 +87,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
         // Handle string concatenation BEFORE numeric coercion
         // If both operands are pointers and op is Add, treat as string concat
-        if let BinaryOp::Add = bin.op
+        if let BinaryOp::Plus = bin.op
             && let (BasicValueEnum::PointerValue(lp), BasicValueEnum::PointerValue(rp)) = (l, r)
         {
             if let Some(strcat) = self.module.get_function("str_concat") {
@@ -136,10 +135,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     }
                 }
             } else {
-                return Err(Diagnostic::simple_with_span_boxed(
+                return Err(Diagnostic::simple_boxed(
                     Severity::Error,
                     "string concatenation helper `str_concat` not found",
-                    bin.span.lo.0 as usize,
                 ));
             }
         }
@@ -160,13 +158,13 @@ impl<'a> crate::codegen::CodeGen<'a> {
                          op: &BinaryOp|
          -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
             match op {
-                BinaryOp::Add => {
+                BinaryOp::Plus => {
                     let v = builder
                         .build_float_add(lf, rf, "sum")
                         .map_err(|_| Diagnostic::error("float add failed"))?;
                     Ok(v.as_basic_value_enum())
                 }
-                BinaryOp::Sub => {
+                BinaryOp::Minus => {
                     let v = builder
                         .build_float_sub(lf, rf, "sub")
                         .map_err(|_| Diagnostic::error("float sub failed"))?;
@@ -209,7 +207,6 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 BinaryOp::Gt => FloatPredicate::OGT,
                 BinaryOp::GtEq => FloatPredicate::OGE,
                 BinaryOp::EqEq => FloatPredicate::OEQ,
-                BinaryOp::EqEqEq => FloatPredicate::OEQ,
                 BinaryOp::NotEq => FloatPredicate::ONE,
                 _ => {
                     return Err(Diagnostic::simple_boxed(
@@ -250,7 +247,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         // two incoming values to a common ABI representation; `build_phi_merge`
         // performs those coercions conservatively (boxing numeric values
         // if the other arm expects a pointer-like value, etc.).
-        if let deno_ast::swc::ast::BinaryOp::LogicalAnd = bin.op {
+        if let BinaryOp::And = bin.op {
             // a && b -> if a truthy then b else a
             let left_val = l;
             let cond = self
@@ -310,7 +307,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 "expression lowering failed",
             ))?;
         }
-        if let deno_ast::swc::ast::BinaryOp::LogicalOr = bin.op {
+        if let BinaryOp::Or = bin.op {
             // `||` mirrors `&&` but keeps the left value when truthy.
             // a || b -> if a truthy then a else b
             let left_val = l;
@@ -365,7 +362,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         match (l, r) {
             (BasicValueEnum::PointerValue(lp), BasicValueEnum::PointerValue(rp)) => {
                 // Keep string concat behavior for Add
-                if let BinaryOp::Add = bin.op {
+                if let BinaryOp::Plus = bin.op {
                     if let Some(strcat) = self.module.get_function("str_concat") {
                         let call_site =
                             match self
@@ -392,14 +389,14 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         Err(Diagnostic::simple_with_span_boxed(
                             Severity::Error,
                             "string concatenation helper `str_concat` not found",
-                            bin.span.lo.0 as usize,
+                            bin.span.start,
                         ))
                     }
                 } else {
                     Err(Diagnostic::simple_with_span_boxed(
                         Severity::Error,
                         "pointer binary operation not supported",
-                        bin.span.lo.0 as usize,
+                        bin.span.start,
                     ))
                 }
             }
@@ -407,6 +404,219 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 Severity::Error,
                 "operation not supported (bin fallback)",
             )),
+        }
+    }
+
+    /// Helper method to perform binary operations on already-lowered values.
+    /// This is used for compound assignments where we need to operate on loaded values.
+    pub(super) fn lower_binary_expr_with_values(
+        &self,
+        op: &BinaryOp,
+        left: BasicValueEnum<'a>,
+        right: BasicValueEnum<'a>,
+        _function: FunctionValue<'a>,
+        _param_map: &HashMap<String, u32>,
+        _locals: &mut LocalsStackLocal<'a>,
+    ) -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
+        // Helper to handle float arithmetic
+        let float_bin = |builder: &Builder<'a>,
+                         lf: inkwell::values::FloatValue<'a>,
+                         rf: inkwell::values::FloatValue<'a>,
+                         op: &BinaryOp|
+         -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
+            match op {
+                BinaryOp::Plus => {
+                    let v = builder
+                        .build_float_add(lf, rf, "sum")
+                        .map_err(|_| Diagnostic::error("float add failed"))?;
+                    Ok(v.as_basic_value_enum())
+                }
+                BinaryOp::Minus => {
+                    let v = builder
+                        .build_float_sub(lf, rf, "sub")
+                        .map_err(|_| Diagnostic::error("float sub failed"))?;
+                    Ok(v.as_basic_value_enum())
+                }
+                BinaryOp::Mul => {
+                    let v = builder
+                        .build_float_mul(lf, rf, "mul")
+                        .map_err(|_| Diagnostic::error("float mul failed"))?;
+                    Ok(v.as_basic_value_enum())
+                }
+                BinaryOp::Div => {
+                    let v = builder
+                        .build_float_div(lf, rf, "div")
+                        .map_err(|_| Diagnostic::error("float div failed"))?;
+                    Ok(v.as_basic_value_enum())
+                }
+                BinaryOp::Mod => {
+                    let v = builder
+                        .build_float_rem(lf, rf, "rem")
+                        .map_err(|_| Diagnostic::error("float rem failed"))?;
+                    Ok(v.as_basic_value_enum())
+                }
+                BinaryOp::Exp => {
+                    // Exponentiation: use pow function
+                    // For now, return error - would need runtime helper
+                    Err(Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "exponentiation (**) not yet supported in compound assignments",
+                    ))
+                }
+                _ => Err(Diagnostic::simple_boxed(
+                    Severity::Error,
+                    "unsupported binary operation for compound assignment",
+                )),
+            }
+        };
+
+        // Try float path by coercing to float as needed
+        if let (Some(lf), Some(rf)) = (self.coerce_to_f64(left), self.coerce_to_f64(right))
+            && let Ok(v) = float_bin(&self.builder, lf, rf, op)
+        {
+            return Ok(v);
+        }
+
+        // Handle integer bitwise operations
+        if let (BasicValueEnum::IntValue(li), BasicValueEnum::IntValue(ri)) = (left, right) {
+            match op {
+                BinaryOp::LShift => {
+                    // Ensure both are i64 for shift operations
+                    let li64 = if li.get_type().get_bit_width() < 64 {
+                        self.builder
+                            .build_int_s_extend(li, self.i64_t, "lshift_left")
+                            .map_err(|_| Diagnostic::error("int extend failed"))?
+                    } else {
+                        li
+                    };
+                    let ri64 = if ri.get_type().get_bit_width() < 64 {
+                        self.builder
+                            .build_int_s_extend(ri, self.i64_t, "lshift_right")
+                            .map_err(|_| Diagnostic::error("int extend failed"))?
+                    } else {
+                        ri
+                    };
+                    let v = self
+                        .builder
+                        .build_left_shift(li64, ri64, "lshift")
+                        .map_err(|_| Diagnostic::error("left shift failed"))?;
+                    Ok(v.as_basic_value_enum())
+                }
+                BinaryOp::RShift => {
+                    let li64 = if li.get_type().get_bit_width() < 64 {
+                        self.builder
+                            .build_int_s_extend(li, self.i64_t, "rshift_left")
+                            .map_err(|_| Diagnostic::error("int extend failed"))?
+                    } else {
+                        li
+                    };
+                    let ri64 = if ri.get_type().get_bit_width() < 64 {
+                        self.builder
+                            .build_int_s_extend(ri, self.i64_t, "rshift_right")
+                            .map_err(|_| Diagnostic::error("int extend failed"))?
+                    } else {
+                        ri
+                    };
+                    let v = self
+                        .builder
+                        .build_right_shift(li64, ri64, false, "rshift")
+                        .map_err(|_| Diagnostic::error("right shift failed"))?;
+                    Ok(v.as_basic_value_enum())
+                }
+                BinaryOp::URShift => {
+                    let li64 = if li.get_type().get_bit_width() < 64 {
+                        self.builder
+                            .build_int_z_extend(li, self.i64_t, "urshift_left")
+                            .map_err(|_| Diagnostic::error("int extend failed"))?
+                    } else {
+                        li
+                    };
+                    let ri64 = if ri.get_type().get_bit_width() < 64 {
+                        self.builder
+                            .build_int_z_extend(ri, self.i64_t, "urshift_right")
+                            .map_err(|_| Diagnostic::error("int extend failed"))?
+                    } else {
+                        ri
+                    };
+                    let v = self
+                        .builder
+                        .build_right_shift(li64, ri64, true, "urshift")
+                        .map_err(|_| Diagnostic::error("unsigned right shift failed"))?;
+                    Ok(v.as_basic_value_enum())
+                }
+                BinaryOp::BitwiseAnd => {
+                    let li64 = if li.get_type().get_bit_width() < 64 {
+                        self.builder
+                            .build_int_s_extend(li, self.i64_t, "and_left")
+                            .map_err(|_| Diagnostic::error("int extend failed"))?
+                    } else {
+                        li
+                    };
+                    let ri64 = if ri.get_type().get_bit_width() < 64 {
+                        self.builder
+                            .build_int_s_extend(ri, self.i64_t, "and_right")
+                            .map_err(|_| Diagnostic::error("int extend failed"))?
+                    } else {
+                        ri
+                    };
+                    let v = self
+                        .builder
+                        .build_and(li64, ri64, "bitwise_and")
+                        .map_err(|_| Diagnostic::error("bitwise and failed"))?;
+                    Ok(v.as_basic_value_enum())
+                }
+                BinaryOp::BitwiseOr => {
+                    let li64 = if li.get_type().get_bit_width() < 64 {
+                        self.builder
+                            .build_int_s_extend(li, self.i64_t, "or_left")
+                            .map_err(|_| Diagnostic::error("int extend failed"))?
+                    } else {
+                        li
+                    };
+                    let ri64 = if ri.get_type().get_bit_width() < 64 {
+                        self.builder
+                            .build_int_s_extend(ri, self.i64_t, "or_right")
+                            .map_err(|_| Diagnostic::error("int extend failed"))?
+                    } else {
+                        ri
+                    };
+                    let v = self
+                        .builder
+                        .build_or(li64, ri64, "bitwise_or")
+                        .map_err(|_| Diagnostic::error("bitwise or failed"))?;
+                    Ok(v.as_basic_value_enum())
+                }
+                BinaryOp::BitwiseXor => {
+                    let li64 = if li.get_type().get_bit_width() < 64 {
+                        self.builder
+                            .build_int_s_extend(li, self.i64_t, "xor_left")
+                            .map_err(|_| Diagnostic::error("int extend failed"))?
+                    } else {
+                        li
+                    };
+                    let ri64 = if ri.get_type().get_bit_width() < 64 {
+                        self.builder
+                            .build_int_s_extend(ri, self.i64_t, "xor_right")
+                            .map_err(|_| Diagnostic::error("int extend failed"))?
+                    } else {
+                        ri
+                    };
+                    let v = self
+                        .builder
+                        .build_xor(li64, ri64, "bitwise_xor")
+                        .map_err(|_| Diagnostic::error("bitwise xor failed"))?;
+                    Ok(v.as_basic_value_enum())
+                }
+                _ => Err(Diagnostic::simple_boxed(
+                    Severity::Error,
+                    "unsupported integer binary operation for compound assignment",
+                )),
+            }
+        } else {
+            Err(Diagnostic::simple_boxed(
+                Severity::Error,
+                "compound assignment only supported for numeric types",
+            ))
         }
     }
 }

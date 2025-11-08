@@ -80,17 +80,17 @@ impl<'a> crate::codegen::CodeGen<'a> {
     /// A lowered `BasicValueEnum` on success, or a `Diagnostic` on failure.
     pub fn lower_expr(
         &self,
-        expr: &deno_ast::swc::ast::Expr,
+        expr: &oats_ast::Expr,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals: &mut LocalsStackLocal<'a>,
     ) -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
-        use deno_ast::swc::ast;
+        use oats_ast::*;
 
         match expr {
-            // Removed duplicate `ast::Expr::Call(call)` match arm at line 482 to fix unreachable pattern warning.
+            // Removed duplicate `Expr::Call(call)` match arm at line 482 to fix unreachable pattern warning.
             // Removed unused `parent` variable to resolve the warning.
-            ast::Expr::Bin(bin) => self.lower_binary_expr(bin, function, param_map, locals),
+            Expr::Bin(bin) => self.lower_binary_expr(bin, function, param_map, locals),
             // Identifier lookup and TDZ handling
             //
             // Identifiers can refer to function parameters (which are
@@ -99,39 +99,31 @@ impl<'a> crate::codegen::CodeGen<'a> {
             // unreachable) for Temporal Dead Zone reads. We also record the
             // origin local name for the last-lowered expression which helps
             // propagate closure-local typing information.
-            ast::Expr::Ident(id) => self.lower_ident_expr(id, function, param_map, locals),
-            ast::Expr::This(this_expr) => {
-                self.lower_this_expr(this_expr, function, param_map, locals)
-            }
-            ast::Expr::Call(call) => self.lower_call_expr(call, function, param_map, locals),
+            Expr::Ident(id) => self.lower_ident_expr(id, function, param_map, locals),
+            Expr::This(this_expr) => self.lower_this_expr(this_expr, function, param_map, locals),
+            Expr::Call(call) => self.lower_call_expr(call, function, param_map, locals),
             // (Duplicate closure-call lowering removed; handled in the primary Call arm above.)
-            ast::Expr::Assign(assign) => {
-                self.lower_assign_expr(assign, function, param_map, locals)
-            }
-            ast::Expr::Paren(paren) => self.lower_paren_expr(paren, function, param_map, locals),
-            ast::Expr::Cond(cond) => self.lower_cond_expr(cond, function, param_map, locals),
-            ast::Expr::Lit(lit) => Ok(crate::codegen::expr::literals::lower_lit(self, lit)?),
-            ast::Expr::Array(arr) => Ok(literals::lower_array(
+            Expr::Assign(assign) => self.lower_assign_expr(assign, function, param_map, locals),
+            Expr::Paren(paren) => self.lower_paren_expr(paren, function, param_map, locals),
+            Expr::Cond(cond) => self.lower_cond_expr(cond, function, param_map, locals),
+            Expr::Lit(lit) => Ok(crate::codegen::expr::literals::lower_lit(self, lit)?),
+            Expr::Array(arr) => Ok(literals::lower_array(
                 self, arr, function, param_map, locals,
             )?),
-            ast::Expr::Member(member) => {
-                self.lower_member_expr(member, function, param_map, locals)
-            }
-            ast::Expr::New(new_expr) => self.lower_new_expr(new_expr, function, param_map, locals),
-            ast::Expr::Await(await_expr) => {
+            Expr::Member(member) => self.lower_member_expr(member, function, param_map, locals),
+            Expr::New(new_expr) => self.lower_new_expr(new_expr, function, param_map, locals),
+            Expr::Await(await_expr) => {
                 self.lower_await_expr(await_expr, function, param_map, locals)
             }
-            ast::Expr::Arrow(arrow) => self.lower_arrow_expr(arrow, function, param_map, locals),
-            ast::Expr::Object(obj_lit) => Ok(literals::lower_object(
+            Expr::Arrow(arrow) => self.lower_arrow_expr(arrow, function, param_map, locals),
+            Expr::Object(obj_lit) => Ok(literals::lower_object(
                 self, obj_lit, function, param_map, locals,
             )?),
-            ast::Expr::Tpl(tpl) => Ok(literals::lower_template(
+            Expr::Tpl(tpl) => Ok(literals::lower_template(
                 self, tpl, function, param_map, locals,
             )?),
-            ast::Expr::Unary(unary) => self.lower_unary_expr(unary, function, param_map, locals),
-            ast::Expr::Update(update) => {
-                self.lower_update_expr(update, function, param_map, locals)
-            }
+            Expr::Unary(unary) => self.lower_unary_expr(unary, function, param_map, locals),
+            Expr::Update(update) => self.lower_update_expr(update, function, param_map, locals),
             _ => Err(Diagnostic::simple_boxed(
                 Severity::Error,
                 "operation not supported",
@@ -143,16 +135,16 @@ impl<'a> crate::codegen::CodeGen<'a> {
     /// For example, given `outer.data`, this returns the nominal type of the `data` field.
     fn resolve_member_type(
         &self,
-        member: &deno_ast::swc::ast::MemberExpr,
+        member: &oats_ast::MemberExpr,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals: &mut LocalsStackLocal<'a>,
     ) -> Option<String> {
-        use deno_ast::swc::ast;
+        use oats_ast::*;
 
         // First, determine the nominal type of member.obj
-        let obj_nominal = if let ast::Expr::Ident(ident) = &*member.obj {
-            let ident_name = ident.sym.to_string();
+        let obj_nominal = if let Expr::Ident(ident) = &*member.obj {
+            let ident_name = ident.sym.clone();
             // Check if it's `this`
             if ident_name == "this" {
                 if let Some(param_types) = self
@@ -194,7 +186,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             } else {
                 None
             }
-        } else if let ast::Expr::Member(inner_member) = &*member.obj {
+        } else if let Expr::Member(inner_member) = &*member.obj {
             // Recursively resolve nested member expressions
             self.resolve_member_type(inner_member, function, param_map, locals)
         } else {
@@ -206,8 +198,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
             && let Some(fields) = self.class_fields.borrow().get(&obj_type_name)
         {
             // Get the property name from member.prop
-            if let ast::MemberProp::Ident(prop_ident) = &member.prop {
-                let field_name = prop_ident.sym.to_string();
+            if let MemberProp::Ident(prop_ident) = &member.prop {
+                let field_name = prop_ident.sym.clone();
                 // Find the field and return its type if it's a NominalStruct
                 for (fname, ftype) in fields {
                     if fname == &field_name {

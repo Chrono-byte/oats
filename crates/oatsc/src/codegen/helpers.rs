@@ -572,50 +572,6 @@ impl<'a> super::CodeGen<'a> {
         }
     }
 
-    /// Insert a new local into the function-level scope (for `var` declarations).
-    ///
-    /// This is used for `var` declarations which are function-scoped and hoisted
-    /// to the top of the function, unlike `let`/`const` which are block-scoped.
-    pub(crate) fn insert_local_function_scope(
-        &self,
-        locals: &mut LocalsStackLocal<'a>,
-        info: LocalVarInfo<'a>,
-    ) {
-        // Ensure we have at least one scope (the function scope)
-        if locals.is_empty() {
-            locals.push(HashMap::new());
-        }
-        // Insert into the function-level scope (index 0)
-        let scope = &mut locals[0];
-        #[cfg(debug_assertions)]
-        let _key = info.name.clone();
-        scope.insert(
-            info.name,
-            (
-                info.ptr,
-                info.ty,
-                info.initialized,
-                info.is_const,
-                info.is_weak,
-                info.nominal.clone(),
-                info.oats_type.clone(),
-            ),
-        );
-        // DEBUG: print insertion
-        #[cfg(debug_assertions)]
-        {
-            let keys: Vec<String> = scope.keys().cloned().collect();
-            let entry = scope.get(&_key).cloned();
-            let nominal_str = entry
-                .and_then(|(_, _, _, _, _, nom, _)| nom)
-                .unwrap_or("<none>".to_string());
-            eprintln!(
-                "[debug insert_local_function] inserted='{}' nominal='{}' keys_now={:?}",
-                _key, nominal_str, keys
-            );
-        }
-    }
-
     pub(crate) fn set_local_initialized(
         &self,
         locals: &mut LocalsStackLocal<'a>,

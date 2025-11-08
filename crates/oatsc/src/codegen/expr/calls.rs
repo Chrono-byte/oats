@@ -1,10 +1,10 @@
 use crate::codegen::CodeGen;
 use crate::diagnostics::{Diagnostic, Severity};
 use crate::types::OatsType;
-use deno_ast::swc::ast;
 use inkwell::AddressSpace;
 use inkwell::types::BasicTypeEnum;
 use inkwell::values::{BasicValue, BasicValueEnum, PointerValue};
+use oats_ast::*;
 use std::collections::HashMap;
 
 type LocalEntry<'a> = (
@@ -22,15 +22,12 @@ impl<'a> CodeGen<'a> {
     #[allow(clippy::result_large_err)]
     pub(super) fn lower_call_expr(
         &self,
-        call: &deno_ast::swc::ast::CallExpr,
+        call: &CallExpr,
         function: inkwell::values::FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals: &mut Vec<HashMap<String, LocalEntry<'a>>>,
     ) -> crate::diagnostics::DiagnosticResult<inkwell::values::BasicValueEnum<'a>> {
-        eprintln!(
-            "[debug lower_call_expr] callee_kind={:?} span_lo={}",
-            call.callee, call.span.lo.0 as usize
-        );
+        eprintln!("[debug lower_call_expr] callee={:?}", call.callee);
         // Support simple identifier callees and member-callee method calls.
         //
         // We intentionally support a small set of call shapes in the
@@ -38,7 +35,6 @@ impl<'a> CodeGen<'a> {
         // member method calls (e.g., `obj.method()`). More complex
         // call expressions (computed callees, dynamic property lookups)
         // can be added when needed.
-        use deno_ast::swc::ast::Callee;
         if let Callee::Super(_) = &call.callee {
             // Lower `super(...)` calls: call parent's `<Parent>_init(this, ...args)`
             let parent_opt = self.current_class_parent.borrow().clone();
@@ -48,7 +44,7 @@ impl<'a> CodeGen<'a> {
                 return Err(Diagnostic::simple_with_span_boxed(
                     Severity::Error,
                     "super used outside of constructor or no parent",
-                    call.span.lo.0 as usize,
+                    call.span.start,
                 ));
             };
 
@@ -69,7 +65,7 @@ impl<'a> CodeGen<'a> {
                 let mut args: Vec<inkwell::values::BasicMetadataValueEnum> = Vec::new();
                 args.push(this_loaded.into());
                 for a in &call.args {
-                    if let Ok(v) = self.lower_expr(&a.expr, function, param_map, locals) {
+                    if let Ok(v) = self.lower_expr(a, function, param_map, locals) {
                         args.push(v.into());
                     } else {
                         return Err(Diagnostic::simple_boxed(
@@ -101,21 +97,21 @@ impl<'a> CodeGen<'a> {
                     Err(Diagnostic::simple_with_span_boxed(
                         Severity::Error,
                         format!("super target '{}' not found", init_name),
-                        call.span.lo.0 as usize,
+                        call.span.start,
                     ))
                 }
             } else {
                 Err(Diagnostic::simple_with_span_boxed(
                     Severity::Error,
                     "super used but `this` not found",
-                    call.span.lo.0 as usize,
+                    call.span.start,
                 ))
             }
-        } else if let ast::Callee::Expr(boxed_expr) = &call.callee {
+        } else if let Callee::Expr(boxed_expr) = &call.callee {
             match &**boxed_expr {
-                ast::Expr::Member(member) => {
+                Expr::Member(member) => {
                     // Handle member calls like console.log() or Temporal.now()
-                    if let ast::Expr::Ident(obj_ident) = &*member.obj {
+                    if let Expr::Ident(obj_ident) = &*member.obj {
                         let obj_name = obj_ident.sym.to_string();
 
                         // If the identifier is a local variable, treat this as
@@ -123,9 +119,9 @@ impl<'a> CodeGen<'a> {
                         // treat it as a potential std namespace (e.g. `Math.max`).
                         if self.find_local(locals, &obj_name).is_some() {
                             // Handle as complex member call on a local value.
-                            use deno_ast::swc::ast::MemberProp;
+                            use oats_ast::*;
                             if let MemberProp::Ident(prop_ident) = &member.prop {
-                                let method_name = prop_ident.sym.to_string();
+                                let method_name = prop_ident.sym.clone();
 
                                 if let Ok(obj_val) =
                                     self.lower_expr(&member.obj, function, param_map, locals)
@@ -191,12 +187,11 @@ impl<'a> CodeGen<'a> {
                                     > = Vec::new();
                                     call_args.push(obj_val.into());
                                     for a in &call.args {
-                                        let val = match self
-                                            .lower_expr(&a.expr, function, param_map, locals)
-                                        {
-                                            Ok(v) => v,
-                                            Err(d) => return Err(d)?,
-                                        };
+                                        let val =
+                                            match self.lower_expr(a, function, param_map, locals) {
+                                                Ok(v) => v,
+                                                Err(d) => return Err(d)?,
+                                            };
                                         call_args.push(val.into());
                                     }
 
@@ -247,38 +242,34 @@ impl<'a> CodeGen<'a> {
                                 return Err(Diagnostic::simple_with_span_boxed(
                                     Severity::Error,
                                     "computed property calls not supported",
-                                    call.span.lo.0 as usize,
+                                    call.span.start,
                                 ));
                             }
                         }
 
                         let prop_name = match &member.prop {
-                            ast::MemberProp::Ident(prop_ident) => prop_ident.sym.to_string(),
+                            MemberProp::Ident(prop_ident) => prop_ident.sym.clone(),
                             _ => {
                                 return Err(Diagnostic::simple_with_span_boxed(
                                     Severity::Error,
                                     "computed property calls not supported",
-                                    call.span.lo.0 as usize,
+                                    call.span.start,
                                 ));
                             }
                         };
 
                         if obj_name == "Promise" && prop_name == "resolve" && call.args.len() == 1 {
                             // Lower the single argument
-                            let arg_val = match self.lower_expr(
-                                &call.args[0].expr,
-                                function,
-                                param_map,
-                                locals,
-                            ) {
-                                Ok(v) => v,
-                                Err(_) => {
-                                    return Err(Diagnostic::simple_boxed(
-                                        Severity::Error,
-                                        "expression lowering failed",
-                                    ))?;
-                                }
-                            };
+                            let arg_val =
+                                match self.lower_expr(&call.args[0], function, param_map, locals) {
+                                    Ok(v) => v,
+                                    Err(_) => {
+                                        return Err(Diagnostic::simple_boxed(
+                                            Severity::Error,
+                                            "expression lowering failed",
+                                        ))?;
+                                    }
+                                };
 
                             // Ensure we pass an `i8*` payload to the runtime.
                             let payload_ptr = match arg_val {
@@ -344,9 +335,7 @@ impl<'a> CodeGen<'a> {
                             let mut lowered_args: Vec<inkwell::values::BasicMetadataValueEnum> =
                                 Vec::new();
                             for a in &call.args {
-                                if let Ok(val) =
-                                    self.lower_expr(&a.expr, function, param_map, locals)
-                                {
+                                if let Ok(val) = self.lower_expr(a, function, param_map, locals) {
                                     lowered_args.push(val.into());
                                 } else {
                                     return Err(Diagnostic::simple_boxed(
@@ -378,15 +367,15 @@ impl<'a> CodeGen<'a> {
                                 Err(Diagnostic::simple_with_span_boxed(
                                     Severity::Error,
                                     format!("std function '{}' not found", fname),
-                                    call.span.lo.0 as usize,
+                                    call.span.start,
                                 ))
                             }
                         }
                     } else {
                         // Handle complex member calls (obj.method())
-                        use deno_ast::swc::ast::MemberProp;
+                        use oats_ast::*;
                         if let MemberProp::Ident(prop_ident) = &member.prop {
-                            let method_name = prop_ident.sym.to_string();
+                            let method_name = prop_ident.sym.clone();
 
                             // Lower `Promise.resolve(x)` by calling the runtime
                             // helper `promise_resolve(i8*) -> i8*` so resolved
@@ -396,12 +385,12 @@ impl<'a> CodeGen<'a> {
                             // receives an `i8*` payload.
                             if method_name == "resolve"
                                 && call.args.len() == 1
-                                && let deno_ast::swc::ast::Expr::Ident(ident) = &*member.obj
+                                && let Expr::Ident(ident) = &*member.obj
                                 && ident.sym == "Promise"
                             {
                                 // Lower the single argument
                                 let arg_val = match self.lower_expr(
-                                    &call.args[0].expr,
+                                    &call.args[0],
                                     function,
                                     param_map,
                                     locals,
@@ -537,13 +526,25 @@ impl<'a> CodeGen<'a> {
                                 }
 
                                 // General method call lowering: obj.method(args...)
-                                // Lower all args first
+                                // Infer types from argument expressions for type-directed lowering
+                                let mut inferred_arg_types: Vec<crate::types::OatsType> =
+                                    Vec::new();
+                                // Infer type for 'this' (obj) - treat as pointer type
+                                inferred_arg_types.push(crate::types::OatsType::String); // Default to pointer-like
+
+                                for a in &call.args {
+                                    // Infer type from expression before lowering
+                                    let inferred = crate::types::infer_type_from_expr(a);
+                                    inferred_arg_types
+                                        .push(inferred.unwrap_or(crate::types::OatsType::Number));
+                                }
+
+                                // Lower all args
                                 let mut call_args: Vec<inkwell::values::BasicMetadataValueEnum> =
                                     Vec::new();
                                 call_args.push(obj_val.into()); // 'this' is first arg
                                 for a in &call.args {
-                                    let val = match self
-                                        .lower_expr(&a.expr, function, param_map, locals)
+                                    let val = match self.lower_expr(a, function, param_map, locals)
                                     {
                                         Ok(v) => v,
                                         Err(d) => return Err(d)?,
@@ -552,7 +553,7 @@ impl<'a> CodeGen<'a> {
                                 }
 
                                 // Check if this is a class method call: obj is nominal type, method exists
-                                let class_name = if let ast::Expr::Ident(ident) = &*member.obj {
+                                let class_name = if let Expr::Ident(ident) = &*member.obj {
                                     let ident_name = ident.sym.to_string();
                                     if let Some((_, _, _, _, _, nominal, _)) =
                                         self.find_local(locals, &ident_name)
@@ -594,11 +595,20 @@ impl<'a> CodeGen<'a> {
                                 }
 
                                 // Fallback: general method call lowering
-                                // For now, assume all method calls return f64 and take f64 args
-                                // TODO: Type-directed lowering
-                                let ret_ty = self.f64_t;
+                                // Use type-directed lowering based on inferred argument types
+                                let ret_ty = self.f64_t; // Return type inference not yet implemented
+
+                                // Convert inferred OatsTypes to LLVM parameter types
                                 let param_tys: Vec<inkwell::types::BasicMetadataTypeEnum> =
-                                    call_args.iter().map(|_| self.f64_t.into()).collect();
+                                    inferred_arg_types
+                                        .iter()
+                                        .map(|ty| {
+                                            // Use map_type_to_llvm helper and convert to BasicMetadataTypeEnum
+                                            let basic_ty = self.map_type_to_llvm(ty);
+                                            basic_ty.into()
+                                        })
+                                        .collect();
+
                                 let fn_ty = ret_ty.fn_type(&param_tys, false);
 
                                 // Generate a unique name for this method call
@@ -634,7 +644,7 @@ impl<'a> CodeGen<'a> {
                             Err(Diagnostic::simple_with_span_boxed(
                                 Severity::Error,
                                 "computed property calls not supported",
-                                call.span.lo.0 as usize,
+                                call.span.start,
                             ))
                         }
                     }
@@ -642,7 +652,7 @@ impl<'a> CodeGen<'a> {
                 // (super calls handled by Callee::Super branch below)
                 _ => {
                     // Check if this is a plain function call like `print_f64(...)`
-                    if let ast::Expr::Ident(ident) = &**boxed_expr {
+                    if let Expr::Ident(ident) = &**boxed_expr {
                         let fn_name = ident.sym.to_string();
                         if let Some(fv) = self.module.get_function(&fn_name) {
                             eprintln!("[debug call] found module function '{}'", fn_name);
@@ -650,11 +660,10 @@ impl<'a> CodeGen<'a> {
                             let mut call_args: Vec<inkwell::values::BasicMetadataValueEnum> =
                                 Vec::new();
                             for a in &call.args {
-                                let val =
-                                    match self.lower_expr(&a.expr, function, param_map, locals) {
-                                        Ok(v) => v,
-                                        Err(d) => return Err(d)?,
-                                    };
+                                let val = match self.lower_expr(a, function, param_map, locals) {
+                                    Ok(v) => v,
+                                    Err(d) => return Err(d)?,
+                                };
                                 call_args.push(val.into());
                             }
                             // Call the function
@@ -690,8 +699,7 @@ impl<'a> CodeGen<'a> {
                         if has_nested {
                             // Try to infer type arguments from the first argument if it's an array
                             if !call.args.is_empty() {
-                                let inferred =
-                                    crate::types::infer_type(None, Some(&call.args[0].expr));
+                                let inferred = crate::types::infer_type(None, Some(&call.args[0]));
                                 if let crate::types::OatsType::Array(elem_ty) = inferred {
                                     // Monomorphize and get specialized name
                                     if let Ok(spec_name) =
@@ -710,7 +718,7 @@ impl<'a> CodeGen<'a> {
                                         > = Vec::new();
                                         for a in &call.args {
                                             let val = match self
-                                                .lower_expr(&a.expr, function, param_map, locals)
+                                                .lower_expr(a, function, param_map, locals)
                                             {
                                                 Ok(v) => v,
                                                 Err(d) => return Err(d)?,
@@ -815,9 +823,7 @@ impl<'a> CodeGen<'a> {
                             let mut lowered_args: Vec<inkwell::values::BasicMetadataValueEnum> =
                                 Vec::new();
                             for a in &call.args {
-                                if let Ok(val) =
-                                    self.lower_expr(&a.expr, function, param_map, locals)
-                                {
+                                if let Ok(val) = self.lower_expr(a, function, param_map, locals) {
                                     lowered_args.push(val.into());
                                 } else {
                                     return Err(Diagnostic::simple_boxed(
@@ -973,20 +979,20 @@ impl<'a> CodeGen<'a> {
                             Err(Diagnostic::simple_with_span_boxed(
                                 Severity::Error,
                                 "unsupported closure call (indirect call lowering failed)",
-                                call.span.lo.0 as usize,
+                                call.span.start,
                             ))
                         } else {
                             Err(Diagnostic::simple_with_span_boxed(
                                 Severity::Error,
                                 "unsupported callee expression",
-                                call.span.lo.0 as usize,
+                                call.span.start,
                             ))
                         }
                     } else {
                         Err(Diagnostic::simple_with_span_boxed(
                             Severity::Error,
                             "expression lowering failed",
-                            call.span.lo.0 as usize,
+                            call.span.start,
                         ))
                     }
                 }
@@ -995,7 +1001,7 @@ impl<'a> CodeGen<'a> {
             Err(Diagnostic::simple_with_span_boxed(
                 Severity::Error,
                 "unsupported call expression: callee form not supported",
-                call.span.lo.0 as usize,
+                call.span.start,
             ))
         }
     }

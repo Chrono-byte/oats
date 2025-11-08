@@ -1,11 +1,10 @@
 use crate::codegen::CodeGen;
 use crate::diagnostics::{Diagnostic, Severity};
 use crate::types::OatsType;
-use deno_ast::swc::ast;
-use deno_ast::swc::ast::MemberProp;
 use inkwell::AddressSpace;
 use inkwell::types::BasicTypeEnum;
 use inkwell::values::{BasicValue, BasicValueEnum, FunctionValue, PointerValue};
+use oats_ast::*;
 use std::collections::HashMap;
 
 // LocalEntry now includes an Option<String> for an optional nominal type name
@@ -25,35 +24,33 @@ impl<'a> CodeGen<'a> {
     #[allow(clippy::result_large_err)]
     pub(super) fn lower_member_expr(
         &self,
-        member: &ast::MemberExpr,
+        member: &MemberExpr,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals: &mut LocalsStackLocal<'a>,
     ) -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
         // Support both computed member access (obj[expr]) and dot-member (obj.prop)
         match &member.prop {
-            MemberProp::Computed(boxed) => {
+            MemberProp::Computed(expr) => {
                 eprintln!("DEBUG: Computed member access");
                 // lower object and index separately so we can produce clearer diagnostics
                 let obj_res = self.lower_expr(&member.obj, function, param_map, locals);
-                let idx_res = self.lower_expr(&boxed.expr, function, param_map, locals);
+                let idx_res = self.lower_expr(expr, function, param_map, locals);
                 let obj_val = match obj_res {
                     Ok(v) => v,
                     Err(_) => {
-                        return Err(Diagnostic::simple_with_span_boxed(
+                        return Err(Diagnostic::simple_boxed(
                             Severity::Error,
                             "failed to lower member object expression",
-                            member.span.lo.0 as usize,
                         ));
                     }
                 };
                 let idx_val = match idx_res {
                     Ok(v) => v,
                     Err(_) => {
-                        return Err(Diagnostic::simple_with_span_boxed(
+                        return Err(Diagnostic::simple_boxed(
                             Severity::Error,
                             "failed to lower member index expression",
-                            member.span.lo.0 as usize,
                         ));
                     }
                 };
@@ -66,8 +63,8 @@ impl<'a> CodeGen<'a> {
                 if let BasicValueEnum::PointerValue(arr_ptr) = obj_val {
                     // Try to infer a nominal class name from the object
                     let mut class_name_opt: Option<String> = None;
-                    if let deno_ast::swc::ast::Expr::Ident(ident) = &*member.obj {
-                        let ident_name = ident.sym.to_string();
+                    if let Expr::Ident(ident) = &*member.obj {
+                        let ident_name = ident.sym.clone();
                         // check locals for nominal annotation
                         if let Some((_, _ty, _init, _is_const, _is_weak, nominal, _oats_type)) =
                             self.find_local(locals, &ident_name)
@@ -87,7 +84,7 @@ impl<'a> CodeGen<'a> {
                                 class_name_opt = Some(n.clone());
                             }
                         }
-                    } else if matches!(&*member.obj, deno_ast::swc::ast::Expr::This(_)) {
+                    } else if matches!(&*member.obj, Expr::This(_)) {
                         let fname = function.get_name().to_str().unwrap_or("");
                         if let Some(param_types) = self.fn_param_types.borrow().get(fname)
                             && !param_types.is_empty()
@@ -116,7 +113,7 @@ impl<'a> CodeGen<'a> {
                                 return Err(Diagnostic::simple_with_span_boxed(
                                     Severity::Error,
                                     "unsupported index type for computed member access",
-                                    member.span.lo.0 as usize,
+                                    member.span.start,
                                 ));
                             }
                         };
@@ -263,7 +260,7 @@ impl<'a> CodeGen<'a> {
                             return Err(Diagnostic::simple_with_span_boxed(
                                 Severity::Error,
                                 "unsupported index type for computed member access",
-                                member.span.lo.0 as usize,
+                                member.span.start,
                             ));
                         }
                     };
@@ -280,10 +277,10 @@ impl<'a> CodeGen<'a> {
                         // Try to determine the array's element type from available metadata.
                         let mut prefer_f64 = false;
                         // If the array expression was an identifier, check locals/params
-                        if let deno_ast::swc::ast::Expr::Member(_) = &*member.obj {
+                        if let Expr::Member(_) = &*member.obj {
                             // Member access; we can't easily infer here. Fall through to ptr case.
-                        } else if let deno_ast::swc::ast::Expr::Ident(ident) = &*member.obj {
-                            let arr_name = ident.sym.to_string();
+                        } else if let Expr::Ident(ident) = &*member.obj {
+                            let arr_name = ident.sym.clone();
                             // Check lexical locals first
                             if let Some((
                                 _p,
@@ -327,7 +324,7 @@ impl<'a> CodeGen<'a> {
                                     return Err(Diagnostic::simple_with_span_boxed(
                                         Severity::Error,
                                         "operation failed",
-                                        member.span.lo.0 as usize,
+                                        member.span.start,
                                     ));
                                 }
                             };
@@ -350,7 +347,7 @@ impl<'a> CodeGen<'a> {
                             return Err(Diagnostic::simple_with_span_boxed(
                                 Severity::Error,
                                 "operation failed",
-                                member.span.lo.0 as usize,
+                                member.span.start,
                             ));
                         }
                     };
@@ -362,7 +359,7 @@ impl<'a> CodeGen<'a> {
                     return Err(Diagnostic::simple_with_span_boxed(
                         Severity::Error,
                         "computed member access on non-pointer object",
-                        member.span.lo.0 as usize,
+                        member.span.start,
                     ));
                 }
             }
@@ -372,15 +369,15 @@ impl<'a> CodeGen<'a> {
                 // dot-member access like obj.prop
                 let field_name = prop_ident.sym.to_string();
                 eprintln!("DEBUG: field_name created");
-                let ident_name = if let deno_ast::swc::ast::Expr::Ident(ident) = &*member.obj {
-                    ident.sym.to_string()
-                } else if let deno_ast::swc::ast::Expr::This(_) = &*member.obj {
+                let ident_name = if let Expr::Ident(ident) = &*member.obj {
+                    ident.sym.clone()
+                } else if let Expr::This(_) = &*member.obj {
                     "this".to_string()
                 } else {
                     return Err(Diagnostic::simple_with_span_boxed(
                         Severity::Error,
                         "member access requires identifier or 'this' object",
-                        member.span.lo.0 as usize,
+                        member.span.start,
                     ));
                 };
                 // Check if the object is an enum type
@@ -396,7 +393,7 @@ impl<'a> CodeGen<'a> {
                         return Err(Diagnostic::simple_with_span_boxed(
                             Severity::Error,
                             format!("enum '{}' has no member '{}'", ident_name, field_name),
-                            member.span.lo.0 as usize,
+                            member.span.start,
                         ));
                     }
                 }
@@ -415,7 +412,7 @@ impl<'a> CodeGen<'a> {
                                 return Err(Diagnostic::simple_with_span_boxed(
                                     Severity::Error,
                                     "failed to compute array length pointer",
-                                    member.span.lo.0 as usize,
+                                    member.span.start,
                                 ));
                             }
                         };
@@ -431,7 +428,7 @@ impl<'a> CodeGen<'a> {
                                 return Err(Diagnostic::simple_with_span_boxed(
                                     Severity::Error,
                                     "failed to cast length pointer",
-                                    member.span.lo.0 as usize,
+                                    member.span.start,
                                 ));
                             }
                         };
@@ -442,7 +439,7 @@ impl<'a> CodeGen<'a> {
                                     return Err(Diagnostic::simple_with_span_boxed(
                                         Severity::Error,
                                         "failed to load array length",
-                                        member.span.lo.0 as usize,
+                                        member.span.start,
                                     ));
                                 }
                             };
@@ -463,8 +460,8 @@ impl<'a> CodeGen<'a> {
                     // that are nominal structs. If member.obj is an Ident and
                     // matches a parameter name, use the declared param type
                     // to infer the nominal class.
-                    if let deno_ast::swc::ast::Expr::Ident(ident) = &*member.obj {
-                        let ident_name = ident.sym.to_string();
+                    if let Expr::Ident(ident) = &*member.obj {
+                        let ident_name = ident.sym.clone();
                         // If ident is `this` and function param types exist
                         if ident_name == "this" {
                             if let Some(param_types) = self
@@ -506,7 +503,7 @@ impl<'a> CodeGen<'a> {
                                 class_name_opt = Some(nom);
                             }
                         }
-                    } else if matches!(&*member.obj, deno_ast::swc::ast::Expr::This(_))
+                    } else if matches!(&*member.obj, Expr::This(_))
                         && let Some(param_types) = self
                             .fn_param_types
                             .borrow()
@@ -515,7 +512,7 @@ impl<'a> CodeGen<'a> {
                         && let crate::types::OatsType::NominalStruct(n) = &param_types[0]
                     {
                         class_name_opt = Some(n.clone());
-                    } else if let deno_ast::swc::ast::Expr::Member(inner_member) = &*member.obj {
+                    } else if let Expr::Member(inner_member) = &*member.obj {
                         // Nested member access: outer.data.value
                         // We need to resolve the type of outer.data to know what fields it has
                         // First, recursively resolve the outer member expression's type
@@ -740,8 +737,8 @@ impl<'a> CodeGen<'a> {
             let keys: Vec<String> = self.class_fields.borrow().keys().cloned().collect();
             let mut recv_info = String::from("<unknown>");
             let mut recv_fields: Vec<String> = Vec::new();
-            if let deno_ast::swc::ast::Expr::Ident(ident) = &*member.obj {
-                let name = ident.sym.to_string();
+            if let Expr::Ident(ident) = &*member.obj {
+                let name = ident.sym.clone();
                 if let Some((_, _ty, _init, _is_const, _is_weak, nominal, _oats_type)) =
                     self.find_local(locals, &name)
                 {
@@ -777,8 +774,8 @@ impl<'a> CodeGen<'a> {
             {
                 // If prop is an identifier, try to find a class that
                 // has this field and load it.
-                if let deno_ast::swc::ast::MemberProp::Ident(pi) = &member.prop {
-                    let target_field = pi.sym.to_string();
+                if let MemberProp::Ident(pi) = &member.prop {
+                    let target_field = pi.sym.clone();
                     for (_class_name, fields) in self.class_fields.borrow().iter() {
                         if let Some((field_idx, (_fname, field_ty))) = fields
                             .iter()
@@ -922,7 +919,7 @@ impl<'a> CodeGen<'a> {
             Err(Diagnostic::simple_with_span_boxed(
                 Severity::Error,
                 msg,
-                member.span.lo.0 as usize,
+                member.span.start,
             ))
         }
     }

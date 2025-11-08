@@ -23,7 +23,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
     #[allow(clippy::result_large_err)]
     pub(super) fn lower_arrow_expr(
         &self,
-        _arrow: &deno_ast::swc::ast::ArrowExpr,
+        _arrow: &oats_ast::ArrowExpr,
         _function: FunctionValue<'a>,
         _param_map: &HashMap<String, u32>,
         _locals: &mut LocalsStackLocal<'a>,

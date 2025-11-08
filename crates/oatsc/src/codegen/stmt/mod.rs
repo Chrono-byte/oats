@@ -51,7 +51,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
     /// code for the current basic block.
     pub(crate) fn lower_stmts(
         &self,
-        stmts: &[deno_ast::swc::ast::Stmt],
+        stmts: &[oats_ast::Stmt],
         function: inkwell::values::FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals_stack: &mut LocalsStackLocal<'a>,
@@ -66,51 +66,40 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
     pub(crate) fn lower_stmt(
         &self,
-        stmt: &deno_ast::swc::ast::Stmt,
+        stmt: &oats_ast::Stmt,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals_stack: &mut LocalsStackLocal<'a>,
     ) -> crate::diagnostics::DiagnosticResult<bool> {
+        use oats_ast::*;
         // A small statement lowering implementation that covers the test
         // cases: variable declarations with initializers, expression
         // statements, return statements and blocks. This is intentionally
         // minimal: more statements can be added into `stmt.rs` later.
         match stmt {
-            deno_ast::swc::ast::Stmt::Decl(d) => {
-                self.lower_decl_stmt(d, function, param_map, locals_stack)
-            }
-            deno_ast::swc::ast::Stmt::Expr(expr_stmt) => {
+            Stmt::VarDecl(vd) => self.lower_decl_stmt(vd, function, param_map, locals_stack),
+            Stmt::ExprStmt(expr_stmt) => {
                 self.lower_expr_stmt(expr_stmt, function, param_map, locals_stack)
             }
-            deno_ast::swc::ast::Stmt::Return(ret) => {
-                self.lower_return_stmt(ret, function, param_map, locals_stack)
-            }
-            deno_ast::swc::ast::Stmt::Break(break_stmt) => {
-                self.lower_break_stmt(break_stmt, locals_stack)
-            }
-            deno_ast::swc::ast::Stmt::Continue(continue_stmt) => {
-                self.lower_continue_stmt(continue_stmt, locals_stack)
-            }
-            deno_ast::swc::ast::Stmt::Block(block) => {
-                self.lower_block_stmt(block, function, param_map, locals_stack)
-            }
-            deno_ast::swc::ast::Stmt::If(ifstmt) => {
-                self.lower_if_stmt(ifstmt, function, param_map, locals_stack)
-            }
-            deno_ast::swc::ast::Stmt::Labeled(labeled) => {
+            Stmt::Return(ret) => self.lower_return_stmt(ret, function, param_map, locals_stack),
+            Stmt::Break(break_stmt) => self.lower_break_stmt(break_stmt, locals_stack),
+            Stmt::Continue(continue_stmt) => self.lower_continue_stmt(continue_stmt, locals_stack),
+            Stmt::Block(block) => self.lower_block_stmt(block, function, param_map, locals_stack),
+            Stmt::If(ifstmt) => self.lower_if_stmt(ifstmt, function, param_map, locals_stack),
+            Stmt::Labeled(labeled) => {
                 self.lower_labeled_stmt(labeled, function, param_map, locals_stack)
             }
-            deno_ast::swc::ast::Stmt::ForOf(forof) => {
-                self.lower_for_of_stmt(forof, function, param_map, locals_stack)
-            }
-            deno_ast::swc::ast::Stmt::For(forstmt) => {
-                self.lower_for_stmt(forstmt, function, param_map, locals_stack)
-            }
-            deno_ast::swc::ast::Stmt::While(while_stmt) => {
+            Stmt::ForOf(forof) => self.lower_for_of_stmt(forof, function, param_map, locals_stack),
+            Stmt::For(forstmt) => self.lower_for_stmt(forstmt, function, param_map, locals_stack),
+            Stmt::While(while_stmt) => {
                 self.lower_while_stmt(while_stmt, function, param_map, locals_stack)
             }
-            deno_ast::swc::ast::Stmt::DoWhile(dowhile_stmt) => {
+            Stmt::DoWhile(dowhile_stmt) => {
                 self.lower_do_while_stmt(dowhile_stmt, function, param_map, locals_stack)
+            }
+            Stmt::FnDecl(_) | Stmt::ClassDecl(_) => {
+                // Function and class declarations are handled at module level
+                Ok(false)
             }
             _ => Err(crate::diagnostics::Diagnostic::simple_boxed(
                 Severity::Error,

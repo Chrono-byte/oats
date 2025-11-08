@@ -1,4 +1,4 @@
-use deno_ast::swc::ast;
+use oats_ast::*;
 use std::collections::{HashMap, HashSet};
 
 /// Enhanced intra-procedural escape analysis with def-use tracking and control flow awareness.
@@ -76,7 +76,7 @@ impl crate::codegen::CodeGen<'_> {
     /// - Analyzing control flow through loops, conditionals, and blocks.
     /// - Performing precise async analysis to identify variables live across `await` points.
     /// - Providing comprehensive statement and expression coverage.
-    pub fn analyze_fn(&self, func: &ast::Function) -> EscapeInfo {
+    pub fn analyze_fn(&self, func: &Function) -> EscapeInfo {
         let mut analyzer = EscapeAnalyzer::new();
 
         // First pass: Collect parameter names as initial definitions.
@@ -137,42 +137,43 @@ impl EscapeAnalyzer {
     }
 
     /// Recursively collects variable names from declaration patterns.
-    fn collect_param_names(&mut self, pat: &ast::Pat) {
-        use deno_ast::swc::ast::*;
+    fn collect_param_names(&mut self, pat: &Pat) {
         match pat {
-            Pat::Ident(ident) => self.info.define_var(ident.id.sym.to_string()),
+            Pat::Ident(ident) => self.info.define_var(ident.sym.clone()),
             Pat::Array(arr) => {
-                for elem in arr.elems.iter().flatten() {
-                    self.collect_param_names(elem);
+                for elem_pat in arr.elems.iter().flatten() {
+                    self.collect_param_names(elem_pat);
                 }
             }
             Pat::Object(obj) => {
                 for prop in &obj.props {
                     match prop {
-                        ObjectPatProp::KeyValue(kv) => self.collect_param_names(&kv.value),
-                        ObjectPatProp::Assign(assign) => {
-                            self.info.define_var(assign.key.sym.to_string())
+                        ObjectPatProp::KeyValue { value, .. } => {
+                            self.collect_param_names(value);
                         }
-                        ObjectPatProp::Rest(rest) => self.collect_param_names(&rest.arg),
+                        ObjectPatProp::Rest { arg, .. } => {
+                            self.info.define_var(arg.sym.clone());
+                        }
                     }
                 }
             }
-            Pat::Rest(rest) => self.collect_param_names(&rest.arg),
-            _ => {}
+            Pat::Rest(rest) => {
+                self.collect_param_names(&rest.arg);
+            }
         }
     }
 
     /// Analyzes a statement for escape patterns.
-    fn analyze_stmt(&mut self, stmt: &ast::Stmt) {
-        use deno_ast::swc::ast::*;
+    fn analyze_stmt(&mut self, stmt: &Stmt) {
         match stmt {
-            Stmt::Expr(expr_stmt) => self.analyze_expr(&expr_stmt.expr),
+            Stmt::ExprStmt(expr_stmt) => self.analyze_expr(&expr_stmt.expr),
             Stmt::Return(ret) => {
                 if let Some(arg) = &ret.arg {
                     self.analyze_expr_as_escaping(arg);
                 }
             }
-            Stmt::Decl(decl) => self.analyze_decl(decl),
+            Stmt::VarDecl(vd) => self.analyze_var_decl(vd),
+            Stmt::FnDecl(fn_decl) => self.info.define_var(fn_decl.ident.sym.clone()),
             Stmt::If(if_stmt) => {
                 self.analyze_expr(&if_stmt.test);
                 self.enter_scope();
@@ -201,8 +202,8 @@ impl EscapeAnalyzer {
                 self.enter_scope();
                 if let Some(init) = &for_stmt.init {
                     match init {
-                        ast::VarDeclOrExpr::VarDecl(vd) => self.analyze_var_decl(vd),
-                        ast::VarDeclOrExpr::Expr(e) => self.analyze_expr(e),
+                        ForInit::VarDecl(vd) => self.analyze_var_decl(vd),
+                        ForInit::Expr(e) => self.analyze_expr(e),
                     }
                 }
                 if let Some(test) = &for_stmt.test {
@@ -250,17 +251,8 @@ impl EscapeAnalyzer {
         }
     }
 
-    /// Analyzes a declaration.
-    fn analyze_decl(&mut self, decl: &ast::Decl) {
-        match decl {
-            ast::Decl::Var(var_decl) => self.analyze_var_decl(var_decl),
-            ast::Decl::Fn(fn_decl) => self.info.define_var(fn_decl.ident.sym.to_string()),
-            _ => {}
-        }
-    }
-
     /// Analyzes a variable declaration list.
-    fn analyze_var_decl(&mut self, var_decl: &ast::VarDecl) {
+    fn analyze_var_decl(&mut self, var_decl: &VarDecl) {
         for declarator in &var_decl.decls {
             self.collect_param_names(&declarator.name);
             if let Some(init) = &declarator.init {
@@ -270,22 +262,21 @@ impl EscapeAnalyzer {
     }
 
     /// Analyzes a block statement.
-    fn analyze_block_stmt(&mut self, block: &ast::BlockStmt) {
+    fn analyze_block_stmt(&mut self, block: &BlockStmt) {
         for stmt in &block.stmts {
             self.analyze_stmt(stmt);
         }
     }
 
     /// Analyzes an expression for variable uses and escape patterns.
-    fn analyze_expr(&mut self, expr: &ast::Expr) {
-        use deno_ast::swc::ast::*;
+    fn analyze_expr(&mut self, expr: &Expr) {
         match expr {
-            Expr::Ident(ident) => self.info.use_var(ident.sym.as_ref()),
+            Expr::Ident(ident) => self.info.use_var(&ident.sym),
             Expr::Call(call) => {
                 // Check if this is a call that might cause escapes
                 if let Callee::Expr(callee_expr) = &call.callee {
                     if let Expr::Ident(ident) = &**callee_expr {
-                        let func_name = ident.sym.to_string();
+                        let func_name = ident.sym.clone();
                         // Mark certain functions as escape-causing
                         if matches!(
                             func_name.as_str(),
@@ -294,7 +285,7 @@ impl EscapeAnalyzer {
                             self.info.mark_escape_call(func_name.clone());
                             // All arguments to escape calls are considered escaping
                             for arg in &call.args {
-                                self.analyze_expr_as_escaping(&arg.expr);
+                                self.analyze_expr_as_escaping(arg);
                             }
                             return;
                         }
@@ -302,22 +293,19 @@ impl EscapeAnalyzer {
                     self.analyze_expr(callee_expr);
                 }
                 for arg in &call.args {
-                    self.analyze_expr_as_escaping(&arg.expr);
+                    self.analyze_expr_as_escaping(arg);
                 }
             }
             Expr::Member(member) => {
                 self.analyze_expr(&member.obj);
                 if let MemberProp::Computed(comp) = &member.prop {
-                    self.analyze_expr(&comp.expr);
+                    self.analyze_expr(comp);
                 }
             }
             Expr::Assign(assign) => {
-                if let AssignTarget::Simple(SimpleAssignTarget::Member(_)) = &assign.left {
-                    self.analyze_expr_as_escaping(&assign.right);
-                    return;
-                }
-                if let AssignTarget::Simple(SimpleAssignTarget::Ident(ident)) = &assign.left {
-                    let name = ident.id.sym.to_string();
+                // oats_ast::AssignTarget only supports Pat for now
+                if let AssignTarget::Pat(Pat::Ident(ident)) = &assign.left {
+                    let name = ident.sym.clone();
                     if !self.is_defined(&name) {
                         self.info.define_var(name);
                     }
@@ -336,36 +324,25 @@ impl EscapeAnalyzer {
             }
             Expr::Array(arr) => {
                 for elem in arr.elems.iter().flatten() {
-                    self.analyze_expr(&elem.expr);
+                    self.analyze_expr(elem);
                 }
             }
             Expr::Object(obj) => {
                 for prop in &obj.props {
                     match prop {
                         PropOrSpread::Spread(spread) => self.analyze_expr(&spread.expr),
-                        PropOrSpread::Prop(p) => match &**p {
-                            Prop::KeyValue(kv) => {
-                                if let PropName::Computed(c) = &kv.key {
-                                    self.analyze_expr(&c.expr);
-                                }
-                                self.analyze_expr(&kv.value);
-                            }
-                            Prop::Method(m) => {
-                                if let PropName::Computed(c) = &m.key {
-                                    self.analyze_expr(&c.expr);
-                                }
-                            }
-                            _ => {}
-                        },
+                        PropOrSpread::Prop(Prop::KeyValue(kv)) => {
+                            // PropName doesn't have Computed in oats_ast, skip for now
+                            self.analyze_expr(&kv.value);
+                        }
+                        PropOrSpread::Prop(Prop::Shorthand(_)) => {}
                     }
                 }
             }
             Expr::New(new) => {
                 self.analyze_expr(&new.callee);
-                if let Some(args) = &new.args {
-                    for arg in args {
-                        self.analyze_expr_as_escaping(&arg.expr);
-                    }
+                for arg in &new.args {
+                    self.analyze_expr_as_escaping(arg);
                 }
             }
             Expr::Await(await_expr) => self.analyze_expr(&await_expr.arg),
@@ -393,9 +370,9 @@ impl EscapeAnalyzer {
                 }
 
                 // Analyze the body
-                match &*arrow.body {
-                    BlockStmtOrExpr::Expr(e) => self.analyze_expr(e),
-                    BlockStmtOrExpr::BlockStmt(block) => {
+                match &arrow.body {
+                    ArrowBody::Expr(e) => self.analyze_expr(e),
+                    ArrowBody::Block(block) => {
                         self.enter_scope();
                         self.analyze_block_stmt(block);
                         self.exit_scope();
@@ -407,7 +384,7 @@ impl EscapeAnalyzer {
     }
 
     /// Analyzes an expression where all contained variables are considered escaping.
-    fn analyze_expr_as_escaping(&mut self, expr: &ast::Expr) {
+    fn analyze_expr_as_escaping(&mut self, expr: &Expr) {
         let mut vars = HashSet::new();
         Self::collect_vars_from_expr(expr, &mut vars);
         for var in vars {
@@ -416,24 +393,23 @@ impl EscapeAnalyzer {
     }
 
     /// Recursively collects all variable names from an expression.
-    fn collect_vars_from_expr(expr: &ast::Expr, vars: &mut HashSet<String>) {
-        use deno_ast::swc::ast::*;
+    fn collect_vars_from_expr(expr: &Expr, vars: &mut HashSet<String>) {
         match expr {
             Expr::Ident(ident) => {
-                vars.insert(ident.sym.to_string());
+                vars.insert(ident.sym.clone());
             }
             Expr::Call(call) => {
                 if let Callee::Expr(callee_expr) = &call.callee {
                     Self::collect_vars_from_expr(callee_expr, vars);
                 }
                 for arg in &call.args {
-                    Self::collect_vars_from_expr(&arg.expr, vars);
+                    Self::collect_vars_from_expr(arg, vars);
                 }
             }
             Expr::Member(member) => {
                 Self::collect_vars_from_expr(&member.obj, vars);
                 if let MemberProp::Computed(comp) = &member.prop {
-                    Self::collect_vars_from_expr(&comp.expr, vars);
+                    Self::collect_vars_from_expr(comp, vars);
                 }
             }
             Expr::Bin(bin) => {
@@ -448,7 +424,7 @@ impl EscapeAnalyzer {
             }
             Expr::Array(arr) => {
                 for elem in arr.elems.iter().flatten() {
-                    Self::collect_vars_from_expr(&elem.expr, vars);
+                    Self::collect_vars_from_expr(elem, vars);
                 }
             }
             Expr::Assign(assign) => Self::collect_vars_from_expr(&assign.right, vars),
@@ -458,35 +434,36 @@ impl EscapeAnalyzer {
     }
 
     /// Recursively collects all variable names from a pattern.
-    fn collect_vars_from_pat(pat: &ast::Pat, vars: &mut HashSet<String>) {
-        use deno_ast::swc::ast::*;
+    fn collect_vars_from_pat(pat: &Pat, vars: &mut HashSet<String>) {
         match pat {
             Pat::Ident(ident) => {
-                vars.insert(ident.id.sym.to_string());
+                vars.insert(ident.sym.clone());
             }
             Pat::Array(arr) => {
-                for elem in arr.elems.iter().flatten() {
-                    Self::collect_vars_from_pat(elem, vars);
+                for elem_pat in arr.elems.iter().flatten() {
+                    Self::collect_vars_from_pat(elem_pat, vars);
                 }
             }
             Pat::Object(obj) => {
                 for prop in &obj.props {
                     match prop {
-                        ObjectPatProp::KeyValue(kv) => Self::collect_vars_from_pat(&kv.value, vars),
-                        ObjectPatProp::Assign(assign) => {
-                            vars.insert(assign.key.sym.to_string());
+                        ObjectPatProp::KeyValue { value, .. } => {
+                            Self::collect_vars_from_pat(value, vars);
                         }
-                        ObjectPatProp::Rest(rest) => Self::collect_vars_from_pat(&rest.arg, vars),
+                        ObjectPatProp::Rest { arg, .. } => {
+                            vars.insert(arg.sym.clone());
+                        }
                     }
                 }
             }
-            Pat::Rest(rest) => Self::collect_vars_from_pat(&rest.arg, vars),
-            _ => {}
+            Pat::Rest(rest) => {
+                Self::collect_vars_from_pat(&rest.arg, vars);
+            }
         }
     }
 
     /// Analyzes an async function to find variables live across `await` points.
-    fn analyze_async_await_live(&mut self, func: &ast::Function) {
+    fn analyze_async_await_live(&mut self, func: &Function) {
         if let Some(body) = &func.body {
             let mut await_analyzer = AwaitLiveAnalyzer::new();
             await_analyzer.analyze_stmts(&body.stmts);
@@ -513,16 +490,15 @@ impl AwaitLiveAnalyzer {
         }
     }
 
-    fn analyze_stmts(&mut self, stmts: &[ast::Stmt]) {
+    fn analyze_stmts(&mut self, stmts: &[Stmt]) {
         for stmt in stmts {
             self.analyze_stmt(stmt);
         }
     }
 
-    fn analyze_stmt(&mut self, stmt: &ast::Stmt) {
-        use deno_ast::swc::ast::*;
+    fn analyze_stmt(&mut self, stmt: &Stmt) {
         match stmt {
-            Stmt::Expr(expr_stmt) => self.analyze_expr(&expr_stmt.expr),
+            Stmt::ExprStmt(expr_stmt) => self.analyze_expr(&expr_stmt.expr),
             Stmt::Block(block) => self.analyze_stmts(&block.stmts),
             Stmt::If(if_stmt) => {
                 self.analyze_expr(&if_stmt.test);
@@ -535,11 +511,10 @@ impl AwaitLiveAnalyzer {
         }
     }
 
-    fn analyze_expr(&mut self, expr: &ast::Expr) {
-        use deno_ast::swc::ast::*;
+    fn analyze_expr(&mut self, expr: &Expr) {
         match expr {
             Expr::Ident(ident) => {
-                self.current_vars.insert(ident.sym.to_string());
+                self.current_vars.insert(ident.sym.clone());
             }
             Expr::Await(_) => {
                 for var in &self.current_vars {
@@ -552,13 +527,13 @@ impl AwaitLiveAnalyzer {
                     self.analyze_expr(callee_expr);
                 }
                 for arg in &call.args {
-                    self.analyze_expr(&arg.expr);
+                    self.analyze_expr(arg);
                 }
             }
             Expr::Member(member) => {
                 self.analyze_expr(&member.obj);
                 if let MemberProp::Computed(comp) = &member.prop {
-                    self.analyze_expr(&comp.expr);
+                    self.analyze_expr(comp);
                 }
             }
             Expr::Bin(bin) => {

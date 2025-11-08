@@ -25,7 +25,7 @@ type LocalsStackLocal<'a> = Vec<HashMap<String, LocalEntry<'a>>>;
 impl<'a> crate::codegen::CodeGen<'a> {
     pub(crate) fn lower_if_stmt(
         &self,
-        ifstmt: &deno_ast::swc::ast::IfStmt,
+        ifstmt: &oats_ast::IfStmt,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals_stack: &mut LocalsStackLocal<'a>,
@@ -45,7 +45,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 // Build then block
                 self.builder.position_at_end(then_bb);
                 let then_terminated: bool = match &*ifstmt.cons {
-                    deno_ast::swc::ast::Stmt::Block(block) => {
+                    oats_ast::Stmt::Block(block) => {
                         self.lower_stmts(&block.stmts, function, param_map, locals_stack)?
                     }
                     _ => self.lower_stmt(&ifstmt.cons, function, param_map, locals_stack)?,
@@ -58,7 +58,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 self.builder.position_at_end(else_bb);
                 let else_terminated: bool = if let Some(alt) = &ifstmt.alt {
                     match &**alt {
-                        deno_ast::swc::ast::Stmt::Block(block) => {
+                        oats_ast::Stmt::Block(block) => {
                             self.lower_stmts(&block.stmts, function, param_map, locals_stack)?
                         }
                         _ => self.lower_stmt(alt, function, param_map, locals_stack)?,
@@ -91,28 +91,23 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
     pub(crate) fn lower_for_stmt(
         &self,
-        forstmt: &deno_ast::swc::ast::ForStmt,
+        forstmt: &oats_ast::ForStmt,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals_stack: &mut LocalsStackLocal<'a>,
     ) -> crate::diagnostics::DiagnosticResult<bool> {
+        use oats_ast::*;
         // Push new scope for the loop (init vars live in this scope)
         locals_stack.push(HashMap::new());
 
         // Lower init (can be VarDecl or Expr)
         if let Some(init) = &forstmt.init {
             match init {
-                deno_ast::swc::ast::VarDeclOrExpr::VarDecl(var_decl) => {
-                    let _ = self.lower_stmt(
-                        &deno_ast::swc::ast::Stmt::Decl(deno_ast::swc::ast::Decl::Var(Box::new(
-                            (**var_decl).clone(),
-                        ))),
-                        function,
-                        param_map,
-                        locals_stack,
-                    );
+                ForInit::VarDecl(var_decl) => {
+                    // Handle variable declaration in for loop init (e.g., let i = 0)
+                    self.lower_decl_stmt(var_decl, function, param_map, locals_stack)?;
                 }
-                deno_ast::swc::ast::VarDeclOrExpr::Expr(expr) => {
+                ForInit::Expr(expr) => {
                     // Handle expression (e.g., i = 0)
                     let _ = self.lower_expr(expr, function, param_map, locals_stack);
                 }
@@ -168,7 +163,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         // Build body block
         self.builder.position_at_end(loop_body_bb);
         let body_terminated: bool = match &*forstmt.body {
-            deno_ast::swc::ast::Stmt::Block(block) => {
+            oats_ast::Stmt::Block(block) => {
                 self.lower_stmts(&block.stmts, function, param_map, locals_stack)?
             }
             _ => self.lower_stmt(&forstmt.body, function, param_map, locals_stack)?,
@@ -200,11 +195,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
     pub(crate) fn lower_while_stmt(
         &self,
-        while_stmt: &deno_ast::swc::ast::WhileStmt,
+        while_stmt: &oats_ast::WhileStmt,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals_stack: &mut LocalsStackLocal<'a>,
     ) -> crate::diagnostics::DiagnosticResult<bool> {
+        use oats_ast::*;
         // Create basic blocks
         let loop_cond_bb = self.context.append_basic_block(function, "while.cond");
         let loop_body_bb = self.context.append_basic_block(function, "while.body");
@@ -244,7 +240,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         // Build body block
         self.builder.position_at_end(loop_body_bb);
         let body_terminated: bool = match &*while_stmt.body {
-            deno_ast::swc::ast::Stmt::Block(block) => {
+            Stmt::Block(block) => {
                 self.lower_stmts(&block.stmts, function, param_map, locals_stack)?
             }
             _ => self.lower_stmt(&while_stmt.body, function, param_map, locals_stack)?,
@@ -266,11 +262,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
     pub(crate) fn lower_do_while_stmt(
         &self,
-        dowhile_stmt: &deno_ast::swc::ast::DoWhileStmt,
+        dowhile_stmt: &oats_ast::DoWhileStmt,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals_stack: &mut LocalsStackLocal<'a>,
     ) -> crate::diagnostics::DiagnosticResult<bool> {
+        use oats_ast::*;
         // Create basic blocks
         let loop_body_bb = self.context.append_basic_block(function, "dowhile.body");
         let loop_cond_bb = self.context.append_basic_block(function, "dowhile.cond");
@@ -292,7 +289,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         // Build body block
         self.builder.position_at_end(loop_body_bb);
         let body_terminated: bool = match &*dowhile_stmt.body {
-            deno_ast::swc::ast::Stmt::Block(block) => {
+            Stmt::Block(block) => {
                 self.lower_stmts(&block.stmts, function, param_map, locals_stack)?
             }
             _ => self.lower_stmt(&dowhile_stmt.body, function, param_map, locals_stack)?,

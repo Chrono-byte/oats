@@ -24,12 +24,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
     #[allow(clippy::result_large_err)]
     pub(super) fn lower_ident_expr(
         &self,
-        id: &deno_ast::swc::ast::Ident,
+        id: &oats_ast::Ident,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals: &mut LocalsStackLocal<'a>,
     ) -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
-        let name = id.sym.to_string();
+        let name = id.sym.clone();
 
         // First, check if the identifier is a function parameter.
         if let Some(idx) = param_map.get(&name)
@@ -46,13 +46,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
         // Check if the identifier refers to an enum type (enums themselves are not values)
         if let Some(OatsType::Enum(_, _)) = self.symbol_table.borrow().get_type(&name) {
-            return Err(Diagnostic::simple_with_span_boxed(
+            return Err(Diagnostic::simple_boxed(
                 Severity::Error,
                 format!(
                     "'{}' is an enum type and cannot be used as a value. Use 'enum.member' syntax instead.",
                     name
                 ),
-                id.span.lo.0 as usize,
             ));
         }
 
@@ -148,10 +147,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         self.string_literals.borrow_mut().insert(s.clone(), ptr);
                         return Ok(ptr.as_basic_value_enum());
                     }
-                    return Err(Diagnostic::simple_with_span_boxed(
+                    return Err(Diagnostic::simple_boxed(
                         Severity::Error,
                         "failed to lower const string literal",
-                        id as usize,
                     ));
                 }
                 crate::codegen::const_eval::ConstValue::Array(_)
@@ -160,10 +158,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     if let Some(gptr) = self.const_globals.borrow().get(&name) {
                         return Ok(gptr.as_basic_value_enum());
                     }
-                    return Err(Diagnostic::simple_with_span_boxed(
+                    return Err(Diagnostic::simple_boxed(
                         Severity::Error,
                         "const global not emitted",
-                        id.span.lo.0 as usize,
                     ));
                 }
             }
@@ -203,10 +200,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
             return Ok(loaded);
         }
 
-        Err(Diagnostic::simple_with_span_boxed(
+        Err(Diagnostic::simple_boxed(
             Severity::Error,
             format!("undefined identifier '{}'", name),
-            id.span.lo.0 as usize,
         ))
     }
 }

@@ -1,4 +1,4 @@
-use crate::diagnostics::Severity;
+use crate::diagnostics::{Diagnostic, Severity};
 use inkwell::AddressSpace;
 use inkwell::types::BasicType;
 use inkwell::values::{BasicValue, BasicValueEnum, FunctionValue};
@@ -23,234 +23,961 @@ type LocalEntry<'a> = (
 // for union tracking.
 type LocalsStackLocal<'a> = Vec<HashMap<String, LocalEntry<'a>>>;
 
+/// Type information extracted from a variable declaration
+struct DeclTypeInfo {
+    declared_mapped: Option<crate::types::OatsType>,
+    declared_union: Option<crate::types::OatsType>,
+    declared_is_weak: bool,
+    declared_nominal: Option<String>,
+    init_inferred: Option<crate::types::OatsType>,
+    #[allow(dead_code)]
+    effective_type: crate::types::OatsType,
+}
+
 impl<'a> crate::codegen::CodeGen<'a> {
-    pub(crate) fn lower_decl_stmt(
+    /// Resolve type information from a variable declaration.
+    ///
+    /// Extracts declared type annotations, infers types from initializers,
+    /// and determines the effective type and related flags (union, weak, nominal).
+    fn resolve_decl_type(
         &self,
-        d: &deno_ast::swc::ast::Decl,
+        decl: &oats_ast::VarDeclarator,
+    ) -> crate::diagnostics::DiagnosticResult<DeclTypeInfo> {
+        let mut declared_mapped: Option<crate::types::OatsType> = None;
+        let mut declared_union: Option<crate::types::OatsType> = None;
+        let mut declared_is_weak = false;
+        let mut declared_nominal: Option<String> = None;
+
+        // Determine if the identifier has an explicit type annotation
+        if let Some(ty) = &decl.ty
+            && let Some(mapped) = crate::types::map_ts_type(ty)
+        {
+            declared_mapped = Some(mapped.clone());
+            if let crate::types::OatsType::Union(_) = &mapped {
+                declared_union = Some(mapped.clone());
+            }
+            if let crate::types::OatsType::Weak(_) = &mapped {
+                declared_is_weak = true;
+            }
+            if let crate::types::OatsType::NominalStruct(n) = &mapped {
+                declared_nominal = Some(n.clone());
+            }
+            // If the declared type is an Array, tag the local with
+            // a sentinel nominal so lowering sites (like println)
+            // can detect arrays at compile time.
+            if let crate::types::OatsType::Array(_) = &mapped {
+                declared_nominal = Some("__oats_array".to_string());
+            }
+        }
+
+        // Compute inferred type from initializer if present
+        let init_inferred = decl
+            .init
+            .as_ref()
+            .map(|init| crate::types::infer_type(None, Some(init)));
+
+        // Require either explicit type annotation or initializer for inference
+        if declared_mapped.is_none() && init_inferred.is_none() {
+            return Err(crate::diagnostics::Diagnostic::simple_boxed(
+                Severity::Error,
+                "Variable declaration requires explicit type annotation or initializer",
+            ));
+        }
+
+        // Determine effective type: declared takes precedence, then inferred
+        let effective_type = declared_mapped
+            .as_ref()
+            .or(init_inferred.as_ref())
+            .ok_or_else(|| {
+                crate::diagnostics::Diagnostic::simple_boxed(
+                    Severity::Error,
+                    "Internal error: variable type resolution failed (this should not happen)",
+                )
+            })?
+            .clone();
+
+        // If no explicit type annotation, set flags from inferred type
+        if declared_mapped.is_none() {
+            if let crate::types::OatsType::Union(_) = &effective_type {
+                declared_union = Some(effective_type.clone());
+            }
+            if let crate::types::OatsType::Weak(_) = &effective_type {
+                declared_is_weak = true;
+            }
+            if let crate::types::OatsType::NominalStruct(n) = &effective_type {
+                declared_nominal = Some(n.clone());
+            }
+            // If the inferred type is an Array, tag the local with
+            // a sentinel nominal so lowering sites (like println)
+            // can detect arrays at compile time.
+            if let crate::types::OatsType::Array(_) = &effective_type {
+                declared_nominal = Some("__oats_array".to_string());
+            }
+        }
+
+        Ok(DeclTypeInfo {
+            declared_mapped,
+            declared_union,
+            declared_is_weak,
+            declared_nominal,
+            init_inferred,
+            effective_type,
+        })
+    }
+
+    /// Handle compile-time constant evaluation for const declarations.
+    ///
+    /// Returns `Ok(true)` if the const was successfully evaluated and stored,
+    /// meaning the caller should skip further lowering. Returns `Ok(false)` if
+    /// the const should fall through to normal lowering (e.g., arrays/objects).
+    fn handle_const_decl(
+        &self,
+        init: &oats_ast::Expr,
+        var_decl: &oats_ast::VarDecl,
+        name: &str,
+    ) -> crate::diagnostics::DiagnosticResult<bool> {
+        if !matches!(var_decl.kind, oats_ast::VarDeclKind::Const) {
+            return Ok(false);
+        }
+
+        let span_start = var_decl.span.start;
+        let const_map = self.const_items.borrow();
+        match crate::codegen::const_eval::eval_const_expr(init, span_start, &const_map) {
+            Ok(cv) => {
+                // Only treat primitives as const; arrays and objects need runtime allocation
+                if matches!(
+                    cv,
+                    crate::codegen::const_eval::ConstValue::Number(_)
+                        | crate::codegen::const_eval::ConstValue::Bool(_)
+                        | crate::codegen::const_eval::ConstValue::Str(_)
+                ) {
+                    drop(const_map);
+                    // Insert into compile-time const map keyed by name
+                    self.const_items.borrow_mut().insert(name.to_string(), cv);
+                    // For consts we do not lower the initializer further; the
+                    // lowered uses will be replaced by LLVM constants later.
+                    return Ok(true);
+                } else {
+                    drop(const_map);
+                    // For arrays/objects, fall through to normal lowering
+                }
+            }
+            Err(_diag) => {
+                // If const evaluation fails, fall through to normal lowering
+                drop(const_map);
+            }
+        }
+        Ok(false)
+    }
+
+    /// Handle object literal initialization with nominal type registration.
+    ///
+    /// If the initializer is an object literal and the declared local carries
+    /// a nominal struct name, register the object's property list under
+    /// `self.class_fields` keyed by the nominal name.
+    fn handle_object_literal_init(
+        &self,
+        init: &oats_ast::Expr,
+        declared_nominal: &Option<String>,
+    ) -> crate::diagnostics::DiagnosticResult<()> {
+        if let oats_ast::Expr::Object(obj_lit) = init
+            && let Some(nominal_name) = declared_nominal.clone()
+        {
+            let mut fields: Vec<(String, crate::types::OatsType)> = Vec::new();
+            for prop in &obj_lit.props {
+                if let oats_ast::PropOrSpread::Prop(prop) = prop
+                    && let oats_ast::Prop::KeyValue(kv) = prop
+                    && let oats_ast::PropName::Ident(id) = &kv.key
+                {
+                    let fname = id.sym.clone();
+                    // Try to infer the field type from the initializer expression.
+                    let fty = crate::types::infer_type(None, Some(&kv.value));
+                    fields.push((fname, fty));
+                }
+            }
+            if !fields.is_empty() {
+                self.class_fields.borrow_mut().insert(nominal_name, fields);
+            }
+        }
+        Ok(())
+    }
+
+    /// Handle `new ClassName(...)` initializers.
+    ///
+    /// Pre-allocates a local slot for the declared variable before lowering
+    /// the initializer so subsequent statements can resolve the local even
+    /// if initializer lowering emits diagnostics.
+    fn handle_new_expr_init(
+        &self,
+        init: &oats_ast::Expr,
+        name: &str,
+        declared_is_weak: bool,
+        declared_nominal: &mut Option<String>,
+        declared_union: &Option<crate::types::OatsType>,
+        locals_stack: &mut LocalsStackLocal<'a>,
+    ) -> crate::diagnostics::DiagnosticResult<bool> {
+        if let oats_ast::Expr::New(new_expr) = init
+            && let oats_ast::Expr::Ident(ident) = &*new_expr.callee
+        {
+            *declared_nominal = Some(ident.sym.clone());
+
+            // Pre-allocate an i8* slot and insert the local into
+            // the current scope marked as uninitialized. This
+            // ensures `find_local` can discover the nominal
+            // type for member-call lowering that appears
+            // after this declaration.
+            let allocated_ty = self.i8ptr_t.as_basic_type_enum();
+            let alloca = match self.builder.build_alloca(allocated_ty, name) {
+                Ok(a) => a,
+                Err(_) => {
+                    crate::diagnostics::emit_diagnostic(
+                        &crate::diagnostics::Diagnostic::simple_boxed(
+                            Severity::Error,
+                            "alloca failed for local variable",
+                        ),
+                        Some(self.source),
+                    );
+                    return Ok(false);
+                }
+            };
+            // Insert local early as uninitialized; we'll store to it below
+            self.insert_local_current_scope(
+                locals_stack,
+                crate::codegen::helpers::LocalVarInfo {
+                    name: name.to_string(),
+                    ptr: alloca,
+                    ty: allocated_ty,
+                    initialized: false,
+                    is_const: false,
+                    is_weak: declared_is_weak,
+                    nominal: declared_nominal.clone(),
+                    oats_type: declared_union.clone(),
+                },
+            );
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
+    /// Handle tuple initialization from array literals.
+    ///
+    /// If the declared type is a Tuple and the initializer is an array literal,
+    /// allocate a native tuple object and register its field types.
+    /// Returns `Ok(true)` if tuple initialization was handled, `Ok(false)` otherwise.
+    #[allow(unused_variables)]
+    fn handle_tuple_init(
+        &self,
+        init: &oats_ast::Expr,
+        declared_mapped: &Option<crate::types::OatsType>,
+        name: &str,
+        var_decl: &oats_ast::VarDecl,
+        is_mut_decl: bool,
+        declared_is_weak: bool,
+        declared_union: &Option<crate::types::OatsType>,
+        declared_nominal: &Option<String>,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals_stack: &mut LocalsStackLocal<'a>,
     ) -> crate::diagnostics::DiagnosticResult<bool> {
-        if let deno_ast::swc::ast::Decl::Var(var_decl) = d {
-            for decl in &var_decl.decls {
-                // Only simple identifier patterns are handled at present.
-                if let deno_ast::swc::ast::Pat::Ident(ident) = &decl.name {
-                    let name = ident.id.sym.to_string();
+        let Some(crate::types::OatsType::Tuple(elem_types)) = declared_mapped else {
+            return Ok(false);
+        };
+        let oats_ast::Expr::Array(arr_lit) = init else {
+            return Ok(false);
+        };
 
-                    // Language Spec v2: `let` is immutable by default. Support
-                    // `let mut` by consulting the parser-computed set of
-                    // var declarations that contained a `mut` token. This
-                    // avoids scanning the source text at lowering time and
-                    // is resilient to `mut` inside strings/comments.
-                    let is_mut_decl =
-                        if matches!(var_decl.kind, deno_ast::swc::ast::VarDeclKind::Let) {
-                            let start = var_decl.span.lo.0 as usize;
-                            let end = var_decl.span.hi.0 as usize;
-                            // Check parser-computed set first, then fall back to the
-                            // original source-scan heuristic if necessary. This helps
-                            // cover edge-cases where spans or byte offsets differ.
-                            if self.mut_var_decls.contains(&start) {
-                                true
-                            } else if end > start && end <= self.source.len() {
-                                let slice = &self.source[start..end];
-                                slice.contains("mut ")
-                                    || slice.contains("mut\t")
-                                    || slice.contains("mut\n")
-                            } else {
-                                false
-                            }
-                        } else {
-                            false
-                        };
+        // number of elements
+        let elem_count = arr_lit.elems.len();
+        // Generate a nominal name for this tuple shape
+        let fname = function.get_name().to_str().unwrap_or("<fn>");
+        let gen_name = format!("tuple_{}_{}", fname, name);
+        // Register field list under class_fields as ("0", type0), ...
+        let mut fields: Vec<(String, crate::types::OatsType)> = Vec::new();
+        for (i, et) in elem_types.iter().enumerate() {
+            fields.push((format!("{}", i), et.clone()));
+        }
+        self.class_fields
+            .borrow_mut()
+            .insert(gen_name.clone(), fields);
 
-                    // Determine if the identifier has an explicit type annotation
-                    // (do this regardless of whether there's an initializer so we
-                    // know whether the local should be treated as Weak<T> even
-                    // for uninitialized locals). Also capture a nominal struct
-                    // name if the annotation maps to a NominalStruct so member
-                    // lowering can use it.
-                    let mut declared_mapped: Option<crate::types::OatsType> = None;
-                    let mut declared_union: Option<crate::types::OatsType> = None;
-                    let mut declared_is_weak = false;
-                    let mut declared_nominal: Option<String> = None;
-                    if let Some(type_ann) = &ident.type_ann
-                        && let Some(mapped) = crate::types::map_ts_type(&type_ann.type_ann)
+        // Allocate object: header + meta_slot + elem_count * 8
+        let header_size = 8u64;
+        let meta_slot = 8u64;
+        let total_size = header_size + meta_slot + (elem_count as u64 * 8);
+        let malloc_fn = self.get_malloc();
+        let size_const = self.i64_t.const_int(total_size, false);
+        let cs = self
+            .builder
+            .build_call(malloc_fn, &[size_const.into()], "tuple_malloc");
+        let malloc_ret = if let Ok(cs) = cs
+            && let inkwell::Either::Left(bv) = cs.try_as_basic_value()
+        {
+            bv.into_pointer_value()
+        } else {
+            crate::diagnostics::emit_diagnostic(
+                &crate::diagnostics::Diagnostic::simple_boxed(
+                    Severity::Error,
+                    "malloc failed for tuple allocation",
+                ),
+                Some(self.source),
+            );
+            return Ok(false);
+        };
+
+        // store header
+        let header_ptr = self
+            .builder
+            .build_pointer_cast(malloc_ret, self.i8ptr_t, "hdr_ptr")
+            .map_err(|_| {
+                crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "pointer cast failed")
+            })?;
+        let header_val = self.i64_t.const_int(1u64, false);
+        let _ = self.builder.build_store(header_ptr, header_val);
+
+        // For each element in the array literal, lower and store
+        for (i, opt) in arr_lit.elems.iter().enumerate() {
+            let Some(expr) = opt else {
+                return Err(crate::diagnostics::Diagnostic::simple_boxed(
+                    Severity::Error,
+                    "elided tuple element not supported",
+                ));
+            };
+            let ev = self.lower_expr(expr, function, param_map, locals_stack)?;
+            let offset = header_size + meta_slot + (i as u64 * 8);
+            let obj_addr = self
+                .builder
+                .build_ptr_to_int(malloc_ret, self.i64_t, "obj_addr")
+                .map_err(|_| {
+                    crate::diagnostics::Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "ptr_to_int failed",
+                    )
+                })?;
+            let offset_const = self.i64_t.const_int(offset, false);
+            let field_addr = self
+                .builder
+                .build_int_add(obj_addr, offset_const, "field_addr")
+                .map_err(|_| {
+                    crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "int_add failed")
+                })?;
+            let field_ptr = self
+                .builder
+                .build_int_to_ptr(field_addr, self.i8ptr_t, "field_ptr")
+                .map_err(|_| {
+                    crate::diagnostics::Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "int_to_ptr failed",
+                    )
+                })?;
+            // Store element into slot using same logic as object literal
+            // Use the declared element type to choose storage
+            let field_ty = elem_types.get(i).ok_or_else(|| {
+                crate::diagnostics::Diagnostic::simple_boxed(
+                    Severity::Error,
+                    "tuple element type missing",
+                )
+            })?;
+            self.store_tuple_element(field_ptr, ev, field_ty)?;
+        }
+
+        // Create an alloca for the local and store the tuple pointer
+        let allocated_ty = self.i8ptr_t.as_basic_type_enum();
+        let alloca = match self.builder.build_alloca(allocated_ty, name) {
+            Ok(a) => a,
+            Err(_) => {
+                crate::diagnostics::emit_diagnostic(
+                    &crate::diagnostics::Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "alloca failed for local variable",
+                    ),
+                    Some(self.source),
+                );
+                return Ok(false);
+            }
+        };
+        // increment rc for stored pointer (unless elided)
+        if !self.should_elide_rc_for_local(name) {
+            let rc_inc = self.get_rc_inc();
+            let _ = self
+                .builder
+                .build_call(rc_inc, &[malloc_ret.into()], "rc_inc_local");
+        }
+        let _ = self
+            .builder
+            .build_store(alloca, malloc_ret.as_basic_value_enum());
+        // mark initialized and insert local with nominal pointing to tuple generated name
+        self.insert_local_current_scope(
+            locals_stack,
+            crate::codegen::helpers::LocalVarInfo {
+                name: name.to_string(),
+                ptr: alloca,
+                ty: allocated_ty,
+                initialized: true,
+                // If this was a `let` without `mut`, treat as const/immutable
+                is_const: matches!(var_decl.kind, oats_ast::VarDeclKind::Const) || !is_mut_decl,
+                is_weak: declared_is_weak,
+                nominal: Some(gen_name),
+                oats_type: declared_union.clone(),
+            },
+        );
+        Ok(true)
+    }
+
+    /// Store a tuple element into a field pointer based on its type.
+    fn store_tuple_element(
+        &self,
+        field_ptr: inkwell::values::PointerValue<'a>,
+        ev: BasicValueEnum<'a>,
+        field_ty: &crate::types::OatsType,
+    ) -> crate::diagnostics::DiagnosticResult<()> {
+        match field_ty {
+            crate::types::OatsType::Number => {
+                // Coerce to f64 then store into an f64* slot
+                let fv = if ev.get_type().is_float_type() {
+                    ev.into_float_value()
+                } else if ev.get_type().is_int_type() {
+                    let iv = ev.into_int_value();
+                    self.builder
+                        .build_signed_int_to_float(iv, self.f64_t, "i_to_f")
+                        .map_err(|_| {
+                            crate::diagnostics::Diagnostic::simple_boxed(
+                                Severity::Error,
+                                "int->float cast failed",
+                            )
+                        })?
+                } else if let Some(fv) = self.coerce_to_f64(ev) {
+                    fv
+                } else {
+                    return Err(crate::diagnostics::Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "expected numeric value for tuple number element",
+                    ));
+                };
+                let f64_ptr_ty = self.context.ptr_type(AddressSpace::default());
+                let elem_f64_ptr = self
+                    .builder
+                    .build_pointer_cast(field_ptr, f64_ptr_ty, "tuple_elem_f64_ptr")
+                    .map_err(|_| {
+                        crate::diagnostics::Diagnostic::simple_boxed(
+                            Severity::Error,
+                            "pointer cast failed",
+                        )
+                    })?;
+                let _ = self
+                    .builder
+                    .build_store(elem_f64_ptr, fv.as_basic_value_enum());
+            }
+            crate::types::OatsType::Union(_) => {
+                // Box union payloads into a heap object and store pointer
+                // If ev is float -> union_box_f64, if pointer -> union_box_ptr
+                if ev.get_type().is_float_type() {
+                    let box_fn = self.get_union_box_f64();
+                    let cs2 = self
+                        .builder
+                        .build_call(box_fn, &[ev.into()], "union_box_f64_ctor");
+                    if let Ok(cs2) = cs2
+                        && let inkwell::Either::Left(bv2) = cs2.try_as_basic_value()
                     {
-                        declared_mapped = Some(mapped.clone());
-                        if let crate::types::OatsType::Union(_) = &mapped {
-                            declared_union = Some(mapped.clone());
-                        }
-                        if let crate::types::OatsType::Weak(_) = &mapped {
-                            declared_is_weak = true;
-                        }
-                        if let crate::types::OatsType::NominalStruct(n) = &mapped {
-                            declared_nominal = Some(n.clone());
-                        }
-                        // If the declared type is an Array, tag the local with
-                        // a sentinel nominal so lowering sites (like println)
-                        // can detect arrays at compile time.
-                        if let crate::types::OatsType::Array(_) = &mapped {
-                            declared_nominal = Some("__oats_array".to_string());
+                        let boxed_ptr = bv2.into_pointer_value();
+                        let rc_inc = self.get_rc_inc();
+                        let _ =
+                            self.builder
+                                .build_call(rc_inc, &[boxed_ptr.into()], "rc_inc_field");
+                        let boxed_bv = inkwell::values::BasicValueEnum::PointerValue(boxed_ptr);
+                        let _ = self.builder.build_store(field_ptr, boxed_bv);
+                    }
+                } else if ev.get_type().is_pointer_type() {
+                    let box_fn = self.get_union_box_ptr();
+                    let cs2 = self
+                        .builder
+                        .build_call(box_fn, &[ev.into()], "union_box_ptr_ctor");
+                    if let Ok(cs2) = cs2
+                        && let inkwell::Either::Left(bv2) = cs2.try_as_basic_value()
+                    {
+                        let boxed_ptr = bv2.into_pointer_value();
+                        let rc_inc = self.get_rc_inc();
+                        let _ =
+                            self.builder
+                                .build_call(rc_inc, &[boxed_ptr.into()], "rc_inc_field");
+                        let boxed_bv = inkwell::values::BasicValueEnum::PointerValue(boxed_ptr);
+                        let _ = self.builder.build_store(field_ptr, boxed_bv);
+                    }
+                } else {
+                    return Err(crate::diagnostics::Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "unsupported tuple union element type at init",
+                    ));
+                }
+            }
+            // Pointer-like types: store pointer and rc_inc
+            crate::types::OatsType::String
+            | crate::types::OatsType::NominalStruct(_)
+            | crate::types::OatsType::Array(_)
+            | crate::types::OatsType::Option(_)
+            | crate::types::OatsType::Weak(_)
+            | crate::types::OatsType::Promise(_) => {
+                if let inkwell::values::BasicValueEnum::PointerValue(p) = ev {
+                    let rc_inc = self.get_rc_inc();
+                    let _ = self.builder.build_call(rc_inc, &[p.into()], "rc_inc_field");
+                    let _ = self.builder.build_store(field_ptr, ev);
+                } else {
+                    return Err(crate::diagnostics::Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "expected pointer for tuple reference element",
+                    ));
+                }
+            }
+            _ => {
+                // Fallback: store as is (covers booleans/int where appropriate)
+                let _ = self.builder.build_store(field_ptr, ev);
+            }
+        }
+        Ok(())
+    }
+
+    /// Apply union boxing to a value if needed.
+    ///
+    /// Returns the (possibly boxed) value and the allocated type.
+    fn handle_union_boxing(
+        &self,
+        mut val: BasicValueEnum<'a>,
+        declared_union: &Option<crate::types::OatsType>,
+    ) -> crate::diagnostics::DiagnosticResult<(BasicValueEnum<'a>, inkwell::types::BasicTypeEnum<'a>)>
+    {
+        let mut allocated_ty = val.get_type().as_basic_type_enum();
+        if let Some(crate::types::OatsType::Union(parts)) = declared_union {
+            let any_ptr = parts.iter().any(|p| {
+                matches!(
+                    p,
+                    crate::types::OatsType::String
+                        | crate::types::OatsType::NominalStruct(_)
+                        | crate::types::OatsType::Array(_)
+                        | crate::types::OatsType::Promise(_)
+                )
+            });
+            if any_ptr {
+                // Only box scalar values (f64, i1)
+                // Pointers are assumed to be either already boxed
+                // or need to be treated as direct pointer values
+                if val.get_type().is_float_type() {
+                    let box_fn = self.get_union_box_f64();
+                    let cs = self
+                        .builder
+                        .build_call(box_fn, &[val.into()], "union_box_f64_ctor");
+                    if let Ok(cs) = cs
+                        && let inkwell::Either::Left(bv) = cs.try_as_basic_value()
+                    {
+                        val = bv;
+                    }
+                    allocated_ty = self.i8ptr_t.as_basic_type_enum();
+                } else if val.get_type().is_int_type() {
+                    // Boolean -> convert to f64, then box
+                    if let BasicValueEnum::IntValue(iv) = val {
+                        let as_f64 =
+                            self.builder
+                                .build_unsigned_int_to_float(iv, self.f64_t, "bool_to_f64");
+                        if let Ok(fv) = as_f64 {
+                            let box_fn = self.get_union_box_f64();
+                            let cs =
+                                self.builder
+                                    .build_call(box_fn, &[fv.into()], "union_box_f64_ctor");
+                            if let Ok(cs) = cs
+                                && let inkwell::Either::Left(bv) = cs.try_as_basic_value()
+                            {
+                                val = bv;
+                            }
                         }
                     }
+                    allocated_ty = self.i8ptr_t.as_basic_type_enum();
+                } else if val.get_type().is_pointer_type() {
+                    // Pointer value - don't box it, might already be boxed
+                    // Just use it directly
+                    allocated_ty = self.i8ptr_t.as_basic_type_enum();
+                }
+            } else {
+                // union of only numbers -> use f64 slot
+                allocated_ty = self.f64_t.as_basic_type_enum();
+                if val.get_type().is_int_type() {
+                    // coerce int to float
+                    if let BasicValueEnum::IntValue(iv) = val
+                        && let Ok(fv_val) = self
+                            .builder
+                            .build_signed_int_to_float(iv, self.f64_t, "i2f")
+                    {
+                        val = inkwell::values::BasicValueEnum::FloatValue(fv_val);
+                    }
+                }
+            }
+        }
+        Ok((val, allocated_ty))
+    }
 
-                    // Compute inferred type from initializer if present
-                    let init_inferred = decl
-                        .init
-                        .as_ref()
-                        .map(|init| crate::types::infer_type(None, Some(init)));
+    /// Lower array destructuring: let [a, b, c] = arr
+    fn lower_array_destructuring(
+        &self,
+        arr_pat: &oats_ast::ArrayPat,
+        init: &oats_ast::Expr,
+        var_decl: &oats_ast::VarDecl,
+        function: FunctionValue<'a>,
+        param_map: &HashMap<String, u32>,
+        locals_stack: &mut LocalsStackLocal<'a>,
+    ) -> crate::diagnostics::DiagnosticResult<()> {
+        use oats_ast::*;
 
-                    // Require either explicit type annotation or initializer for inference
-                    if declared_mapped.is_none() && init_inferred.is_none() {
-                        return Err(crate::diagnostics::Diagnostic::simple_boxed(
+        // Lower the initializer (should be an array)
+        let arr_val = self.lower_expr(init, function, param_map, locals_stack)?;
+        let arr_ptr = if let BasicValueEnum::PointerValue(pv) = arr_val {
+            pv
+        } else {
+            return Err(crate::diagnostics::Diagnostic::simple_boxed(
+                Severity::Error,
+                "Array destructuring requires an array initializer",
+            ));
+        };
+
+        // Get array length helper
+        let array_get_length = self.get_array_get_length();
+        let length_call = self
+            .builder
+            .build_call(array_get_length, &[arr_ptr.into()], "arr_len")
+            .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "failed to get array length"))?;
+        // Note: length is computed but not currently used for bounds checking
+        // This could be used in the future to validate array destructuring bounds
+        let _length = if let inkwell::Either::Left(bv) = length_call.try_as_basic_value() {
+            bv.into_int_value()
+        } else {
+            return Err(Diagnostic::simple_boxed(
+                Severity::Error,
+                "array length call failed",
+            ));
+        };
+
+        let is_mut_decl = matches!(var_decl.kind, VarDeclKind::Let { mutable: true });
+
+        // Extract each element
+        for (idx, opt_elem_pat) in arr_pat.elems.iter().enumerate() {
+            if let Some(elem_pat) = opt_elem_pat {
+                // Get array element at index
+                let idx_const = self.i64_t.const_int(idx as u64, false);
+                let array_get_ptr = self.get_array_get_ptr();
+                let elem_call = self
+                    .builder
+                    .build_call(
+                        array_get_ptr,
+                        &[arr_ptr.into(), idx_const.into()],
+                        "arr_elem",
+                    )
+                    .map_err(|_| {
+                        Diagnostic::simple_boxed(Severity::Error, "failed to get array element")
+                    })?;
+                let elem_val = if let inkwell::Either::Left(bv) = elem_call.try_as_basic_value() {
+                    bv
+                } else {
+                    return Err(Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "array element call failed",
+                    ));
+                };
+
+                // Handle nested patterns recursively
+                match elem_pat {
+                    Pat::Ident(ident) => {
+                        let name = ident.sym.clone();
+                        let alloca = self
+                            .builder
+                            .build_alloca(self.i8ptr_t.as_basic_type_enum(), &name)
+                            .map_err(|_| {
+                                Diagnostic::simple_boxed(Severity::Error, "alloca failed")
+                            })?;
+
+                        // RC increment for the element
+                        if let BasicValueEnum::PointerValue(elem_pv) = elem_val {
+                            let rc_inc = self.get_rc_inc();
+                            let _ = self
+                                .builder
+                                .build_call(rc_inc, &[elem_pv.into()], "rc_inc_elem")
+                                .map_err(|_| {
+                                    Diagnostic::simple_boxed(Severity::Error, "rc_inc failed")
+                                })?;
+                        }
+
+                        let _ = self.builder.build_store(alloca, elem_val);
+                        self.insert_local_current_scope(
+                            locals_stack,
+                            crate::codegen::helpers::LocalVarInfo {
+                                name,
+                                ptr: alloca,
+                                ty: self.i8ptr_t.as_basic_type_enum(),
+                                initialized: true,
+                                is_const: matches!(var_decl.kind, VarDeclKind::Const)
+                                    || !is_mut_decl,
+                                is_weak: false,
+                                nominal: None,
+                                oats_type: None,
+                            },
+                        );
+                    }
+                    Pat::Array(_) | Pat::Object(_) | Pat::Rest(_) => {
+                        // Nested destructuring not yet supported
+                        return Err(Diagnostic::simple_boxed(
                             Severity::Error,
-                            "Variable declaration requires explicit type annotation or initializer",
+                            "Nested destructuring patterns not yet supported",
                         ));
                     }
+                }
+            }
+        }
 
-                    // Determine effective type: declared takes precedence, then inferred
-                    // At least one must be Some due to the check above
-                    let effective_type = declared_mapped
-                        .as_ref()
-                        .or(init_inferred.as_ref())
-                        .ok_or_else(|| crate::diagnostics::Diagnostic::simple_boxed(
-                            Severity::Error,
-                            "Internal error: variable type resolution failed (this should not happen)",
-                        ))?;
+        Ok(())
+    }
 
-                    // If no explicit type annotation, set flags from inferred type
-                    if declared_mapped.is_none() {
-                        if let crate::types::OatsType::Union(_) = effective_type {
-                            declared_union = Some(effective_type.clone());
-                        }
-                        if let crate::types::OatsType::Weak(_) = effective_type {
-                            declared_is_weak = true;
-                        }
-                        if let crate::types::OatsType::NominalStruct(n) = effective_type {
-                            declared_nominal = Some(n.clone());
-                        }
-                        // If the inferred type is an Array, tag the local with
-                        // a sentinel nominal so lowering sites (like println)
-                        // can detect arrays at compile time.
-                        if let crate::types::OatsType::Array(_) = effective_type {
-                            declared_nominal = Some("__oats_array".to_string());
-                        }
+    /// Lower object destructuring: let {a, b: c} = obj
+    fn lower_object_destructuring(
+        &self,
+        obj_pat: &oats_ast::ObjectPat,
+        init: &oats_ast::Expr,
+        var_decl: &oats_ast::VarDecl,
+        function: FunctionValue<'a>,
+        param_map: &HashMap<String, u32>,
+        locals_stack: &mut LocalsStackLocal<'a>,
+    ) -> crate::diagnostics::DiagnosticResult<()> {
+        use oats_ast::*;
+
+        // Lower the initializer (should be an object)
+        let obj_val = self.lower_expr(init, function, param_map, locals_stack)?;
+        let _obj_ptr = if let BasicValueEnum::PointerValue(pv) = obj_val {
+            pv
+        } else {
+            return Err(Diagnostic::simple_boxed(
+                Severity::Error,
+                "Object destructuring requires an object initializer",
+            ));
+        };
+
+        let _is_mut_decl = matches!(var_decl.kind, VarDeclKind::Let { mutable: true });
+
+        // Extract each property
+        if let Some(prop) = obj_pat.props.iter().next() {
+            match prop {
+                ObjectPatProp::KeyValue {
+                    key, value: _value, ..
+                } => {
+                    // Get property name
+                    let _prop_name = match key {
+                        PropName::Ident(ident) => ident.sym.clone(),
+                        PropName::Str(s) => s.clone(),
+                        PropName::Num(n) => n.to_string(),
+                    };
+
+                    // Object destructuring requires class field metadata to properly
+                    // access fields. This is a placeholder implementation.
+                    // TODO: Implement proper field access using class_fields metadata
+                    return Err(Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "Object destructuring requires class field metadata; use explicit member access for now",
+                    ));
+                }
+                ObjectPatProp::Rest { .. } => {
+                    return Err(Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "Rest patterns in object destructuring not yet supported",
+                    ));
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    pub(crate) fn lower_decl_stmt(
+        &self,
+        var_decl: &oats_ast::VarDecl,
+        function: FunctionValue<'a>,
+        param_map: &HashMap<String, u32>,
+        locals_stack: &mut LocalsStackLocal<'a>,
+    ) -> crate::diagnostics::DiagnosticResult<bool> {
+        for decl in &var_decl.decls {
+            // Handle destructuring patterns
+            match &decl.name {
+                oats_ast::Pat::Array(arr_pat) => {
+                    // Array destructuring: let [a, b, c] = arr
+                    if let Some(init) = &decl.init {
+                        self.lower_array_destructuring(
+                            arr_pat,
+                            init,
+                            var_decl,
+                            function,
+                            param_map,
+                            locals_stack,
+                        )?;
+                    } else {
+                        return Err(crate::diagnostics::Diagnostic::error(
+                            "Array destructuring requires an initializer",
+                        )
+                        .with_code("E1005")
+                        .with_label(crate::diagnostics::Label {
+                            span: crate::diagnostics::Span {
+                                start: decl.span.start,
+                                end: decl.span.end,
+                            },
+                            message: "Array destructuring must have an initializer".into(),
+                        })
+                        .into());
+                    }
+                    continue;
+                }
+                oats_ast::Pat::Object(obj_pat) => {
+                    // Object destructuring: let {a, b: c} = obj
+                    if let Some(init) = &decl.init {
+                        self.lower_object_destructuring(
+                            obj_pat,
+                            init,
+                            var_decl,
+                            function,
+                            param_map,
+                            locals_stack,
+                        )?;
+                    } else {
+                        return Err(crate::diagnostics::Diagnostic::error(
+                            "Object destructuring requires an initializer",
+                        )
+                        .with_code("E1006")
+                        .with_label(crate::diagnostics::Label {
+                            span: crate::diagnostics::Span {
+                                start: decl.span.start,
+                                end: decl.span.end,
+                            },
+                            message: "Object destructuring must have an initializer".into(),
+                        })
+                        .into());
+                    }
+                    continue;
+                }
+                oats_ast::Pat::Rest(_) => {
+                    return Err(crate::diagnostics::Diagnostic::error(
+                        "Rest patterns in variable declarations not yet supported",
+                    )
+                    .with_code("E1007")
+                    .with_label(crate::diagnostics::Label {
+                        span: crate::diagnostics::Span {
+                            start: decl.span.start,
+                            end: decl.span.end,
+                        },
+                        message: "Rest patterns (...rest) not yet supported".into(),
+                    })
+                    .into());
+                }
+                _ => {}
+            }
+
+            // Simple identifier pattern
+            let name = match &decl.name {
+                oats_ast::Pat::Ident(ident) => ident.sym.clone(),
+                _ => {
+                    return Err(crate::diagnostics::Diagnostic::error(
+                        "Unsupported pattern in variable declaration",
+                    )
+                    .with_code("E1004")
+                    .with_label(crate::diagnostics::Label {
+                        span: crate::diagnostics::Span {
+                            start: decl.span.start,
+                            end: decl.span.end,
+                        },
+                        message: "Unsupported pattern type".into(),
+                    })
+                    .into());
+                }
+            };
+            {
+                // Language Spec v2: `let` is immutable by default. Support
+                // `let mut` by checking the mutable flag in VarDeclKind::Let.
+                let is_mut_decl =
+                    matches!(var_decl.kind, oats_ast::VarDeclKind::Let { mutable: true });
+
+                // Resolve type information
+                let type_info = self.resolve_decl_type(decl)?;
+                let declared_mapped = type_info.declared_mapped;
+                let declared_union = type_info.declared_union;
+                let declared_is_weak = type_info.declared_is_weak;
+                let mut declared_nominal = type_info.declared_nominal;
+                let init_inferred = type_info.init_inferred;
+
+                eprintln!(
+                    "[debug] Processing var decl: {} kind={:?}",
+                    name, var_decl.kind
+                );
+
+                if let Some(init) = &decl.init {
+                    // Handle const evaluation
+                    if self.handle_const_decl(init, var_decl, &name)? {
+                        continue;
                     }
 
-                    // If there is an initializer, lower it and allocate a
-                    // matching alloca for its type. If the declared identifier
-                    // has an Oats type annotation that maps to a union,
-                    // allocate the ABI slot accordingly and box numeric
-                    // payloads into union objects.
-                    eprintln!(
-                        "[debug] Processing var decl: {} kind={:?}",
-                        name, var_decl.kind
-                    );
-                    if let Some(init) = &decl.init {
-                        // If this is a `const` declaration, attempt compile-time evaluation
-                        if matches!(var_decl.kind, deno_ast::swc::ast::VarDeclKind::Const) {
-                            let span_start = var_decl.span.lo.0 as usize;
-                            // Borrow const_items immutably for evaluation
-                            let const_map = self.const_items.borrow();
-                            match crate::codegen::const_eval::eval_const_expr(
-                                init, span_start, &const_map,
-                            ) {
-                                Ok(cv) => {
-                                    // Only treat primitives as const; arrays and objects need runtime allocation
-                                    if matches!(
-                                        cv,
-                                        crate::codegen::const_eval::ConstValue::Number(_)
-                                            | crate::codegen::const_eval::ConstValue::Bool(_)
-                                            | crate::codegen::const_eval::ConstValue::Str(_)
-                                    ) {
-                                        drop(const_map);
-                                        // Insert into compile-time const map keyed by name
-                                        self.const_items.borrow_mut().insert(name.clone(), cv);
-                                        // For consts we do not lower the initializer further; the
-                                        // lowered uses will be replaced by LLVM constants later.
-                                        continue;
-                                    } else {
-                                        drop(const_map);
-                                        // For arrays/objects, fall through to normal lowering
-                                    }
-                                }
-                                Err(_diag) => {
-                                    // If const evaluation fails, fall through to normal lowering
-                                    drop(const_map);
-                                }
-                            }
-                        }
-                        // Infer a local OatsType from the initializer expression
-                        // so we can record it on the local entry. This helps
-                        // call-site monomorphization to see concrete types for
-                        // locals (e.g., `Array(String)`) when no explicit
-                        // annotation was provided.
-                        let init_inferred = init_inferred
-                            .as_ref()
-                            .ok_or_else(|| crate::diagnostics::Diagnostic::simple_boxed(
-                                Severity::Error,
-                                "Internal error: failed to infer type from initializer (this should not happen)",
-                            ))?
-                            .clone();
-                        // If the initializer is an object literal and the
-                        // declared local carries a nominal struct name
-                        // (for example `const user: User = { ... }`),
-                        // register the object's property list under
-                        // `self.class_fields` keyed by the nominal name.
-                        // This helps member-access lowering (e.g., `user.x`)
-                        // infer field offsets for locals typed with
-                        // interface/type-alias names declared in-scope.
-                        if let deno_ast::swc::ast::Expr::Object(obj_lit) = &**init
-                            && declared_nominal.is_some()
-                        {
-                            // declared_nominal was checked with `is_some()` above;
-                            // be defensive and avoid panics by returning a Diagnostic
-                            // if the value is somehow missing.
-                            let nominal_name = if let Some(n) = declared_nominal.clone() {
-                                n
-                            } else {
-                                return Err(crate::diagnostics::Diagnostic::simple_boxed(
-                                    Severity::Error,
-                                    "internal error: nominal name missing",
-                                ));
-                            };
-                            let mut fields: Vec<(String, crate::types::OatsType)> = Vec::new();
-                            use deno_ast::swc::ast;
-                            for prop in &obj_lit.props {
-                                if let ast::PropOrSpread::Prop(prop_box) = prop
-                                    && let ast::Prop::KeyValue(kv) = &**prop_box
-                                    && let ast::PropName::Ident(id) = &kv.key
-                                {
-                                    let fname = id.sym.to_string();
-                                    // Try to infer the field type from the initializer expression.
-                                    let fty = crate::types::infer_type(None, Some(&kv.value));
-                                    fields.push((fname, fty));
-                                }
-                            }
-                            if !fields.is_empty() {
-                                self.class_fields.borrow_mut().insert(nominal_name, fields);
-                            }
-                        }
-                        // If initializer is `new ClassName(...)`, record the declared nominal
-                        // so member call lowering can infer the class for locals without
-                        // an explicit type annotation. Also pre-allocate a local
-                        // slot for the declared variable before lowering the
-                        // initializer so subsequent statements in the same
-                        // function can resolve the local even if initializer
-                        // lowering emits diagnostics or performs nested
-                        // emissions that temporarily disrupt symbol lookup.
-                        if let deno_ast::swc::ast::Expr::New(new_expr) = &**init
-                            && let deno_ast::swc::ast::Expr::Ident(ident) = &*new_expr.callee
-                        {
-                            declared_nominal = Some(ident.sym.to_string());
+                    // Infer a local OatsType from the initializer expression
+                    let init_inferred = init_inferred
+                        .as_ref()
+                        .ok_or_else(|| crate::diagnostics::Diagnostic::simple_boxed(
+                            Severity::Error,
+                            "Internal error: failed to infer type from initializer (this should not happen)",
+                        ))?
+                        .clone();
 
-                            // Pre-allocate an i8* slot and insert the local into
-                            // the current scope marked as uninitialized. This
-                            // ensures `find_local` can discover the nominal
-                            // type for member-call lowering that appears
-                            // after this declaration.
-                            let allocated_ty = self.i8ptr_t.as_basic_type_enum();
-                            let alloca = match self.builder.build_alloca(allocated_ty, &name) {
+                    // Handle object literal initialization
+                    self.handle_object_literal_init(init, &declared_nominal)?;
+
+                    // Handle new expression initialization
+                    if self.handle_new_expr_init(
+                        init,
+                        &name,
+                        declared_is_weak,
+                        &mut declared_nominal,
+                        &declared_union,
+                        locals_stack,
+                    )? {
+                        // Continue to lower the new expression normally
+                    }
+
+                    // Handle tuple initialization
+                    if self.handle_tuple_init(
+                        init,
+                        &declared_mapped,
+                        &name,
+                        var_decl,
+                        is_mut_decl,
+                        declared_is_weak,
+                        &declared_union,
+                        &declared_nominal,
+                        function,
+                        param_map,
+                        locals_stack,
+                    )? {
+                        continue;
+                    }
+
+                    // Lower the initializer expression
+                    if let Ok(val) = self.lower_expr(init, function, param_map, locals_stack) {
+                        // Apply union boxing if needed
+                        let (val, allocated_ty) = self.handle_union_boxing(val, &declared_union)?;
+
+                        // If a local with this name was pre-inserted (for
+                        // example when we pre-allocated a slot for `new`
+                        // or `await` initializers), reuse its alloca so we
+                        // don't create duplicate slots. Otherwise allocate
+                        // a fresh alloca for the local.
+                        let maybe_existing = self.find_local(locals_stack, &name);
+                        let alloca = if let Some((
+                            existing_ptr,
+                            _existing_ty,
+                            _existing_init,
+                            _existing_is_const,
+                            _existing_is_weak,
+                            _existing_nominal,
+                            _existing_oats_type,
+                        )) = &maybe_existing
+                        {
+                            *existing_ptr
+                        } else {
+                            match self.builder.build_alloca(allocated_ty, &name) {
                                 Ok(a) => a,
                                 Err(_) => {
                                     crate::diagnostics::emit_diagnostic(
@@ -262,812 +989,121 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     );
                                     return Ok(false);
                                 }
-                            };
-                            // Insert local early as uninitialized; we'll store to it below
-                            // For `var` declarations, insert into function scope (hoisted)
-                            // For `let`/`const` declarations, insert into current scope (block-scoped)
-                            if matches!(var_decl.kind, deno_ast::swc::ast::VarDeclKind::Var) {
-                                self.insert_local_function_scope(
-                                    locals_stack,
-                                    crate::codegen::helpers::LocalVarInfo {
-                                        name: name.clone(),
-                                        ptr: alloca,
-                                        ty: allocated_ty,
-                                        initialized: false,
-                                        // var declarations are mutable
-                                        is_const: false,
-                                        is_weak: declared_is_weak,
-                                        nominal: declared_nominal.clone(),
-                                        oats_type: declared_union.clone(),
-                                    },
-                                );
-                            } else {
-                                self.insert_local_current_scope(
-                                    locals_stack,
-                                    crate::codegen::helpers::LocalVarInfo {
-                                        name: name.clone(),
-                                        ptr: alloca,
-                                        ty: allocated_ty,
-                                        initialized: false,
-                                        is_const: matches!(
-                                            var_decl.kind,
-                                            deno_ast::swc::ast::VarDeclKind::Const
-                                        ) || !is_mut_decl,
-                                        is_weak: declared_is_weak,
-                                        nominal: declared_nominal.clone(),
-                                        oats_type: declared_union.clone(),
-                                    },
-                                );
                             }
-                        }
-                        // `init` is an Option<Box<Expr>> (deno_ast wrapper); use `.as_ref()`
-                        // Special-case: if the declared type is a Tuple and the
-                        // initializer is an array literal, allocate a native
-                        // tuple object here and register its field types so
-                        // member/index lowering can treat it as a nominal.
-                        if let Some(crate::types::OatsType::Tuple(elem_types)) = &declared_mapped
-                            && let deno_ast::swc::ast::Expr::Array(arr_lit) = &**init
+                        };
+                        // Always store the initializer into the slot and
+                        // perform RC increment for pointer-like values.
+                        if val.get_type().is_pointer_type()
+                            && let BasicValueEnum::PointerValue(pv) = val
+                            && !self.should_elide_rc_for_local(&name)
                         {
-                            // number of elements
-                            let elem_count = arr_lit.elems.len();
-                            // Generate a nominal name for this tuple shape
-                            let fname = function.get_name().to_str().unwrap_or("<fn>");
-                            let gen_name = format!("tuple_{}_{}", fname, name);
-                            // Register field list under class_fields as ("0", type0), ...
-                            let mut fields: Vec<(String, crate::types::OatsType)> = Vec::new();
-                            for (i, et) in elem_types.iter().enumerate() {
-                                fields.push((format!("{}", i), et.clone()));
-                            }
-                            self.class_fields
-                                .borrow_mut()
-                                .insert(gen_name.clone(), fields);
-
-                            // Allocate object: header + meta_slot + elem_count * 8
-                            let header_size = 8u64;
-                            let meta_slot = 8u64;
-                            let total_size = header_size + meta_slot + (elem_count as u64 * 8);
-                            let malloc_fn = self.get_malloc();
-                            let size_const = self.i64_t.const_int(total_size, false);
-                            let cs = self.builder.build_call(
-                                malloc_fn,
-                                &[size_const.into()],
-                                "tuple_malloc",
-                            );
-                            if let Ok(cs) = cs
-                                && let inkwell::Either::Left(bv) = cs.try_as_basic_value()
-                            {
-                                let malloc_ret = bv.into_pointer_value();
-                                // store header
-                                let header_ptr = self
-                                    .builder
-                                    .build_pointer_cast(malloc_ret, self.i8ptr_t, "hdr_ptr")
-                                    .map_err(|_| {
-                                        crate::diagnostics::Diagnostic::simple_boxed(
-                                            Severity::Error,
-                                            "pointer cast failed",
-                                        )
-                                    })?;
-                                let header_val = self.i64_t.const_int(1u64, false);
-                                let _ = self.builder.build_store(header_ptr, header_val);
-
-                                // For each element in the array literal, lower and store
-                                for (i, opt) in arr_lit.elems.iter().enumerate() {
-                                    if let Some(expr_or_spread) = opt {
-                                        let ev = self.lower_expr(
-                                            &expr_or_spread.expr,
-                                            function,
-                                            param_map,
-                                            locals_stack,
-                                        )?;
-                                        let offset = header_size + meta_slot + (i as u64 * 8);
-                                        let obj_addr = self
-                                            .builder
-                                            .build_ptr_to_int(malloc_ret, self.i64_t, "obj_addr")
-                                            .map_err(|_| {
-                                                crate::diagnostics::Diagnostic::simple_boxed(
-                                                    Severity::Error,
-                                                    "ptr_to_int failed",
-                                                )
-                                            })?;
-                                        let offset_const = self.i64_t.const_int(offset, false);
-                                        let field_addr = self
-                                            .builder
-                                            .build_int_add(obj_addr, offset_const, "field_addr")
-                                            .map_err(|_| {
-                                                crate::diagnostics::Diagnostic::simple_boxed(
-                                                    Severity::Error,
-                                                    "int_add failed",
-                                                )
-                                            })?;
-                                        let field_ptr = self
-                                            .builder
-                                            .build_int_to_ptr(field_addr, self.i8ptr_t, "field_ptr")
-                                            .map_err(|_| {
-                                                crate::diagnostics::Diagnostic::simple_boxed(
-                                                    Severity::Error,
-                                                    "int_to_ptr failed",
-                                                )
-                                            })?;
-                                        // Store element into slot using same logic as object literal
-                                        // Use the declared element type to choose storage
-                                        let field_ty = match elem_types.get(i) {
-                                            Some(ft) => ft,
-                                            None => {
-                                                return Err(
-                                                    crate::diagnostics::Diagnostic::simple_boxed(
-                                                        Severity::Error,
-                                                        "tuple element type missing",
-                                                    ),
-                                                );
-                                            }
-                                        };
-                                        match field_ty {
-                                                            crate::types::OatsType::Number => {
-                                                                // Coerce to f64 then store into an f64* slot
-                                                                let fv = if ev.get_type().is_float_type() {
-                                                                    ev.into_float_value()
-                                                                } else if ev.get_type().is_int_type() {
-                                                                    let iv = ev.into_int_value();
-                                                                    self.builder.build_signed_int_to_float(iv, self.f64_t, "i_to_f").map_err(|_| crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "int->float cast failed"))?
-                                                                } else if let Some(fv) = self.coerce_to_f64(ev) {
-                                                                    fv
-                                                                } else {
-                                                                    return Err(crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "expected numeric value for tuple number element"));
-                                                                };
-                                                                let f64_ptr_ty = self.context.ptr_type(AddressSpace::default());
-                                                                let elem_f64_ptr = self.builder.build_pointer_cast(field_ptr, f64_ptr_ty, "tuple_elem_f64_ptr").map_err(|_| crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "pointer cast failed"))?;
-                                                                let _ = self.builder.build_store(elem_f64_ptr, fv.as_basic_value_enum());
-                                                            }
-                                                            crate::types::OatsType::Union(_) => {
-                                                                // Box union payloads into a heap object and store pointer
-                                                                // If ev is float -> union_box_f64, if pointer -> union_box_ptr
-                                                                if ev.get_type().is_float_type() {
-                                                                    let box_fn = self.get_union_box_f64();
-                                                                    let cs2 = self.builder.build_call(box_fn, &[ev.into()], "union_box_f64_ctor");
-                                                                    if let Ok(cs2) = cs2 && let inkwell::Either::Left(bv2) = cs2.try_as_basic_value() {
-                                                                        let boxed_ptr = bv2.into_pointer_value();
-                                                                        let rc_inc = self.get_rc_inc();
-                                                                        let _ = self.builder.build_call(rc_inc, &[boxed_ptr.into()], "rc_inc_field");
-                                                                        let boxed_bv = inkwell::values::BasicValueEnum::PointerValue(boxed_ptr);
-                                                                        let _ = self.builder.build_store(field_ptr, boxed_bv);
-                                                                        // Note: no rc_dec here as the store takes ownership of the newly boxed object
-                                                                    }
-                                                                } else if ev.get_type().is_pointer_type() {
-                                                                    let box_fn = self.get_union_box_ptr();
-                                                                    let cs2 = self.builder.build_call(box_fn, &[ev.into()], "union_box_ptr_ctor");
-                                                                    if let Ok(cs2) = cs2 && let inkwell::Either::Left(bv2) = cs2.try_as_basic_value() {
-                                                                        let boxed_ptr = bv2.into_pointer_value();
-                                                                        let rc_inc = self.get_rc_inc();
-                                                                        let _ = self.builder.build_call(rc_inc, &[boxed_ptr.into()], "rc_inc_field");
-                                                                        let boxed_bv = inkwell::values::BasicValueEnum::PointerValue(boxed_ptr);
-                                                                        let _ = self.builder.build_store(field_ptr, boxed_bv);
-                                                                        // Note: no rc_dec here as the store takes ownership of the newly boxed object
-                                                                    }
-                                                                } else {
-                                                                    return Err(crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "unsupported tuple union element type at init"));
-                                                                }
-                                                            }
-                                                            // Pointer-like types: store pointer and rc_inc
-                                                            crate::types::OatsType::String
-                                                            | crate::types::OatsType::NominalStruct(_)
-                                                            | crate::types::OatsType::Array(_)
-                                                            | crate::types::OatsType::Option(_)
-                                                            | crate::types::OatsType::Weak(_)
-                                                            | crate::types::OatsType::Promise(_) => {
-                                                                if let inkwell::values::BasicValueEnum::PointerValue(p) = ev {
-                                                                    let rc_inc = self.get_rc_inc();
-                                                                    let _ = self.builder.build_call(rc_inc, &[p.into()], "rc_inc_field");
-                                                                    let _ = self.builder.build_store(field_ptr, ev);
-                                                                } else {
-                                                                    return Err(crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "expected pointer for tuple reference element"));
-                                                                }
-                                                            }
-                                                            _ => {
-                                                                // Fallback: store as is (covers booleans/int where appropriate)
-                                                                let _ = self.builder.build_store(field_ptr, ev);
-                                                            }
-                                                        }
-                                    } else {
-                                        return Err(crate::diagnostics::Diagnostic::simple_boxed(
-                                            Severity::Error,
-                                            "elided tuple element not supported",
-                                        ));
-                                    }
-                                }
-
-                                // Create an alloca for the local and store the tuple pointer
-                                let allocated_ty = self.i8ptr_t.as_basic_type_enum();
-                                let alloca = match self.builder.build_alloca(allocated_ty, &name) {
-                                    Ok(a) => a,
-                                    Err(_) => {
-                                        crate::diagnostics::emit_diagnostic(
-                                            &crate::diagnostics::Diagnostic::simple_boxed(
-                                                Severity::Error,
-                                                "alloca failed for local variable",
-                                            ),
-                                            Some(self.source),
-                                        );
-                                        return Ok(false);
-                                    }
-                                };
-                                // increment rc for stored pointer (unless elided)
-                                if !self.should_elide_rc_for_local(&name) {
-                                    let rc_inc = self.get_rc_inc();
-                                    let _ = self.builder.build_call(
-                                        rc_inc,
-                                        &[malloc_ret.into()],
-                                        "rc_inc_local",
-                                    );
-                                }
-                                let _ = self
-                                    .builder
-                                    .build_store(alloca, malloc_ret.as_basic_value_enum());
-                                // mark initialized and insert local with nominal pointing to tuple generated name
-                                self.insert_local_current_scope(
-                                    locals_stack,
-                                    crate::codegen::helpers::LocalVarInfo {
-                                        name: name.clone(),
-                                        ptr: alloca,
-                                        ty: allocated_ty,
-                                        initialized: true,
-                                        // If this was a `let` without `mut`, treat as const/immutable
-                                        is_const: matches!(
-                                            var_decl.kind,
-                                            deno_ast::swc::ast::VarDeclKind::Const
-                                        ) || !is_mut_decl,
-                                        is_weak: declared_is_weak,
-                                        nominal: Some(gen_name),
-                                        oats_type: declared_union.clone(),
-                                    },
-                                );
-                                // done handling tuple init
-                                continue;
-                            } else {
-                                crate::diagnostics::emit_diagnostic(
-                                    &crate::diagnostics::Diagnostic::simple_boxed(
-                                        Severity::Error,
-                                        "malloc failed for tuple allocation",
-                                    ),
-                                    Some(self.source),
-                                );
-                                return Ok(false);
-                            }
+                            let rc_inc = self.get_rc_inc();
+                            let _ = self
+                                .builder
+                                .build_call(rc_inc, &[pv.into()], "rc_inc_local");
                         }
-
-                        if let Ok(mut val) =
-                            self.lower_expr(init, function, param_map, locals_stack)
-                        {
-                            // If declared as a Union that includes pointer-like
-                            // parts we must pick a stable ABI slot. The
-                            // strategy here is:
-                            // - If any union arm is pointer-like (string,
-                            //   array, nominal struct, promise), represent the
-                            //   union in the ABI as an `i8*` pointer.
-                            // - Numeric-only unions are represented as `f64`.
-                            //
-                            // When a pointer-like union receives a numeric
-                            // initializer, we "box" it into a heap object
-                            // using runtime helpers (`union_box_f64` /
-                            // `union_box_ptr`) so the stored slot is a
-                            // pointer. Boxing keeps the runtime layout
-                            // uniform for pointer-like unions and simplifies
-                            // RC handling.
-                            //
-                            // NOTE: We don't box pointer values here because
-                            // they might already be boxed unions from function
-                            // calls. This prevents double-boxing. Only scalar
-                            // values (f64, bool) are boxed.
-                            let mut allocated_ty = val.get_type().as_basic_type_enum();
-                            if let Some(crate::types::OatsType::Union(parts)) = &declared_union {
-                                let any_ptr = parts.iter().any(|p| {
-                                    matches!(
-                                        p,
-                                        crate::types::OatsType::String
-                                            | crate::types::OatsType::NominalStruct(_)
-                                            | crate::types::OatsType::Array(_)
-                                            | crate::types::OatsType::Promise(_)
-                                    )
-                                });
-                                if any_ptr {
-                                    // Only box scalar values (f64, i1)
-                                    // Pointers are assumed to be either already boxed
-                                    // or need to be treated as direct pointer values
-                                    if val.get_type().is_float_type() {
-                                        let box_fn = self.get_union_box_f64();
-                                        let cs = self.builder.build_call(
-                                            box_fn,
-                                            &[val.into()],
-                                            "union_box_f64_ctor",
-                                        );
-                                        if let Ok(cs) = cs
-                                            && let inkwell::Either::Left(bv) =
-                                                cs.try_as_basic_value()
-                                        {
-                                            val = bv;
-                                        }
-                                        allocated_ty = self.i8ptr_t.as_basic_type_enum();
-                                    } else if val.get_type().is_int_type() {
-                                        // Boolean -> convert to f64, then box
-                                        if let BasicValueEnum::IntValue(iv) = val {
-                                            let as_f64 = self.builder.build_unsigned_int_to_float(
-                                                iv,
-                                                self.f64_t,
-                                                "bool_to_f64",
-                                            );
-                                            if let Ok(fv) = as_f64 {
-                                                let box_fn = self.get_union_box_f64();
-                                                let cs = self.builder.build_call(
-                                                    box_fn,
-                                                    &[fv.into()],
-                                                    "union_box_f64_ctor",
-                                                );
-                                                if let Ok(cs) = cs
-                                                    && let inkwell::Either::Left(bv) =
-                                                        cs.try_as_basic_value()
-                                                {
-                                                    val = bv;
-                                                }
-                                            }
-                                        }
-                                        allocated_ty = self.i8ptr_t.as_basic_type_enum();
-                                    } else if val.get_type().is_pointer_type() {
-                                        // Pointer value - don't box it, might already be boxed
-                                        // Just use it directly
-                                        allocated_ty = self.i8ptr_t.as_basic_type_enum();
-                                    }
-                                } else {
-                                    // union of only numbers -> use f64 slot
-                                    allocated_ty = self.f64_t.as_basic_type_enum();
-                                    if val.get_type().is_int_type() {
-                                        // coerce int to float
-                                        if let BasicValueEnum::IntValue(iv) = val
-                                            && let Ok(fv_val) = self
-                                                .builder
-                                                .build_signed_int_to_float(iv, self.f64_t, "i2f")
-                                        {
-                                            val =
-                                                inkwell::values::BasicValueEnum::FloatValue(fv_val);
-                                        }
-                                    }
-                                }
-                            }
-
-                            // If a local with this name was pre-inserted (for
-                            // example when we pre-allocated a slot for `new`
-                            // or `await` initializers), reuse its alloca so we
-                            // don't create duplicate slots. Otherwise allocate
-                            // a fresh alloca for the local.
-                            let maybe_existing = self.find_local(locals_stack, &name);
-                            let alloca = if let Some((
-                                existing_ptr,
-                                _existing_ty,
-                                _existing_init,
-                                _existing_is_const,
-                                _existing_is_weak,
-                                _existing_nominal,
-                                _existing_oats_type,
-                            )) = &maybe_existing
-                            {
-                                *existing_ptr
-                            } else {
-                                match self.builder.build_alloca(allocated_ty, &name) {
-                                    Ok(a) => a,
-                                    Err(_) => {
-                                        crate::diagnostics::emit_diagnostic(
-                                            &crate::diagnostics::Diagnostic::simple_boxed(
-                                                Severity::Error,
-                                                "alloca failed for local variable",
-                                            ),
-                                            Some(self.source),
-                                        );
-                                        return Ok(false);
-                                    }
-                                }
-                            };
-                            // Always store the initializer into the slot and
-                            // perform RC increment for pointer-like values.
-                            if val.get_type().is_pointer_type()
-                                && let BasicValueEnum::PointerValue(pv) = val
-                                && !self.should_elide_rc_for_local(&name)
-                            {
-                                let rc_inc = self.get_rc_inc();
-                                let _ =
-                                    self.builder
-                                        .build_call(rc_inc, &[pv.into()], "rc_inc_local");
-                            }
-                            let _ = self.builder.build_store(alloca, val);
-                            // If we reused an existing local, mark it initialized.
-                            if maybe_existing.is_some() {
-                                self.set_local_initialized(locals_stack, &name, true);
-                            } else {
-                                // mark initialized in locals; is_const=false by default
-                                // For `var` declarations, insert into function scope (hoisted)
-                                // For `let`/`const` declarations, insert into current scope (block-scoped)
-                                if matches!(var_decl.kind, deno_ast::swc::ast::VarDeclKind::Var) {
-                                    self.insert_local_function_scope(
-                                        locals_stack,
-                                        crate::codegen::helpers::LocalVarInfo {
-                                            name: name.clone(),
-                                            ptr: alloca,
-                                            ty: allocated_ty,
-                                            initialized: true,
-                                            // var declarations are mutable
-                                            is_const: false,
-                                            is_weak: declared_is_weak,
-                                            nominal: declared_nominal.clone(),
-                                            oats_type: declared_mapped
-                                                .clone()
-                                                .or(Some(init_inferred.clone())),
-                                        },
-                                    );
-                                } else {
-                                    self.insert_local_current_scope(
-                                        locals_stack,
-                                        crate::codegen::helpers::LocalVarInfo {
-                                            name: name.clone(),
-                                            ptr: alloca,
-                                            ty: allocated_ty,
-                                            initialized: true,
-                                            // If this was a `let` without `mut`, treat as const/immutable
-                                            is_const: matches!(
-                                                var_decl.kind,
-                                                deno_ast::swc::ast::VarDeclKind::Const
-                                            ) || !is_mut_decl,
-                                            is_weak: declared_is_weak,
-                                            nominal: declared_nominal.clone(),
-                                            oats_type: declared_mapped
-                                                .clone()
-                                                .or(Some(init_inferred.clone())),
-                                        },
-                                    );
-                                }
-                            }
+                        let _ = self.builder.build_store(alloca, val);
+                        // If we reused an existing local, mark it initialized.
+                        if maybe_existing.is_some() {
+                            self.set_local_initialized(locals_stack, &name, true);
                         } else {
-                            // No initializer: create an uninitialized slot
-                            // using `i64` as a conservative ABI choice. The
-                            // slot will be marked uninitialized so further
-                            // lowering can detect reads of uninitialized
-                            // locals and emit diagnostics if necessary.
-                            // For union types, use i8ptr since unions are boxed.
-                            let ty = if declared_union.is_some() {
-                                self.i8ptr_t.as_basic_type_enum()
-                            } else {
-                                self.i64_t.as_basic_type_enum()
-                            };
-                            let alloca = match self.builder.build_alloca(ty, &name) {
-                                Ok(a) => a,
-                                Err(_) => {
-                                    crate::diagnostics::emit_diagnostic(
-                                        &crate::diagnostics::Diagnostic::simple_boxed(
-                                            Severity::Error,
-                                            "alloca failed for uninitialized var",
-                                        ),
-                                        Some(self.source),
-                                    );
-                                    return Ok(false);
-                                }
-                            };
+                            // mark initialized in locals; is_const=false by default
+                            // For `let`/`const` declarations, insert into current scope (block-scoped)
                             self.insert_local_current_scope(
                                 locals_stack,
                                 crate::codegen::helpers::LocalVarInfo {
-                                    name,
+                                    name: name.clone(),
                                     ptr: alloca,
-                                    ty,
-                                    initialized: false,
-                                    is_const: matches!(
-                                        var_decl.kind,
-                                        deno_ast::swc::ast::VarDeclKind::Const
-                                    ) || !is_mut_decl,
+                                    ty: allocated_ty,
+                                    initialized: true,
+                                    // If this was a `let` without `mut`, treat as const/immutable
+                                    is_const: matches!(var_decl.kind, oats_ast::VarDeclKind::Const)
+                                        || !is_mut_decl,
                                     is_weak: declared_is_weak,
                                     nominal: declared_nominal.clone(),
-                                    oats_type: declared_union.clone(),
+                                    oats_type: declared_mapped
+                                        .clone()
+                                        .or(Some(init_inferred.clone())),
                                 },
                             );
                         }
-                    }
-                }
-            }
-        }
-
-        // Handle nested function declarations inside a block/function
-        // (e.g. `function inner() {}` defined within another function).
-        // Emit them as top-level module functions so later call sites
-        // that reference the identifier can resolve via
-        // `module.get_function(name)` during expression lowering.
-        if let deno_ast::swc::ast::Decl::Fn(fdecl) = d {
-            // For nested functions, require/check parameter and return
-            // annotations using the same strictness check used by the
-            // top-level builder. If strictness checking fails (missing
-            // or invalid annotations) we emit a diagnostic and skip
-            // emitting the nested function rather than silently
-            // defaulting its return type to `Void` which produces
-            // incorrect codegen (see getFirstElement lowering bug).
-            let fname = fdecl.ident.sym.to_string();
-            // call the strictness checker which validates annotations
-            // and returns a concrete FunctionSig (params + return)
-            let mut symbols = crate::types::SymbolTable::new();
-            match crate::types::check_function_strictness(&fdecl.function, &mut symbols) {
-                Ok((Some(fsig), type_diags)) => {
-                    // Emit type checking diagnostics
-                    for diag in &type_diags {
-                        crate::diagnostics::emit_diagnostic(diag, Some(self.source));
-                    }
-
-                    // If this nested function is generic (has type params)
-                    // register it for monomorphization instead of emitting
-                    // a single generic instance now. We'll create
-                    // specialized versions at call-sites when concrete
-                    // type arguments are inferred.
-                    if fdecl.function.type_params.is_some() {
-                        eprintln!("[debug] registering nested generic fn '{}'", fname);
-                        self.nested_generic_fns
-                            .borrow_mut()
-                            .insert(fname.clone(), ((*fdecl.function).clone(), fsig.clone()));
-                        // Eagerly create common specializations (number, string)
-                        let _ =
-                            self.monomorphize_function(&fname, &[crate::types::OatsType::Number]);
-                        let _ =
-                            self.monomorphize_function(&fname, &[crate::types::OatsType::String]);
                     } else {
-                        let param_types_vec = fsig.params.clone();
-                        let ret_type = fsig.ret.clone();
-
-                        // Preserve current insertion block so we can restore it after
-                        // emitting the nested function. gen_function_ir mutates the
-                        // builder position (it emits into the new function), which
-                        // would otherwise leave us positioned inside the nested
-                        // function and cause later code to be emitted into it.
-                        let prev_block = self.builder.get_insert_block();
-                        if let Err(diag) = self.gen_function_ir(
-                            &fname,
-                            &fdecl.function,
-                            &param_types_vec,
-                            &ret_type,
-                            None,
-                        ) {
-                            crate::diagnostics::emit_diagnostic(&diag, Some(self.source));
-                        }
-                        if let Some(pb) = prev_block {
-                            // Restore to the previous block so lowering resumes
-                            // at the correct location.
-                            self.builder.position_at_end(pb);
-                        }
+                        // Lowering failed, handle uninitialized variable
+                        self.handle_uninitialized_var(
+                            &name,
+                            var_decl,
+                            is_mut_decl,
+                            declared_is_weak,
+                            &declared_union,
+                            &declared_nominal,
+                            locals_stack,
+                        )?;
                     }
-                }
-                Ok((None, type_diags)) => {
-                    // Emit type checking diagnostics
-                    for diag in &type_diags {
-                        crate::diagnostics::emit_diagnostic(diag, Some(self.source));
-                    }
-
-                    // Function signature could not be determined
-                    let msg = format!(
-                        "skipping nested function '{}' due to missing/invalid type annotations",
-                        fname
-                    );
-                    crate::diagnostics::emit_diagnostic(
-                        &crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, &msg),
-                        Some(self.source),
-                    );
-                }
-                Err(e) => {
-                    // Emit a diagnostic so the user knows to add annotations
-                    // rather than silently generating an incorrect void
-                    // returning function.
-                    let msg = format!(
-                        "skipping nested function '{}' due to missing/invalid type annotations: {}",
-                        fname, e
-                    );
-                    crate::diagnostics::emit_diagnostic(
-                        &crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, &msg),
-                        Some(self.source),
-                    );
-                }
-            }
-        }
-        // Handle nested class declarations inside functions/blocks.
-        // Emit their methods and constructors as top-level module
-        // functions so callsites can resolve <Class>_<method> symbols
-        // during expression lowering. We do not attempt fallbacks;
-        // emit diagnostics when function strictness checking fails.
-        if let deno_ast::swc::ast::Decl::Class(class_decl) = d {
-            use deno_ast::swc::ast;
-            let class_name = class_decl.ident.sym.to_string();
-
-            // Collect class fields (from ClassProp and constructor params)
-            let mut fields: Vec<(String, crate::types::OatsType)> = Vec::new();
-            for member in &class_decl.class.body {
-                if let ast::ClassMember::ClassProp(prop) = member
-                    && let ast::PropName::Ident(id) = &prop.key
-                {
-                    let fname = id.sym.to_string();
-                    if fields.iter().all(|(n, _)| n != &fname) {
-                        let ftype = if let Some(type_ann) = &prop.type_ann {
-                            if let Some(mt) = crate::types::map_ts_type(&type_ann.type_ann) {
-                                mt
-                            } else {
-                                crate::types::OatsType::Number
-                            }
-                        } else {
-                            crate::types::OatsType::Number
-                        };
-                        fields.push((fname, ftype));
-                    }
-                }
-            }
-
-            // Also collect parameter properties from the constructor
-            // (Oats shorthand `constructor(public x: T)`) so methods
-            // can see these fields during lowering. We scan ctor.params
-            // for `ParamOrTsParamProp::TsParamProp` entries and add them.
-            use deno_ast::swc::ast::{ParamOrTsParamProp, TsParamPropParam};
-            for member in &class_decl.class.body {
-                if let ast::ClassMember::Constructor(cons) = member {
-                    for p in &cons.params {
-                        if let ParamOrTsParamProp::TsParamProp(ts_param) = p
-                            && let TsParamPropParam::Ident(binding_ident) = &ts_param.param
-                        {
-                            let fname = binding_ident.id.sym.to_string();
-                            if fields.iter().all(|(n, _)| n != &fname) {
-                                let ty = crate::types::infer_type(
-                                    binding_ident.type_ann.as_ref().map(|ann| &*ann.type_ann),
-                                    None,
-                                );
-                                fields.push((fname, ty));
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Determine parent name (if any) so `super(...)` lowering can work
-            let parent_name_opt = if let Some(sc) = &class_decl.class.super_class {
-                if let deno_ast::swc::ast::Expr::Ident(id) = &**sc {
-                    Some(id.sym.to_string())
                 } else {
-                    None
-                }
-            } else {
-                None
-            };
-            // Set current class parent while emitting members
-            *self.current_class_parent.borrow_mut() = parent_name_opt.clone();
-
-            // Emit methods and constructor bodies as module functions.
-            for member in &class_decl.class.body {
-                use deno_ast::swc::ast::ClassMember;
-                match member {
-                    ClassMember::Method(m) => {
-                        let mname = match &m.key {
-                            ast::PropName::Ident(id) => id.sym.to_string(),
-                            ast::PropName::Str(s) => s.value.to_string(),
-                            _ => continue,
-                        };
-                        // Strictness check to obtain parameter/return types. If the
-                        // strict check fails (for example when the method uses
-                        // default params or non-ident patterns), fall back to a
-                        // permissive extraction that maps simple idents and
-                        // defaults unknown types to Number. This keeps nested
-                        // class emission resilient while still producing usable IR.
-                        let mut method_symbols = crate::types::SymbolTable::new();
-                        let mut params: Vec<crate::types::OatsType> = Vec::new();
-                        params.push(crate::types::OatsType::NominalStruct(class_name.clone()));
-                        let ret: crate::types::OatsType;
-                        if let Ok((Some(sig), type_diags)) = crate::types::check_function_strictness(
-                            &m.function,
-                            &mut method_symbols,
-                        ) {
-                            for diag in &type_diags {
-                                crate::diagnostics::emit_diagnostic(diag, Some(self.source));
-                            }
-                            params.extend(sig.params.into_iter());
-                            ret = sig.ret;
-                        } else {
-                            // Fallback: extract parameter types permissively
-                            for p in &m.function.params {
-                                match &p.pat {
-                                    deno_ast::swc::ast::Pat::Ident(ident) => {
-                                        if let Some(type_ann) = &ident.type_ann
-                                            && let Some(mt) =
-                                                crate::types::map_ts_type(&type_ann.type_ann)
-                                        {
-                                            params.push(mt);
-                                            continue;
-                                        }
-                                        params.push(crate::types::OatsType::Number);
-                                    }
-                                    _ => {
-                                        params.push(crate::types::OatsType::Number);
-                                    }
-                                }
-                            }
-                            // Fallback return type: use annotated return type if present
-                            if let Some(rt) = &m.function.return_type {
-                                if let Some(mapped) = crate::types::map_ts_type(&rt.type_ann) {
-                                    ret = mapped;
-                                } else {
-                                    ret = crate::types::OatsType::Void;
-                                }
-                            } else {
-                                ret = crate::types::OatsType::Void;
-                            }
-                        }
-
-                        let fname = format!("{}_{}", class_name, mname);
-                        let prev_block = self.builder.get_insert_block();
-                        if let Err(d) =
-                            self.gen_function_ir(&fname, &m.function, &params, &ret, Some("this"))
-                        {
-                            crate::diagnostics::emit_diagnostic(&d, Some(self.source));
-                        }
-                        if let Some(pb) = prev_block {
-                            self.builder.position_at_end(pb);
-                        }
-                    }
-                    ClassMember::Constructor(ctor) => {
-                        // gather constructor param/prop-inferred fields
-                        use deno_ast::swc::ast::{Expr, MemberProp, Stmt};
-                        if let Some(body) = &ctor.body {
-                            for stmt in &body.stmts {
-                                if let Stmt::Expr(expr_stmt) = stmt
-                                    && let Expr::Assign(assign) = &*expr_stmt.expr
-                                    && let deno_ast::swc::ast::AssignTarget::Simple(simple_target) =
-                                        &assign.left
-                                    && let deno_ast::swc::ast::SimpleAssignTarget::Member(mem) =
-                                        simple_target
-                                    && matches!(&*mem.obj, Expr::This(_))
-                                    && let MemberProp::Ident(ident) = &mem.prop
-                                {
-                                    let name = ident.sym.to_string();
-                                    let inferred =
-                                        crate::types::infer_type(None, Some(&assign.right));
-                                    if fields.iter().all(|(n, _)| n != &name) {
-                                        fields.push((name, inferred));
-                                    }
-                                }
-                            }
-                        }
-
-                        // Register class fields for lowering
-                        self.class_fields
-                            .borrow_mut()
-                            .insert(class_name.clone(), fields.clone());
-
-                        // Emit constructor IR. Ensure current_class_parent is set so `super(...)` works.
-                        let prev_block = self.builder.get_insert_block();
-                        // Collect simple identifier decorators (MVP): only support
-                        // decorator expressions that are plain identifiers.
-                        let mut deco_names: Vec<String> = Vec::new();
-                        for d in &class_decl.class.decorators {
-                            if let deno_ast::swc::ast::Expr::Ident(id) = &*d.expr {
-                                deco_names.push(id.sym.to_string());
-                            } else {
-                                // Non-ident decorators are currently unsupported in the MVP.
-                            }
-                        }
-                        if let Err(diag) = self.gen_constructor_ir(
-                            &class_name,
-                            ctor,
-                            &fields,
-                            if deco_names.is_empty() {
-                                None
-                            } else {
-                                Some(deco_names)
-                            },
-                        ) {
-                            crate::diagnostics::emit_diagnostic(&diag, Some(self.source));
-                        }
-                        if let Some(pb) = prev_block {
-                            self.builder.position_at_end(pb);
-                        }
-                    }
-                    _ => {}
+                    // No initializer: create an uninitialized slot
+                    self.handle_uninitialized_var(
+                        &name,
+                        var_decl,
+                        is_mut_decl,
+                        declared_is_weak,
+                        &declared_union,
+                        &declared_nominal,
+                        locals_stack,
+                    )?;
                 }
             }
-            // Clear current class parent after emitting members
-            self.current_class_parent.borrow_mut().take();
         }
 
         Ok(false)
+    }
+
+    /// Handle uninitialized variable declarations.
+    ///
+    /// Creates an uninitialized slot using `i64` as a conservative ABI choice
+    /// (or `i8ptr` for unions). The slot will be marked uninitialized so further
+    /// lowering can detect reads of uninitialized locals and emit diagnostics.
+    fn handle_uninitialized_var(
+        &self,
+        name: &str,
+        var_decl: &oats_ast::VarDecl,
+        is_mut_decl: bool,
+        declared_is_weak: bool,
+        declared_union: &Option<crate::types::OatsType>,
+        declared_nominal: &Option<String>,
+        locals_stack: &mut LocalsStackLocal<'a>,
+    ) -> crate::diagnostics::DiagnosticResult<()> {
+        // For union types, use i8ptr since unions are boxed.
+        let ty = if declared_union.is_some() {
+            self.i8ptr_t.as_basic_type_enum()
+        } else {
+            self.i64_t.as_basic_type_enum()
+        };
+        let alloca = match self.builder.build_alloca(ty, name) {
+            Ok(a) => a,
+            Err(_) => {
+                crate::diagnostics::emit_diagnostic(
+                    &crate::diagnostics::Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "alloca failed for uninitialized var",
+                    ),
+                    Some(self.source),
+                );
+                return Ok(());
+            }
+        };
+        self.insert_local_current_scope(
+            locals_stack,
+            crate::codegen::helpers::LocalVarInfo {
+                name: name.to_string(),
+                ptr: alloca,
+                ty,
+                initialized: false,
+                is_const: matches!(var_decl.kind, oats_ast::VarDeclKind::Const) || !is_mut_decl,
+                is_weak: declared_is_weak,
+                nominal: declared_nominal.clone(),
+                oats_type: declared_union.clone(),
+            },
+        );
+        Ok(())
     }
 }

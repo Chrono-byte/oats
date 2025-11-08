@@ -1,5 +1,5 @@
 use crate::diagnostics::{Diagnostic, Severity};
-use deno_ast::swc::ast;
+use oats_ast::*;
 
 /// Small enum representing compile-time constant values supported in phase 1.
 #[derive(Clone, Debug)]
@@ -53,17 +53,26 @@ impl ConstValue {
 /// Evaluate a limited subset of expressions as compile-time constants.
 /// Supported: numeric, boolean, string literals, unary -, binary + - * /, comparisons
 pub fn eval_const_expr(
-    expr: &ast::Expr,
+    expr: &Expr,
     span_start: usize,
     const_items: &std::collections::HashMap<String, ConstValue>,
 ) -> crate::diagnostics::DiagnosticResult<ConstValue> {
-    use ast::{BinExpr, BinaryOp, Expr, Lit, UnaryExpr, UnaryOp};
-
     match expr {
         Expr::Lit(l) => match l {
-            Lit::Num(n) => Ok(ConstValue::Number(n.value)),
-            Lit::Str(s) => Ok(ConstValue::Str(s.value.to_string())),
-            Lit::Bool(b) => Ok(ConstValue::Bool(b.value)),
+            Lit::F64(n) => Ok(ConstValue::Number(*n)),
+            Lit::F32(n) => Ok(ConstValue::Number(*n as f64)),
+            Lit::I64(n) => Ok(ConstValue::I64(*n)),
+            Lit::I32(n) => Ok(ConstValue::I32(*n)),
+            Lit::I16(n) => Ok(ConstValue::I16(*n)),
+            Lit::I8(n) => Ok(ConstValue::I8(*n)),
+            Lit::U64(n) => Ok(ConstValue::U64(*n)),
+            Lit::U32(n) => Ok(ConstValue::U32(*n)),
+            Lit::U16(n) => Ok(ConstValue::U16(*n)),
+            Lit::U8(n) => Ok(ConstValue::U8(*n)),
+            Lit::ISize(n) => Ok(ConstValue::I64(*n as i64)),
+            Lit::USize(n) => Ok(ConstValue::I64(*n as i64)),
+            Lit::Str(s) => Ok(ConstValue::Str(s.clone())),
+            Lit::Bool(b) => Ok(ConstValue::Bool(*b)),
             _ => Err(Diagnostic::simple_with_span_boxed(
                 Severity::Error,
                 "unsupported literal in const initializer",
@@ -84,7 +93,7 @@ pub fn eval_const_expr(
                         ))
                     }
                 }
-                UnaryOp::Bang => {
+                UnaryOp::Not => {
                     if let ConstValue::Bool(b) = inner {
                         Ok(ConstValue::Bool(!b))
                     } else {
@@ -107,15 +116,14 @@ pub fn eval_const_expr(
         }) => {
             let l = eval_const_expr(left, span_start, const_items)?;
             let r = eval_const_expr(right, span_start, const_items)?;
-            use BinaryOp::*;
             match op {
-                Add | Sub | Mul | Div => {
+                BinaryOp::Plus | BinaryOp::Minus | BinaryOp::Mul | BinaryOp::Div => {
                     if let (Some(lf), Some(rf)) = (l.as_f64(), r.as_f64()) {
                         let v = match op {
-                            Add => lf + rf,
-                            Sub => lf - rf,
-                            Mul => lf * rf,
-                            Div => lf / rf,
+                            BinaryOp::Plus => lf + rf,
+                            BinaryOp::Minus => lf - rf,
+                            BinaryOp::Mul => lf * rf,
+                            BinaryOp::Div => lf / rf,
                             _ => unreachable!(),
                         };
                         Ok(ConstValue::Number(v))
@@ -127,21 +135,26 @@ pub fn eval_const_expr(
                         ))
                     }
                 }
-                EqEq | NotEq | Gt | Lt | GtEq | LtEq => {
+                BinaryOp::EqEq
+                | BinaryOp::NotEq
+                | BinaryOp::Gt
+                | BinaryOp::Lt
+                | BinaryOp::GtEq
+                | BinaryOp::LtEq => {
                     // Comparisons: handle numbers and strings and bools conservatively
                     let res = match (l, r) {
                         (ConstValue::Number(a), ConstValue::Number(b)) => match op {
-                            EqEq => a == b,
-                            NotEq => a != b,
-                            Gt => a > b,
-                            Lt => a < b,
-                            GtEq => a >= b,
-                            LtEq => a <= b,
+                            BinaryOp::EqEq => a == b,
+                            BinaryOp::NotEq => a != b,
+                            BinaryOp::Gt => a > b,
+                            BinaryOp::Lt => a < b,
+                            BinaryOp::GtEq => a >= b,
+                            BinaryOp::LtEq => a <= b,
                             _ => false,
                         },
                         (ConstValue::Str(a), ConstValue::Str(b)) => match op {
-                            EqEq => a == b,
-                            NotEq => a != b,
+                            BinaryOp::EqEq => a == b,
+                            BinaryOp::NotEq => a != b,
                             _ => {
                                 return Err(Diagnostic::simple_with_span_boxed(
                                     Severity::Error,
@@ -151,8 +164,8 @@ pub fn eval_const_expr(
                             }
                         },
                         (ConstValue::Bool(a), ConstValue::Bool(b)) => match op {
-                            EqEq => a == b,
-                            NotEq => a != b,
+                            BinaryOp::EqEq => a == b,
+                            BinaryOp::NotEq => a != b,
                             _ => {
                                 return Err(Diagnostic::simple_with_span_boxed(
                                     Severity::Error,
@@ -171,14 +184,14 @@ pub fn eval_const_expr(
                     };
                     Ok(ConstValue::Bool(res))
                 }
-                LogicalAnd => {
+                BinaryOp::And => {
                     if l.is_truthy() {
                         Ok(r)
                     } else {
                         Ok(l)
                     }
                 }
-                LogicalOr => {
+                BinaryOp::Or => {
                     if l.is_truthy() {
                         Ok(l)
                     } else {
@@ -207,7 +220,7 @@ pub fn eval_const_expr(
             let mut out: Vec<ConstValue> = Vec::new();
             for opt in &arr.elems {
                 if let Some(es) = opt {
-                    let v = eval_const_expr(&es.expr, span_start, const_items)?;
+                    let v = eval_const_expr(es, span_start, const_items)?;
                     out.push(v);
                 } else {
                     return Err(Diagnostic::simple_with_span_boxed(
@@ -220,11 +233,10 @@ pub fn eval_const_expr(
             Ok(ConstValue::Array(out))
         }
         Expr::Object(obj) => {
-            use deno_ast::swc::ast::{Prop, PropName, PropOrSpread};
             let mut map = std::collections::HashMap::new();
             for prop in &obj.props {
                 if let PropOrSpread::Prop(pb) = prop {
-                    if let Prop::KeyValue(kv) = &**pb {
+                    if let Prop::KeyValue(kv) = pb {
                         if let PropName::Ident(id) = &kv.key {
                             let key = id.sym.to_string();
                             let val = eval_const_expr(&kv.value, span_start, const_items)?;
@@ -263,14 +275,13 @@ pub fn eval_const_expr(
         }
         Expr::Call(call) => {
             // For now, support simple built-in functions
-            if let ast::Callee::Expr(callee_expr) = &call.callee
-                && let ast::Expr::Member(member) = &**callee_expr
-                && let (ast::Expr::Ident(obj), ast::MemberProp::Ident(prop)) =
-                    (&*member.obj, &member.prop)
+            if let Callee::Expr(callee_expr) = &call.callee
+                && let Expr::Member(member) = &**callee_expr
+                && let (Expr::Ident(obj), MemberProp::Ident(prop)) = (&*member.obj, &member.prop)
                 && obj.sym == "Math"
                 && call.args.len() == 1
             {
-                let arg = eval_const_expr(&call.args[0].expr, span_start, const_items)?;
+                let arg = eval_const_expr(&call.args[0], span_start, const_items)?;
                 if let Some(n) = arg.as_f64() {
                     match prop.sym.as_str() {
                         "abs" => return Ok(ConstValue::Number(n.abs())),

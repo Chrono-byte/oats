@@ -26,36 +26,142 @@ impl<'a> crate::codegen::CodeGen<'a> {
     #[allow(clippy::result_large_err)]
     pub(super) fn lower_assign_expr(
         &self,
-        assign: &deno_ast::swc::ast::AssignExpr,
+        assign: &oats_ast::AssignExpr,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals: &mut LocalsStackLocal<'a>,
     ) -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
-        use deno_ast::swc::ast::{AssignTarget, SimpleAssignTarget};
+        use oats_ast::*;
+
+        // Handle compound assignment operators (e.g., +=, -=, *=, etc.)
+        // For compound assignments, we need to:
+        // 1. Load the current value of the left-hand side
+        // 2. Perform the binary operation with the right-hand side
+        // 3. Store the result back
+        if !matches!(assign.op, AssignOp::Eq) {
+            // This is a compound assignment (e.g., +=, -=, *=)
+            if let AssignTarget::Pat(Pat::Ident(ident)) = &assign.left {
+                let name = ident.sym.clone();
+                if let Some((ptr, _ty, _init, is_const, _extra, _nominal, _oats_type)) =
+                    self.find_local(locals, &name)
+                {
+                    if is_const {
+                        return Err(Diagnostic::simple_boxed(
+                            Severity::Error,
+                            "assignment to immutable variable",
+                        ));
+                    }
+
+                    // Load current value
+                    let current_val = if _ty == self.i8ptr_t.as_basic_type_enum() {
+                        self.builder
+                            .build_load(self.i8ptr_t, ptr, "current_val")
+                            .map_err(|_| Diagnostic::error("failed to load current value"))?
+                    } else if _ty == self.f64_t.as_basic_type_enum() {
+                        self.builder
+                            .build_load(self.f64_t, ptr, "current_val")
+                            .map_err(|_| Diagnostic::error("failed to load current value"))?
+                    } else {
+                        return Err(Diagnostic::simple_boxed(
+                            Severity::Error,
+                            "compound assignment only supported for numbers and pointers",
+                        ));
+                    };
+
+                    // Lower right-hand side
+                    let rhs_val = self.lower_expr(&assign.right, function, param_map, locals)?;
+
+                    // Convert compound assignment operator to binary operator
+                    let bin_op = match assign.op {
+                        AssignOp::PlusEq => BinaryOp::Plus,
+                        AssignOp::MinusEq => BinaryOp::Minus,
+                        AssignOp::MulEq => BinaryOp::Mul,
+                        AssignOp::DivEq => BinaryOp::Div,
+                        AssignOp::ModEq => BinaryOp::Mod,
+                        AssignOp::LShiftEq => BinaryOp::LShift,
+                        AssignOp::RShiftEq => BinaryOp::RShift,
+                        AssignOp::URShiftEq => BinaryOp::URShift,
+                        AssignOp::BitwiseAndEq => BinaryOp::BitwiseAnd,
+                        AssignOp::BitwiseOrEq => BinaryOp::BitwiseOr,
+                        AssignOp::BitwiseXorEq => BinaryOp::BitwiseXor,
+                        AssignOp::ExpEq => BinaryOp::Exp,
+                        AssignOp::Eq => unreachable!(), // Already handled above
+                    };
+
+                    // Lower the binary expression using the current value as left operand
+                    let result = self.lower_binary_expr_with_values(
+                        &bin_op,
+                        current_val,
+                        rhs_val,
+                        function,
+                        param_map,
+                        locals,
+                    )?;
+
+                    // Store result directly
+                    if _ty == self.i8ptr_t.as_basic_type_enum() {
+                        if let BasicValueEnum::PointerValue(newpv) = result {
+                            // RC protocol: increment new value before storing
+                            if !self.should_elide_rc_for_local(&name)
+                                && !self.is_unowned_local(locals, &name)
+                            {
+                                let rc_inc = self.get_rc_inc();
+                                let _ = self
+                                    .builder
+                                    .build_call(rc_inc, &[newpv.into()], "rc_inc_new")
+                                    .map_err(|_| Diagnostic::error("operation failed"))?;
+                            }
+
+                            // Decrement old value after storing
+                            if _init
+                                && !self.should_elide_rc_for_local(&name)
+                                && let BasicValueEnum::PointerValue(oldpv) = current_val
+                            {
+                                let rc_dec = self.get_rc_dec();
+                                let _ = self
+                                    .builder
+                                    .build_call(rc_dec, &[oldpv.into()], "rc_dec_old")
+                                    .map_err(|_| Diagnostic::error("operation failed"))?;
+                            }
+
+                            let _ = self.builder.build_store(ptr, result);
+                        } else {
+                            return Err(Diagnostic::simple_boxed(
+                                Severity::Error,
+                                "compound assignment result type mismatch",
+                            ));
+                        }
+                    } else {
+                        let _ = self.builder.build_store(ptr, result);
+                    }
+
+                    self.set_local_initialized(locals, &name, true);
+                    return Ok(result);
+                }
+            } else if let AssignTarget::Member(_) = &assign.left {
+                // Compound assignment for member access (e.g., obj.field += 5)
+                // This is more complex - we'd need to load the field, perform the operation, and store back
+                // For now, return an error suggesting to use explicit assignment
+                return Err(Diagnostic::simple_with_span_boxed(
+                    Severity::Error,
+                    "compound assignment to member fields not yet supported; use explicit assignment",
+                    assign.span.start,
+                ));
+            }
+        }
 
         // support simple assignments `ident = expr` where the left side is an identifier
-        if let AssignTarget::Simple(SimpleAssignTarget::Ident(bid)) = &assign.left {
-            let name = bid.id.sym.to_string();
+        if let AssignTarget::Pat(Pat::Ident(ident)) = &assign.left {
+            let name = ident.sym.clone();
             if let Some((ptr, _ty, _init, is_const, _extra, _nominal, oats_type)) =
                 self.find_local(locals, &name)
             {
                 // Disallow assigning to immutable locals at compile-time
                 if is_const {
-                    // Use span-aware diagnostic: assign.span.lo is a BytePos wrapper
-                    let span_start = assign.span.lo.0 as usize;
-                    let _ = crate::diagnostics::report_error_span_and_bail::<()>(
-                        None,
-                        self.source,
-                        span_start,
-                        "assignment to immutable variable",
-                        Some(
-                            "This variable was not declared mutable (use `let mut` to make it mutable).",
-                        ),
-                    );
                     return Err(Diagnostic::simple_boxed(
                         Severity::Error,
-                        "expression lowering failed",
-                    ))?;
+                        "assignment to immutable variable",
+                    ));
                 }
                 if let Ok(mut val) = self.lower_expr(&assign.right, function, param_map, locals) {
                     // If the target variable is a union type, box the value
@@ -165,16 +271,15 @@ impl<'a> crate::codegen::CodeGen<'a> {
         }
 
         // Handle member assignment: obj.field = expr
-        // Check if left side is a member expression
-        if let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = &assign.left {
+        if let AssignTarget::Member(member) = &assign.left {
             // Lower the right-hand side value
             if let Ok(new_val) = self.lower_expr(&assign.right, function, param_map, locals) {
                 // Capture RHS origin (if this RHS expression originated from a local)
                 let rhs_origin_after_rhs = self.last_expr_origin_local.borrow().clone();
                 // Only handle dot-member (obj.prop), not computed (obj[expr])
-                use deno_ast::swc::ast::MemberProp;
+                use oats_ast::*;
                 if let MemberProp::Ident(prop_ident) = &member.prop {
-                    let field_name = prop_ident.sym.to_string();
+                    let field_name = prop_ident.sym.clone();
                     eprintln!("DEBUG: field_name set to '{}'", field_name);
                     eprintln!("DEBUG: About to do enum check");
 
@@ -198,8 +303,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         let mut class_name_opt: Option<String> = None;
 
                         // Check if obj is `this` or a named parameter
-                        if let deno_ast::swc::ast::Expr::Ident(ident) = &*member.obj {
-                            let ident_name = ident.sym.to_string();
+                        if let Expr::Ident(ident) = &*member.obj {
+                            let ident_name = ident.sym.clone();
                             if ident_name == "this" {
                                 // If we're inside a constructor function named <Class>_init,
                                 // infer the class name from the function name. Otherwise
@@ -247,7 +352,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     class_name_opt = Some(nom);
                                 }
                             }
-                        } else if matches!(&*member.obj, deno_ast::swc::ast::Expr::This(_)) {
+                        } else if matches!(&*member.obj, Expr::This(_)) {
                             let fname = function.get_name().to_str().unwrap_or("");
                             if let Some(cls) = fname.strip_suffix("_init") {
                                 class_name_opt = Some(cls.to_string());
@@ -588,17 +693,14 @@ impl<'a> crate::codegen::CodeGen<'a> {
         }
 
         // Handle array element assignment: arr[idx] = value
-        // Check if left side is a subscript expression
-        if let AssignTarget::Simple(SimpleAssignTarget::SuperProp(_)) = &assign.left {
-            // SuperProp is not supported yet
-        } else if let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = &assign.left {
-            use deno_ast::swc::ast::MemberProp;
+        if let AssignTarget::Member(member) = &assign.left {
+            use oats_ast::*;
             if let MemberProp::Computed(computed) = &member.prop {
                 // This is arr[idx] = value
 
                 // Get the alloca pointer for the array variable (needed for reallocation)
-                let arr_alloca_opt = if let deno_ast::swc::ast::Expr::Ident(ident) = &*member.obj {
-                    let name = ident.sym.to_string();
+                let arr_alloca_opt = if let Expr::Ident(ident) = &*member.obj {
+                    let name = ident.sym.clone();
                     self.find_local(locals, &name)
                         .map(|(ptr, _, _, _, _, _, _)| ptr)
                 } else {
@@ -609,12 +711,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     Diagnostic::simple_with_span(
                         Severity::Error,
                         "array element assignment requires array stored in a variable",
-                        assign.span.lo.0 as usize,
+                        assign.span.start,
                     )
                 })?;
 
                 // Lower the index expression
-                let idx_val = self.lower_expr(&computed.expr, function, param_map, locals)?;
+                let idx_val = self.lower_expr(computed, function, param_map, locals)?;
                 let idx_i64 = if let BasicValueEnum::FloatValue(fv) = idx_val {
                     // Convert f64 to i64
                     match self
@@ -701,7 +803,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         Err(Diagnostic::simple_with_span_boxed(
             Severity::Error,
             "unsupported assignment target or pattern",
-            assign.span.lo.0 as usize,
+            assign.span.start,
         ))
     }
 }

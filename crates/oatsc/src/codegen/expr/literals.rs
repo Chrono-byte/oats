@@ -12,32 +12,77 @@ use inkwell::values::BasicValue;
 use inkwell::values::BasicValueEnum;
 
 use crate::codegen::utils;
+use oats_ast::*;
 
 /// Lower a literal expression (number, boolean, string, null)
 #[allow(clippy::result_large_err)]
 pub fn lower_lit<'a>(
     codegen: &crate::codegen::CodeGen<'a>,
-    lit: &deno_ast::swc::ast::Lit,
+    lit: &Lit,
 ) -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
-    use deno_ast::swc::ast::Lit;
     match lit {
-        Lit::Num(n) => {
-            let fv = codegen.f64_t.const_float(n.value);
+        Lit::F64(n) => {
+            let fv = codegen.f64_t.const_float(*n);
             Ok(fv.as_basic_value_enum())
         }
-        Lit::Null(_) => {
+        Lit::F32(n) => {
+            let fv = codegen.f32_t.const_float(*n as f64);
+            Ok(fv.as_basic_value_enum())
+        }
+        Lit::I64(n) => {
+            let iv = codegen.i64_t.const_int(*n as u64, true);
+            Ok(iv.as_basic_value_enum())
+        }
+        Lit::I32(n) => {
+            let iv = codegen.i32_t.const_int(*n as u64, true);
+            Ok(iv.as_basic_value_enum())
+        }
+        Lit::I16(n) => {
+            let iv = codegen.i16_t.const_int(*n as u64, true);
+            Ok(iv.as_basic_value_enum())
+        }
+        Lit::I8(n) => {
+            let iv = codegen.i8_t.const_int(*n as u64, true);
+            Ok(iv.as_basic_value_enum())
+        }
+        Lit::U64(n) => {
+            let iv = codegen.i64_t.const_int(*n, false);
+            Ok(iv.as_basic_value_enum())
+        }
+        Lit::U32(n) => {
+            let iv = codegen.i32_t.const_int(*n as u64, false);
+            Ok(iv.as_basic_value_enum())
+        }
+        Lit::U16(n) => {
+            let iv = codegen.i16_t.const_int(*n as u64, false);
+            Ok(iv.as_basic_value_enum())
+        }
+        Lit::U8(n) => {
+            let iv = codegen.i8_t.const_int(*n as u64, false);
+            Ok(iv.as_basic_value_enum())
+        }
+        // Default numeric literals to F64
+        Lit::ISize(n) => {
+            let fv = codegen.f64_t.const_float(*n as f64);
+            Ok(fv.as_basic_value_enum())
+        }
+        Lit::USize(n) => {
+            let fv = codegen.f64_t.const_float(*n as f64);
+            Ok(fv.as_basic_value_enum())
+        }
+        Lit::Null => {
             // Represent `null` as a null i8* pointer so it can be
             // stored into pointer-typed fields (strings, objects, arrays).
             let null_ptr = codegen.i8ptr_t.const_null();
             Ok(null_ptr.as_basic_value_enum())
         }
         Lit::Bool(b) => {
-            let iv = codegen.bool_t.const_int(if b.value { 1 } else { 0 }, false);
+            let iv = codegen.bool_t.const_int(if *b { 1 } else { 0 }, false);
             Ok(iv.as_basic_value_enum())
         }
         Lit::Str(s) => {
-            let bytes = s.value.as_bytes();
-            let key = String::from_utf8_lossy(bytes).into_owned();
+            let bytes = s.as_bytes();
+            let key = s.clone();
             // Check cache first (cache stores the computed pointer)
             if let Some(ptr_val) = codegen.string_literals.borrow().get(&key) {
                 return Ok(ptr_val.as_basic_value_enum());
@@ -90,10 +135,9 @@ pub fn lower_lit<'a>(
                 codegen.string_literals.borrow_mut().insert(key, ptr);
                 return Ok(ptr.as_basic_value_enum());
             }
-            Err(Diagnostic::simple_with_span_boxed(
+            Err(Diagnostic::simple_boxed(
                 Severity::Error,
                 "failed to lower string literal",
-                s.span.lo.0 as usize,
             ))
         }
         _ => Err(Diagnostic::simple_boxed(
@@ -107,7 +151,7 @@ pub fn lower_lit<'a>(
 #[allow(clippy::result_large_err)]
 pub fn lower_array<'a>(
     codegen: &crate::codegen::CodeGen<'a>,
-    arr: &deno_ast::swc::ast::ArrayLit,
+    arr: &oats_ast::ArrayLit,
     function: inkwell::values::FunctionValue<'a>,
     param_map: &std::collections::HashMap<String, u32>,
     locals: &mut crate::codegen::LocalsStackLocal<'a>,
@@ -115,16 +159,15 @@ pub fn lower_array<'a>(
     // Lower array literal: determine element kinds by lowering each elt
     let mut lowered_elems: Vec<BasicValueEnum> = Vec::new();
     for opt in &arr.elems {
-        if let Some(expr_or_spread) = opt {
-            // ExprOrSpread has .expr
-            if let Ok(ev) = codegen.lower_expr(&expr_or_spread.expr, function, param_map, locals) {
+        if let Some(expr) = opt {
+            if let Ok(ev) = codegen.lower_expr(expr, function, param_map, locals) {
                 lowered_elems.push(ev);
             } else {
                 // unsupported element lowering
                 return Err(Diagnostic::simple_with_span_boxed(
                     Severity::Error,
                     "expression lowering failed",
-                    arr.span.lo.0 as usize,
+                    arr.span.start,
                 ));
             }
         } else {
@@ -132,7 +175,7 @@ pub fn lower_array<'a>(
             return Err(Diagnostic::simple_with_span_boxed(
                 Severity::Error,
                 "expression lowering failed",
-                arr.span.lo.0 as usize,
+                arr.span.start,
             ));
         }
     }
@@ -207,7 +250,7 @@ pub fn lower_array<'a>(
         return Err(Diagnostic::simple_with_span_boxed(
             Severity::Error,
             "expression lowering failed",
-            arr.span.lo.0 as usize,
+            arr.span.start,
         ));
     };
 
@@ -243,7 +286,7 @@ pub fn lower_array<'a>(
                     return Err(Diagnostic::simple_with_span_boxed(
                         Severity::Error,
                         "expression lowering failed",
-                        arr.span.lo.0 as usize,
+                        arr.span.start,
                     ));
                 };
                 // bitcast to f64* (unwrap Result returned by pointer cast)
@@ -304,7 +347,7 @@ pub fn lower_array<'a>(
                 return Err(Diagnostic::simple_with_span_boxed(
                     Severity::Error,
                     "expression lowering failed",
-                    arr.span.lo.0 as usize,
+                    arr.span.start,
                 ));
             };
 
@@ -324,7 +367,7 @@ pub fn lower_array<'a>(
                 return Err(Diagnostic::simple_with_span_boxed(
                     Severity::Error,
                     "expression lowering failed",
-                    arr.span.lo.0 as usize,
+                    arr.span.start,
                 ));
             };
             // bitcast to i8** (pointer-to-pointer)
@@ -412,7 +455,7 @@ pub fn lower_array<'a>(
                     return Err(Diagnostic::simple_with_span_boxed(
                         Severity::Error,
                         "operation failed",
-                        arr.span.lo.0 as usize,
+                        arr.span.start,
                     ));
                 }
             }
@@ -425,7 +468,7 @@ pub fn lower_array<'a>(
 #[allow(clippy::result_large_err)]
 pub fn lower_object<'a>(
     codegen: &crate::codegen::CodeGen<'a>,
-    obj_lit: &deno_ast::swc::ast::ObjectLit,
+    obj_lit: &oats_ast::ObjectLit,
     function: inkwell::values::FunctionValue<'a>,
     param_map: &std::collections::HashMap<String, u32>,
     locals: &mut crate::codegen::LocalsStackLocal<'a>,
@@ -440,106 +483,59 @@ pub fn lower_object<'a>(
 
     for prop in &obj_lit.props {
         match prop {
-            deno_ast::swc::ast::PropOrSpread::Prop(prop_box) => match &**prop_box {
-                deno_ast::swc::ast::Prop::KeyValue(kv) => {
-                    // Only identifier keys are supported currently.
-                    if let deno_ast::swc::ast::PropName::Ident(_ident) = &kv.key {
-                        // Lower the value expression
-                        let val = codegen.lower_expr(&kv.value, function, param_map, locals)?;
-                        field_values.push(val);
-                    } else {
-                        return Err(Diagnostic::simple_boxed(
-                            Severity::Error,
-                            "unsupported object literal key",
-                        ));
-                    }
-                }
-                deno_ast::swc::ast::Prop::Assign(assign) => {
-                    // shorthand property `{ x }` - lower the identifier value
-                    let name = assign.key.sym.to_string();
-                    // First check parameters
-                    if let Some(idx) = param_map.get(&name) {
-                        if let Some(pv) = function.get_nth_param(*idx) {
-                            let bv = pv.as_basic_value_enum();
-                            field_values.push(bv);
-                        } else {
-                            return Err(Diagnostic::simple_boxed(
-                                Severity::Error,
-                                "failed to find shorthand param",
-                            ));
-                        }
-                    } else if let Some((ptr, ty, _init, _is_const, _extra, _nominal, _oats_type)) =
-                        codegen.find_local(locals, &name)
-                    {
-                        // load local value
-                        let loaded = match codegen.builder.build_load(
-                            ty,
-                            ptr,
-                            &format!("shorthand_{}", name),
-                        ) {
-                            Ok(v) => v,
-                            Err(_) => {
-                                return Err(Diagnostic::simple_boxed(
-                                    Severity::Error,
-                                    "failed to load shorthand local value",
-                                ));
-                            }
-                        };
-                        field_values.push(loaded);
-                    } else {
-                        return Err(Diagnostic::simple_boxed(
-                            Severity::Error,
-                            "shorthand property not found in params or locals",
-                        ));
-                    }
-                }
-                deno_ast::swc::ast::Prop::Shorthand(ident) => {
-                    // ES6 shorthand property { x } which is equivalent to { x: x }
-                    let name = ident.sym.to_string();
-                    // First check parameters
-                    if let Some(idx) = param_map.get(&name) {
-                        if let Some(pv) = function.get_nth_param(*idx) {
-                            let bv = pv.as_basic_value_enum();
-                            field_values.push(bv);
-                        } else {
-                            return Err(Diagnostic::simple_boxed(
-                                Severity::Error,
-                                "failed to find shorthand param",
-                            ));
-                        }
-                    } else if let Some((ptr, ty, _init, _is_const, _extra, _nominal, _oats_type)) =
-                        codegen.find_local(locals, &name)
-                    {
-                        // load local value
-                        let loaded = match codegen.builder.build_load(
-                            ty,
-                            ptr,
-                            &format!("shorthand_{}", name),
-                        ) {
-                            Ok(v) => v,
-                            Err(_) => {
-                                return Err(Diagnostic::simple_boxed(
-                                    Severity::Error,
-                                    "failed to load shorthand local value",
-                                ));
-                            }
-                        };
-                        field_values.push(loaded);
-                    } else {
-                        return Err(Diagnostic::simple_boxed(
-                            Severity::Error,
-                            "shorthand property not found in params or locals",
-                        ));
-                    }
-                }
-                _ => {
+            PropOrSpread::Prop(Prop::KeyValue(kv)) => {
+                // Only identifier keys are supported currently.
+                if let PropName::Ident(_ident) = &kv.key {
+                    // Lower the value expression
+                    let val = codegen.lower_expr(&kv.value, function, param_map, locals)?;
+                    field_values.push(val);
+                } else {
                     return Err(Diagnostic::simple_boxed(
                         Severity::Error,
-                        "unsupported object literal property",
+                        "unsupported object literal key",
                     ));
                 }
-            },
-            deno_ast::swc::ast::PropOrSpread::Spread(_) => {
+            }
+            PropOrSpread::Prop(Prop::Shorthand(ident)) => {
+                // ES6 shorthand property { x } which is equivalent to { x: x }
+                let name = ident.sym.clone();
+                // First check parameters
+                if let Some(idx) = param_map.get(&name) {
+                    if let Some(pv) = function.get_nth_param(*idx) {
+                        let bv = pv.as_basic_value_enum();
+                        field_values.push(bv);
+                    } else {
+                        return Err(Diagnostic::simple_boxed(
+                            Severity::Error,
+                            "failed to find shorthand param",
+                        ));
+                    }
+                } else if let Some((ptr, ty, _init, _is_const, _extra, _nominal, _oats_type)) =
+                    codegen.find_local(locals, &name)
+                {
+                    // load local value
+                    let loaded =
+                        match codegen
+                            .builder
+                            .build_load(ty, ptr, &format!("shorthand_{}", name))
+                        {
+                            Ok(v) => v,
+                            Err(_) => {
+                                return Err(Diagnostic::simple_boxed(
+                                    Severity::Error,
+                                    "failed to load shorthand local value",
+                                ));
+                            }
+                        };
+                    field_values.push(loaded);
+                } else {
+                    return Err(Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "shorthand property not found in params or locals",
+                    ));
+                }
+            }
+            PropOrSpread::Spread(_) => {
                 return Err(Diagnostic::simple_boxed(
                     Severity::Error,
                     "spread properties not supported in object literal",
@@ -638,7 +634,7 @@ pub fn lower_object<'a>(
 #[allow(clippy::result_large_err)]
 pub fn lower_template<'a>(
     codegen: &crate::codegen::CodeGen<'a>,
-    tpl: &deno_ast::swc::ast::Tpl,
+    tpl: &oats_ast::TplExpr,
     function: inkwell::values::FunctionValue<'a>,
     param_map: &std::collections::HashMap<String, u32>,
     locals: &mut crate::codegen::LocalsStackLocal<'a>,
@@ -783,7 +779,7 @@ pub fn lower_template<'a>(
                         Diagnostic::simple_with_span(
                             Severity::Error,
                             "failed to build call",
-                            tpl.span.lo.0 as usize,
+                            tpl.span.start,
                         )
                     })?;
                 let tmp_ptr = call_site
@@ -793,7 +789,7 @@ pub fn lower_template<'a>(
                         Diagnostic::simple_with_span(
                             Severity::Error,
                             "num_to_str returned no value",
-                            tpl.span.lo.0 as usize,
+                            tpl.span.start,
                         )
                     })?
                     .into_pointer_value();
@@ -825,7 +821,7 @@ pub fn lower_template<'a>(
                         Diagnostic::simple_with_span(
                             Severity::Error,
                             "failed to build select",
-                            tpl.span.lo.0 as usize,
+                            tpl.span.start,
                         )
                     })?
                     .into_pointer_value()
@@ -833,7 +829,7 @@ pub fn lower_template<'a>(
                 return Err(Diagnostic::simple_with_span_boxed(
                     Severity::Error,
                     "unsupported value type in template literal",
-                    tpl.span.lo.0 as usize,
+                    tpl.span.start,
                 ));
             };
 
@@ -842,7 +838,7 @@ pub fn lower_template<'a>(
                 Diagnostic::simple_with_span(
                     Severity::Error,
                     "concat left operand missing",
-                    tpl.span.lo.0 as usize,
+                    tpl.span.start,
                 )
             })?;
             // We do not currently maintain origin info for the running
@@ -859,7 +855,7 @@ pub fn lower_template<'a>(
                     Diagnostic::simple_with_span(
                         Severity::Error,
                         "failed to build call",
-                        tpl.span.lo.0 as usize,
+                        tpl.span.start,
                     )
                 })?;
             let new_res = call_site
@@ -869,7 +865,7 @@ pub fn lower_template<'a>(
                     Diagnostic::simple_with_span(
                         Severity::Error,
                         "concat call returned no value",
-                        tpl.span.lo.0 as usize,
+                        tpl.span.start,
                     )
                 })?
                 .into_pointer_value();

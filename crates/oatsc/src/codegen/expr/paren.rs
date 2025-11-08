@@ -22,7 +22,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
     #[allow(clippy::result_large_err)]
     pub(super) fn lower_paren_expr(
         &self,
-        paren: &deno_ast::swc::ast::ParenExpr,
+        paren: &oats_ast::ParenExpr,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals: &mut LocalsStackLocal<'a>,

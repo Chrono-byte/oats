@@ -24,7 +24,7 @@ type LocalsStackLocal<'a> = Vec<HashMap<String, LocalEntry<'a>>>;
 impl<'a> crate::codegen::CodeGen<'a> {
     pub(crate) fn lower_break_stmt(
         &self,
-        break_stmt: &deno_ast::swc::ast::BreakStmt,
+        break_stmt: &oats_ast::BreakStmt,
         locals_stack: &mut LocalsStackLocal<'a>,
     ) -> crate::diagnostics::DiagnosticResult<bool> {
         // Find the target loop context
@@ -61,7 +61,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
     pub(crate) fn lower_continue_stmt(
         &self,
-        continue_stmt: &deno_ast::swc::ast::ContinueStmt,
+        continue_stmt: &oats_ast::ContinueStmt,
         locals_stack: &mut LocalsStackLocal<'a>,
     ) -> crate::diagnostics::DiagnosticResult<bool> {
         // Find the target loop context

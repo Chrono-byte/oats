@@ -22,13 +22,13 @@ type LocalsStackLocal<'a> = Vec<HashMap<String, LocalEntry<'a>>>;
 impl<'a> crate::codegen::CodeGen<'a> {
     pub(super) fn lower_unary_expr(
         &self,
-        unary: &deno_ast::swc::ast::UnaryExpr,
+        unary: &oats_ast::UnaryExpr,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals: &mut LocalsStackLocal<'a>,
     ) -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
         // Handle unary operators: -, +, !, ~, typeof
-        use deno_ast::swc::ast::UnaryOp;
+        use oats_ast::*;
 
         // Short-circuit typeof since it returns a string literal based on runtime kind
         if matches!(unary.op, UnaryOp::TypeOf) {
@@ -146,7 +146,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     ))
                 }
             }
-            UnaryOp::Bang => {
+            UnaryOp::Not => {
                 // Logical NOT: convert to boolean and negate using XOR
                 let cond = self
                     .to_condition_i1(arg_val)
@@ -158,7 +158,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     .map_err(|_| Diagnostic::error("LLVM builder error"))?;
                 Ok(not.as_basic_value_enum())
             }
-            UnaryOp::Tilde => {
+            UnaryOp::BitwiseNot => {
                 // Bitwise NOT: convert to integer, apply NOT, convert back
                 if let Some(fv) = self.coerce_to_f64(arg_val) {
                     // Convert to i32
@@ -193,18 +193,18 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
     pub(super) fn lower_update_expr(
         &self,
-        update: &deno_ast::swc::ast::UpdateExpr,
+        update: &oats_ast::UpdateExpr,
         _function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals: &mut LocalsStackLocal<'a>,
     ) -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
         // Handle update operators: ++, --
         // These modify the variable and return the old (postfix) or new (prefix) value
-        use deno_ast::swc::ast::UpdateOp;
+        use oats_ast::UpdateOp;
 
         // Only simple identifier updates are supported at present.
-        if let deno_ast::swc::ast::Expr::Ident(ident) = &*update.arg {
-            let name = ident.sym.to_string();
+        if let oats_ast::Expr::Ident(ident) = &*update.arg {
+            let name = ident.sym.clone();
 
             // Find the variable (parameter or local)
             let var_entry = if param_map.contains_key(&name) {
@@ -247,11 +247,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
                     // Compute new value based on operator
                     let new_fv = match update.op {
-                        UpdateOp::PlusPlus => self
+                        UpdateOp::Inc => self
                             .builder
                             .build_float_add(old_fv, one, "inc")
                             .map_err(|_| Diagnostic::error("LLVM builder error"))?,
-                        UpdateOp::MinusMinus => self
+                        UpdateOp::Dec => self
                             .builder
                             .build_float_sub(old_fv, one, "dec")
                             .map_err(|_| Diagnostic::error("LLVM builder error"))?,

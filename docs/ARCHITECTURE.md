@@ -218,8 +218,158 @@ Pointer rules and ARC semantics:
 - Async lowering context fields on `CodeGen` must be cleared after emitting a poll function to avoid leaking state across compilations.
 - When adding new object types, update both codegen and runtime layouts, plus the memory design doc and relevant tests.
 
+## Compiler Architecture Review
+
+### Overall Structure
+
+The compiler follows a clean pipeline architecture:
+
+```text
+Source → Parser → Type Checker → Code Generator → LLVM IR → Object File → Executable
+```
+
+**Strengths:**
+
+- Clear separation between `oats_parser`, `oats_ast`, `oatsc` (compiler), `runtime`, and `toasty` (build system)
+- Well-defined interfaces between components
+- Modular design allows independent development
+
+**Observations:**
+
+- The `builder.rs` file is quite large (1370+ lines) and handles multiple concerns
+- Consider splitting into smaller modules: compilation orchestration, linking
+- Note: Package-level concerns (manifest parsing, dependency resolution) are handled by `toasty`, not `oatsc`
+
+### Parser
+
+**Parser (`crates/oatsc/src/parser.rs`):**
+
+- Uses `deno_ast` for parsing (good choice for TypeScript compatibility)
+- Enforces security limits (MAX_SOURCE_SIZE, MAX_AST_DEPTH)
+- Properly tracks mutable variable declarations
+- Security-conscious with configurable limits
+
+### Type System
+
+**Type System (`crates/oatsc/src/types.rs`):**
+
+- Comprehensive `OatsType` enum covering primitives, unions, generics, etc.
+- Symbol table with lexical scoping
+- Function signature tracking
+- Type system is well-designed and extensible
+
+### Code Generation
+
+**Code Generation (`crates/oatsc/src/codegen/`):**
+
+- Well-organized into submodules: `emit.rs`, `expr.rs`, `stmt.rs`, `helpers.rs`
+- Proper LLVM IR generation using `inkwell`
+- Escape analysis for RC optimization
+- Const evaluation and interning
+- Codegen is well-structured and feature-rich
+
+### Runtime System
+
+**Runtime (`crates/runtime/`):**
+
+- C-callable interface for generated code
+- Deterministic ARC with cycle collection
+- Security limits (MAX_RECURSION_DEPTH, heap limits)
+- Well-documented memory layout contracts
+
+**Key Contracts:**
+
+- 64-bit header layout is clearly documented
+- Reference counting protocol is well-defined
+- Object layouts are consistent and documented
+
+## Security & Safety
+
+### Security Measures
+
+**Strengths:**
+
+- Source file size limits (10MB default, configurable)
+- AST depth limits (100 default, configurable)
+- Runtime recursion depth limits (128, non-configurable)
+- Heap limits (1GB default, configurable)
+- Allocation size limits (256MB default, configurable)
+
+**Observations:**
+
+- Good defense-in-depth approach
+- Limits are configurable via environment variables (good for flexibility)
+- Some limits are hardcoded for security (good for safety)
+
+### Memory Safety
+
+**Strengths:**
+
+- ARC system with proper reference counting
+- Cycle collector for handling circular references
+- Escape analysis to optimize RC operations
+- Weak references properly implemented
+
+**Potential Issues:**
+
+- Runtime uses `unsafe` blocks (necessary for C FFI)
+- Need to ensure all unsafe code is properly documented
+- Should verify all pointer operations are safe
+
+**Recommendation:**
+
+- Audit all `unsafe` blocks for safety
+- Add safety comments explaining why each `unsafe` is needed
+- Consider using `miri` for testing unsafe code
+
+### Type Safety
+
+**Strengths:**
+
+- Strong type system with comprehensive type checking
+- Type inference for expressions
+- Generic type support with monomorphization
+- Union types properly handled
+
+**Observations:**
+
+- Type system is well-designed
+- Some type checking could be more strict (see TODOs in DEVELOPMENT.md)
+
+## Performance Considerations
+
+### Compilation Performance
+
+**Observations:**
+
+- Single-pass parsing (good)
+- Const evaluation and interning (good for reducing code size)
+- Escape analysis (good for optimizing RC operations)
+
+**Potential Optimizations:**
+
+- Could optimize LLVM IR generation
+- Could improve const evaluation caching
+- Note: Module caching and parallelization are handled by `toasty` at the package level
+
+### Runtime Performance
+
+**Strengths:**
+
+- ARC with escape analysis optimization
+- Cycle collector runs in background
+- Efficient object layouts
+- Static literals avoid RC overhead
+
+**Observations:**
+
+- Runtime is designed for performance
+- Good balance between safety and speed
+
 ## Future Work
 
 - Expand type system for generics and better nominal typing.
 - Improve cycle collector heuristics and diagnostics.
 - Compiler optimizations: escape analysis to elide RC ops where safe.
+- Refactor large files (especially `builder.rs`) into smaller modules
+- Complete error handling audit (remove all `.unwrap()`/`.expect()` calls)

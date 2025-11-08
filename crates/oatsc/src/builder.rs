@@ -421,7 +421,11 @@ pub fn run_from_args(args: &[String]) -> Result<Option<String>> {
     // console.log functions
     let void_t = context.void_type();
     let i8ptr_t = context.ptr_type(inkwell::AddressSpace::default());
-    module.add_function("oats_std_console_log", void_t.fn_type(&[i8ptr_t.into()], false), None);
+    module.add_function(
+        "oats_std_console_log",
+        void_t.fn_type(&[i8ptr_t.into()], false),
+        None,
+    );
 
     let builder = context.create_builder();
     let codegen = CodeGen {

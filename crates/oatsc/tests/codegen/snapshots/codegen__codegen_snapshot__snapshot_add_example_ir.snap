@@ -47,6 +47,7 @@ declare ptr @str_concat(ptr, ptr)
 define double @oats_main() {
 entry:
   %num = alloca i64, align 8
+  unreachable
   ret double 0.000000e+00
 }
 

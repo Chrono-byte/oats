@@ -220,6 +220,11 @@ unsafe fn array_grow(arr: *mut c_void, min_capacity: usize) -> *mut c_void {
     }
 }
 
+/// # Safety
+///
+/// `arr_ptr` must be a valid pointer to a pointer to an array object, or null.
+/// If non-null, the array must be a valid array object allocated by this runtime.
+/// The function performs null checks and bounds checking internally.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn array_set_f64(arr_ptr: *mut *mut c_void, idx: usize, v: f64) {
     if arr_ptr.is_null() {
@@ -272,6 +277,12 @@ pub unsafe extern "C" fn array_set_f64(arr_ptr: *mut *mut c_void, idx: usize, v:
     }
 }
 
+/// # Safety
+///
+/// `arr_ptr` must be a valid pointer to a pointer to an array object, or null.
+/// If non-null, the array must be a valid array object allocated by this runtime.
+/// `p` must be a valid pointer to an object managed by this runtime's reference counting,
+/// or null. The function performs null checks and bounds checking internally.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn array_set_ptr(arr_ptr: *mut *mut c_void, idx: usize, p: *mut c_void) {
     if arr_ptr.is_null() {
@@ -337,6 +348,12 @@ pub unsafe extern "C" fn array_set_ptr(arr_ptr: *mut *mut c_void, idx: usize, p:
     }
 }
 
+/// # Safety
+///
+/// `arr` must be a valid pointer to an array object allocated by this runtime, or null.
+/// `p` must be a valid pointer to an object managed by this runtime's reference counting,
+/// or null. The function performs null checks and bounds checking internally.
+/// This function uses weak references, so it does not increment the strong reference count.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn array_set_ptr_weak(arr: *mut c_void, idx: usize, p: *mut c_void) {
     if arr.is_null() {
@@ -435,8 +452,13 @@ pub extern "C" fn array_pop_f64(arr: *mut c_void) -> f64 {
     }
 }
 
+/// # Safety
+///
+/// `arr` must be a valid pointer to an array object allocated by this runtime, or null.
+/// `value` must be a valid pointer to an object managed by this runtime's reference counting,
+/// or null. The function performs null checks and bounds checking internally.
 #[unsafe(no_mangle)]
-pub extern "C" fn array_push_ptr(arr: *mut c_void, value: *mut c_void) {
+pub unsafe extern "C" fn array_push_ptr(arr: *mut c_void, value: *mut c_void) {
     if arr.is_null() {
         return;
     }
@@ -457,8 +479,14 @@ pub extern "C" fn array_push_ptr(arr: *mut c_void, value: *mut c_void) {
     }
 }
 
+/// # Safety
+///
+/// `arr` must be a valid pointer to an array object allocated by this runtime, or null.
+/// `value` must be a valid pointer to an object managed by this runtime's reference counting,
+/// or null. The function performs null checks and bounds checking internally.
+/// This function uses weak references, so it does not increment the strong reference count.
 #[unsafe(no_mangle)]
-pub extern "C" fn array_push_ptr_weak(arr: *mut c_void, value: *mut c_void) {
+pub unsafe extern "C" fn array_push_ptr_weak(arr: *mut c_void, value: *mut c_void) {
     if arr.is_null() {
         return;
     }
@@ -599,8 +627,13 @@ pub extern "C" fn array_get(arr: *mut c_void, idx: usize) -> *mut c_void {
     array_get_ptr(arr, idx)
 }
 
+/// # Safety
+///
+/// `arr` must be a valid pointer to an array object allocated by this runtime, or null.
+/// `value` must be a valid pointer to an object managed by this runtime's reference counting,
+/// or null. The function performs null checks and bounds checking internally.
 #[unsafe(no_mangle)]
-pub extern "C" fn array_set(arr: *mut c_void, idx: usize, value: *mut c_void) {
+pub unsafe extern "C" fn array_set(arr: *mut c_void, idx: usize, value: *mut c_void) {
     let mut arr_ptr = arr;
     unsafe {
         array_set_ptr(&mut arr_ptr, idx, value);
@@ -615,6 +648,11 @@ pub fn array_get_pub(arr: *mut c_void, idx: usize) -> *mut c_void {
     array_get(arr, idx)
 }
 
-pub fn array_set_pub(arr: *mut c_void, idx: usize, value: *mut c_void) {
-    array_set(arr, idx, value)
+/// # Safety
+///
+/// `arr` must be a valid pointer to an array object allocated by this runtime, or null.
+/// `value` must be a valid pointer to an object managed by this runtime's reference counting,
+/// or null. The function performs null checks and bounds checking internally.
+pub unsafe fn array_set_pub(arr: *mut c_void, idx: usize, value: *mut c_void) {
+    unsafe { array_set(arr, idx, value) }
 }

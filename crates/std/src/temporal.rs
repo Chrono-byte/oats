@@ -53,7 +53,7 @@ impl TemporalInstant {
 impl Drop for TemporalInstant {
     fn drop(&mut self) {
         if !self.ptr.is_null() {
-            runtime::rc::rc_dec_pub(self.ptr);
+            unsafe { runtime::rc::rc_dec_pub(self.ptr) };
         }
     }
 }

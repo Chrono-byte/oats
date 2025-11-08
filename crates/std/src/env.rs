@@ -5,7 +5,7 @@ use libc::c_char;
 /// Get environment variable (caller must free result)
 /// #[oats_export]
 #[no_mangle]
-pub extern "C" fn oats_std_env_get_var(name: *const c_char) -> *mut c_char {
+pub unsafe extern "C" fn oats_std_env_get_var(name: *const c_char) -> *mut c_char {
     if name.is_null() {
         return std::ptr::null_mut();
     }

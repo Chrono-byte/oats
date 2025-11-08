@@ -7,7 +7,7 @@ use std::process::Command;
 /// Execute a command and return its output as a string (caller must free)
 /// #[oats_export]
 #[no_mangle]
-pub extern "C" fn oats_std_process_exec(
+pub unsafe extern "C" fn oats_std_process_exec(
     program: *const c_char,
     args: *const *const c_char,
     args_len: size_t,
@@ -53,7 +53,7 @@ pub extern "C" fn oats_std_process_exec(
 /// Execute a command and return exit code
 /// #[oats_export]
 #[no_mangle]
-pub extern "C" fn oats_std_process_exec_status(
+pub unsafe extern "C" fn oats_std_process_exec_status(
     program: *const c_char,
     args: *const *const c_char,
     args_len: size_t,
@@ -89,8 +89,13 @@ pub extern "C" fn oats_std_process_exec_status(
 
 /// Check if a command exists in PATH
 /// #[oats_export]
+///
+/// # Safety
+///
+/// `cmd` must be a valid pointer to a null-terminated C string, or null.
+/// If non-null, the string must remain valid for the duration of this call.
 #[no_mangle]
-pub extern "C" fn oats_std_process_command_exists(cmd: *const c_char) -> c_int {
+pub unsafe extern "C" fn oats_std_process_command_exists(cmd: *const c_char) -> c_int {
     if cmd.is_null() {
         return 0;
     }

@@ -7,7 +7,10 @@ use std::path::Path;
 /// Join two paths (caller must free result)
 /// #[oats_export]
 #[no_mangle]
-pub extern "C" fn oats_std_path_join(base: *const c_char, component: *const c_char) -> *mut c_char {
+pub unsafe extern "C" fn oats_std_path_join(
+    base: *const c_char,
+    component: *const c_char,
+) -> *mut c_char {
     if base.is_null() || component.is_null() {
         return std::ptr::null_mut();
     }
@@ -34,7 +37,7 @@ pub extern "C" fn oats_std_path_join(base: *const c_char, component: *const c_ch
 /// Get file name from path (caller must free result)
 /// #[oats_export]
 #[no_mangle]
-pub extern "C" fn oats_std_path_file_name(path: *const c_char) -> *mut c_char {
+pub unsafe extern "C" fn oats_std_path_file_name(path: *const c_char) -> *mut c_char {
     if path.is_null() {
         return std::ptr::null_mut();
     }
@@ -59,7 +62,7 @@ pub extern "C" fn oats_std_path_file_name(path: *const c_char) -> *mut c_char {
 /// Check if path is absolute
 /// #[oats_export]
 #[no_mangle]
-pub extern "C" fn oats_std_path_is_absolute(path: *const c_char) -> libc::c_int {
+pub unsafe extern "C" fn oats_std_path_is_absolute(path: *const c_char) -> libc::c_int {
     if path.is_null() {
         return 0;
     }

@@ -7,7 +7,7 @@ use std::fs;
 /// Read entire file into a string
 /// #[oats_export]
 #[no_mangle]
-pub extern "C" fn oats_std_fs_read_file(path: *const c_char) -> *mut c_char {
+pub unsafe extern "C" fn oats_std_fs_read_file(path: *const c_char) -> *mut c_char {
     if path.is_null() {
         return std::ptr::null_mut();
     }
@@ -29,7 +29,7 @@ pub extern "C" fn oats_std_fs_read_file(path: *const c_char) -> *mut c_char {
 /// Write string to file
 /// #[oats_export]
 #[no_mangle]
-pub extern "C" fn oats_std_fs_write_file(
+pub unsafe extern "C" fn oats_std_fs_write_file(
     path: *const c_char,
     content: *const c_char,
 ) -> libc::c_int {
@@ -57,7 +57,7 @@ pub extern "C" fn oats_std_fs_write_file(
 /// Check if file exists
 /// #[oats_export]
 #[no_mangle]
-pub extern "C" fn oats_std_fs_file_exists(path: *const c_char) -> libc::c_int {
+pub unsafe extern "C" fn oats_std_fs_file_exists(path: *const c_char) -> libc::c_int {
     if path.is_null() {
         return 0;
     }
@@ -77,7 +77,7 @@ pub extern "C" fn oats_std_fs_file_exists(path: *const c_char) -> libc::c_int {
 /// Create directory recursively
 /// #[oats_export]
 #[no_mangle]
-pub extern "C" fn oats_std_fs_create_dir_all(path: *const c_char) -> libc::c_int {
+pub unsafe extern "C" fn oats_std_fs_create_dir_all(path: *const c_char) -> libc::c_int {
     if path.is_null() {
         return -1;
     }
@@ -100,7 +100,7 @@ pub extern "C" fn oats_std_fs_create_dir_all(path: *const c_char) -> libc::c_int
 /// Remove file
 /// #[oats_export]
 #[no_mangle]
-pub extern "C" fn oats_std_fs_remove_file(path: *const c_char) -> libc::c_int {
+pub unsafe extern "C" fn oats_std_fs_remove_file(path: *const c_char) -> libc::c_int {
     if path.is_null() {
         return -1;
     }

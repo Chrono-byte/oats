@@ -5,7 +5,7 @@ use libc::c_char;
 /// HTTP GET request (returns response body as string, caller must free)
 /// #[oats_export]
 #[no_mangle]
-pub extern "C" fn oats_std_net_http_get(url: *const c_char) -> *mut c_char {
+pub unsafe extern "C" fn oats_std_net_http_get(url: *const c_char) -> *mut c_char {
     if url.is_null() {
         return std::ptr::null_mut();
     }
@@ -27,7 +27,7 @@ pub extern "C" fn oats_std_net_http_get(url: *const c_char) -> *mut c_char {
 /// Check if URL is reachable
 /// #[oats_export]
 #[no_mangle]
-pub extern "C" fn oats_std_net_url_reachable(url: *const c_char) -> libc::c_int {
+pub unsafe extern "C" fn oats_std_net_url_reachable(url: *const c_char) -> libc::c_int {
     if url.is_null() {
         return 0;
     }

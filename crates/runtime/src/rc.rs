@@ -50,7 +50,11 @@ pub unsafe extern "C" fn rc_inc(p: *mut c_void) {
     }
 }
 
-pub fn rc_inc_pub(p: *mut c_void) {
+/// # Safety
+///
+/// `p` must be a valid pointer previously returned by the runtime, or null.
+/// If non-null, the pointer must remain valid for the duration of this call.
+pub unsafe fn rc_inc_pub(p: *mut c_void) {
     unsafe { rc_inc(p) }
 }
 
@@ -169,7 +173,11 @@ pub unsafe extern "C" fn rc_dec(p: *mut c_void) {
     }
 }
 
-pub fn rc_dec_pub(p: *mut c_void) {
+/// # Safety
+///
+/// `p` must be a valid pointer previously returned by the runtime, or null.
+/// If non-null, the pointer must remain valid for the duration of this call.
+pub unsafe fn rc_dec_pub(p: *mut c_void) {
     unsafe { rc_dec(p) }
 }
 

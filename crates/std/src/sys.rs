@@ -24,18 +24,18 @@ pub fn free(ptr: NonNull<c_void>) {
 /// Create a new string in the runtime heap
 pub fn create_string(content: &str) -> Option<NonNull<c_char>> {
     let cstr = std::ffi::CString::new(content).ok()?;
-    let ptr = runtime::string::heap_str_from_cstr_pub(cstr.as_ptr());
+    let ptr = unsafe { runtime::string::heap_str_from_cstr_pub(cstr.as_ptr()) };
     NonNull::new(ptr)
 }
 
 /// Increment reference count for a string
 pub fn rc_inc_string(s: NonNull<c_char>) {
-    runtime::string::rc_inc_str_pub(s.as_ptr());
+    unsafe { runtime::string::rc_inc_str_pub(s.as_ptr()) };
 }
 
 /// Decrement reference count for a string
 pub fn rc_dec_string(s: NonNull<c_char>) {
-    runtime::string::rc_dec_str_pub(s.as_ptr());
+    unsafe { runtime::string::rc_dec_str_pub(s.as_ptr()) };
 }
 
 /// Create a new array in the runtime heap
@@ -52,17 +52,17 @@ pub fn array_get_element(array: NonNull<c_void>, index: usize) -> Option<NonNull
 
 /// Set an element in an array
 pub fn array_set_element(array: NonNull<c_void>, index: usize, value: NonNull<c_void>) {
-    runtime::array::array_set_pub(array.as_ptr(), index, value.as_ptr());
+    unsafe { runtime::array::array_set_pub(array.as_ptr(), index, value.as_ptr()) };
 }
 
 /// Increment reference count for any object
 pub fn rc_inc_object(obj: NonNull<c_void>) {
-    runtime::rc::rc_inc_pub(obj.as_ptr());
+    unsafe { runtime::rc::rc_inc_pub(obj.as_ptr()) };
 }
 
 /// Decrement reference count for any object
 pub fn rc_dec_object(obj: NonNull<c_void>) {
-    runtime::rc::rc_dec_pub(obj.as_ptr());
+    unsafe { runtime::rc::rc_dec_pub(obj.as_ptr()) };
 }
 
 /// Print function that abstracts away the type

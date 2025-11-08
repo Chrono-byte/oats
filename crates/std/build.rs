@@ -84,8 +84,7 @@ fn parse_module(content: &str, _module_name: &str) -> String {
     for (i, line) in lines.iter().enumerate() {
         if line.contains("/// #[oats_export]") {
             // Look for the function signature in the next few lines
-            for j in (i + 1)..lines.len().min(i + 10) {
-                let func_line = lines[j].trim();
+            for func_line in lines.iter().skip(i + 1).take(10).map(|l| l.trim()) {
                 if func_line.starts_with("#[no_mangle]") {
                     // Skip the no_mangle attribute
                     continue;
@@ -132,8 +131,8 @@ fn parse_function_signature(line: &str) -> Option<String> {
     // Parse return type
     let return_type = if after_paren[close_paren_pos + 1..].trim().starts_with("->") {
         let return_part = &after_paren[close_paren_pos + 1..].trim();
-        if return_part.starts_with("-> ") {
-            return_part[3..].trim()
+        if let Some(stripped) = return_part.strip_prefix("-> ") {
+            stripped.trim()
         } else {
             "void"
         }

@@ -65,10 +65,18 @@ pub unsafe extern "C" fn heap_str_from_cstr(s: *const c_char) -> *mut c_char {
     }
 }
 
-pub fn heap_str_from_cstr_pub(s: *const c_char) -> *mut c_char {
+/// # Safety
+///
+/// `s` must be a valid pointer to a null-terminated C string, or null.
+/// If non-null, the string must remain valid for the duration of this call.
+pub unsafe fn heap_str_from_cstr_pub(s: *const c_char) -> *mut c_char {
     unsafe { heap_str_from_cstr(s) }
 }
 
+/// # Safety
+///
+/// `data` must be a pointer to string data previously returned by this runtime.
+/// The pointer must point to valid string data with the expected memory layout.
 #[inline]
 pub unsafe fn heap_str_to_obj(data: *const c_char) -> *mut c_void {
     if data.is_null() {
@@ -92,7 +100,12 @@ pub unsafe extern "C" fn rc_inc_str(data: *mut c_char) {
     }
 }
 
-pub fn rc_inc_str_pub(data: *mut c_char) {
+/// # Safety
+///
+/// `data` must be a pointer previously returned by this runtime for string data
+/// (either a static literal or a heap-allocated string). Passing invalid
+/// pointers is undefined behavior.
+pub unsafe fn rc_inc_str_pub(data: *mut c_char) {
     unsafe { rc_inc_str(data) }
 }
 
@@ -111,10 +124,19 @@ pub unsafe extern "C" fn rc_dec_str(data: *mut c_char) {
     }
 }
 
-pub fn rc_dec_str_pub(data: *mut c_char) {
+/// # Safety
+///
+/// `data` must be a pointer previously returned by this runtime for string data
+/// (either a static literal or a heap-allocated string). Passing invalid
+/// pointers is undefined behavior.
+pub unsafe fn rc_dec_str_pub(data: *mut c_char) {
     unsafe { rc_dec_str(data) }
 }
 
+/// # Safety
+///
+/// `s` must be a valid pointer to a null-terminated C string, or null.
+/// If non-null, the string must remain valid for the duration of this call.
 #[unsafe(no_mangle)]
 pub unsafe fn str_dup(s: *const c_char) -> *mut c_char {
     unsafe {

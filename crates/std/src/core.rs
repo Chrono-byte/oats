@@ -101,6 +101,11 @@ pub struct OatsObject {
 
 impl OatsObject {
     /// Create from a raw pointer
+    ///
+    /// # Safety
+    ///
+    /// `ptr` must be a valid pointer to an object managed by the Oats runtime.
+    /// The caller must ensure the object remains valid for the lifetime of the `OatsObject`.
     pub unsafe fn from_ptr(ptr: NonNull<libc::c_void>) -> Self {
         Self { ptr }
     }

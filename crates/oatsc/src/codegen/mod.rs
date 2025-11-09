@@ -8,11 +8,26 @@
 //! - `expr` : expression lowering
 //! - `stmt` : statement lowering
 //! - `helpers` : small re-usable utilities
+//! - `const_eval` : compile-time constant evaluation
+//! - `escape` : escape analysis for RC optimization
 //!
 //! `CodeGen` also exposes getters for runtime helper functions (for
 //! example `get_rc_inc`, `get_union_box_f64`) which lazily add declarations
 //! to the LLVM module. This centralization ensures consistent ABI types for
 //! these helpers and avoids duplicate declarations.
+//!
+//! # RTA Integration
+//!
+//! The `rta_results` field stores Rapid Type Analysis results which are used
+//! to optimize code generation:
+//! - Dead code elimination: Methods that are not reachable are skipped
+//! - Future: Devirtualization, method inlining decisions
+//!
+//! # Memory Management
+//!
+//! Code generation emits reference counting operations (`rc_inc`/`rc_dec`) for
+//! heap-allocated objects. Escape analysis (`escape.rs`) can elide unnecessary
+//! RC operations for locals that don't escape the function scope.
 
 use crate::diagnostics::Severity;
 use inkwell::AddressSpace;
@@ -587,7 +602,7 @@ impl<'a> CodeGen<'a> {
             &[self.i64_t.into(), self.i32_t.into(), self.i32_t.into()],
             false,
         );
-        let f = self.module.add_function("array_alloc", fn_type, None);
+        let f = self.module.add_function(crate::runtime_functions::names::ARRAY_ALLOC, fn_type, None);
         *self.fn_array_alloc.borrow_mut() = Some(f);
         f
     }
@@ -600,7 +615,7 @@ impl<'a> CodeGen<'a> {
             .context
             .void_type()
             .fn_type(&[self.i8ptr_t.into()], false);
-        let f = self.module.add_function("rc_inc", fn_type, None);
+        let f = self.module.add_function(crate::runtime_functions::names::RC_INC, fn_type, None);
         *self.fn_rc_inc.borrow_mut() = Some(f);
         f
     }
@@ -689,7 +704,7 @@ impl<'a> CodeGen<'a> {
             .context
             .void_type()
             .fn_type(&[self.i8ptr_t.into()], false);
-        let f = self.module.add_function("rc_dec", fn_type, None);
+        let f = self.module.add_function(crate::runtime_functions::names::RC_DEC, fn_type, None);
         *self.fn_rc_dec.borrow_mut() = Some(f);
         f
     }
@@ -700,7 +715,7 @@ impl<'a> CodeGen<'a> {
         }
         // number_to_string(f64) -> i8*
         let fn_type = self.i8ptr_t.fn_type(&[self.f64_t.into()], false);
-        let f = self.module.add_function("number_to_string", fn_type, None);
+        let f = self.module.add_function(crate::runtime_functions::names::NUMBER_TO_STRING, fn_type, None);
         *self.fn_number_to_string.borrow_mut() = Some(f);
         f
     }
@@ -711,7 +726,7 @@ impl<'a> CodeGen<'a> {
         }
         // union_box_f64(f64) -> i8*
         let fn_type = self.i8ptr_t.fn_type(&[self.f64_t.into()], false);
-        let f = self.module.add_function("union_box_f64", fn_type, None);
+        let f = self.module.add_function(crate::runtime_functions::names::UNION_BOX_F64, fn_type, None);
         *self.fn_union_box_f64.borrow_mut() = Some(f);
         f
     }
@@ -722,7 +737,7 @@ impl<'a> CodeGen<'a> {
         }
         // union_box_ptr(i8*) -> i8*
         let fn_type = self.i8ptr_t.fn_type(&[self.i8ptr_t.into()], false);
-        let f = self.module.add_function("union_box_ptr", fn_type, None);
+        let f = self.module.add_function(crate::runtime_functions::names::UNION_BOX_PTR, fn_type, None);
         *self.fn_union_box_ptr.borrow_mut() = Some(f);
         f
     }
@@ -782,7 +797,7 @@ impl<'a> CodeGen<'a> {
             .context
             .void_type()
             .fn_type(&[self.i8ptr_t.into()], false);
-        let f = self.module.add_function("rc_weak_inc", fn_type, None);
+        let f = self.module.add_function(crate::runtime_functions::names::RC_WEAK_INC, fn_type, None);
         *self.fn_rc_weak_inc.borrow_mut() = Some(f);
         f
     }
@@ -795,7 +810,7 @@ impl<'a> CodeGen<'a> {
             .context
             .void_type()
             .fn_type(&[self.i8ptr_t.into()], false);
-        let f = self.module.add_function("rc_weak_dec", fn_type, None);
+        let f = self.module.add_function(crate::runtime_functions::names::RC_WEAK_DEC, fn_type, None);
         *self.fn_rc_weak_dec.borrow_mut() = Some(f);
         f
     }
@@ -916,12 +931,12 @@ impl<'a> CodeGen<'a> {
             .struct_type(&[header_ty.into(), len_ty.into(), data_ty.into()], false);
 
         let id = self.next_str_id.get();
-        let name = format!("strlit.{}", id);
+        let name = format!("{}{}", crate::runtime_functions::naming::STRING_LITERAL_PREFIX, id);
         self.next_str_id.set(id.wrapping_add(1));
         let gv = self.module.add_global(struct_ty, None, &name);
 
         // static header bit set at bit 32
-        let static_header = self.i64_t.const_int(1u64 << 32, false);
+        let static_header = self.i64_t.const_int(crate::constants::STATIC_HEADER_BIT, false);
         let length_val = self.i64_t.const_int(str_len as u64, false);
         let data_val = self.context.const_string(bytes, true);
 
@@ -1107,7 +1122,7 @@ impl<'a> CodeGen<'a> {
         self.builder.position_at_end(entry);
 
         // Try to look up oats_main; it should be present if gen_function_ir emitted it.
-        let oats_main_fn = match self.module.get_function("oats_main") {
+        let oats_main_fn = match self.module.get_function(crate::runtime_functions::names::OATS_MAIN) {
             Some(f) => f,
             None => {
                 // No oats_main available; emit an empty main that returns 1
@@ -1256,7 +1271,7 @@ impl<'a> CodeGen<'a> {
             return f;
         }
         let fn_type = self.i8ptr_t.fn_type(&[self.i64_t.into()], false);
-        let f = self.module.add_function("malloc", fn_type, None);
+        let f = self.module.add_function(crate::runtime_functions::names::MALLOC, fn_type, None);
         *self.fn_malloc.borrow_mut() = Some(f);
         f
     }
@@ -1281,10 +1296,7 @@ impl<'a> CodeGen<'a> {
         func_name: &str,
         type_args: &[crate::types::OatsType],
     ) -> crate::diagnostics::DiagnosticResult<String> {
-        eprintln!(
-            "[debug monomorphize] func='{}' type_args={:?}",
-            func_name, type_args
-        );
+        // Monomorphizing function: func='{}' type_args={:?}
         // Create a unique key for this monomorphization
         let mut key_parts = vec![func_name.to_string()];
         for arg in type_args {
@@ -1383,12 +1395,7 @@ impl<'a> CodeGen<'a> {
         self.monomorphized_map
             .borrow_mut()
             .insert(key.clone(), specialized_name.clone());
-        eprintln!(
-            "[debug monomorphize] reserved '{}' (key={}) module_has_before={}",
-            specialized_name,
-            key,
-            self.module.get_function(&specialized_name).is_some()
-        );
+        // Reserved monomorphization: '{}' (key={}) module_has_before={}
 
         // Emit the specialized function IR. gen_function_ir mutates the builder
         // insert point, so preserve and restore it.
@@ -1402,20 +1409,13 @@ impl<'a> CodeGen<'a> {
         ) {
             // On error, remove the reserved mapping and return the diagnostic
             self.monomorphized_map.borrow_mut().remove(&key);
-            eprintln!(
-                "[debug monomorphize] gen_function_ir failed for '{}' diag='{}'",
-                specialized_name, diag.message
-            );
+            // Monomorphization failed for '{}': {}
             return Err(diag);
         }
         if let Some(pb) = prev_block {
             self.builder.position_at_end(pb);
         }
-        eprintln!(
-            "[debug monomorphize] emitted '{}' present_in_module={}",
-            specialized_name,
-            self.module.get_function(&specialized_name).is_some()
-        );
+        // Monomorphization emitted: '{}' present_in_module={}
 
         Ok(specialized_name)
     }

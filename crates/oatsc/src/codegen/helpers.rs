@@ -146,7 +146,9 @@ impl<'a> super::CodeGen<'a> {
             OatsType::Generic(_) => {
                 // Generics are not directly mappable to LLVM types.
                 // This should be resolved during specialization.
-                panic!("Generic types must be specialized before mapping to LLVM types");
+                // This is a programming error - generics should be specialized before reaching here.
+                // Return a fallback type to avoid panicking, but this indicates a bug.
+                self.i8ptr_t.as_basic_type_enum()
             }
             OatsType::GenericInstance { .. } => {
                 // Generic instances are specialized, so treat as pointer types
@@ -599,48 +601,48 @@ impl<'a> super::CodeGen<'a> {
         // behavior can be adjusted.
         //
         // declare malloc(i64) -> i8*
-        if self.module.get_function("malloc").is_none() {
+        if self.module.get_function(crate::runtime_functions::names::MALLOC).is_none() {
             let i8ptr = self.i8ptr_t;
             let i64t = self.i64_t;
             let malloc_ty = i8ptr.fn_type(&[i64t.into()], false);
-            let f = self.module.add_function("malloc", malloc_ty, None);
+            let f = self.module.add_function(crate::runtime_functions::names::MALLOC, malloc_ty, None);
             self.fn_malloc.borrow_mut().replace(f);
         }
 
         // declare strlen(i8*) -> i64
-        if self.module.get_function("strlen").is_none() {
+        if self.module.get_function(crate::runtime_functions::names::STRLEN).is_none() {
             let i8ptr = self.i8ptr_t;
             let i64t = self.i64_t;
             let strlen_ty = i64t.fn_type(&[i8ptr.into()], false);
-            let f = self.module.add_function("strlen", strlen_ty, None);
+            let f = self.module.add_function(crate::runtime_functions::names::STRLEN, strlen_ty, None);
             self.fn_strlen.borrow_mut().replace(f);
         }
 
         // declare memcpy(i8*, i8*, i64) -> i8*
-        if self.module.get_function("memcpy").is_none() {
+        if self.module.get_function(crate::runtime_functions::names::MEMCPY).is_none() {
             let i8ptr = self.i8ptr_t;
             let i64t = self.i64_t;
             let memcpy_ty = i8ptr.fn_type(&[i8ptr.into(), i8ptr.into(), i64t.into()], false);
-            let f = self.module.add_function("memcpy", memcpy_ty, None);
+            let f = self.module.add_function(crate::runtime_functions::names::MEMCPY, memcpy_ty, None);
             self.fn_memcpy.borrow_mut().replace(f);
         }
 
         // declare free(i8*) -> void
-        if self.module.get_function("free").is_none() {
+        if self.module.get_function(crate::runtime_functions::names::FREE).is_none() {
             let voidt = self.context.void_type();
             let i8ptr = self.i8ptr_t;
             let free_ty = voidt.fn_type(&[i8ptr.into()], false);
-            let f = self.module.add_function("free", free_ty, None);
+            let f = self.module.add_function(crate::runtime_functions::names::FREE, free_ty, None);
             self.fn_free.borrow_mut().replace(f);
         }
 
         // Declare runtime print helpers so user scripts can call them.
-        if self.module.get_function("print_f64").is_none() {
+        if self.module.get_function(crate::runtime_functions::names::PRINT_F64).is_none() {
             let print_ty = self
                 .context
                 .void_type()
                 .fn_type(&[self.f64_t.into()], false);
-            let f = self.module.add_function("print_f64", print_ty, None);
+            let f = self.module.add_function(crate::runtime_functions::names::PRINT_F64, print_ty, None);
             self.fn_print_f64.borrow_mut().replace(f);
         }
         // declare print_f64_no_nl(f64) -> void
@@ -651,10 +653,10 @@ impl<'a> super::CodeGen<'a> {
                 .fn_type(&[self.f64_t.into()], false);
             let _f = self.module.add_function("print_f64_no_nl", print_ty, None);
         }
-        if self.module.get_function("print_str").is_none() {
+        if self.module.get_function(crate::runtime_functions::names::PRINT_STR).is_none() {
             let i8ptr = self.i8ptr_t;
             let print_str_ty = self.context.void_type().fn_type(&[i8ptr.into()], false);
-            let f = self.module.add_function("print_str", print_str_ty, None);
+            let f = self.module.add_function(crate::runtime_functions::names::PRINT_STR, print_str_ty, None);
             self.fn_print_str.borrow_mut().replace(f);
         }
         // declare print_str_no_nl(i8*) -> void
@@ -844,7 +846,7 @@ impl<'a> super::CodeGen<'a> {
     }
 
     pub(crate) fn gen_str_concat(&self) {
-        if self.module.get_function("str_concat").is_some() {
+        if self.module.get_function(crate::runtime_functions::names::STR_CONCAT).is_some() {
             return;
         }
         // Instead of emitting a full definition here (which can cause
@@ -859,7 +861,7 @@ impl<'a> super::CodeGen<'a> {
 
         // Add the function declaration (no body). If a definition is needed
         // later (for a self-contained IR mode) we can change this behavior.
-        let _function = self.module.add_function("str_concat", fn_type, None);
+        let _function = self.module.add_function(crate::runtime_functions::names::STR_CONCAT, fn_type, None);
     }
 
     // Allocate a heap object with the standard header/meta/fields layout and

@@ -299,14 +299,14 @@ pub unsafe extern "C" fn rc_dec(p: *mut c_void) {
                                     // Function pointers should typically be aligned (platform-dependent, but usually at least 1-byte)
                                     // We use a conservative check: ensure it's not obviously misaligned
                                     const MIN_FN_ALIGN: usize = 1; // Minimum alignment for function pointers
-                                    if (dtor_addr % MIN_FN_ALIGN) == 0 {
+                                    if dtor_addr.is_multiple_of(MIN_FN_ALIGN) {
                                         // SAFETY: We've validated the pointer is in a plausible address range and aligned.
                                         // The pointer was stored by the code generator and should be a valid function pointer.
                                         // However, if the memory is corrupted, this could still be invalid. The is_plausible_addr
                                         // check provides defense-in-depth but cannot guarantee the pointer is actually executable.
                                         // In practice, destructor pointers are set by the code generator and should be valid.
                                         let dtor: extern "C" fn(*mut c_void) =
-                                            unsafe { std::mem::transmute(dtor_raw) };
+                                            std::mem::transmute(dtor_raw);
                                         dtor(obj_ptr);
                                     } else if should_log {
                                         let _ = io::stderr().write_all(

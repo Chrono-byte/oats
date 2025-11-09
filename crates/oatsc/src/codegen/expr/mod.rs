@@ -29,8 +29,6 @@ pub mod binary_ops;
 pub mod calls;
 pub mod control_flow_expr;
 pub mod fn_expr;
-pub mod seq_expr;
-pub mod yield_expr;
 pub mod ident;
 pub mod literals;
 pub mod member_access;
@@ -38,9 +36,11 @@ pub mod new_expr;
 pub mod optional_chaining;
 pub mod paren;
 pub mod process;
+pub mod seq_expr;
 pub mod super_expr;
 pub mod this;
 pub mod unary_ops;
+pub mod yield_expr;
 
 // LocalEntry now includes an Option<String> for an optional nominal type name
 // LocalEntry now includes an Option<OatsType> for union tracking
@@ -167,7 +167,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
             Expr::ProcessUnregister(unregister) => {
                 self.lower_process_unregister_expr(unregister, function, param_map, locals)
             }
-            Expr::Yield(yield_expr) => self.lower_yield_expr(yield_expr, function, param_map, locals),
+            Expr::Yield(yield_expr) => {
+                self.lower_yield_expr(yield_expr, function, param_map, locals)
+            }
             _ => Err(Diagnostic::simple_boxed(
                 Severity::Error,
                 "operation not supported",

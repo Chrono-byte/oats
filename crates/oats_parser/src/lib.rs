@@ -170,13 +170,17 @@ fn format_delimiter_error(err: &DelimiterError, input: &str) -> String {
                 ')' => '(',
                 ']' => '[',
                 '}' => '{',
-                _ => return format!("unclosed delimiter"),
+                _ => return "unclosed delimiter".to_string(),
             }
         )
     };
 
     // Add file location (using generic filename, actual path will be added by compiler layer)
-    msg.push_str(&format!("\n  --> file.oats:{}:{}", closing_line, closing_col + 1));
+    msg.push_str(&format!(
+        "\n  --> file.oats:{}:{}",
+        closing_line,
+        closing_col + 1
+    ));
     msg.push_str("\n   |");
 
     // Show opening delimiter location if available
@@ -210,10 +214,7 @@ fn format_delimiter_error(err: &DelimiterError, input: &str) -> String {
             }
         ));
     } else {
-        msg.push_str(&format!(
-            "\n   | {} unclosed delimiter",
-            caret
-        ));
+        msg.push_str(&format!("\n   | {} unclosed delimiter", caret));
     }
 
     msg
@@ -321,12 +322,14 @@ fn module_parser<'a>() -> impl Parser<'a, &'a str, Module> + 'a {
     let expr_impl = expr::expr_parser(
         expr.clone(), // Pass `expr` placeholder for self-recursion
         stmt.clone(), // Pass `stmt` placeholder
-    ).boxed();
+    )
+    .boxed();
     //    ...and how we pass `stmt` AND `expr` to `stmt_parser`.
     let stmt_impl = stmt::stmt_parser(
         stmt.clone(), // Pass `stmt` placeholder for self-recursion
         expr.clone(), // Pass `expr` placeholder
-    ).boxed();
+    )
+    .boxed();
 
     // 3. Connect the implementations back to the placeholders.
     stmt.define(stmt_impl);
@@ -407,7 +410,10 @@ mod tests {
         }
         input.push_str("; }");
         let result = parse_module(&input);
-        assert!(result.is_ok(), "Long additive chain should parse without stack overflow");
+        assert!(
+            result.is_ok(),
+            "Long additive chain should parse without stack overflow"
+        );
     }
 
     #[test]
@@ -419,7 +425,10 @@ mod tests {
         }
         input.push_str("; }");
         let result = parse_module(&input);
-        assert!(result.is_ok(), "Long logical OR chain should parse without stack overflow");
+        assert!(
+            result.is_ok(),
+            "Long logical OR chain should parse without stack overflow"
+        );
     }
 
     #[test]
@@ -431,7 +440,10 @@ mod tests {
         }
         input.push_str("; }");
         let result = parse_module(&input);
-        assert!(result.is_ok(), "Long logical AND chain should parse without stack overflow");
+        assert!(
+            result.is_ok(),
+            "Long logical AND chain should parse without stack overflow"
+        );
     }
 
     #[test]
@@ -443,7 +455,10 @@ mod tests {
         }
         input.push_str("; }");
         let result = parse_module(&input);
-        assert!(result.is_ok(), "Long bitwise OR chain should parse without stack overflow");
+        assert!(
+            result.is_ok(),
+            "Long bitwise OR chain should parse without stack overflow"
+        );
     }
 
     #[test]
@@ -461,7 +476,10 @@ mod tests {
         }
         input.push_str("; }");
         let result = parse_module(&input);
-        assert!(result.is_ok(), "Mixed operator chain should parse without stack overflow");
+        assert!(
+            result.is_ok(),
+            "Mixed operator chain should parse without stack overflow"
+        );
     }
 
     #[test]
@@ -476,7 +494,10 @@ mod tests {
             input.push_str(" }");
         }
         let result = parse_module(&input);
-        assert!(result.is_ok(), "Deep block nesting should parse without stack overflow");
+        assert!(
+            result.is_ok(),
+            "Deep block nesting should parse without stack overflow"
+        );
     }
 
     #[test]
@@ -488,7 +509,10 @@ mod tests {
         }
         input.push_str(";");
         let result = parse_module(&input);
-        assert!(result.is_ok(), "Long union type should parse without stack overflow");
+        assert!(
+            result.is_ok(),
+            "Long union type should parse without stack overflow"
+        );
     }
 
     #[test]
@@ -500,7 +524,10 @@ mod tests {
         }
         input.push_str(";");
         let result = parse_module(&input);
-        assert!(result.is_ok(), "Deep array type should parse without stack overflow");
+        assert!(
+            result.is_ok(),
+            "Deep array type should parse without stack overflow"
+        );
     }
 
     #[test]
@@ -516,7 +543,10 @@ mod tests {
         }
         input.push_str("; }");
         let result = parse_module(&input);
-        assert!(result.is_ok(), "Complex expression with calls and members should parse without stack overflow");
+        assert!(
+            result.is_ok(),
+            "Complex expression with calls and members should parse without stack overflow"
+        );
     }
 
     #[test]
@@ -528,6 +558,9 @@ mod tests {
         }
         input.push_str("; }");
         let result = parse_module(&input);
-        assert!(result.is_ok(), "Exponentiation chain should parse without stack overflow");
+        assert!(
+            result.is_ok(),
+            "Exponentiation chain should parse without stack overflow"
+        );
     }
 }

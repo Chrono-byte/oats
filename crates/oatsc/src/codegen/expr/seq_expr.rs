@@ -50,4 +50,3 @@ impl<'a> CodeGen<'a> {
         self.lower_expr(&seq.exprs[seq.exprs.len() - 1], function, param_map, locals)
     }
 }
-

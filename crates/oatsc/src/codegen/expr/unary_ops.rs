@@ -199,7 +199,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 let _ = self.lower_expr(&unary.arg, function, param_map, locals)?;
                 // Return true (1) to indicate successful deletion
                 // Note: In JavaScript, delete returns a boolean
-                Ok(self.context.bool_type().const_int(1, false).as_basic_value_enum())
+                Ok(self
+                    .context
+                    .bool_type()
+                    .const_int(1, false)
+                    .as_basic_value_enum())
             }
             _ => Err(Diagnostic::simple_boxed(
                 Severity::Error,

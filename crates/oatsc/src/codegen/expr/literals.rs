@@ -541,7 +541,8 @@ pub fn lower_object<'a>(
                 // For statically known class types, we can copy all fields at compile time
 
                 // Lower the spread expression to get the source object
-                let spread_obj_val = codegen.lower_expr(&spread.expr, function, param_map, locals)?;
+                let spread_obj_val =
+                    codegen.lower_expr(&spread.expr, function, param_map, locals)?;
                 let spread_obj_ptr = if let BasicValueEnum::PointerValue(pv) = spread_obj_val {
                     pv
                 } else {
@@ -619,7 +620,11 @@ pub fn lower_object<'a>(
 
                             // Get field pointer
                             let field_i8ptr = codegen
-                                .i8_ptr_from_offset_i64(spread_obj_ptr, offset, "spread_field_i8ptr")
+                                .i8_ptr_from_offset_i64(
+                                    spread_obj_ptr,
+                                    offset,
+                                    "spread_field_i8ptr",
+                                )
                                 .map_err(|_| Diagnostic::error("operation failed"))?;
 
                             // Load field value based on type
@@ -629,7 +634,9 @@ pub fn lower_object<'a>(
                                         .builder
                                         .build_pointer_cast(
                                             field_i8ptr,
-                                            codegen.context.ptr_type(inkwell::AddressSpace::default()),
+                                            codegen
+                                                .context
+                                                .ptr_type(inkwell::AddressSpace::default()),
                                             "f64_ptr_cast",
                                         )
                                         .map_err(|_| Diagnostic::error("LLVM builder error"))?;
@@ -642,10 +649,15 @@ pub fn lower_object<'a>(
                                 crate::types::OatsType::String
                                 | crate::types::OatsType::NominalStruct(_)
                                 | crate::types::OatsType::Array(_) => {
-                                    let slot_ptr_ty = codegen.context.ptr_type(inkwell::AddressSpace::default());
+                                    let slot_ptr_ty =
+                                        codegen.context.ptr_type(inkwell::AddressSpace::default());
                                     let slot_ptr = codegen
                                         .builder
-                                        .build_pointer_cast(field_i8ptr, slot_ptr_ty, "slot_ptr_cast")
+                                        .build_pointer_cast(
+                                            field_i8ptr,
+                                            slot_ptr_ty,
+                                            "slot_ptr_cast",
+                                        )
                                         .map_err(|_| Diagnostic::error("operation failed"))?;
                                     let loaded = codegen
                                         .builder
@@ -663,14 +675,23 @@ pub fn lower_object<'a>(
                                     loaded
                                 }
                                 crate::types::OatsType::Union(_) => {
-                                    let slot_ptr_ty = codegen.context.ptr_type(inkwell::AddressSpace::default());
+                                    let slot_ptr_ty =
+                                        codegen.context.ptr_type(inkwell::AddressSpace::default());
                                     let slot_ptr = codegen
                                         .builder
-                                        .build_pointer_cast(field_i8ptr, slot_ptr_ty, "slot_ptr_cast")
+                                        .build_pointer_cast(
+                                            field_i8ptr,
+                                            slot_ptr_ty,
+                                            "slot_ptr_cast",
+                                        )
                                         .map_err(|_| Diagnostic::error("operation failed"))?;
                                     let boxed = codegen
                                         .builder
-                                        .build_load(codegen.i8ptr_t, slot_ptr, "spread_union_boxed_load")
+                                        .build_load(
+                                            codegen.i8ptr_t,
+                                            slot_ptr,
+                                            "spread_union_boxed_load",
+                                        )
                                         .map_err(|_| Diagnostic::error("operation failed"))?;
                                     if let BasicValueEnum::PointerValue(boxed_ptr) = boxed {
                                         // Increment refcount for union boxed values
@@ -691,7 +712,10 @@ pub fn lower_object<'a>(
                                 _ => {
                                     return Err(Diagnostic::simple_with_span_boxed(
                                         Severity::Error,
-                                        format!("unsupported field type in spread for field '{}'", field_name),
+                                        format!(
+                                            "unsupported field type in spread for field '{}'",
+                                            field_name
+                                        ),
                                         spread.span.start,
                                     ));
                                 }

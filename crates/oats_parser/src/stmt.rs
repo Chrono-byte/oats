@@ -381,7 +381,11 @@ fn interface_member_parser<'a>() -> impl Parser<'a, &'a str, InterfaceMember> + 
             .or_not()
             .then(common::ident_parser())
             .then(just("?").padded().or_not())
-            .then(just(":").padded().ignore_then(super::types::ts_type_parser()))
+            .then(
+                just(":")
+                    .padded()
+                    .ignore_then(super::types::ts_type_parser()),
+            )
             .then_ignore(just(";").padded().or_not())
             .map_with(|(((readonly, ident), optional), ty), extra| {
                 InterfaceMember::Property(InterfaceProperty {
@@ -396,7 +400,11 @@ fn interface_member_parser<'a>() -> impl Parser<'a, &'a str, InterfaceMember> + 
         common::ident_parser()
             .then(just("?").padded().or_not())
             .then(common::param_list_parser())
-            .then(just(":").padded().ignore_then(super::types::ts_type_parser()))
+            .then(
+                just(":")
+                    .padded()
+                    .ignore_then(super::types::ts_type_parser()),
+            )
             .then_ignore(just(";").padded().or_not())
             .map_with(|(((ident, optional), params), return_type), extra| {
                 InterfaceMember::Method(InterfaceMethod {
@@ -411,9 +419,17 @@ fn interface_member_parser<'a>() -> impl Parser<'a, &'a str, InterfaceMember> + 
         just("[")
             .padded()
             .ignore_then(common::ident_parser())
-            .then(just(":").padded().ignore_then(super::types::ts_type_parser()))
+            .then(
+                just(":")
+                    .padded()
+                    .ignore_then(super::types::ts_type_parser()),
+            )
             .then_ignore(just("]").padded())
-            .then(just(":").padded().ignore_then(super::types::ts_type_parser()))
+            .then(
+                just(":")
+                    .padded()
+                    .ignore_then(super::types::ts_type_parser()),
+            )
             .then_ignore(just(";").padded().or_not())
             .map_with(|((key_name, key_type), value_type), extra| {
                 InterfaceMember::IndexSignature(IndexSignature {

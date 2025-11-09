@@ -3,7 +3,7 @@
 //! to audit and maintain.
 
 use libc::{c_char, size_t};
-use std::ffi::CStr;
+use std::ffi::{CStr, CString};
 
 use crate::*;
 
@@ -26,26 +26,6 @@ pub extern "C" fn collector_collect_now() {
     let c = init_collector();
     let roots = c.drain_now();
     crate::collector::Collector::process_roots(&roots);
-}
-
-// collector_test_enqueue is provided under the feature gate by the original
-// file; keep it here as well.
-#[cfg(feature = "collector-test")]
-#[unsafe(no_mangle)]
-pub extern "C" fn collector_test_enqueue() {
-    // body moved from original lib.rs
-    let size = std::mem::size_of::<u64>() * 2;
-    let mem = runtime_malloc(size as size_t) as *mut u8;
-    if mem.is_null() {
-        return;
-    }
-    unsafe {
-        let header_ptr = mem as *mut u64;
-        *header_ptr = make_heap_header(1);
-        let second = mem.add(std::mem::size_of::<u64>()) as *mut u64;
-        *second = 0u64;
-    }
-    add_root_candidate(mem as *mut c_void);
 }
 
 /// # Safety

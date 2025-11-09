@@ -67,4 +67,3 @@ impl<'a> CodeGen<'a> {
         self.lower_arrow_expr(&arrow_expr, function, param_map, locals)
     }
 }
-

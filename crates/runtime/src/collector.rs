@@ -613,7 +613,7 @@ impl Collector {
                                     if crate::is_plausible_addr(dtor_addr) {
                                         // Additional validation: check alignment
                                         const MIN_FN_ALIGN: usize = 1;
-                                        if (dtor_addr % MIN_FN_ALIGN) == 0 {
+                                        if dtor_addr.is_multiple_of(MIN_FN_ALIGN) {
                                             if crate::COLLECTOR_LOG.load(Ordering::Relaxed) {
                                                 let _ = io::stderr().write_all(
                                                     format!(
@@ -628,7 +628,7 @@ impl Collector {
                                             // check provides defense-in-depth but cannot guarantee the pointer is actually executable.
                                             // In practice, destructor pointers are set by the code generator and should be valid.
                                             let dtor: extern "C" fn(*mut std::ffi::c_void) =
-                                                unsafe { std::mem::transmute(dtor_raw) };
+                                                std::mem::transmute(dtor_raw);
                                             dtor(o as *mut std::ffi::c_void);
                                         } else if crate::COLLECTOR_LOG.load(Ordering::Relaxed) {
                                             let _ = io::stderr().write_all(
@@ -970,7 +970,7 @@ impl Collector {
                         if crate::is_plausible_addr(dtor_addr) {
                             // Additional validation: check alignment
                             const MIN_FN_ALIGN: usize = 1;
-                            if (dtor_addr % MIN_FN_ALIGN) == 0 {
+                            if dtor_addr.is_multiple_of(MIN_FN_ALIGN) {
                                 if crate::COLLECTOR_LOG.load(Ordering::Relaxed) {
                                     let _ = io::stderr().write_all(
                                         format!(

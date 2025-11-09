@@ -242,28 +242,34 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     crate::types::OatsType::String
                                     | crate::types::OatsType::NominalStruct(_)
                                     | crate::types::OatsType::Array(_) => {
-                                        let slot_ptr_ty = self.context.ptr_type(AddressSpace::default());
+                                        let slot_ptr_ty =
+                                            self.context.ptr_type(AddressSpace::default());
                                         let slot_ptr = self
                                             .builder
-                                            .build_pointer_cast(field_i8ptr, slot_ptr_ty, "slot_ptr_cast")
+                                            .build_pointer_cast(
+                                                field_i8ptr,
+                                                slot_ptr_ty,
+                                                "slot_ptr_cast",
+                                            )
                                             .map_err(|_| Diagnostic::error("operation failed"))?;
-                                        let loaded = self
+                                        
+                                        self
                                             .builder
                                             .build_load(self.i8ptr_t, slot_ptr, "field_load")
-                                            .map_err(|_| Diagnostic::error("operation failed"))?;
-                                        loaded
+                                            .map_err(|_| Diagnostic::error("operation failed"))?
                                     }
                                     _ => {
                                         return Err(Diagnostic::simple_with_span_boxed(
                                             Severity::Error,
-                                            format!("compound assignment not supported for field type"),
+                                            "compound assignment not supported for field type".to_string(),
                                             assign.span.start,
                                         ));
                                     }
                                 };
 
                                 // Lower right-hand side
-                                let rhs_val = self.lower_expr(&assign.right, function, param_map, locals)?;
+                                let rhs_val =
+                                    self.lower_expr(&assign.right, function, param_map, locals)?;
 
                                 // Convert compound assignment operator to binary operator
                                 let bin_op = match assign.op {
@@ -303,7 +309,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                     self.context.ptr_type(AddressSpace::default()),
                                                     "f64_ptr_cast",
                                                 )
-                                                .map_err(|_| Diagnostic::error("LLVM builder error"))?;
+                                                .map_err(|_| {
+                                                    Diagnostic::error("LLVM builder error")
+                                                })?;
                                             let _ = self.builder.build_store(f64_ptr, fv);
                                             return Ok(result);
                                         } else {
@@ -318,17 +326,26 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     | crate::types::OatsType::NominalStruct(_)
                                     | crate::types::OatsType::Array(_) => {
                                         if let BasicValueEnum::PointerValue(new_pv) = result {
-                                            let slot_ptr_ty = self.context.ptr_type(AddressSpace::default());
+                                            let slot_ptr_ty =
+                                                self.context.ptr_type(AddressSpace::default());
                                             let slot_ptr = self
                                                 .builder
-                                                .build_pointer_cast(field_i8ptr, slot_ptr_ty, "slot_ptr_cast")
-                                                .map_err(|_| Diagnostic::error("operation failed"))?;
+                                                .build_pointer_cast(
+                                                    field_i8ptr,
+                                                    slot_ptr_ty,
+                                                    "slot_ptr_cast",
+                                                )
+                                                .map_err(|_| {
+                                                    Diagnostic::error("operation failed")
+                                                })?;
 
                                             // Load old value for RC decrement
                                             let old_val = self
                                                 .builder
                                                 .build_load(self.i8ptr_t, slot_ptr, "old_field_val")
-                                                .map_err(|_| Diagnostic::error("operation failed"))?;
+                                                .map_err(|_| {
+                                                    Diagnostic::error("operation failed")
+                                                })?;
 
                                             // Store new value
                                             let _ = self.builder.build_store(slot_ptr, result);
@@ -337,15 +354,27 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             let rc_inc = self.get_rc_inc();
                                             let _ = self
                                                 .builder
-                                                .build_call(rc_inc, &[new_pv.into()], "rc_inc_new_field")
-                                                .map_err(|_| Diagnostic::error("operation failed"))?;
+                                                .build_call(
+                                                    rc_inc,
+                                                    &[new_pv.into()],
+                                                    "rc_inc_new_field",
+                                                )
+                                                .map_err(|_| {
+                                                    Diagnostic::error("operation failed")
+                                                })?;
 
                                             if let BasicValueEnum::PointerValue(old_pv) = old_val {
                                                 let rc_dec = self.get_rc_dec();
                                                 let _ = self
                                                     .builder
-                                                    .build_call(rc_dec, &[old_pv.into()], "rc_dec_old_field")
-                                                    .map_err(|_| Diagnostic::error("operation failed"))?;
+                                                    .build_call(
+                                                        rc_dec,
+                                                        &[old_pv.into()],
+                                                        "rc_dec_old_field",
+                                                    )
+                                                    .map_err(|_| {
+                                                        Diagnostic::error("operation failed")
+                                                    })?;
                                             }
 
                                             return Ok(result);
@@ -360,7 +389,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     _ => {
                                         return Err(Diagnostic::simple_with_span_boxed(
                                             Severity::Error,
-                                            format!("compound assignment not supported for field type"),
+                                            "compound assignment not supported for field type".to_string(),
                                             assign.span.start,
                                         ));
                                     }
@@ -368,7 +397,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             } else {
                                 return Err(Diagnostic::simple_with_span_boxed(
                                     Severity::Error,
-                                    format!("field '{}' not found in class '{}'", field_name, class_name),
+                                    format!(
+                                        "field '{}' not found in class '{}'",
+                                        field_name, class_name
+                                    ),
                                     assign.span.start,
                                 ));
                             }
@@ -449,22 +481,24 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 )
                             {
                                 // Look up field by name
-                                if let Some((idx, (_name, ty))) = fields
-                                    .iter()
-                                    .enumerate()
-                                    .find(|(_, (name, _))| name == &s)
+                                if let Some((idx, (_name, ty))) =
+                                    fields.iter().enumerate().find(|(_, (name, _))| name == &s)
                                 {
                                     (idx, ty.clone())
                                 } else {
                                     return Err(Diagnostic::simple_with_span_boxed(
                                         Severity::Error,
-                                        format!("field '{}' not found in class '{}'", s, class_name),
+                                        format!(
+                                            "field '{}' not found in class '{}'",
+                                            s, class_name
+                                        ),
                                         assign.span.start,
                                     ));
                                 }
                             } else {
                                 // Try to evaluate as integer literal (field index)
-                                let idx_val = self.lower_expr(computed_expr, function, param_map, locals)?;
+                                let idx_val =
+                                    self.lower_expr(computed_expr, function, param_map, locals)?;
                                 let idx_i64 = match idx_val {
                                     BasicValueEnum::IntValue(iv) => self
                                         .builder
@@ -485,16 +519,17 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
                                 if let Some(const_idx) = idx_i64.get_zero_extended_constant() {
                                     let idx_usize = const_idx as usize;
-                                    if let Some((idx, (_name, ty))) = fields
-                                        .iter()
-                                        .enumerate()
-                                        .find(|(i, _)| *i == idx_usize)
+                                    if let Some((idx, (_name, ty))) =
+                                        fields.iter().enumerate().find(|(i, _)| *i == idx_usize)
                                     {
                                         (idx, ty.clone())
                                     } else {
                                         return Err(Diagnostic::simple_with_span_boxed(
                                             Severity::Error,
-                                            format!("field index {} out of bounds for class '{}'", idx_usize, class_name),
+                                            format!(
+                                                "field index {} out of bounds for class '{}'",
+                                                idx_usize, class_name
+                                            ),
                                             assign.span.start,
                                         ));
                                     }
@@ -568,16 +603,16 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 .builder
                                 .build_pointer_cast(field_i8ptr, slot_ptr_ty, "slot_ptr_cast")
                                 .map_err(|_| Diagnostic::error("operation failed"))?;
-                            let loaded = self
+                            
+                            self
                                 .builder
                                 .build_load(self.i8ptr_t, slot_ptr, "field_load")
-                                .map_err(|_| Diagnostic::error("operation failed"))?;
-                            loaded
+                                .map_err(|_| Diagnostic::error("operation failed"))?
                         }
                         _ => {
                             return Err(Diagnostic::simple_with_span_boxed(
                                 Severity::Error,
-                                format!("compound assignment not supported for field type"),
+                                "compound assignment not supported for field type".to_string(),
                                 assign.span.start,
                             ));
                         }
@@ -681,7 +716,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         _ => {
                             return Err(Diagnostic::simple_with_span_boxed(
                                 Severity::Error,
-                                format!("compound assignment not supported for field type"),
+                                "compound assignment not supported for field type".to_string(),
                                 assign.span.start,
                             ));
                         }

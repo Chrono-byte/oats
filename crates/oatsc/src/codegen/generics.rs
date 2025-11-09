@@ -20,7 +20,7 @@ impl<'a> CodeGen<'a> {
     pub fn specialize_generic(
         &self,
         type_params: &[crate::types::OatsType],
-        args: &[oats_ast::Expr],
+        _args: &[oats_ast::Expr],
     ) -> crate::diagnostics::DiagnosticResult<inkwell::values::BasicValueEnum<'a>> {
         if type_params.is_empty() {
             return Err(Diagnostic::simple_boxed(

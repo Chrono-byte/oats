@@ -132,15 +132,24 @@ impl<'a> CodeGen<'a> {
         let state_ptr = state_param.into_pointer_value();
 
         // Save live locals to state (similar to async await)
-        if let Some(live_sets) = self.generator_yield_live_sets.borrow().as_ref() {
-            if (yield_idx as usize) <= live_sets.len() {
+        if let Some(live_sets) = self.generator_yield_live_sets.borrow().as_ref()
+            && (yield_idx as usize) <= live_sets.len() {
                 let live_set = &live_sets[(yield_idx - 1) as usize];
-                if let Some(local_name_to_slot) = self.generator_local_name_to_slot.borrow().as_ref() {
+                if let Some(local_name_to_slot) =
+                    self.generator_local_name_to_slot.borrow().as_ref()
+                {
                     for live_name in live_set {
                         if let Some(slot_idx) = local_name_to_slot.get(live_name) {
                             // Find the local in the locals stack
-                            if let Some((local_ptr, local_ty, _init, _is_const, _is_weak, _nominal, _oats_type)) =
-                                self.find_local(locals, live_name)
+                            if let Some((
+                                local_ptr,
+                                local_ty,
+                                _init,
+                                _is_const,
+                                _is_weak,
+                                _nominal,
+                                _oats_type,
+                            )) = self.find_local(locals, live_name)
                             {
                                 // Load local value
                                 let local_val = self
@@ -162,22 +171,26 @@ impl<'a> CodeGen<'a> {
                                 .map_err(|_| Diagnostic::error("gep failed"))?;
 
                                 // Store to state slot
-                                let slot_ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+                                let slot_ptr_ty =
+                                    self.context.ptr_type(inkwell::AddressSpace::default());
                                 let slot_ptr = self
                                     .builder
                                     .build_pointer_cast(slot_i8ptr, slot_ptr_ty, "slot_ptr")
                                     .map_err(|_| Diagnostic::error("pointer cast failed"))?;
 
                                 match local_ty {
-                                    inkwell::types::BasicTypeEnum::FloatType(ft) => {
+                                    inkwell::types::BasicTypeEnum::FloatType(_ft) => {
                                         let f64_ptr = self
                                             .builder
                                             .build_pointer_cast(
                                                 slot_ptr,
-                                                self.context.ptr_type(inkwell::AddressSpace::default()),
+                                                self.context
+                                                    .ptr_type(inkwell::AddressSpace::default()),
                                                 "f64_ptr",
                                             )
-                                            .map_err(|_| Diagnostic::error("f64 ptr cast failed"))?;
+                                            .map_err(|_| {
+                                                Diagnostic::error("f64 ptr cast failed")
+                                            })?;
                                         let _ = self
                                             .builder
                                             .build_store(f64_ptr, local_val)
@@ -189,7 +202,8 @@ impl<'a> CodeGen<'a> {
                                             .builder
                                             .build_pointer_cast(
                                                 slot_ptr,
-                                                self.context.ptr_type(inkwell::AddressSpace::default()),
+                                                self.context
+                                                    .ptr_type(inkwell::AddressSpace::default()),
                                                 "ptr_ptr",
                                             )
                                             .map_err(|_| Diagnostic::error("ptr cast failed"))?;
@@ -204,7 +218,6 @@ impl<'a> CodeGen<'a> {
                     }
                 }
             }
-        }
 
         // Store resume index to state field (offset 8)
         let state_addr_int = self
@@ -330,10 +343,9 @@ impl<'a> CodeGen<'a> {
                 fn_ptr_ty,
                 "next_fn_ptr_cast",
             )
-            .map_err(|_| Diagnostic::simple_boxed(
-                crate::diagnostics::Severity::Error,
-                "cast next fn failed",
-            ))?;
+            .map_err(|_| {
+                Diagnostic::simple_boxed(crate::diagnostics::Severity::Error, "cast next fn failed")
+            })?;
 
         // Create a loop that calls the delegated generator's next function
         // Loop structure:
@@ -362,10 +374,9 @@ impl<'a> CodeGen<'a> {
         let _ = self
             .builder
             .build_unconditional_branch(loop_start_bb)
-            .map_err(|_| Diagnostic::simple_boxed(
-                crate::diagnostics::Severity::Error,
-                "branch failed",
-            ))?;
+            .map_err(|_| {
+                Diagnostic::simple_boxed(crate::diagnostics::Severity::Error, "branch failed")
+            })?;
 
         // Loop start: call delegated generator's next function (indirect call)
         self.builder.position_at_end(loop_start_bb);
@@ -377,10 +388,12 @@ impl<'a> CodeGen<'a> {
                 &[delegated_gen_ptr.into(), out_ptr.into()],
                 "delegated_next_call",
             )
-            .map_err(|_| Diagnostic::simple_boxed(
-                crate::diagnostics::Severity::Error,
-                "indirect call failed",
-            ))?;
+            .map_err(|_| {
+                Diagnostic::simple_boxed(
+                    crate::diagnostics::Severity::Error,
+                    "indirect call failed",
+                )
+            })?;
 
         let result_val = if let inkwell::Either::Left(bv) = call_result.try_as_basic_value() {
             if let BasicValueEnum::IntValue(iv) = bv {
@@ -403,21 +416,11 @@ impl<'a> CodeGen<'a> {
         let one = self.i32_t.const_int(1, false);
         let is_done = self
             .builder
-            .build_int_compare(
-                inkwell::IntPredicate::EQ,
-                result_val,
-                zero,
-                "is_done",
-            )
+            .build_int_compare(inkwell::IntPredicate::EQ, result_val, zero, "is_done")
             .map_err(|_| Diagnostic::error("compare failed"))?;
         let is_yielded = self
             .builder
-            .build_int_compare(
-                inkwell::IntPredicate::EQ,
-                result_val,
-                one,
-                "is_yielded",
-            )
+            .build_int_compare(inkwell::IntPredicate::EQ, result_val, one, "is_yielded")
             .map_err(|_| Diagnostic::error("compare failed"))?;
 
         // Branch: if done, go to loop_end; if yielded, go to yield_bb; else continue loop
@@ -437,14 +440,23 @@ impl<'a> CodeGen<'a> {
         self.builder.position_at_end(yield_bb);
 
         // Save live locals to state (same as regular yield)
-        if let Some(live_sets) = self.generator_yield_live_sets.borrow().as_ref() {
-            if (yield_idx as usize) <= live_sets.len() {
+        if let Some(live_sets) = self.generator_yield_live_sets.borrow().as_ref()
+            && (yield_idx as usize) <= live_sets.len() {
                 let live_set = &live_sets[(yield_idx - 1) as usize];
-                if let Some(local_name_to_slot) = self.generator_local_name_to_slot.borrow().as_ref() {
+                if let Some(local_name_to_slot) =
+                    self.generator_local_name_to_slot.borrow().as_ref()
+                {
                     for live_name in live_set {
-                        if let Some(slot_idx) = local_name_to_slot.get(live_name) {
-                            if let Some((local_ptr, local_ty, _init, _is_const, _is_weak, _nominal, _oats_type)) =
-                                self.find_local(locals, live_name)
+                        if let Some(slot_idx) = local_name_to_slot.get(live_name)
+                            && let Some((
+                                local_ptr,
+                                local_ty,
+                                _init,
+                                _is_const,
+                                _is_weak,
+                                _nominal,
+                                _oats_type,
+                            )) = self.find_local(locals, live_name)
                             {
                                 let local_val = self
                                     .builder
@@ -463,22 +475,26 @@ impl<'a> CodeGen<'a> {
                                 }
                                 .map_err(|_| Diagnostic::error("gep failed"))?;
 
-                                let slot_ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+                                let slot_ptr_ty =
+                                    self.context.ptr_type(inkwell::AddressSpace::default());
                                 let slot_ptr = self
                                     .builder
                                     .build_pointer_cast(slot_i8ptr, slot_ptr_ty, "slot_ptr")
                                     .map_err(|_| Diagnostic::error("pointer cast failed"))?;
 
                                 match local_ty {
-                                    inkwell::types::BasicTypeEnum::FloatType(ft) => {
+                                    inkwell::types::BasicTypeEnum::FloatType(_ft) => {
                                         let f64_ptr = self
                                             .builder
                                             .build_pointer_cast(
                                                 slot_ptr,
-                                                self.context.ptr_type(inkwell::AddressSpace::default()),
+                                                self.context
+                                                    .ptr_type(inkwell::AddressSpace::default()),
                                                 "f64_ptr",
                                             )
-                                            .map_err(|_| Diagnostic::error("f64 ptr cast failed"))?;
+                                            .map_err(|_| {
+                                                Diagnostic::error("f64 ptr cast failed")
+                                            })?;
                                         let _ = self
                                             .builder
                                             .build_store(f64_ptr, local_val)
@@ -489,7 +505,8 @@ impl<'a> CodeGen<'a> {
                                             .builder
                                             .build_pointer_cast(
                                                 slot_ptr,
-                                                self.context.ptr_type(inkwell::AddressSpace::default()),
+                                                self.context
+                                                    .ptr_type(inkwell::AddressSpace::default()),
                                                 "ptr_ptr",
                                             )
                                             .map_err(|_| Diagnostic::error("ptr cast failed"))?;
@@ -500,11 +517,9 @@ impl<'a> CodeGen<'a> {
                                     }
                                 }
                             }
-                        }
                     }
                 }
             }
-        }
 
         // Store resume index to state field
         let state_addr_int = self
@@ -544,4 +559,3 @@ impl<'a> CodeGen<'a> {
         Ok(self.i8ptr_t.const_null().as_basic_value_enum())
     }
 }
-

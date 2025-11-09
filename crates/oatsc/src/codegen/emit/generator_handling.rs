@@ -22,12 +22,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 Expr::Bin(b) => contains_yield_expr(&b.left) || contains_yield_expr(&b.right),
                 Expr::Unary(u) => contains_yield_expr(&u.arg),
                 Expr::Call(c) => {
-                    if let Callee::Expr(e) = &c.callee {
-                        if contains_yield_expr(e) {
+                    if let Callee::Expr(e) = &c.callee
+                        && contains_yield_expr(e) {
                             return true;
                         }
-                    }
-                    c.args.iter().any(|a| contains_yield_expr(a))
+                    c.args.iter().any(contains_yield_expr)
                 }
                 Expr::Member(m) => {
                     contains_yield_expr(&m.obj)
@@ -40,12 +39,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 }
                 Expr::Assign(a) => contains_yield_expr(&a.right),
                 Expr::Paren(p) => contains_yield_expr(&p.expr),
-                Expr::Array(arr) => arr.elems.iter().flatten().any(|e| contains_yield_expr(e)),
+                Expr::Array(arr) => arr.elems.iter().flatten().any(contains_yield_expr),
                 Expr::New(n) => {
-                    contains_yield_expr(&n.callee)
-                        || n.args.iter().any(|a| contains_yield_expr(a))
+                    contains_yield_expr(&n.callee) || n.args.iter().any(contains_yield_expr)
                 }
-                Expr::Seq(s) => s.exprs.iter().any(|e| contains_yield_expr(e)),
+                Expr::Seq(s) => s.exprs.iter().any(contains_yield_expr),
                 _ => false,
             }
         }
@@ -53,30 +51,32 @@ impl<'a> crate::codegen::CodeGen<'a> {
         fn contains_yield_stmt(stmt: &Stmt) -> bool {
             match stmt {
                 Stmt::ExprStmt(es) => contains_yield_expr(&es.expr),
-                Stmt::Return(r) => r.arg.as_ref().map_or(false, |e| contains_yield_expr(e)),
-                Stmt::VarDecl(vd) => vd.decls.iter().any(|d| {
-                    d.init.as_ref().map_or(false, |e| contains_yield_expr(e))
-                }),
+                Stmt::Return(r) => r.arg.as_ref().is_some_and(contains_yield_expr),
+                Stmt::VarDecl(vd) => vd
+                    .decls
+                    .iter()
+                    .any(|d| d.init.as_ref().is_some_and(contains_yield_expr)),
                 Stmt::If(if_stmt) => {
                     contains_yield_expr(&if_stmt.test)
                         || contains_yield_stmt(&if_stmt.cons)
-                        || if_stmt.alt.as_ref().map_or(false, |a| contains_yield_stmt(a))
+                        || if_stmt
+                            .alt
+                            .as_ref()
+                            .is_some_and(|a| contains_yield_stmt(a))
                 }
-                Stmt::While(w) => {
-                    contains_yield_expr(&w.test) || contains_yield_stmt(&w.body)
-                }
+                Stmt::While(w) => contains_yield_expr(&w.test) || contains_yield_stmt(&w.body),
                 Stmt::For(f) => {
-                    (f.init.as_ref().map_or(false, |i| match i {
+                    (f.init.as_ref().is_some_and(|i| match i {
                         ForInit::Expr(e) => contains_yield_expr(e),
-                        ForInit::VarDecl(vd) => vd.decls.iter().any(|d| {
-                            d.init.as_ref().map_or(false, |e| contains_yield_expr(e))
-                        }),
-                    }))
-                        || f.test.as_ref().map_or(false, |e| contains_yield_expr(e))
-                        || f.update.as_ref().map_or(false, |e| contains_yield_expr(e))
+                        ForInit::VarDecl(vd) => vd
+                            .decls
+                            .iter()
+                            .any(|d| d.init.as_ref().is_some_and(contains_yield_expr)),
+                    })) || f.test.as_ref().is_some_and(contains_yield_expr)
+                        || f.update.as_ref().is_some_and(contains_yield_expr)
                         || contains_yield_stmt(&f.body)
                 }
-                Stmt::Block(b) => b.stmts.iter().any(|s| contains_yield_stmt(s)),
+                Stmt::Block(b) => b.stmts.iter().any(contains_yield_stmt),
                 _ => false,
             }
         }
@@ -274,7 +274,6 @@ impl<'a> crate::codegen::CodeGen<'a> {
         function: FunctionValue<'a>,
         entry: inkwell::basic_block::BasicBlock<'a>,
     ) -> crate::diagnostics::DiagnosticResult<FunctionValue<'a>> {
-
         // Generators return a generator object (i8* pointer to generator state)
         // The generator state contains the function's state machine
 
@@ -360,31 +359,33 @@ impl<'a> crate::codegen::CodeGen<'a> {
         let state_ptr = state_param.into_pointer_value();
 
         // Read state u32 at offset 8
-        let state_addr_int = match self
-            .builder
-            .build_ptr_to_int(state_ptr, self.i64_t, "state_addr")
-        {
-            Ok(v) => v,
-            Err(_) => {
-                return Err(crate::diagnostics::Diagnostic::simple_boxed(
-                    Severity::Error,
-                    "ptr_to_int failed in next",
-                ));
-            }
-        };
+        let state_addr_int =
+            match self
+                .builder
+                .build_ptr_to_int(state_ptr, self.i64_t, "state_addr")
+            {
+                Ok(v) => v,
+                Err(_) => {
+                    return Err(crate::diagnostics::Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "ptr_to_int failed in next",
+                    ));
+                }
+            };
         let state_off = self.i64_t.const_int(8, false);
-        let state_field_int = match self
-            .builder
-            .build_int_add(state_addr_int, state_off, "state_field_addr")
-        {
-            Ok(v) => v,
-            Err(_) => {
-                return Err(crate::diagnostics::Diagnostic::simple_boxed(
-                    Severity::Error,
-                    "int_add failed in next",
-                ));
-            }
-        };
+        let state_field_int =
+            match self
+                .builder
+                .build_int_add(state_addr_int, state_off, "state_field_addr")
+            {
+                Ok(v) => v,
+                Err(_) => {
+                    return Err(crate::diagnostics::Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "int_add failed in next",
+                    ));
+                }
+            };
         let state_field_ptr = match self.builder.build_int_to_ptr(
             state_field_int,
             self.context.ptr_type(inkwell::AddressSpace::default()),
@@ -418,12 +419,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
         let is_zero = self
             .builder
-            .build_int_compare(
-                inkwell::IntPredicate::EQ,
-                state_val,
-                zero_state,
-                "is_zero",
-            )
+            .build_int_compare(inkwell::IntPredicate::EQ, state_val, zero_state, "is_zero")
             .map_err(|_| {
                 crate::diagnostics::Diagnostic::simple_boxed(
                     Severity::Error,
@@ -450,7 +446,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
         self.builder.position_at_end(dispatch_bb);
 
         // Build cases vector for switch
-        let mut cases: Vec<(inkwell::values::IntValue<'a>, inkwell::basic_block::BasicBlock<'a>)> = Vec::new();
+        let mut cases: Vec<(
+            inkwell::values::IntValue<'a>,
+            inkwell::basic_block::BasicBlock<'a>,
+        )> = Vec::new();
         for (i, resume_bb) in resume_blocks.iter().enumerate() {
             let case_val = self.i32_t.const_int((i + 1) as u64, false);
             cases.push((case_val, *resume_bb));
@@ -568,7 +567,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     // Cast slot_ptr to generic pointer type for loading
                     let f64_ptr = self
                         .builder
-                        .build_pointer_cast(slot_ptr, self.context.ptr_type(inkwell::AddressSpace::default()), "f64_ptr")
+                        .build_pointer_cast(
+                            slot_ptr,
+                            self.context.ptr_type(inkwell::AddressSpace::default()),
+                            "f64_ptr",
+                        )
                         .map_err(|_| {
                             crate::diagnostics::Diagnostic::simple_boxed(
                                 Severity::Error,
@@ -590,7 +593,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     // Pointer types
                     let ptr_ptr = self
                         .builder
-                        .build_pointer_cast(slot_ptr, self.context.ptr_type(inkwell::AddressSpace::default()), "ptr_ptr")
+                        .build_pointer_cast(
+                            slot_ptr,
+                            self.context.ptr_type(inkwell::AddressSpace::default()),
+                            "ptr_ptr",
+                        )
                         .map_err(|_| {
                             crate::diagnostics::Diagnostic::simple_boxed(
                                 Severity::Error,
@@ -599,7 +606,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         })?;
                     let ptr_ptr_typed = self
                         .builder
-                        .build_pointer_cast(ptr_ptr, self.context.ptr_type(inkwell::AddressSpace::default()), "ptr_ptr_typed")
+                        .build_pointer_cast(
+                            ptr_ptr,
+                            self.context.ptr_type(inkwell::AddressSpace::default()),
+                            "ptr_ptr_typed",
+                        )
                         .map_err(|_| {
                             crate::diagnostics::Diagnostic::simple_boxed(
                                 Severity::Error,
@@ -621,15 +632,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             let _ = self.builder.build_store(param_alloca, loaded);
             locals_stack[0].insert(
                 param_name,
-                (
-                    param_alloca,
-                    llvm_ty,
-                    true,
-                    false,
-                    false,
-                    None,
-                    None,
-                ),
+                (param_alloca, llvm_ty, true, false, false, None, None),
             );
         }
 
@@ -645,10 +648,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
         // Split function body at yield points and lower each segment
         if let Some(body) = &impl_decl.body {
-
             // Lower body segments: from start to first yield, between yields, and after last yield
             let mut stmt_idx = 0;
-            let mut yield_idx = 0;
+            let yield_idx = 0;
 
             // Lower initial segment (before first yield)
             while stmt_idx < body.stmts.len() {
@@ -670,9 +672,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
             if yield_idx < yield_positions.len() && stmt_idx == yield_positions[yield_idx] {
                 // Lower the statement containing the yield
                 // The yield expression will save state and return
-                let _ = self.lower_stmt(&body.stmts[stmt_idx], next_f, &param_map, &mut locals_stack);
-                yield_idx += 1;
-                stmt_idx += 1;
+                let _ =
+                    self.lower_stmt(&body.stmts[stmt_idx], next_f, &param_map, &mut locals_stack);
             }
         }
 
@@ -685,15 +686,24 @@ impl<'a> crate::codegen::CodeGen<'a> {
             self.builder.position_at_end(*resume_bb);
 
             // Restore live locals from state
-            if let Some(live_sets) = self.generator_yield_live_sets.borrow().as_ref() {
-                if resume_idx < live_sets.len() {
+            if let Some(live_sets) = self.generator_yield_live_sets.borrow().as_ref()
+                && resume_idx < live_sets.len() {
                     let live_set = &live_sets[resume_idx];
-                    if let Some(local_name_to_slot) = self.generator_local_name_to_slot.borrow().as_ref() {
+                    if let Some(local_name_to_slot) =
+                        self.generator_local_name_to_slot.borrow().as_ref()
+                    {
                         for live_name in live_set {
                             if let Some(slot_idx) = local_name_to_slot.get(live_name) {
                                 // Find the local in the locals stack
-                                if let Some((local_ptr, local_ty, _init, _is_const, _is_weak, _nominal, _oats_type)) =
-                                    self.find_local(&locals_stack, live_name)
+                                if let Some((
+                                    local_ptr,
+                                    local_ty,
+                                    _init,
+                                    _is_const,
+                                    _is_weak,
+                                    _nominal,
+                                    _oats_type,
+                                )) = self.find_local(&locals_stack, live_name)
                                 {
                                     // Compute slot offset in state
                                     let slot_offset = 16 + (*slot_idx * 8) as u64;
@@ -714,7 +724,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     })?;
 
                                     // Load from state slot
-                                    let slot_ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+                                    let slot_ptr_ty =
+                                        self.context.ptr_type(inkwell::AddressSpace::default());
                                     let slot_ptr = self
                                         .builder
                                         .build_pointer_cast(slot_i8ptr, slot_ptr_ty, "slot_ptr")
@@ -732,7 +743,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                 .builder
                                                 .build_pointer_cast(
                                                     slot_ptr,
-                                                    self.context.ptr_type(inkwell::AddressSpace::default()),
+                                                    self.context
+                                                        .ptr_type(inkwell::AddressSpace::default()),
                                                     "f64_ptr",
                                                 )
                                                 .map_err(|_| {
@@ -743,7 +755,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                 })?;
                                             // Load the float value - ft is used here to specify the load type
                                             self.builder
-                                                .build_load(ft, f64_ptr, &format!("restore_{}", live_name))
+                                                .build_load(
+                                                    ft,
+                                                    f64_ptr,
+                                                    &format!("restore_{}", live_name),
+                                                )
                                                 .map_err(|_| {
                                                     crate::diagnostics::Diagnostic::simple_boxed(
                                                         Severity::Error,
@@ -757,7 +773,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                 .builder
                                                 .build_pointer_cast(
                                                     slot_ptr,
-                                                        self.context.ptr_type(inkwell::AddressSpace::default()),
+                                                    self.context
+                                                        .ptr_type(inkwell::AddressSpace::default()),
                                                     "ptr_ptr",
                                                 )
                                                 .map_err(|_| {
@@ -767,7 +784,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                     )
                                                 })?;
                                             self.builder
-                                                .build_load(self.i8ptr_t, ptr_ptr, &format!("restore_{}", live_name))
+                                                .build_load(
+                                                    self.i8ptr_t,
+                                                    ptr_ptr,
+                                                    &format!("restore_{}", live_name),
+                                                )
                                                 .map_err(|_| {
                                                     crate::diagnostics::Diagnostic::simple_boxed(
                                                         Severity::Error,
@@ -792,7 +813,6 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         }
                     }
                 }
-            }
 
             // Branch to continuation block
             let cont_bb = cont_blocks[resume_idx];
@@ -830,7 +850,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     // Lower statements in this segment
                     let mut hit_terminator = false;
                     for i in start_pos..end_pos {
-                        if self.lower_stmt(&body.stmts[i], next_f, &param_map, &mut cont_locals_stack)? {
+                        if self.lower_stmt(
+                            &body.stmts[i],
+                            next_f,
+                            &param_map,
+                            &mut cont_locals_stack,
+                        )? {
                             // Terminator found (return, break, etc.)
                             hit_terminator = true;
                             break;
@@ -1094,4 +1119,3 @@ impl<'a> crate::codegen::CodeGen<'a> {
         Ok(function)
     }
 }
-

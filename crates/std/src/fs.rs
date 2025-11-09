@@ -1,9 +1,9 @@
 //! File system operations
 
 use libc::c_char;
+use runtime::heap::{runtime_free, runtime_malloc};
 use std::ffi::{CStr, CString};
 use std::fs;
-use runtime::heap::{runtime_malloc, runtime_free};
 
 /// Read entire file into a string.
 ///
@@ -326,9 +326,7 @@ pub unsafe extern "C" fn oats_std_fs_read_dir(path: *const c_char) -> *mut *mut 
 
     // Allocate array of pointers using runtime allocator for consistency
     let ptr_size = std::mem::size_of::<*mut c_char>();
-    let array_ptr = unsafe {
-        runtime_malloc((count + 1) * ptr_size) as *mut *mut c_char
-    };
+    let array_ptr = runtime_malloc((count + 1) * ptr_size) as *mut *mut c_char;
 
     if array_ptr.is_null() {
         return std::ptr::null_mut();

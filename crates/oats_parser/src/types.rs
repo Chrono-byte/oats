@@ -21,13 +21,21 @@ pub fn ts_type_parser<'a>() -> impl Parser<'a, &'a str, TsType> + 'a {
             tuple_type_parser(ty_clone.clone()).boxed(),
             type_literal_parser(ty_clone.clone()).boxed(),
             function_type_parser(ty_clone.clone()).boxed(),
-            ty_clone.clone().delimited_by(just("(").padded(), just(")").padded()).boxed(),
+            ty_clone
+                .clone()
+                .delimited_by(just("(").padded(), just(")").padded())
+                .boxed(),
         ));
 
         // Primary type: base + array suffixes
         let primary = base_type
             .then(
-                just("[").padded().then(just("]").padded()).repeated().at_most(MAX_TYPE_CHAIN_LENGTH).collect::<Vec<_>>(),
+                just("[")
+                    .padded()
+                    .then(just("]").padded())
+                    .repeated()
+                    .at_most(MAX_TYPE_CHAIN_LENGTH)
+                    .collect::<Vec<_>>(),
             )
             .map_with(|(mut elem_type, array_suffixes), extra| {
                 for _ in array_suffixes {
@@ -134,10 +142,7 @@ fn type_ref_parser<'a>(
                         .collect::<Vec<_>>(),
                 )
                 .then_ignore(just(">").padded())
-                .map(|params| TsTypeParamInstantiation {
-                    params,
-                    span: 0..0,
-                })
+                .map(|params| TsTypeParamInstantiation { params, span: 0..0 })
                 .or_not(),
         )
         .map_with(|(ident, type_params), extra| {

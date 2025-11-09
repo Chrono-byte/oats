@@ -54,7 +54,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
             // Lower RHS (object to iterate over)
             let obj_val = self.lower_expr(&for_in.right, function, param_map, locals_stack)?;
-            let obj_ptr = if let BasicValueEnum::PointerValue(pv) = obj_val {
+            let _obj_ptr = if let BasicValueEnum::PointerValue(pv) = obj_val {
                 pv
             } else {
                 return Err(Diagnostic::simple_with_span_boxed(
@@ -180,12 +180,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             let len_const = self.i64_t.const_int(field_names.len() as u64, false);
             let cmp = self
                 .builder
-                .build_int_compare(
-                    inkwell::IntPredicate::ULT,
-                    cur_idx,
-                    len_const,
-                    "cmp_idx",
-                )
+                .build_int_compare(inkwell::IntPredicate::ULT, cur_idx, len_const, "cmp_idx")
                 .map_err(|_| Diagnostic::error("failed to compare index"))?;
             let _ = self
                 .builder
@@ -270,18 +265,18 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
             Ok(false)
         } else {
-            Err(Diagnostic::error(
-                "for-in loop left-hand side must be a variable declaration",
+            Err(
+                Diagnostic::error("for-in loop left-hand side must be a variable declaration")
+                    .with_code("E1008")
+                    .with_label(crate::diagnostics::Label {
+                        span: crate::diagnostics::Span {
+                            start: for_in.span.start,
+                            end: for_in.span.end,
+                        },
+                        message: "Expected: for (let key in obj)".into(),
+                    })
+                    .into(),
             )
-            .with_code("E1008")
-            .with_label(crate::diagnostics::Label {
-                span: crate::diagnostics::Span {
-                    start: for_in.span.start,
-                    end: for_in.span.end,
-                },
-                message: "Expected: for (let key in obj)".into(),
-            })
-            .into())
         }
     }
 
@@ -296,10 +291,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
             let str_ptr = self
                 .builder
                 .build_global_string_ptr(field_name, "field_name")
-                .map_err(|_| Diagnostic::simple_boxed(
-                    crate::diagnostics::Severity::Error,
-                    "failed to create global string",
-                ))?
+                .map_err(|_| {
+                    Diagnostic::simple_boxed(
+                        crate::diagnostics::Severity::Error,
+                        "failed to create global string",
+                    )
+                })?
                 .as_pointer_value();
             key_strings.push(str_ptr);
         }
@@ -327,12 +324,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     crate::diagnostics::Severity::Error,
                     "array_alloc returned non-pointer",
                 ));
-                }
-            } else {
-                return Err(Diagnostic::simple_boxed(
-                    crate::diagnostics::Severity::Error,
-                    "array_alloc returned void",
-                ));
+            }
+        } else {
+            return Err(Diagnostic::simple_boxed(
+                crate::diagnostics::Severity::Error,
+                "array_alloc returned void",
+            ));
         };
 
         // Create alloca to store array pointer (array_set_ptr needs i8** for potential reallocation)
@@ -363,4 +360,3 @@ impl<'a> crate::codegen::CodeGen<'a> {
         Ok(final_array_ptr)
     }
 }
-

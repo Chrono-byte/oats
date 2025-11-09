@@ -459,10 +459,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     // Exponentiation: use standard library pow function
                     // Declare pow(double, double) -> double if not already declared
                     let pow_fn = self.module.get_function("pow").unwrap_or_else(|| {
-                        let fn_type = self.f64_t.fn_type(
-                            &[self.f64_t.into(), self.f64_t.into()],
-                            false,
-                        );
+                        let fn_type = self
+                            .f64_t
+                            .fn_type(&[self.f64_t.into(), self.f64_t.into()], false);
                         self.module.add_function("pow", fn_type, None)
                     });
 

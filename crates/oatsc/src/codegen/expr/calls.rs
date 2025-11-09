@@ -200,82 +200,80 @@ impl<'a> CodeGen<'a> {
                                         ))?;
                                     }
                                 }
-                            if method_name == "upgrade" {
-                                if !call.args.is_empty() {
-                                    return Err(Diagnostic::simple_boxed(
-                                        Severity::Error,
-                                        "expression lowering failed",
-                                    ))?;
-                                }
-                                if let BasicValueEnum::PointerValue(pv) = obj_val {
-                                    let f = self.get_rc_weak_upgrade();
-                                    let cs = self.builder.build_call(
-                                        f,
-                                        &[pv.into()],
-                                        "rc_weak_upgrade_call",
-                                    );
-                                    if let Ok(cs) = cs
-                                        && let inkwell::Either::Left(bv) =
-                                            cs.try_as_basic_value()
-                                    {
-                                        return Ok(bv);
+                                if method_name == "upgrade" {
+                                    if !call.args.is_empty() {
+                                        return Err(Diagnostic::simple_boxed(
+                                            Severity::Error,
+                                            "expression lowering failed",
+                                        ))?;
                                     }
-                                    return Err(Diagnostic::simple_boxed(
-                                        Severity::Error,
-                                        "upgrade failed",
-                                    ))?;
-                                } else {
-                                    return Err(Diagnostic::simple_boxed(
-                                        Severity::Error,
-                                        "upgrade on non-pointer",
-                                    ))?;
+                                    if let BasicValueEnum::PointerValue(pv) = obj_val {
+                                        let f = self.get_rc_weak_upgrade();
+                                        let cs = self.builder.build_call(
+                                            f,
+                                            &[pv.into()],
+                                            "rc_weak_upgrade_call",
+                                        );
+                                        if let Ok(cs) = cs
+                                            && let inkwell::Either::Left(bv) =
+                                                cs.try_as_basic_value()
+                                        {
+                                            return Ok(bv);
+                                        }
+                                        return Err(Diagnostic::simple_boxed(
+                                            Severity::Error,
+                                            "upgrade failed",
+                                        ))?;
+                                    } else {
+                                        return Err(Diagnostic::simple_boxed(
+                                            Severity::Error,
+                                            "upgrade on non-pointer",
+                                        ))?;
+                                    }
                                 }
-                            }
 
-                            // Lower args and attempt to call a class method if present
-                            let mut call_args: Vec<
-                                inkwell::values::BasicMetadataValueEnum,
-                            > = Vec::new();
-                            call_args.push(obj_val.into());
-                            for a in &call.args {
-                                let val =
-                                    match self.lower_expr(a, function, param_map, locals) {
+                                // Lower args and attempt to call a class method if present
+                                let mut call_args: Vec<inkwell::values::BasicMetadataValueEnum> =
+                                    Vec::new();
+                                call_args.push(obj_val.into());
+                                for a in &call.args {
+                                    let val = match self.lower_expr(a, function, param_map, locals)
+                                    {
                                         Ok(v) => v,
                                         Err(d) => return Err(d)?,
                                     };
-                                call_args.push(val.into());
-                            }
+                                    call_args.push(val.into());
+                                }
 
-                            // Check nominal on local to resolve class method name
-                            if let Some((_, _, _, _, _, nominal_opt, _)) =
-                                self.find_local(locals, &obj_name)
-                                && let Some(nom) = nominal_opt
-                            {
-                                // Try to devirtualize using RTA if available
-                                let method_fn_name = if let Some(ref rta) = self.rta_results
+                                // Check nominal on local to resolve class method name
+                                if let Some((_, _, _, _, _, nominal_opt, _)) =
+                                    self.find_local(locals, &obj_name)
+                                    && let Some(nom) = nominal_opt
                                 {
-                                    if let Some(devirt_target) =
-                                        rta.can_devirtualize(&nom, &method_name)
-                                    {
-                                        devirt_target
+                                    // Try to devirtualize using RTA if available
+                                    let method_fn_name = if let Some(ref rta) = self.rta_results {
+                                        if let Some(devirt_target) =
+                                            rta.can_devirtualize(&nom, &method_name)
+                                        {
+                                            devirt_target
+                                        } else {
+                                            format!("{}_{}", nom, method_name)
+                                        }
                                     } else {
                                         format!("{}_{}", nom, method_name)
-                                    }
-                                } else {
-                                    format!("{}_{}", nom, method_name)
-                                };
+                                    };
 
-                                if let Some(method_fn) =
-                                    self.module.get_function(&method_fn_name)
-                                {
-                                    let cs = match self.builder.build_call(
-                                        method_fn,
-                                        &call_args,
-                                        "class_method_call",
-                                    ) {
-                                        Ok(cs) => cs,
-                                        Err(_) => {
-                                            return Err(Box::new(
+                                    if let Some(method_fn) =
+                                        self.module.get_function(&method_fn_name)
+                                    {
+                                        let cs = match self.builder.build_call(
+                                            method_fn,
+                                            &call_args,
+                                            "class_method_call",
+                                        ) {
+                                            Ok(cs) => cs,
+                                            Err(_) => {
+                                                return Err(Box::new(
                                                 Diagnostic::simple(
                                                     Severity::Error,
                                                     "class method call failed",
@@ -283,20 +281,20 @@ impl<'a> CodeGen<'a> {
                                                 .with_note(format!("Failed to call method '{}' on class '{}'", method_name, nom))
                                                 .with_help(format!("Ensure the method '{}' exists in class '{}'", method_name, nom))
                                             ));
+                                            }
+                                        };
+                                        let either = cs.try_as_basic_value();
+                                        if let inkwell::Either::Left(bv) = either {
+                                            return Ok(bv);
+                                        } else {
+                                            let zero = self.f64_t.const_float(0.0);
+                                            return Ok(zero.as_basic_value_enum());
                                         }
-                                    };
-                                    let either = cs.try_as_basic_value();
-                                    if let inkwell::Either::Left(bv) = either {
-                                        return Ok(bv);
-                                    } else {
-                                        let zero = self.f64_t.const_float(0.0);
-                                        return Ok(zero.as_basic_value_enum());
                                     }
                                 }
-                            }
 
-                            // Fallback: fall through to error (no std handler for locals)
-                            return Err(Box::new(
+                                // Fallback: fall through to error (no std handler for locals)
+                                return Err(Box::new(
                                 Diagnostic::simple(
                                     Severity::Error,
                                     format!("method '{}' not found on object '{}'", method_name, obj_name),

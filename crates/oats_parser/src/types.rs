@@ -8,13 +8,14 @@ use oats_ast::*;
 const MAX_TYPE_CHAIN_LENGTH: usize = 1024;
 
 /// Parser for TypeScript-style types.
-/// Workaround: Clone ty only once and reuse to avoid construction-time cycles.
+/// Uses a single clone of the recursive parser to avoid stack overflow and compilation hangs.
 pub fn ts_type_parser<'a>() -> impl Parser<'a, &'a str, TsType> + 'a {
     recursive(|ty| {
-        // Clone ty ONCE at the top and reuse - this is key to avoiding cycles
-        let ty_clone = ty.clone().boxed();
+        // Clone ty ONCE and reuse - this is the key to avoiding both stack overflow
+        // and compilation hangs. Cloning the recursive parser is cheap (it's just a reference),
+        // but we should only do it once to avoid excessive type inference.
+        let ty_clone = ty.clone();
 
-        // Base type parser - all use the same ty_clone
         let base_type = choice((
             keyword_type_parser().boxed(),
             type_ref_parser(ty_clone.clone()).boxed(),
@@ -27,8 +28,8 @@ pub fn ts_type_parser<'a>() -> impl Parser<'a, &'a str, TsType> + 'a {
                 .boxed(),
         ));
 
-        // Primary type: base + array suffixes
-        let primary = base_type
+    // Primary type: base + array suffixes
+    let primary = base_type
             .then(
                 just("[")
                     .padded()
@@ -48,17 +49,17 @@ pub fn ts_type_parser<'a>() -> impl Parser<'a, &'a str, TsType> + 'a {
             })
             .boxed();
 
-        // Intersection: primary & primary & ...
-        let intersection = primary
-            .clone()
-            .then(
-                just("&")
-                    .padded()
-                    .then(primary)
-                    .repeated()
-                    .at_most(MAX_TYPE_CHAIN_LENGTH)
-                    .collect::<Vec<_>>(),
-            )
+    // Intersection: primary & primary & ...
+    let intersection = primary
+        .clone()
+        .then(
+            just("&")
+                .padded()
+                .then(primary.clone())
+                .repeated()
+                .at_most(MAX_TYPE_CHAIN_LENGTH)
+                .collect::<Vec<_>>(),
+        )
             .map_with(|(first, rest), extra| {
                 if rest.is_empty() {
                     first

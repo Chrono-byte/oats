@@ -84,12 +84,16 @@ impl Collector {
                     Err(_) => continue,
                 };
                 if !guard.is_empty() {
+                    // Batch processing: collect all roots at once
                     let roots: Vec<usize> = guard.drain(..).collect();
                     drop(guard);
                     if crate::COLLECTOR_LOG.load(Ordering::Relaxed) {
-                        let _ =
-                            io::stderr().write_all(b"[oats runtime] collector: processing roots\n");
+                        let _ = io::stderr().write_all(
+                            format!("[oats runtime] collector: processing {} roots\n", roots.len())
+                                .as_bytes(),
+                        );
                     }
+                    // Use the more efficient Bacon's algorithm
                     Self::process_roots_bacon(&roots);
                 }
             }
@@ -108,8 +112,12 @@ impl Collector {
 
     pub fn push_root(&self, ptr: usize) {
         let Ok(mut q) = self.queue.lock() else { return };
+        // Batch roots: only notify if queue was empty to reduce wake-ups
+        let was_empty = q.is_empty();
         q.push(ptr);
-        self.cv.notify_one();
+        if was_empty {
+            self.cv.notify_one();
+        }
     }
 
     pub fn drain_now(&self) -> Vec<usize> {
@@ -517,11 +525,13 @@ impl Collector {
             const GRAY: u8 = 1; // In worklist
             const BLACK: u8 = 2; // Processed
 
-            // Use a per-object color map (simulated with hashmap for now)
-            let mut colors: HashMap<usize, u8> = HashMap::new();
-            let mut worklist: VecDeque<usize> = VecDeque::new();
+            // Pre-allocate with estimated capacity to reduce reallocations
+            let estimated_size = roots.len().max(64);
+            let mut colors: HashMap<usize, u8> = HashMap::with_capacity(estimated_size);
+            let mut worklist: VecDeque<usize> = VecDeque::with_capacity(estimated_size);
 
             // Phase 1: Mark roots and initial reachable objects
+            // Batch process roots to reduce redundant get_object_base calls
             for &r in roots {
                 if r == 0 {
                     continue;
@@ -531,24 +541,29 @@ impl Collector {
                     continue;
                 }
 
+                // Only add to worklist if not already seen (avoid duplicates)
                 if colors.insert(base, GRAY).is_none() {
                     worklist.push_back(base);
                 }
             }
 
             // Phase 2: Concurrent marking
+            // Process worklist efficiently, avoiding redundant color lookups
             while let Some(obj) = worklist.pop_front() {
-                if colors.get(&obj).copied().unwrap_or(WHITE) != GRAY {
-                    continue;
+                // Fast path: skip if already processed (not GRAY)
+                match colors.get(&obj) {
+                    Some(&GRAY) => {
+                        // Process object references
+                        Self::process_object_refs_bacon(obj, &mut colors, &mut worklist);
+                        colors.insert(obj, BLACK);
+                    }
+                    _ => continue, // Already processed or not in worklist
                 }
-
-                // Process object references
-                Self::process_object_refs_bacon(obj, &mut colors, &mut worklist);
-                colors.insert(obj, BLACK);
             }
 
             // Phase 3: Identify garbage (white objects)
-            let mut garbage: Vec<usize> = Vec::new();
+            // Pre-allocate garbage vector with estimated size
+            let mut garbage: Vec<usize> = Vec::with_capacity(colors.len() / 4); // Estimate ~25% garbage
             for (&obj, &color) in &colors {
                 if color == WHITE {
                     garbage.push(obj);

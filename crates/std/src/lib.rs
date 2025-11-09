@@ -12,10 +12,16 @@ pub mod sys;
 // Public API modules
 pub mod console;
 pub mod env;
+pub mod format;
 pub mod fs;
+pub mod hash;
+pub mod io;
+pub mod math;
 pub mod net;
 pub mod path;
 pub mod process;
+pub mod random;
+pub mod string;
 pub mod temporal;
 pub mod time;
 

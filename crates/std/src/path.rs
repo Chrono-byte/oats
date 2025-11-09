@@ -93,3 +93,118 @@ pub unsafe extern "C" fn oats_std_path_is_absolute(path: *const c_char) -> libc:
         0
     }
 }
+
+/// Get directory name from path (caller must free result)
+///
+/// # Safety
+///
+/// `path` must be a valid pointer to a null-terminated C string, or null.
+/// #[oats_export]
+#[no_mangle]
+pub unsafe extern "C" fn oats_std_path_dir_name(path: *const c_char) -> *mut c_char {
+    if path.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    let path_str = match unsafe { CStr::from_ptr(path).to_str() } {
+        Ok(s) => s,
+        Err(_) => return std::ptr::null_mut(),
+    };
+
+    match Path::new(path_str).parent() {
+        Some(parent) => {
+            let parent_str = parent.to_string_lossy();
+            match CString::new(parent_str.as_ref()) {
+                Ok(cstring) => cstring.into_raw(),
+                Err(_) => std::ptr::null_mut(),
+            }
+        }
+        None => std::ptr::null_mut(),
+    }
+}
+
+/// Get file extension (caller must free result)
+///
+/// # Safety
+///
+/// `path` must be a valid pointer to a null-terminated C string, or null.
+/// #[oats_export]
+#[no_mangle]
+pub unsafe extern "C" fn oats_std_path_extension(path: *const c_char) -> *mut c_char {
+    if path.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    let path_str = match unsafe { CStr::from_ptr(path).to_str() } {
+        Ok(s) => s,
+        Err(_) => return std::ptr::null_mut(),
+    };
+
+    match Path::new(path_str).extension() {
+        Some(ext) => {
+            let ext_str = ext.to_string_lossy();
+            match CString::new(ext_str.as_ref()) {
+                Ok(cstring) => cstring.into_raw(),
+                Err(_) => std::ptr::null_mut(),
+            }
+        }
+        None => std::ptr::null_mut(),
+    }
+}
+
+/// Get file stem (filename without extension) (caller must free result)
+///
+/// # Safety
+///
+/// `path` must be a valid pointer to a null-terminated C string, or null.
+/// #[oats_export]
+#[no_mangle]
+pub unsafe extern "C" fn oats_std_path_stem(path: *const c_char) -> *mut c_char {
+    if path.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    let path_str = match unsafe { CStr::from_ptr(path).to_str() } {
+        Ok(s) => s,
+        Err(_) => return std::ptr::null_mut(),
+    };
+
+    match Path::new(path_str).file_stem() {
+        Some(stem) => {
+            let stem_str = stem.to_string_lossy();
+            match CString::new(stem_str.as_ref()) {
+                Ok(cstring) => cstring.into_raw(),
+                Err(_) => std::ptr::null_mut(),
+            }
+        }
+        None => std::ptr::null_mut(),
+    }
+}
+
+/// Normalize a path (caller must free result)
+///
+/// # Safety
+///
+/// `path` must be a valid pointer to a null-terminated C string, or null.
+/// #[oats_export]
+#[no_mangle]
+pub unsafe extern "C" fn oats_std_path_normalize(path: *const c_char) -> *mut c_char {
+    if path.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    let path_str = match unsafe { CStr::from_ptr(path).to_str() } {
+        Ok(s) => s,
+        Err(_) => return std::ptr::null_mut(),
+    };
+
+    let normalized = Path::new(path_str)
+        .components()
+        .collect::<std::path::PathBuf>();
+    let normalized_str = normalized.to_string_lossy();
+
+    match CString::new(normalized_str.as_ref()) {
+        Ok(cstring) => cstring.into_raw(),
+        Err(_) => std::ptr::null_mut(),
+    }
+}

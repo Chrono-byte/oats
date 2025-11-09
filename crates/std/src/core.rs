@@ -22,10 +22,19 @@ impl OatsString {
     }
 
     /// Convert to a Rust string (borrowed)
+    ///
+    /// # Safety
+    ///
+    /// The returned string slice is only valid as long as the `OatsString` is not dropped.
+    /// The underlying string data must remain valid for the lifetime of the returned reference.
     pub fn as_str(&self) -> &str {
-        // This is unsafe and would need proper implementation
-        // For now, this is a placeholder
-        ""
+        unsafe {
+            // String layout: [header: u64][len: u64][data...]
+            // self.ptr points to the data (offset +16 from object base)
+            // The data is null-terminated, so we can use CStr directly
+            let cstr = std::ffi::CStr::from_ptr(self.ptr.as_ptr());
+            cstr.to_str().unwrap_or("")
+        }
     }
 }
 

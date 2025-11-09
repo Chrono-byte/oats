@@ -27,14 +27,22 @@ pub unsafe extern "C" fn rc_inc(p: *mut c_void) {
         }
 
         let header = obj_ptr as *mut AtomicU64;
-        let header_val = (*header).load(Ordering::Relaxed);
-        if (header_val & HEADER_STATIC_BIT) != 0 {
+
+        // Optimized CAS loop: reduce redundant loads by reusing the initial load
+        let mut old_header = (*header).load(Ordering::Relaxed);
+
+        // Early exit for static objects
+        if (old_header & HEADER_STATIC_BIT) != 0 {
             return;
         }
 
+        // Optimized loop: reuse loaded value, only reload on CAS failure
         loop {
-            let old_header = (*header).load(Ordering::Relaxed);
             let rc = old_header & HEADER_RC_MASK;
+            // Overflow protection: don't increment beyond safe limit
+            if rc >= 0x7FFFFFFF {
+                break;
+            }
             let new_rc = rc.wrapping_add(1) & HEADER_RC_MASK;
             let new_header = (old_header & HEADER_FLAGS_MASK) | new_rc;
             match (*header).compare_exchange_weak(
@@ -44,7 +52,14 @@ pub unsafe extern "C" fn rc_inc(p: *mut c_void) {
                 Ordering::Relaxed,
             ) {
                 Ok(_) => break,
-                Err(_) => continue,
+                Err(actual) => {
+                    // Reuse the actual value from CAS failure instead of reloading
+                    old_header = actual;
+                    // Re-check static bit on retry
+                    if (old_header & HEADER_STATIC_BIT) != 0 {
+                        return;
+                    }
+                }
             }
         }
     }
@@ -59,31 +74,43 @@ pub unsafe fn rc_inc_pub(p: *mut c_void) {
 }
 
 /// Resolve the base object pointer from a possibly-offset pointer.
+///
+/// Optimized with better heuristics:
+/// - Most pointers are already at the base (common case)
+/// - String data pointers are at offset +16
+/// - Fast path for aligned pointers that look like valid headers
 #[inline]
 pub(crate) unsafe fn get_object_base(p: *mut c_void) -> *mut c_void {
     if p.is_null() {
         return ptr::null_mut();
     }
     unsafe {
+        // Fast path: check if current pointer looks like a valid header
+        // Most pointers are already at the base, so this avoids the subtraction
         let header = p as *const AtomicU64;
         let header_val = (*header).load(Ordering::Relaxed);
         let rc = header_val & HEADER_RC_MASK;
         let is_static = (header_val & HEADER_STATIC_BIT) != 0;
 
-        if is_static || (rc > 0 && rc < 10000 && header_val > 256) {
+        // Heuristic: if it looks like a valid header (has reasonable RC or is static),
+        // it's likely already the base pointer
+        if is_static || (rc > 0 && rc < 10000 && (header_val & HEADER_FLAGS_MASK) != 0) {
             return p;
         }
 
+        // Try offset -16 (string data pointer case)
         let obj_ptr = (p as *const u8).sub(16) as *mut c_void;
         let obj_header = obj_ptr as *const AtomicU64;
         let obj_header_val = (*obj_header).load(Ordering::Relaxed);
         let obj_rc = obj_header_val & HEADER_RC_MASK;
         let obj_is_static = (obj_header_val & HEADER_STATIC_BIT) != 0;
 
-        if obj_is_static || (obj_rc > 0 && obj_rc < 10000 && obj_header_val > 256) {
+        // Heuristic: if the offset header looks valid, return it
+        if obj_is_static || (obj_rc > 0 && obj_rc < 10000 && (obj_header_val & HEADER_FLAGS_MASK) != 0) {
             return obj_ptr;
         }
 
+        // Fallback: return original pointer (assume it's already the base)
         p
     }
 }
@@ -98,15 +125,22 @@ pub unsafe extern "C" fn rc_dec(p: *mut c_void) {
         return;
     }
     unsafe {
-        crate::init_runtime_log();
-        if crate::RUNTIME_LOG.load(Ordering::Relaxed) {
+        // Lazy initialization of logging - only initialize once
+        static LOG_INIT: std::sync::Once = std::sync::Once::new();
+        LOG_INIT.call_once(|| {
+            crate::init_runtime_log();
+        });
+        let should_log = crate::RUNTIME_LOG.load(Ordering::Relaxed);
+
+        if should_log {
             let _ = io::stdout()
                 .write_all(format!("[oats runtime] rc_dec called p={:p}\n", p).as_bytes());
             let _ = io::stdout().flush();
         }
+
         let p_addr = p as usize;
         if !crate::is_plausible_addr(p_addr) {
-            if crate::RUNTIME_LOG.load(Ordering::Relaxed) {
+            if should_log {
                 let _ = io::stdout().write_all(
                     format!("[oats runtime] rc_dec: implausible p={:p}, ignoring\n", p).as_bytes(),
                 );
@@ -120,13 +154,16 @@ pub unsafe extern "C" fn rc_dec(p: *mut c_void) {
         }
 
         let header = obj_ptr as *mut AtomicU64;
-        let header_val = (*header).load(Ordering::Relaxed);
-        if (header_val & HEADER_STATIC_BIT) != 0 {
+
+        // Optimized CAS loop: reuse loaded values
+        let mut old_header = (*header).load(Ordering::Acquire);
+
+        // Early exit for static objects
+        if (old_header & HEADER_STATIC_BIT) != 0 {
             return;
         }
 
         loop {
-            let old_header = (*header).load(Ordering::Acquire);
             let rc = old_header & HEADER_RC_MASK;
 
             if rc == 0 {
@@ -167,7 +204,14 @@ pub unsafe extern "C" fn rc_dec(p: *mut c_void) {
                     }
                     break;
                 }
-                Err(_) => continue,
+                Err(actual) => {
+                    // Reuse the actual value from CAS failure
+                    old_header = actual;
+                    // Re-check static bit on retry
+                    if (old_header & HEADER_STATIC_BIT) != 0 {
+                        return;
+                    }
+                }
             }
         }
     }
@@ -195,14 +239,20 @@ pub unsafe extern "C" fn rc_weak_inc(p: *mut c_void) {
             return;
         }
         let header = obj_ptr as *mut AtomicU64;
-        let header_val = (*header).load(Ordering::Relaxed);
-        if (header_val & HEADER_STATIC_BIT) != 0 {
+        let mut old_header = (*header).load(Ordering::Relaxed);
+
+        // Early exit for static objects
+        if (old_header & HEADER_STATIC_BIT) != 0 {
             return;
         }
 
+        // Optimized loop: reuse loaded values
         loop {
-            let old_header = (*header).load(Ordering::Relaxed);
             let weak = header_get_weak_bits(old_header);
+            // Overflow protection: don't increment beyond 16-bit limit
+            if weak >= 0xffff {
+                break;
+            }
             let new_weak = (weak.wrapping_add(1)) & 0xffffu64;
             let new_header = header_with_weak(old_header, new_weak);
             match (*header).compare_exchange_weak(
@@ -212,7 +262,13 @@ pub unsafe extern "C" fn rc_weak_inc(p: *mut c_void) {
                 Ordering::Relaxed,
             ) {
                 Ok(_) => break,
-                Err(_) => continue,
+                Err(actual) => {
+                    old_header = actual;
+                    // Re-check static bit on retry
+                    if (old_header & HEADER_STATIC_BIT) != 0 {
+                        return;
+                    }
+                }
             }
         }
     }
@@ -232,13 +288,15 @@ pub unsafe extern "C" fn rc_weak_dec(p: *mut c_void) {
             return;
         }
         let header = obj_ptr as *mut AtomicU64;
-        let header_val = (*header).load(Ordering::Relaxed);
-        if (header_val & HEADER_STATIC_BIT) != 0 {
+        let mut old_header = (*header).load(Ordering::Acquire);
+
+        // Early exit for static objects
+        if (old_header & HEADER_STATIC_BIT) != 0 {
             return;
         }
 
+        // Optimized loop: reuse loaded values
         loop {
-            let old_header = (*header).load(Ordering::Acquire);
             let weak = header_get_weak_bits(old_header);
             if weak == 0 {
                 return;
@@ -263,7 +321,13 @@ pub unsafe extern "C" fn rc_weak_dec(p: *mut c_void) {
                     }
                     break;
                 }
-                Err(_) => continue,
+                Err(actual) => {
+                    old_header = actual;
+                    // Re-check static bit on retry
+                    if (old_header & HEADER_STATIC_BIT) != 0 {
+                        return;
+                    }
+                }
             }
         }
     }
@@ -284,13 +348,19 @@ pub unsafe extern "C" fn rc_weak_upgrade(p: *mut c_void) -> *mut c_void {
         }
 
         let header = obj_ptr as *mut AtomicU64;
+        let mut old_header = (*header).load(Ordering::Acquire);
+
+        // Optimized loop: reuse loaded values
         loop {
-            let old_header = (*header).load(Ordering::Acquire);
             if (old_header & HEADER_STATIC_BIT) != 0 {
                 return obj_ptr;
             }
             let strong = old_header & HEADER_RC_MASK;
             if strong == 0 {
+                return ptr::null_mut();
+            }
+            // Overflow protection
+            if strong >= 0x7FFFFFFF {
                 return ptr::null_mut();
             }
             let new_strong = (strong.wrapping_add(1)) & HEADER_RC_MASK;
@@ -302,7 +372,9 @@ pub unsafe extern "C" fn rc_weak_upgrade(p: *mut c_void) -> *mut c_void {
                 Ordering::Relaxed,
             ) {
                 Ok(_) => return obj_ptr,
-                Err(_) => continue,
+                Err(actual) => {
+                    old_header = actual;
+                }
             }
         }
     }

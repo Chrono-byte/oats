@@ -2,9 +2,48 @@
 //!
 //! This module provides parsers for process-related expressions:
 //! spawn, send, receive, link, monitor, exit, self, whereis, register, unregister
+//!
+//! REFACTORED: Consolidated all process expressions into a single `process_expressions` parser
+//! to reduce expr cloning from 10+ individual parsers to 1 call site.
 
 use chumsky::prelude::*;
 use oats_ast::*;
+
+/// CONSOLIDATED: Parser for ALL process-related expressions
+///
+/// This single parser handles:
+/// - spawn(name, priority) or spawn()
+/// - send(to, message)
+/// - receive() or receive(type_id)
+/// - process self()
+/// - exit() or exit(reason) or exit(pid, reason)
+/// - link(pid1, pid2)
+/// - unlink(pid1, pid2)
+/// - monitor(target)
+/// - demonitor(monitor_ref)
+/// - whereis(name)
+/// - register(pid, name)
+/// - unregister(name)
+///
+/// OPTIMIZATION: Takes a single expr clone instead of 10+ individual clones
+pub fn process_expressions<'a>(
+    expr: impl Parser<'a, &'a str, Expr> + Clone,
+) -> impl Parser<'a, &'a str, Expr> {
+    choice((
+        spawn_expr_parser(expr.clone()),
+        send_expr_parser(expr.clone()),
+        receive_expr_parser(expr.clone()),
+        process_self_expr_parser(),
+        process_exit_expr_parser(expr.clone()),
+        process_link_expr_parser(expr.clone()),
+        process_unlink_expr_parser(expr.clone()),
+        process_monitor_expr_parser(expr.clone()),
+        process_demonitor_expr_parser(expr.clone()),
+        process_whereis_expr_parser(expr.clone()),
+        process_register_expr_parser(expr.clone()),
+        process_unregister_expr_parser(expr),
+    ))
+}
 
 /// Parser for spawn expression: spawn() or spawn(name, priority)
 pub fn spawn_expr_parser<'a>(

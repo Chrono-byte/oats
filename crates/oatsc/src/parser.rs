@@ -267,29 +267,23 @@ pub fn parse_oats_module_with_options(
     // Parse using oats_parser
     let module = match oats_parser::parse_module(source_without_bom) {
         Ok(m) => m,
-        Err(errors) => {
-            // Convert chumsky errors to diagnostics
-            let mut parse_diags = Vec::new();
-            for error in errors {
-                let message = format!("Parse error: {}", error);
-                let span = error.span();
-                let diag = diagnostics::Diagnostic {
-                    severity: diagnostics::Severity::Error,
-                    code: None,
-                    message,
-                    file: file_path.map(|s| s.to_string()),
-                    labels: vec![diagnostics::Label {
-                        span: diagnostics::Span {
-                            start: span.start,
-                            end: span.end,
-                        },
-                        message: "parse error".to_string(),
-                    }],
-                    note: None,
-                    help: None,
-                };
-                parse_diags.push(diag);
-            }
+        Err(error) => {
+            // Convert parse error to diagnostic
+            let parse_diags = vec![diagnostics::Diagnostic {
+                severity: diagnostics::Severity::Error,
+                code: None,
+                message: error.clone(),
+                file: file_path.map(|s| s.to_string()),
+                labels: vec![diagnostics::Label {
+                    span: diagnostics::Span {
+                        start: 0,
+                        end: source_without_bom.len(),
+                    },
+                    message: "parse error".to_string(),
+                }],
+                note: None,
+                help: None,
+            }];
             return Ok((None, parse_diags));
         }
     };

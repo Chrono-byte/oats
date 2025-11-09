@@ -11,6 +11,7 @@ pub mod tokenizer;
 mod types;
 
 use chumsky::prelude::*;
+use chumsky::recursive::Recursive;
 use oats_ast::*;
 
 pub use parsed::{parse_module_with_metadata, ParsedModule};
@@ -310,8 +311,29 @@ pub fn parse_module(input: &str) -> Result<Module, String> {
 ///
 /// A module is a sequence of statements, terminated by end of input.
 fn module_parser<'a>() -> impl Parser<'a, &'a str, Module> + 'a {
-    recursive(|stmt| stmt::stmt_parser(stmt).boxed())
-        .repeated()
+    // 1. Create empty placeholders for our mutually recursive parsers.
+    let mut stmt = Recursive::declare();
+    let mut expr = Recursive::declare();
+
+    // 2. Define the *implementation* of the parsers using the placeholders.
+    //    Note how we pass `expr` AND `stmt` to `expr_parser`...
+    //    We need to box the implementations before defining them.
+    let expr_impl = expr::expr_parser(
+        expr.clone(), // Pass `expr` placeholder for self-recursion
+        stmt.clone(), // Pass `stmt` placeholder
+    ).boxed();
+    //    ...and how we pass `stmt` AND `expr` to `stmt_parser`.
+    let stmt_impl = stmt::stmt_parser(
+        stmt.clone(), // Pass `stmt` placeholder for self-recursion
+        expr.clone(), // Pass `expr` placeholder
+    ).boxed();
+
+    // 3. Connect the implementations back to the placeholders.
+    stmt.define(stmt_impl);
+    expr.define(expr_impl);
+
+    // 4. The module parser is now just the `stmt` parser, repeated.
+    stmt.repeated()
         .collect::<Vec<_>>()
         .then_ignore(end())
         .map_with(|body, extra| Module {

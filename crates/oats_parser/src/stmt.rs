@@ -1,7 +1,6 @@
 //! Statement parsers
 
 use super::common;
-use super::expr;
 use super::function;
 use chumsky::prelude::*;
 use oats_ast::*;
@@ -11,8 +10,9 @@ use oats_ast::*;
 /// Handles all statement types in the Oats language.
 pub fn stmt_parser<'a>(
     stmt: impl Parser<'a, &'a str, Stmt> + Clone + 'a,
+    expr: impl Parser<'a, &'a str, Expr> + Clone + 'a, // <-- Add this `expr` argument
 ) -> impl Parser<'a, &'a str, Stmt> + 'a {
-    let expr = expr::expr_parser(stmt.clone()).boxed();
+    // `expr` is now passed in, not created
     let stmt_inner = stmt;
 
     choice((

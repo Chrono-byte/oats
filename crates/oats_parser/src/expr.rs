@@ -8,12 +8,11 @@ use oats_ast::*;
 ///
 /// Uses recursive descent with precedence levels.
 pub fn expr_parser<'a>(
+    expr: impl Parser<'a, &'a str, Expr> + Clone + 'a, // <-- Add this `expr` placeholder
     stmt: impl Parser<'a, &'a str, Stmt> + Clone + 'a,
 ) -> impl Parser<'a, &'a str, Expr> + 'a {
-    recursive(|expr| {
-        // Assignment expressions (lowest precedence)
-        assignment_expr_parser(expr, stmt.clone()).boxed()
-    })
+    // The body is now just the implementation, NOT the recursive call
+    assignment_expr_parser(expr.clone(), stmt.clone()).boxed()
 }
 
 /// Assignment expressions: `left = right`, `left += right`, etc.

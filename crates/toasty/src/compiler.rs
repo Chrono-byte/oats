@@ -10,7 +10,7 @@ use std::path::PathBuf;
 /// Invoke oatsc compiler as external command
 pub fn invoke_oatsc(options: &CompileOptions) -> Result<Option<PathBuf>> {
     // Get oatsc path from environment (set by preflight check)
-    let oatsc_path = std::env::var("OATS_OATSC_PATH").unwrap_or_else(|_| "oatsc".to_string());
+    let oatsc_path = crate::env::get_oatsc_path();
 
     // Build command arguments
     let mut args = vec![];
@@ -25,17 +25,17 @@ pub fn invoke_oatsc(options: &CompileOptions) -> Result<Option<PathBuf>> {
     // compute the full path and pass via -o flag
     if let (Some(out_dir), Some(out_name)) = (&options.out_dir, &options.out_name) {
         let output_path = std::path::Path::new(out_dir).join(format!("{}.o", out_name));
-        args.push("-o".to_string());
+        args.push(crate::cli_flags::flags::OUTPUT.to_string());
         args.push(output_path.to_string_lossy().to_string());
     } else if let Some(out_name) = &options.out_name {
         // Only out_name specified, use --out-name
-        args.push("--out-name".to_string());
+        args.push(crate::cli_flags::flags::OUT_NAME.to_string());
         args.push(out_name.clone());
     }
 
     // Add linker
     if let Some(linker) = &options.linker {
-        args.push("--linker".to_string());
+        args.push(crate::cli_flags::flags::LINKER.to_string());
         args.push(linker.clone());
     }
 
@@ -44,55 +44,55 @@ pub fn invoke_oatsc(options: &CompileOptions) -> Result<Option<PathBuf>> {
     for (pkg_name, meta_path) in &options.extern_pkg {
         // Use package name as import path (e.g., "./mylib" -> meta_path)
         let import_path = format!("./{}", pkg_name);
-        args.push("--extern-oats".to_string());
+        args.push(crate::cli_flags::flags::EXTERN_OATS.to_string());
         args.push(format!("{}={}", import_path, meta_path));
     }
 
     // Add external oats modules
     for (path, symbols) in &options.extern_oats {
-        args.push("--extern-oats".to_string());
+        args.push(crate::cli_flags::flags::EXTERN_OATS.to_string());
         args.push(format!("{}={}", path, symbols));
     }
 
     // Add build profile
     if let Some(profile) = &options.build_profile {
-        args.push("--profile".to_string());
+        args.push(crate::cli_flags::flags::PROFILE.to_string());
         args.push(profile.clone());
     }
 
     // Add optimization level
     if let Some(opt_level) = &options.opt_level {
-        args.push("--opt-level".to_string());
+        args.push(crate::cli_flags::flags::OPT_LEVEL.to_string());
         args.push(opt_level.clone());
     }
 
     // Add LTO
     if let Some(lto) = &options.lto {
-        args.push("--lto".to_string());
+        args.push(crate::cli_flags::flags::LTO.to_string());
         args.push(lto.clone());
     }
 
     // Add target triple
     if let Some(triple) = &options.target_triple {
-        args.push("--target-triple".to_string());
+        args.push(crate::cli_flags::flags::TARGET_TRIPLE.to_string());
         args.push(triple.clone());
     }
 
     // Add target CPU
     if let Some(cpu) = &options.target_cpu {
-        args.push("--target-cpu".to_string());
+        args.push(crate::cli_flags::flags::TARGET_CPU.to_string());
         args.push(cpu.clone());
     }
 
     // Add target features
     if let Some(features) = &options.target_features {
-        args.push("--target-features".to_string());
+        args.push(crate::cli_flags::flags::TARGET_FEATURES.to_string());
         args.push(features.clone());
     }
 
     // Add flags
     if options.emit_object_only {
-        args.push("--emit-object-only".to_string());
+        args.push(crate::cli_flags::flags::EMIT_OBJECT_ONLY.to_string());
     }
 
     // Execute command

@@ -323,7 +323,7 @@ pub fn handle_run(
     // Determine source file
     let src_file = if let Some(s) = src {
         s
-    } else if let Ok(p) = std::env::var("OATS_SRC_FILE") {
+    } else if let Some(p) = crate::env::get_src_file() {
         p
     } else {
         return Err(ToastyError::other(

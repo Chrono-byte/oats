@@ -7,7 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 // Simple LCG (Linear Congruential Generator) for basic randomness
 // Using thread-local state to avoid needing a global mutex
 thread_local! {
-    static RNG_STATE: Mutex<u64> = Mutex::new(0);
+    static RNG_STATE: Mutex<u64> = const { Mutex::new(0) };
 }
 
 fn init_rng() -> u64 {
@@ -90,4 +90,3 @@ pub extern "C" fn oats_std_random_bool() -> libc::c_int {
         1
     }
 }
-

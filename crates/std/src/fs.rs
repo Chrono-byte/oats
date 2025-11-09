@@ -292,11 +292,9 @@ pub unsafe extern "C" fn oats_std_fs_read_dir(path: *const c_char) -> *mut *mut 
     let entries: Vec<String> = match fs::read_dir(path_str) {
         Ok(dir) => {
             let mut names = Vec::new();
-            for entry in dir {
-                if let Ok(entry) = entry {
-                    if let Some(name) = entry.file_name().to_str() {
-                        names.push(name.to_string());
-                    }
+            for entry in dir.flatten() {
+                if let Some(name) = entry.file_name().to_str() {
+                    names.push(name.to_string());
                 }
             }
             names
@@ -311,9 +309,7 @@ pub unsafe extern "C" fn oats_std_fs_read_dir(path: *const c_char) -> *mut *mut 
 
     // Allocate array of pointers
     let ptr_size = std::mem::size_of::<*mut c_char>();
-    let array_ptr = unsafe {
-        libc::malloc((count + 1) * ptr_size) as *mut *mut c_char
-    };
+    let array_ptr = unsafe { libc::malloc((count + 1) * ptr_size) as *mut *mut c_char };
 
     if array_ptr.is_null() {
         return std::ptr::null_mut();
@@ -327,11 +323,9 @@ pub unsafe extern "C" fn oats_std_fs_read_dir(path: *const c_char) -> *mut *mut 
     // Convert each entry to CString and store pointer
     for (i, entry) in entries.iter().enumerate() {
         match CString::new(entry.as_str()) {
-            Ok(cstring) => {
-                unsafe {
-                    *array_ptr.add(i + 1) = cstring.into_raw();
-                }
-            }
+            Ok(cstring) => unsafe {
+                *array_ptr.add(i + 1) = cstring.into_raw();
+            },
             Err(_) => {
                 // Cleanup on error
                 unsafe {
@@ -358,9 +352,7 @@ pub unsafe extern "C" fn oats_std_fs_read_dir_count(dir_result: *mut *mut c_char
     if dir_result.is_null() {
         return 0;
     }
-    unsafe {
-        *dir_result as usize
-    }
+    unsafe { *dir_result as usize }
 }
 
 /// Get a directory entry at index (caller must free result)
@@ -382,9 +374,7 @@ pub unsafe extern "C" fn oats_std_fs_read_dir_get(
         return std::ptr::null_mut();
     }
 
-    unsafe {
-        *dir_result.add(index + 1)
-    }
+    unsafe { *dir_result.add(index + 1) }
 }
 
 /// Free a directory listing array

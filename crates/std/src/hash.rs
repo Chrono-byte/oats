@@ -1,8 +1,8 @@
 //! Hashing operations
 
 use libc::c_char;
-use std::ffi::{CStr, CString};
 use std::collections::hash_map::DefaultHasher;
+use std::ffi::{CStr, CString};
 use std::hash::{Hash, Hasher};
 
 /// Compute hash of a string (returns hash as u64)
@@ -80,7 +80,7 @@ pub unsafe extern "C" fn oats_std_hash_sha256_string(str: *const c_char) -> *mut
         Err(_) => return std::ptr::null_mut(),
     };
 
-    use sha2::{Sha256, Digest};
+    use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
     hasher.update(str_val.as_bytes());
     let result = hasher.finalize();
@@ -99,16 +99,13 @@ pub unsafe extern "C" fn oats_std_hash_sha256_string(str: *const c_char) -> *mut
 /// `bytes` must be a valid pointer to at least `len` bytes of readable memory.
 /// #[oats_export]
 #[no_mangle]
-pub unsafe extern "C" fn oats_std_hash_sha256_bytes(
-    bytes: *const u8,
-    len: usize,
-) -> *mut c_char {
+pub unsafe extern "C" fn oats_std_hash_sha256_bytes(bytes: *const u8, len: usize) -> *mut c_char {
     if bytes.is_null() || len == 0 {
         return std::ptr::null_mut();
     }
 
     let slice = unsafe { std::slice::from_raw_parts(bytes, len) };
-    use sha2::{Sha256, Digest};
+    use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
     hasher.update(slice);
     let result = hasher.finalize();
@@ -119,4 +116,3 @@ pub unsafe extern "C" fn oats_std_hash_sha256_bytes(
         Err(_) => std::ptr::null_mut(),
     }
 }
-

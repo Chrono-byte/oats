@@ -602,7 +602,9 @@ impl<'a> CodeGen<'a> {
             &[self.i64_t.into(), self.i32_t.into(), self.i32_t.into()],
             false,
         );
-        let f = self.module.add_function(crate::runtime_functions::names::ARRAY_ALLOC, fn_type, None);
+        let f =
+            self.module
+                .add_function(crate::runtime_functions::names::ARRAY_ALLOC, fn_type, None);
         *self.fn_array_alloc.borrow_mut() = Some(f);
         f
     }
@@ -615,7 +617,9 @@ impl<'a> CodeGen<'a> {
             .context
             .void_type()
             .fn_type(&[self.i8ptr_t.into()], false);
-        let f = self.module.add_function(crate::runtime_functions::names::RC_INC, fn_type, None);
+        let f = self
+            .module
+            .add_function(crate::runtime_functions::names::RC_INC, fn_type, None);
         *self.fn_rc_inc.borrow_mut() = Some(f);
         f
     }
@@ -704,7 +708,9 @@ impl<'a> CodeGen<'a> {
             .context
             .void_type()
             .fn_type(&[self.i8ptr_t.into()], false);
-        let f = self.module.add_function(crate::runtime_functions::names::RC_DEC, fn_type, None);
+        let f = self
+            .module
+            .add_function(crate::runtime_functions::names::RC_DEC, fn_type, None);
         *self.fn_rc_dec.borrow_mut() = Some(f);
         f
     }
@@ -715,7 +721,11 @@ impl<'a> CodeGen<'a> {
         }
         // number_to_string(f64) -> i8*
         let fn_type = self.i8ptr_t.fn_type(&[self.f64_t.into()], false);
-        let f = self.module.add_function(crate::runtime_functions::names::NUMBER_TO_STRING, fn_type, None);
+        let f = self.module.add_function(
+            crate::runtime_functions::names::NUMBER_TO_STRING,
+            fn_type,
+            None,
+        );
         *self.fn_number_to_string.borrow_mut() = Some(f);
         f
     }
@@ -726,7 +736,11 @@ impl<'a> CodeGen<'a> {
         }
         // union_box_f64(f64) -> i8*
         let fn_type = self.i8ptr_t.fn_type(&[self.f64_t.into()], false);
-        let f = self.module.add_function(crate::runtime_functions::names::UNION_BOX_F64, fn_type, None);
+        let f = self.module.add_function(
+            crate::runtime_functions::names::UNION_BOX_F64,
+            fn_type,
+            None,
+        );
         *self.fn_union_box_f64.borrow_mut() = Some(f);
         f
     }
@@ -737,7 +751,11 @@ impl<'a> CodeGen<'a> {
         }
         // union_box_ptr(i8*) -> i8*
         let fn_type = self.i8ptr_t.fn_type(&[self.i8ptr_t.into()], false);
-        let f = self.module.add_function(crate::runtime_functions::names::UNION_BOX_PTR, fn_type, None);
+        let f = self.module.add_function(
+            crate::runtime_functions::names::UNION_BOX_PTR,
+            fn_type,
+            None,
+        );
         *self.fn_union_box_ptr.borrow_mut() = Some(f);
         f
     }
@@ -797,7 +815,9 @@ impl<'a> CodeGen<'a> {
             .context
             .void_type()
             .fn_type(&[self.i8ptr_t.into()], false);
-        let f = self.module.add_function(crate::runtime_functions::names::RC_WEAK_INC, fn_type, None);
+        let f =
+            self.module
+                .add_function(crate::runtime_functions::names::RC_WEAK_INC, fn_type, None);
         *self.fn_rc_weak_inc.borrow_mut() = Some(f);
         f
     }
@@ -810,7 +830,9 @@ impl<'a> CodeGen<'a> {
             .context
             .void_type()
             .fn_type(&[self.i8ptr_t.into()], false);
-        let f = self.module.add_function(crate::runtime_functions::names::RC_WEAK_DEC, fn_type, None);
+        let f =
+            self.module
+                .add_function(crate::runtime_functions::names::RC_WEAK_DEC, fn_type, None);
         *self.fn_rc_weak_dec.borrow_mut() = Some(f);
         f
     }
@@ -931,12 +953,18 @@ impl<'a> CodeGen<'a> {
             .struct_type(&[header_ty.into(), len_ty.into(), data_ty.into()], false);
 
         let id = self.next_str_id.get();
-        let name = format!("{}{}", crate::runtime_functions::naming::STRING_LITERAL_PREFIX, id);
+        let name = format!(
+            "{}{}",
+            crate::runtime_functions::naming::STRING_LITERAL_PREFIX,
+            id
+        );
         self.next_str_id.set(id.wrapping_add(1));
         let gv = self.module.add_global(struct_ty, None, &name);
 
         // static header bit set at bit 32
-        let static_header = self.i64_t.const_int(crate::constants::STATIC_HEADER_BIT, false);
+        let static_header = self
+            .i64_t
+            .const_int(crate::constants::STATIC_HEADER_BIT, false);
         let length_val = self.i64_t.const_int(str_len as u64, false);
         let data_val = self.context.const_string(bytes, true);
 
@@ -1122,7 +1150,10 @@ impl<'a> CodeGen<'a> {
         self.builder.position_at_end(entry);
 
         // Try to look up oats_main; it should be present if gen_function_ir emitted it.
-        let oats_main_fn = match self.module.get_function(crate::runtime_functions::names::OATS_MAIN) {
+        let oats_main_fn = match self
+            .module
+            .get_function(crate::runtime_functions::names::OATS_MAIN)
+        {
             Some(f) => f,
             None => {
                 // No oats_main available; emit an empty main that returns 1
@@ -1271,7 +1302,9 @@ impl<'a> CodeGen<'a> {
             return f;
         }
         let fn_type = self.i8ptr_t.fn_type(&[self.i64_t.into()], false);
-        let f = self.module.add_function(crate::runtime_functions::names::MALLOC, fn_type, None);
+        let f = self
+            .module
+            .add_function(crate::runtime_functions::names::MALLOC, fn_type, None);
         *self.fn_malloc.borrow_mut() = Some(f);
         f
     }

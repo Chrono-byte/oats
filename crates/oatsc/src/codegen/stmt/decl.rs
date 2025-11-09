@@ -46,7 +46,6 @@ struct VarDeclContext<'b> {
     declared_nominal: Option<String>,
 }
 
-
 impl<'a> crate::codegen::CodeGen<'a> {
     /// Resolve type information from a variable declaration.
     ///
@@ -63,7 +62,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
         // Determine if the identifier has an explicit type annotation
         if let Some(ty) = &decl.ty
-            && let Some(mapped) = crate::types::map_ts_type_with_aliases(ty, Some(&*self.type_aliases.borrow()))
+            && let Some(mapped) =
+                crate::types::map_ts_type_with_aliases(ty, Some(&*self.type_aliases.borrow()))
         {
             declared_mapped = Some(mapped.clone());
             if let crate::types::OatsType::Union(_) = &mapped {
@@ -421,7 +421,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 ty: allocated_ty,
                 initialized: true,
                 // If this was a `let` without `mut`, treat as const/immutable
-                is_const: matches!(var_ctx.var_decl.kind, oats_ast::VarDeclKind::Const) || !var_ctx.is_mut_decl,
+                is_const: matches!(var_ctx.var_decl.kind, oats_ast::VarDeclKind::Const)
+                    || !var_ctx.is_mut_decl,
                 is_weak: var_ctx.declared_is_weak,
                 nominal: Some(gen_name),
                 oats_type: var_ctx.declared_union.clone(),
@@ -950,7 +951,14 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         declared_union: declared_union.clone(),
                         declared_nominal: declared_nominal.clone(),
                     };
-                    if self.handle_tuple_init(init, &declared_mapped, &var_ctx, function, param_map, locals_stack)? {
+                    if self.handle_tuple_init(
+                        init,
+                        &declared_mapped,
+                        &var_ctx,
+                        function,
+                        param_map,
+                        locals_stack,
+                    )? {
                         continue;
                     }
 
@@ -1093,7 +1101,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 ptr: alloca,
                 ty,
                 initialized: false,
-                is_const: matches!(var_ctx.var_decl.kind, oats_ast::VarDeclKind::Const) || !var_ctx.is_mut_decl,
+                is_const: matches!(var_ctx.var_decl.kind, oats_ast::VarDeclKind::Const)
+                    || !var_ctx.is_mut_decl,
                 is_weak: var_ctx.declared_is_weak,
                 nominal: var_ctx.declared_nominal.clone(),
                 oats_type: var_ctx.declared_union.clone(),

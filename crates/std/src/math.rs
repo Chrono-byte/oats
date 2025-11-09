@@ -224,4 +224,3 @@ pub extern "C" fn oats_std_math_shl(a: i64, b: i64) -> i64 {
 pub extern "C" fn oats_std_math_shr(a: i64, b: i64) -> i64 {
     a >> (b as u32).min(63)
 }
-

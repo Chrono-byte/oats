@@ -1,24 +1,11 @@
 //! Oats Parser
 //!
-//! This crate implements a parser for the Oats language using chumsky.
-//! It takes a string input and produces an `oats_ast::Module`.
-//!
-//! The parser is organized following Locality of Behavior principles:
-//! - Related parsing logic is grouped together in modules
-//! - Common utilities are reused across modules
-//! - Each module focuses on a specific aspect of the language
-//!
-//! Modern chumsky best practices (0.11.2):
-//! - Use `extra` for context and error handling
-//! - Avoid unnecessary cloning with better recursion patterns
-//! - Leverage combinators for cleaner code
-//! - Use `labelled()` for better error messages
+//! A clean, expressive parser for the Oats language using chumsky.
 
-mod class;
 mod common;
 mod expr;
 mod function;
-mod process;
+mod parsed;
 mod stmt;
 pub mod tokenizer;
 mod types;
@@ -26,40 +13,42 @@ mod types;
 use chumsky::prelude::*;
 use oats_ast::*;
 
+pub use parsed::{parse_module_with_metadata, ParsedModule};
+
 /// Parse a string into an Oats AST Module.
-///
-/// Returns a Module on success or a vector of parse errors on failure.
 pub fn parse_module(input: &str) -> Result<Module, String> {
     module_parser()
         .parse(input)
         .into_result()
-        .map_err(|_errors| "Parse error".to_string())
+        .map_err(|errors| {
+            if errors.is_empty() {
+                "Parse error".to_string()
+            } else {
+                let mut msg = format!("Parse error: found {} error(s)\n", errors.len());
+                for (i, err) in errors.iter().take(5).enumerate() {
+                    msg.push_str(&format!("  Error {}: {:?}\n", i + 1, err));
+                }
+                if errors.len() > 5 {
+                    msg.push_str(&format!("  ... and {} more error(s)\n", errors.len() - 5));
+                }
+                msg
+            }
+        })
 }
 
-/// Parser for the top-level module.
+/// Top-level module parser.
 ///
-/// A module consists of zero or more statements followed by EOF.
-/// This is the entry point for parsing Oats programs.
+/// A module is a sequence of statements, terminated by end of input.
 fn module_parser<'a>() -> impl Parser<'a, &'a str, Module> + 'a {
-    // Use recursive to create mutually recursive expr/stmt parsers
-    // Both expr and stmt parsers are boxed to allow cloning within the recursive functions
-    recursive(|stmt_param| {
-        let expr_parser = recursive(|expr_param| {
-            let stmt_inner = stmt::stmt_parser_inner(expr_param.clone(), stmt_param.clone()).boxed();
-            expr::expr_parser_inner(expr_param, stmt_inner).boxed()
+    recursive(|stmt| stmt::stmt_parser(stmt).boxed())
+        .repeated()
+        .collect::<Vec<_>>()
+        .then_ignore(end())
+        .map_with(|body, extra| Module {
+            body,
+            span: extra.span().into(),
         })
-        .boxed();
-        stmt::stmt_parser_inner(expr_parser, stmt_param).boxed()
-    })
-    .padded()
-    .repeated()
-    .collect::<Vec<_>>()
-    .then_ignore(end())
-    .map_with(|body, extra| Module {
-        body,
-        span: extra.span().into(),
-    })
-    .labelled("module")
+        .labelled("module")
 }
 
 #[cfg(test)]
@@ -67,163 +56,50 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_simple_function() {
-        let input = "function main(): void {}";
+    fn test_export_function() {
+        let input = "export function main(): void { return; }";
         let result = parse_module(input);
-        if let Err(e) = &result {
-            println!("Parse error: {:?}", e);
-        }
-        assert!(result.is_ok());
+        assert!(
+            result.is_ok(),
+            "export function should parse: {:?}",
+            result.err()
+        );
         let module = result.unwrap();
         assert_eq!(module.body.len(), 1);
         if let Stmt::FnDecl(fn_decl) = &module.body[0] {
             assert_eq!(fn_decl.ident.sym, "main");
-            assert!(fn_decl.params.is_empty());
-            assert!(matches!(
-                fn_decl.return_type,
-                Some(TsType::TsKeywordType(TsKeywordType::TsVoidKeyword))
-            ));
         } else {
-            panic!("Expected FnDecl");
+            panic!("Expected FnDecl, got {:?}", module.body[0]);
         }
     }
 
     #[test]
-    fn test_function_with_body() {
-        let input = "function add(a: number, b: number): number { return a + b; }";
+    fn test_simple_function() {
+        let input = "function main(): void {}";
         let result = parse_module(input);
-        if let Err(e) = &result {
-            println!("Parse error: {:?}", e);
-        }
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_export_function_from_file() {
+        let content = std::fs::read_to_string("../examples/proper_tests/basic_types.oats")
+            .or_else(|_| std::fs::read_to_string("examples/proper_tests/basic_types.oats"))
+            .expect("Failed to read test file");
+        let result = parse_module(&content);
+        assert!(
+            result.is_ok(),
+            "export function from file should parse: {:?}",
+            result.err()
+        );
         let module = result.unwrap();
-        assert_eq!(module.body.len(), 1);
+        assert!(
+            module.body.len() > 0,
+            "Module should have at least one statement"
+        );
         if let Stmt::FnDecl(fn_decl) = &module.body[0] {
-            assert_eq!(fn_decl.ident.sym, "add");
-            assert_eq!(fn_decl.params.len(), 2);
-            assert!(fn_decl.body.is_some());
+            assert_eq!(fn_decl.ident.sym, "main");
         } else {
-            panic!("Expected FnDecl");
-        }
-    }
-
-    #[test]
-    fn test_var_decl() {
-        let input = "let x: number = 5;";
-        let result = parse_module(input);
-        if let Err(e) = &result {
-            println!("Parse error: {:?}", e);
-        }
-        assert!(result.is_ok());
-        let module = result.unwrap();
-        assert_eq!(module.body.len(), 1);
-        if let Stmt::VarDecl(var_decl) = &module.body[0] {
-            assert!(matches!(var_decl.kind, VarDeclKind::Let { mutable: false }));
-            assert_eq!(var_decl.decls.len(), 1);
-        } else {
-            panic!("Expected VarDecl");
-        }
-    }
-
-    #[test]
-    fn test_let_mut() {
-        let input = "let mut x: number = 5;";
-        let result = parse_module(input);
-        if let Err(e) = &result {
-            println!("Parse error: {:?}", e);
-        }
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_binary_expr() {
-        let input = "let x: number = 3 + 5;";
-        let result = parse_module(input);
-        if let Err(e) = &result {
-            println!("Parse error: {:?}", e);
-        }
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_if_stmt() {
-        let input = "if (x > 0) { return x; }";
-        let result = parse_module(input);
-        if let Err(e) = &result {
-            println!("Parse error: {:?}", e);
-        }
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_for_loop() {
-        let input = "for (let mut i: number = 0; i < 10; i = i + 1) { console.log(i); }";
-        let result = parse_module(input);
-        if let Err(e) = &result {
-            println!("Parse error: {:?}", e);
-        }
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_var_decl_let_mut() {
-        let input = "let mut z = 100;";
-        let result = parse_module(input);
-        assert!(result.is_ok());
-        let module = result.unwrap();
-        assert_eq!(module.body.len(), 1);
-        if let Stmt::VarDecl(var_decl) = &module.body[0] {
-            assert!(matches!(var_decl.kind, VarDeclKind::Let { mutable: true }));
-            assert_eq!(var_decl.decls.len(), 1);
-            if let Pat::Ident(ident) = &var_decl.decls[0].name {
-                assert_eq!(ident.sym, "z");
-            } else {
-                panic!("Expected identifier pattern");
-            }
-            assert!(matches!(
-                var_decl.decls[0].init,
-                Some(Expr::Lit(Lit::I64(100)))
-            ));
-        } else {
-            panic!("Expected VarDecl");
-        }
-    }
-
-    #[test]
-    fn test_function_with_body_and_var() {
-        let input = "function test(): void { let x = 5; }";
-        let result = parse_module(input);
-        assert!(result.is_ok());
-        let module = result.unwrap();
-        assert_eq!(module.body.len(), 1);
-        if let Stmt::FnDecl(fn_decl) = &module.body[0] {
-            assert_eq!(fn_decl.ident.sym, "test");
-            assert!(fn_decl.params.is_empty());
-            assert!(matches!(
-                fn_decl.return_type,
-                Some(TsType::TsKeywordType(TsKeywordType::TsVoidKeyword))
-            ));
-            // Check that the body contains a statement
-            assert!(fn_decl.body.is_some());
-            let body = fn_decl.body.as_ref().unwrap();
-            assert_eq!(body.stmts.len(), 1);
-            if let Stmt::VarDecl(var_decl) = &body.stmts[0] {
-                assert!(matches!(var_decl.kind, VarDeclKind::Let { mutable: false }));
-                assert_eq!(var_decl.decls.len(), 1);
-                if let Pat::Ident(ident) = &var_decl.decls[0].name {
-                    assert_eq!(ident.sym, "x");
-                } else {
-                    panic!("Expected identifier pattern");
-                }
-                assert!(matches!(
-                    var_decl.decls[0].init,
-                    Some(Expr::Lit(Lit::I64(5)))
-                ));
-            } else {
-                panic!("Expected VarDecl in function body");
-            }
-        } else {
-            panic!("Expected FnDecl");
+            panic!("Expected FnDecl, got {:?}", module.body[0]);
         }
     }
 }

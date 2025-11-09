@@ -950,7 +950,10 @@ impl<'a> CodeGen<'a> {
             let prefix = &function_name[..underscore_pos];
             let suffix = &function_name[underscore_pos + 1..];
             // Handle constructor function names: Foo_ctor, Foo_ctor_impl, Foo_init
-            if suffix == "ctor" || suffix == "init" || (suffix == "impl" && prefix.ends_with("_ctor")) {
+            if suffix == "ctor"
+                || suffix == "init"
+                || (suffix == "impl" && prefix.ends_with("_ctor"))
+            {
                 // For Foo_ctor or Foo_init, the class name is the prefix
                 // For Foo_ctor_impl, we need to extract Foo from Foo_ctor
                 if suffix == "impl" {
@@ -999,7 +1002,10 @@ impl<'a> CodeGen<'a> {
             }
             return Err(Diagnostic::simple_with_span_boxed(
                 Severity::Error,
-                format!("cannot determine class from function name '{}'", function_name),
+                format!(
+                    "cannot determine class from function name '{}'",
+                    function_name
+                ),
                 member.span.start,
             ));
         };
@@ -1120,22 +1126,25 @@ impl<'a> CodeGen<'a> {
                         )
                     })?;
 
-                return Ok(loaded.as_basic_value_enum());
+                Ok(loaded.as_basic_value_enum())
             } else {
                 // Field not found in parent class, check if it's a method
                 // Method calls are handled separately when used as callee
-                return Err(Diagnostic::simple_with_span_boxed(
+                Err(Diagnostic::simple_with_span_boxed(
                     Severity::Error,
-                    format!("super field '{}' not found in parent class '{}'", field_name, parent),
+                    format!(
+                        "super field '{}' not found in parent class '{}'",
+                        field_name, parent
+                    ),
                     member.span.start,
-                ));
+                ))
             }
         } else {
-            return Err(Diagnostic::simple_with_span_boxed(
+            Err(Diagnostic::simple_with_span_boxed(
                 Severity::Error,
                 format!("parent class '{}' fields not found", parent),
                 member.span.start,
-            ));
+            ))
         }
     }
 }

@@ -49,4 +49,3 @@ pub mod offsets {
     /// Size of a pointer field in bytes
     pub const FIELD_SIZE: u64 = 8;
 }
-

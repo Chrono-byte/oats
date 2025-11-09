@@ -102,9 +102,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             Stmt::Switch(switch_stmt) => {
                 self.lower_switch_stmt(switch_stmt, function, param_map, locals_stack)
             }
-            Stmt::Try(try_stmt) => {
-                self.lower_try_stmt(try_stmt, function, param_map, locals_stack)
-            }
+            Stmt::Try(try_stmt) => self.lower_try_stmt(try_stmt, function, param_map, locals_stack),
             Stmt::Throw(throw_stmt) => {
                 self.lower_throw_stmt(throw_stmt, function, param_map, locals_stack)
             }

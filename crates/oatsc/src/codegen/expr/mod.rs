@@ -104,7 +104,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
             // propagate closure-local typing information.
             Expr::Ident(id) => self.lower_ident_expr(id, function, param_map, locals),
             Expr::This(this_expr) => self.lower_this_expr(this_expr, function, param_map, locals),
-            Expr::Super(super_expr) => self.lower_super_expr(super_expr, function, param_map, locals),
+            Expr::Super(super_expr) => {
+                self.lower_super_expr(super_expr, function, param_map, locals)
+            }
             Expr::Call(call) => self.lower_call_expr(call, function, param_map, locals),
             // (Duplicate closure-call lowering removed; handled in the primary Call arm above.)
             Expr::Assign(assign) => self.lower_assign_expr(assign, function, param_map, locals),
@@ -136,14 +138,30 @@ impl<'a> crate::codegen::CodeGen<'a> {
             Expr::Send(send) => self.lower_send_expr(send, function, param_map, locals),
             Expr::Receive(receive) => self.lower_receive_expr(receive, function, param_map, locals),
             Expr::ProcessSelf(self_expr) => self.lower_process_self_expr(self_expr),
-            Expr::ProcessExit(exit) => self.lower_process_exit_expr(exit, function, param_map, locals),
-            Expr::ProcessLink(link) => self.lower_process_link_expr(link, function, param_map, locals),
-            Expr::ProcessUnlink(unlink) => self.lower_process_unlink_expr(unlink, function, param_map, locals),
-            Expr::ProcessMonitor(monitor) => self.lower_process_monitor_expr(monitor, function, param_map, locals),
-            Expr::ProcessDemonitor(demonitor) => self.lower_process_demonitor_expr(demonitor, function, param_map, locals),
-            Expr::ProcessWhereis(whereis) => self.lower_process_whereis_expr(whereis, function, param_map, locals),
-            Expr::ProcessRegister(register) => self.lower_process_register_expr(register, function, param_map, locals),
-            Expr::ProcessUnregister(unregister) => self.lower_process_unregister_expr(unregister, function, param_map, locals),
+            Expr::ProcessExit(exit) => {
+                self.lower_process_exit_expr(exit, function, param_map, locals)
+            }
+            Expr::ProcessLink(link) => {
+                self.lower_process_link_expr(link, function, param_map, locals)
+            }
+            Expr::ProcessUnlink(unlink) => {
+                self.lower_process_unlink_expr(unlink, function, param_map, locals)
+            }
+            Expr::ProcessMonitor(monitor) => {
+                self.lower_process_monitor_expr(monitor, function, param_map, locals)
+            }
+            Expr::ProcessDemonitor(demonitor) => {
+                self.lower_process_demonitor_expr(demonitor, function, param_map, locals)
+            }
+            Expr::ProcessWhereis(whereis) => {
+                self.lower_process_whereis_expr(whereis, function, param_map, locals)
+            }
+            Expr::ProcessRegister(register) => {
+                self.lower_process_register_expr(register, function, param_map, locals)
+            }
+            Expr::ProcessUnregister(unregister) => {
+                self.lower_process_unregister_expr(unregister, function, param_map, locals)
+            }
             _ => Err(Diagnostic::simple_boxed(
                 Severity::Error,
                 "operation not supported",
@@ -226,7 +244,13 @@ impl<'a> crate::codegen::CodeGen<'a> {
             }
         } else if let Expr::Member(inner_member) = &*member.obj {
             // Recursively resolve nested member expressions with depth tracking
-            self.resolve_member_type_with_depth(inner_member, function, param_map, locals, depth + 1)
+            self.resolve_member_type_with_depth(
+                inner_member,
+                function,
+                param_map,
+                locals,
+                depth + 1,
+            )
         } else {
             None
         };

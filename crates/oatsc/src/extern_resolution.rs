@@ -46,10 +46,11 @@ pub fn resolve_external_dependencies<'ctx>(
         // Format: function name(param1: type1, param2: type2): returnType;
         for line in meta_content.lines() {
             let line = line.trim();
-            if line.starts_with("function ") && line.ends_with(";") {
-                if let Some((name, func_sig)) = parse_function_signature_from_metadata(line) {
-                    external_function_signatures.insert(name, (func_sig.params, func_sig.ret));
-                }
+            if line.starts_with("function ")
+                && line.ends_with(";")
+                && let Some((name, func_sig)) = parse_function_signature_from_metadata(line)
+            {
+                external_function_signatures.insert(name, (func_sig.params, func_sig.ret));
             }
         }
     }
@@ -84,19 +85,22 @@ pub fn resolve_external_dependencies<'ctx>(
                 }
                 _ => {
                     // Convert BasicMetadataTypeEnum to BasicTypeEnum for fn_type
-                    let ret_basic_type: BasicTypeEnum = match map_oats_type_to_llvm(context, &ret_type) {
-                        inkwell::types::BasicMetadataTypeEnum::FloatType(ft) => ft.into(),
-                        inkwell::types::BasicMetadataTypeEnum::IntType(it) => it.into(),
-                        inkwell::types::BasicMetadataTypeEnum::PointerType(pt) => pt.into(),
-                        inkwell::types::BasicMetadataTypeEnum::ArrayType(at) => at.into(),
-                        inkwell::types::BasicMetadataTypeEnum::VectorType(vt) => vt.into(),
-                        inkwell::types::BasicMetadataTypeEnum::StructType(st) => st.into(),
-                        inkwell::types::BasicMetadataTypeEnum::ScalableVectorType(svt) => svt.into(),
-                        inkwell::types::BasicMetadataTypeEnum::MetadataType(_) => {
-                            // Metadata types can't be return types, default to f64
-                            context.f64_type().into()
-                        }
-                    };
+                    let ret_basic_type: BasicTypeEnum =
+                        match map_oats_type_to_llvm(context, &ret_type) {
+                            inkwell::types::BasicMetadataTypeEnum::FloatType(ft) => ft.into(),
+                            inkwell::types::BasicMetadataTypeEnum::IntType(it) => it.into(),
+                            inkwell::types::BasicMetadataTypeEnum::PointerType(pt) => pt.into(),
+                            inkwell::types::BasicMetadataTypeEnum::ArrayType(at) => at.into(),
+                            inkwell::types::BasicMetadataTypeEnum::VectorType(vt) => vt.into(),
+                            inkwell::types::BasicMetadataTypeEnum::StructType(st) => st.into(),
+                            inkwell::types::BasicMetadataTypeEnum::ScalableVectorType(svt) => {
+                                svt.into()
+                            }
+                            inkwell::types::BasicMetadataTypeEnum::MetadataType(_) => {
+                                // Metadata types can't be return types, default to f64
+                                context.f64_type().into()
+                            }
+                        };
                     ret_basic_type.fn_type(&llvm_param_types, false)
                 }
             };
@@ -191,4 +195,3 @@ fn parse_oats_type_from_string(type_str: &str) -> OatsType {
         _ => OatsType::Number, // Default
     }
 }
-

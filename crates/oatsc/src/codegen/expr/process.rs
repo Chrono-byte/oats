@@ -37,24 +37,25 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 iv
             } else {
                 // Coerce to i32 if needed
-                self.builder.build_int_cast(
-                    priority_val.try_into().map_err(|_| {
+                self.builder
+                    .build_int_cast(
+                        priority_val.try_into().map_err(|_| {
+                            Diagnostic::simple_with_span_boxed(
+                                Severity::Error,
+                                "spawn priority must be a number",
+                                spawn_expr.span.start,
+                            )
+                        })?,
+                        self.i32_t,
+                        "priority_cast",
+                    )
+                    .map_err(|_| {
                         Diagnostic::simple_with_span_boxed(
                             Severity::Error,
-                            "spawn priority must be a number",
+                            "failed to cast spawn priority",
                             spawn_expr.span.start,
                         )
-                    })?,
-                    self.i32_t,
-                    "priority_cast",
-                )
-                .map_err(|_| {
-                    Diagnostic::simple_with_span_boxed(
-                        Severity::Error,
-                        "failed to cast spawn priority",
-                        spawn_expr.span.start,
-                    )
-                })?
+                    })?
             }
         } else {
             self.i32_t.const_int(0, false) // Normal priority
@@ -74,7 +75,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 ));
             };
 
-            let fn_val = self.module
+            let fn_val = self
+                .module
                 .get_function(runtime_functions::names::PROCESS_SPAWN_NAMED)
                 .ok_or_else(|| {
                     Diagnostic::simple_with_span_boxed(
@@ -86,7 +88,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
             (fn_val, Some(name_ptr))
         } else {
             // Use process_spawn if no name
-            let fn_val = self.module
+            let fn_val = self
+                .module
                 .get_function(runtime_functions::names::PROCESS_SPAWN)
                 .ok_or_else(|| {
                     Diagnostic::simple_with_span_boxed(
@@ -100,7 +103,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
         let result = if let Some(name_ptr) = name_ptr_opt {
             self.builder
-                .build_call(spawn_fn, &[name_ptr.into(), priority.into()], "spawn_result")
+                .build_call(
+                    spawn_fn,
+                    &[name_ptr.into(), priority.into()],
+                    "spawn_result",
+                )
                 .map_err(|_| {
                     Diagnostic::simple_with_span_boxed(
                         Severity::Error,
@@ -121,7 +128,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         };
 
         // Result is i8* (pointer to heap-allocated u64 containing ProcessId)
-        Ok(result.try_as_basic_value().unwrap_left().into())
+        Ok(result.try_as_basic_value().unwrap_left())
     }
 
     /// Lower send expression: send(to, message)
@@ -210,7 +217,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
         // Convert pointers to i64* for the FFI call
         let to_pid_i64ptr = self
             .builder
-            .build_pointer_cast(to_pid_ptr, self.context.ptr_type(inkwell::AddressSpace::default()), "to_pid_i64ptr")
+            .build_pointer_cast(
+                to_pid_ptr,
+                self.context.ptr_type(inkwell::AddressSpace::default()),
+                "to_pid_i64ptr",
+            )
             .map_err(|_| {
                 Diagnostic::simple_with_span_boxed(
                     Severity::Error,
@@ -233,26 +244,28 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 )
             })?;
 
-        let result = self.builder.build_call(
-            send_fn,
-            &[
-                to_pid_i64ptr.into(),
-                self_pid_i64ptr.into(),
-                message_ptr.into(),
-                type_id.into(),
-            ],
-            "send_result",
-        )
-        .map_err(|_| {
-            Diagnostic::simple_with_span_boxed(
-                Severity::Error,
-                "failed to call process_send",
-                send_expr.span.start,
+        let result = self
+            .builder
+            .build_call(
+                send_fn,
+                &[
+                    to_pid_i64ptr.into(),
+                    self_pid_i64ptr.into(),
+                    message_ptr.into(),
+                    type_id.into(),
+                ],
+                "send_result",
             )
-        })?;
+            .map_err(|_| {
+                Diagnostic::simple_with_span_boxed(
+                    Severity::Error,
+                    "failed to call process_send",
+                    send_expr.span.start,
+                )
+            })?;
 
         // Result is i32 (0 = success, non-zero = error)
-        Ok(result.try_as_basic_value().unwrap_left().into())
+        Ok(result.try_as_basic_value().unwrap_left())
     }
 
     /// Lower receive expression: receive() or receive(type_id)
@@ -304,24 +317,25 @@ impl<'a> crate::codegen::CodeGen<'a> {
             if let BasicValueEnum::IntValue(iv) = type_id_val {
                 iv
             } else {
-                self.builder.build_int_cast(
-                    type_id_val.try_into().map_err(|_| {
+                self.builder
+                    .build_int_cast(
+                        type_id_val.try_into().map_err(|_| {
+                            Diagnostic::simple_with_span_boxed(
+                                Severity::Error,
+                                "receive type_id must be a number",
+                                receive_expr.span.start,
+                            )
+                        })?,
+                        self.i64_t,
+                        "type_id_cast",
+                    )
+                    .map_err(|_| {
                         Diagnostic::simple_with_span_boxed(
                             Severity::Error,
-                            "receive type_id must be a number",
+                            "failed to cast receive type_id",
                             receive_expr.span.start,
                         )
-                    })?,
-                    self.i64_t,
-                    "type_id_cast",
-                )
-                .map_err(|_| {
-                    Diagnostic::simple_with_span_boxed(
-                        Severity::Error,
-                        "failed to cast receive type_id",
-                        receive_expr.span.start,
-                    )
-                })?
+                    })?
             }
         } else {
             self.i64_t.const_int(0, false) // Default type ID
@@ -355,7 +369,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
         let result = self
             .builder
-            .build_call(receive_fn, &[self_pid_i64ptr.into(), type_id.into()], "receive_result")
+            .build_call(
+                receive_fn,
+                &[self_pid_i64ptr.into(), type_id.into()],
+                "receive_result",
+            )
             .map_err(|_| {
                 Diagnostic::simple_with_span_boxed(
                     Severity::Error,
@@ -365,7 +383,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             })?;
 
         // Result is i8* (message payload or null)
-        Ok(result.try_as_basic_value().unwrap_left().into())
+        Ok(result.try_as_basic_value().unwrap_left())
     }
 
     /// Lower process self expression: self()
@@ -378,23 +396,17 @@ impl<'a> crate::codegen::CodeGen<'a> {
         let self_fn = self
             .module
             .get_function(runtime_functions::names::PROCESS_SELF)
-            .ok_or_else(|| {
-                Diagnostic::simple_boxed(
-                    Severity::Error,
-                    "process_self not found",
-                )
-            })?;
+            .ok_or_else(|| Diagnostic::simple_boxed(Severity::Error, "process_self not found"))?;
 
-        let result = self.builder.build_call(self_fn, &[], "self_pid")
+        let result = self
+            .builder
+            .build_call(self_fn, &[], "self_pid")
             .map_err(|_| {
-                Diagnostic::simple_boxed(
-                    Severity::Error,
-                    "failed to call process_self",
-                )
+                Diagnostic::simple_boxed(Severity::Error, "failed to call process_self")
             })?;
 
         // Result is i8* (pointer to heap-allocated u64 containing ProcessId)
-        Ok(result.try_as_basic_value().unwrap_left().into())
+        Ok(result.try_as_basic_value().unwrap_left())
     }
 
     // Additional process expression lowering functions would go here...
@@ -501,11 +513,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         self.builder
             .build_call(
                 exit_fn,
-                &[
-                    pid_i64ptr.into(),
-                    reason_type.into(),
-                    reason_str_ptr.into(),
-                ],
+                &[pid_i64ptr.into(), reason_type.into(), reason_str_ptr.into()],
                 "exit_call",
             )
             .map_err(|_| {
@@ -596,7 +604,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
         let result = self
             .builder
-            .build_call(link_fn, &[pid1_i64ptr.into(), pid2_i64ptr.into()], "link_result")
+            .build_call(
+                link_fn,
+                &[pid1_i64ptr.into(), pid2_i64ptr.into()],
+                "link_result",
+            )
             .map_err(|_| {
                 Diagnostic::simple_with_span_boxed(
                     Severity::Error,
@@ -606,7 +618,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             })?;
 
         // Result is i32 (0 = success, non-zero = error)
-        Ok(result.try_as_basic_value().unwrap_left().into())
+        Ok(result.try_as_basic_value().unwrap_left())
     }
 
     pub(super) fn lower_process_unlink_expr(
@@ -684,7 +696,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
             })?;
 
         self.builder
-            .build_call(unlink_fn, &[pid1_i64ptr.into(), pid2_i64ptr.into()], "unlink_call")
+            .build_call(
+                unlink_fn,
+                &[pid1_i64ptr.into(), pid2_i64ptr.into()],
+                "unlink_call",
+            )
             .map_err(|_| {
                 Diagnostic::simple_with_span_boxed(
                     Severity::Error,
@@ -738,7 +754,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     monitor_expr.span.start,
                 )
             })?;
-        let self_pid_ptr = if let BasicValueEnum::PointerValue(pv) = self_pid_ptr_val.try_as_basic_value().unwrap_left() {
+        let self_pid_ptr = if let BasicValueEnum::PointerValue(pv) =
+            self_pid_ptr_val.try_as_basic_value().unwrap_left()
+        {
             pv
         } else {
             return Err(Diagnostic::simple_with_span_boxed(
@@ -806,7 +824,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             })?;
 
         // Result is i8* (pointer to heap-allocated u64 containing MonitorRef)
-        Ok(result.try_as_basic_value().unwrap_left().into())
+        Ok(result.try_as_basic_value().unwrap_left())
     }
 
     pub(super) fn lower_process_demonitor_expr(
@@ -818,7 +836,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
     ) -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
         self.declare_libc();
 
-        let monitor_ref_val = self.lower_expr(&demonitor_expr.monitor_ref, function, param_map, locals)?;
+        let monitor_ref_val =
+            self.lower_expr(&demonitor_expr.monitor_ref, function, param_map, locals)?;
         let monitor_ref_ptr = if let BasicValueEnum::PointerValue(pv) = monitor_ref_val {
             pv
         } else {
@@ -850,7 +869,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     demonitor_expr.span.start,
                 )
             })?;
-        let self_pid_ptr = if let BasicValueEnum::PointerValue(pv) = self_pid_ptr_val.try_as_basic_value().unwrap_left() {
+        let self_pid_ptr = if let BasicValueEnum::PointerValue(pv) =
+            self_pid_ptr_val.try_as_basic_value().unwrap_left()
+        {
             pv
         } else {
             return Err(Diagnostic::simple_with_span_boxed(
@@ -918,7 +939,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             })?;
 
         // Result is i32 (0 = success, non-zero = error)
-        Ok(result.try_as_basic_value().unwrap_left().into())
+        Ok(result.try_as_basic_value().unwrap_left())
     }
 
     pub(super) fn lower_process_whereis_expr(
@@ -964,7 +985,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             })?;
 
         // Result is i8* (pointer to heap-allocated u64 containing ProcessId, or null)
-        Ok(result.try_as_basic_value().unwrap_left().into())
+        Ok(result.try_as_basic_value().unwrap_left())
     }
 
     pub(super) fn lower_process_register_expr(
@@ -1028,7 +1049,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
         let result = self
             .builder
-            .build_call(register_fn, &[pid_i64ptr.into(), name_ptr.into()], "register_result")
+            .build_call(
+                register_fn,
+                &[pid_i64ptr.into(), name_ptr.into()],
+                "register_result",
+            )
             .map_err(|_| {
                 Diagnostic::simple_with_span_boxed(
                     Severity::Error,
@@ -1038,7 +1063,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             })?;
 
         // Result is i32 (0 = success, non-zero = error)
-        Ok(result.try_as_basic_value().unwrap_left().into())
+        Ok(result.try_as_basic_value().unwrap_left())
     }
 
     pub(super) fn lower_process_unregister_expr(
@@ -1086,4 +1111,3 @@ impl<'a> crate::codegen::CodeGen<'a> {
         Ok(self.f64_t.const_float(0.0).as_basic_value_enum())
     }
 }
-

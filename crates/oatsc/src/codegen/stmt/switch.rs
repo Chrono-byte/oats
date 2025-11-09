@@ -28,11 +28,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
         locals_stack: &mut LocalsStackLocal<'a>,
     ) -> crate::diagnostics::DiagnosticResult<bool> {
         // Lower the discriminant expression
-        let disc_val = self.lower_expr(&switch_stmt.discriminant, function, param_map, locals_stack)
+        let disc_val = self
+            .lower_expr(&switch_stmt.discriminant, function, param_map, locals_stack)
             .map_err(|_| {
                 Diagnostic::simple_boxed(
                     crate::diagnostics::Severity::Error,
-                    "failed to lower switch discriminant"
+                    "failed to lower switch discriminant",
                 )
             })?;
 
@@ -40,12 +41,15 @@ impl<'a> crate::codegen::CodeGen<'a> {
         let disc_i64 = self.coerce_to_i64(disc_val).ok_or_else(|| {
             Diagnostic::simple_boxed(
                 crate::diagnostics::Severity::Error,
-                "switch discriminant must be a number"
+                "switch discriminant must be a number",
             )
         })?;
 
         // Find the default case (if any)
-        let default_case_idx = switch_stmt.cases.iter().position(|case| case.test.is_none());
+        let default_case_idx = switch_stmt
+            .cases
+            .iter()
+            .position(|case| case.test.is_none());
 
         // Create basic blocks for each case and a merge block
         let mut case_blocks = Vec::new();
@@ -59,7 +63,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
         // Create blocks for each case
         for (i, case) in switch_stmt.cases.iter().enumerate() {
             if case.test.is_some() {
-                let case_bb = self.context.append_basic_block(function, &format!("switch.case.{}", i));
+                let case_bb = self
+                    .context
+                    .append_basic_block(function, &format!("switch.case.{}", i));
                 case_blocks.push((i, case_bb));
             }
         }
@@ -68,7 +74,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
         // LLVM switch requires constant integer values, so we try to evaluate
         // case tests as constants first. If any case is non-constant, we fall
         // back to an if-else chain.
-        let mut switch_cases: Vec<(inkwell::values::IntValue<'a>, inkwell::basic_block::BasicBlock<'a>)> = Vec::new();
+        let mut switch_cases: Vec<(
+            inkwell::values::IntValue<'a>,
+            inkwell::basic_block::BasicBlock<'a>,
+        )> = Vec::new();
         let mut non_constant_cases: Vec<(usize, &oats_ast::SwitchCase)> = Vec::new();
         let const_map = self.const_items.borrow();
         let const_map_ref = &*const_map;
@@ -120,7 +129,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         };
 
                         // Find the corresponding case block
-                        if let Some(case_block) = case_blocks.iter()
+                        if let Some(case_block) = case_blocks
+                            .iter()
                             .find(|(idx, _)| *idx == case_idx)
                             .map(|(_, bb)| *bb)
                         {
@@ -140,24 +150,27 @@ impl<'a> crate::codegen::CodeGen<'a> {
         let current_block = if non_constant_cases.is_empty() {
             // All cases are constant - use pure switch
             let default_target = default_block.unwrap_or(merge_block);
-            let _switch_inst = self.builder
+            let _switch_inst = self
+                .builder
                 .build_switch(disc_i64, default_target, switch_cases.as_slice())
                 .map_err(|_| {
                     Diagnostic::simple_boxed(
                         crate::diagnostics::Severity::Error,
-                        "failed to build switch instruction"
+                        "failed to build switch instruction",
                     )
                 })?;
             None // No need for additional if-else chain
         } else {
             // We have non-constant cases - need if-else chain
             // First, handle constant cases with switch, defaulting to first non-constant check
-            let first_non_const_bb = case_blocks.iter()
+            let first_non_const_bb = case_blocks
+                .iter()
                 .find(|(idx, _)| non_constant_cases.iter().any(|&(nc_idx, _)| nc_idx == *idx))
                 .map(|(_, bb)| *bb)
                 .unwrap_or_else(|| {
                     // No matching case block found, create a new one for the if-else chain
-                    self.context.append_basic_block(function, "switch.ifelse.start")
+                    self.context
+                        .append_basic_block(function, "switch.ifelse.start")
                 });
 
             let default_target = if non_constant_cases.is_empty() {
@@ -166,12 +179,13 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 first_non_const_bb
             };
 
-            let _switch_inst = self.builder
+            let _switch_inst = self
+                .builder
                 .build_switch(disc_i64, default_target, switch_cases.as_slice())
                 .map_err(|_| {
                     Diagnostic::simple_boxed(
                         crate::diagnostics::Severity::Error,
-                        "failed to build switch instruction"
+                        "failed to build switch instruction",
                     )
                 })?;
 
@@ -185,43 +199,49 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
                 // Lower the test expression
                 if let Some(test_expr) = &case.test {
-                    let test_val = self.lower_expr(test_expr, function, param_map, locals_stack)
+                    let test_val = self
+                        .lower_expr(test_expr, function, param_map, locals_stack)
                         .map_err(|_| {
                             Diagnostic::simple_boxed(
                                 crate::diagnostics::Severity::Error,
-                                "failed to lower switch case test"
+                                "failed to lower switch case test",
                             )
                         })?;
 
                     let test_i64 = self.coerce_to_i64(test_val).ok_or_else(|| {
                         Diagnostic::simple_boxed(
                             crate::diagnostics::Severity::Error,
-                            "switch case test must be a number"
+                            "switch case test must be a number",
                         )
                     })?;
 
                     // Compare with discriminant
-                    let cmp = self.builder.build_int_compare(
-                        inkwell::IntPredicate::EQ,
-                        disc_i64,
-                        test_i64,
-                        "switch_case_cmp"
-                    ).map_err(|_| {
-                        Diagnostic::simple_boxed(
-                            crate::diagnostics::Severity::Error,
-                            "failed to build comparison"
+                    let cmp = self
+                        .builder
+                        .build_int_compare(
+                            inkwell::IntPredicate::EQ,
+                            disc_i64,
+                            test_i64,
+                            "switch_case_cmp",
                         )
-                    })?;
+                        .map_err(|_| {
+                            Diagnostic::simple_boxed(
+                                crate::diagnostics::Severity::Error,
+                                "failed to build comparison",
+                            )
+                        })?;
 
                     // Find case block
-                    let case_bb = case_blocks.iter()
+                    let case_bb = case_blocks
+                        .iter()
                         .find(|(idx, _)| *idx == case_idx)
                         .map(|(_, bb)| *bb)
                         .unwrap_or(merge_block);
 
                     // Create next block for remaining cases
                     let next_bb = if nc_idx + 1 < non_constant_cases.len() {
-                        self.context.append_basic_block(function, &format!("switch.ifelse.{}", nc_idx + 1))
+                        self.context
+                            .append_basic_block(function, &format!("switch.ifelse.{}", nc_idx + 1))
                     } else {
                         default_block.unwrap_or(merge_block)
                     };
@@ -238,7 +258,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
         for (case_idx, case) in switch_stmt.cases.iter().enumerate() {
             let case_block = if case.test.is_some() {
-                case_blocks.iter()
+                case_blocks
+                    .iter()
                     .find(|(idx, _)| *idx == case_idx)
                     .map(|(_, bb)| *bb)
                     .unwrap_or(merge_block)
@@ -249,7 +270,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
             self.builder.position_at_end(case_block);
 
             // Lower the case body statements
-            let case_terminated = self.lower_stmts(&case.cons, function, param_map, locals_stack)?;
+            let case_terminated =
+                self.lower_stmts(&case.cons, function, param_map, locals_stack)?;
 
             // If this case didn't terminate, we need to branch to the next case or merge
             if !case_terminated {
@@ -259,7 +281,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     // Fall through to next case
                     let next_case = &switch_stmt.cases[next_case_idx];
                     let next_block = if next_case.test.is_some() {
-                        case_blocks.iter()
+                        case_blocks
+                            .iter()
                             .find(|(idx, _)| *idx == next_case_idx)
                             .map(|(_, bb)| *bb)
                             .unwrap_or(merge_block)
@@ -289,4 +312,3 @@ impl<'a> crate::codegen::CodeGen<'a> {
         Ok(all_terminated)
     }
 }
-

@@ -47,8 +47,7 @@ pub fn get_src_file() -> Option<String> {
 /// Get the oatsc compiler path from environment
 /// Returns the default "oatsc" if not set
 pub fn get_oatsc_path() -> String {
-    std::env::var(names::OATSC_PATH)
-        .unwrap_or_else(|_| "oatsc".to_string())
+    std::env::var(names::OATSC_PATH).unwrap_or_else(|_| "oatsc".to_string())
 }
 
 /// Get the runtime path from environment
@@ -82,4 +81,3 @@ pub fn is_elide_arc_enabled() -> bool {
         .map(|v| v == "1")
         .unwrap_or(false)
 }
-

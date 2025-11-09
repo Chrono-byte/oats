@@ -7,14 +7,14 @@
 //! - Integration with async/await
 
 use libc::c_void;
-use std::collections::{BinaryHeap, HashMap, VecDeque};
 use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::{SystemTime, UNIX_EPOCH};
 use std::thread;
+use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::{rc_dec, rc_inc, runtime_free, runtime_malloc, promise_poll_into};
+use crate::{promise_poll_into, rc_dec, rc_inc, runtime_free, runtime_malloc};
 
 /// Process identifier - opaque u64 value
 pub type ProcessId = u64;
@@ -37,24 +37,30 @@ pub enum ProcessPriority {
 /// Exit reason for a process
 #[derive(Debug, Clone)]
 pub enum ExitReason {
-    Normal,                    // Normal termination
-    Error(String),             // Error termination with reason
-    Kill(String),              // Killed by supervisor
-    Shutdown(String),       // Shutdown requested
+    Normal,           // Normal termination
+    Error(String),    // Error termination with reason
+    Kill(String),     // Killed by supervisor
+    Shutdown(String), // Shutdown requested
 }
 
 /// Message structure for inter-process communication
 #[derive(Debug)]
 pub struct Message {
     pub from: ProcessId,
-    pub payload: usize,            // Pointer to ARC-managed heap object (stored as usize for Send safety)
-    pub payload_type_id: u64,      // Type identifier for runtime type checking
-    pub timestamp: u64,             // Unix timestamp in milliseconds
+    pub payload: usize, // Pointer to ARC-managed heap object (stored as usize for Send safety)
+    pub payload_type_id: u64, // Type identifier for runtime type checking
+    pub timestamp: u64, // Unix timestamp in milliseconds
 }
 
 /// Message queue for a process mailbox
 pub struct MessageQueue {
     pub messages: VecDeque<Message>,
+}
+
+impl Default for MessageQueue {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl MessageQueue {
@@ -84,21 +90,24 @@ impl MessageQueue {
 /// Wait reason for a process
 #[derive(Debug, Clone)]
 pub enum WaitReason {
-    WaitingForMessage,              // Blocked on receive()
-    WaitingForPromise(usize),       // Blocked on await (promise address as usize)
-    WaitingForTimeout(u64),         // Blocked on receive() with timeout
+    WaitingForMessage,        // Blocked on receive()
+    WaitingForPromise(usize), // Blocked on await (promise address as usize)
+    WaitingForTimeout(u64),   // Blocked on receive() with timeout
 }
 
 /// Timer entry for timeout tracking
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Timer {
-    deadline: u64,      // Timestamp when timeout expires
+    deadline: u64, // Timestamp when timeout expires
     process_id: ProcessId,
 }
 
 impl Timer {
     fn new(deadline: u64, process_id: ProcessId) -> Self {
-        Self { deadline, process_id }
+        Self {
+            deadline,
+            process_id,
+        }
     }
 }
 
@@ -119,8 +128,8 @@ pub struct Process {
     pub children: Vec<ProcessId>,
 
     // Linking and monitoring
-    pub links: Vec<ProcessId>,      // Processes linked to this one
-    pub monitors: Vec<ProcessId>,   // Processes monitoring this one
+    pub links: Vec<ProcessId>,    // Processes linked to this one
+    pub monitors: Vec<ProcessId>, // Processes monitoring this one
     pub monitor_refs: HashMap<u64, ProcessId>, // MonitorRef -> ProcessId mapping
 
     // Lifecycle
@@ -172,17 +181,17 @@ impl Process {
 /// Restart strategy for supervisors
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RestartStrategy {
-    OneForOne,   // Only restart the failed child
-    OneForAll,   // Restart all children when one fails
-    RestForOne,  // Restart the failed child and all children started after it
+    OneForOne,  // Only restart the failed child
+    OneForAll,  // Restart all children when one fails
+    RestForOne, // Restart the failed child and all children started after it
 }
 
 /// Child restart policy
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RestartPolicy {
-    Permanent,  // Always restart
-    Transient,  // Restart only on abnormal exit
-    Temporary,   // Never restart
+    Permanent, // Always restart
+    Transient, // Restart only on abnormal exit
+    Temporary, // Never restart
 }
 
 /// Child specification for supervisors
@@ -205,15 +214,15 @@ pub struct SupervisorConfig {
 
 /// Process scheduler - manages process execution
 pub struct ProcessScheduler {
-    runnable_normal: VecDeque<ProcessId>,    // Normal priority processes ready to run
-    runnable_high: VecDeque<ProcessId>,       // High priority processes ready to run
-    waiting: HashMap<ProcessId, WaitReason>,  // Processes waiting (message or promise)
-    processes: HashMap<ProcessId, Process>,    // All processes
-    timer_heap: BinaryHeap<Reverse<Timer>>,   // Timeouts for receive() with timeout (min-heap via Reverse)
-    registry: HashMap<String, ProcessId>,     // Name -> ProcessId mapping
-    next_pid: AtomicU64,                     // Next process ID to assign
-    process_count: AtomicUsize,               // Current number of processes
-    max_processes: AtomicUsize,               // Maximum number of processes (default: 1 million)
+    runnable_normal: VecDeque<ProcessId>, // Normal priority processes ready to run
+    runnable_high: VecDeque<ProcessId>,   // High priority processes ready to run
+    waiting: HashMap<ProcessId, WaitReason>, // Processes waiting (message or promise)
+    processes: HashMap<ProcessId, Process>, // All processes
+    timer_heap: BinaryHeap<Reverse<Timer>>, // Timeouts for receive() with timeout (min-heap via Reverse)
+    registry: HashMap<String, ProcessId>,   // Name -> ProcessId mapping
+    next_pid: AtomicU64,                    // Next process ID to assign
+    process_count: AtomicUsize,             // Current number of processes
+    max_processes: AtomicUsize,             // Maximum number of processes (default: 1 million)
     supervisors: HashMap<ProcessId, SupervisorConfig>, // Supervisor configurations
     restart_counts: HashMap<ProcessId, Vec<(u64, u32)>>, // (timestamp, count) for restart tracking
 }
@@ -229,8 +238,15 @@ impl PartialOrd for Timer {
 impl Ord for Timer {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         // Normal order: earlier deadlines come first
-        self.deadline.cmp(&other.deadline)
+        self.deadline
+            .cmp(&other.deadline)
             .then_with(|| self.process_id.cmp(&other.process_id))
+    }
+}
+
+impl Default for ProcessScheduler {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -267,7 +283,12 @@ impl ProcessScheduler {
     }
 
     /// Spawn a new process
-    pub fn spawn(&mut self, name: Option<String>, state: Option<*mut c_void>, priority: ProcessPriority) -> Option<ProcessId> {
+    pub fn spawn(
+        &mut self,
+        name: Option<String>,
+        state: Option<*mut c_void>,
+        priority: ProcessPriority,
+    ) -> Option<ProcessId> {
         // Check process limit
         let current = self.process_count.load(Ordering::Relaxed);
         let max = self.max_processes.load(Ordering::Relaxed);
@@ -311,7 +332,13 @@ impl ProcessScheduler {
     }
 
     /// Send a message to a process
-    pub fn send(&mut self, to: ProcessId, from: ProcessId, payload: *mut c_void, type_id: u64) -> bool {
+    pub fn send(
+        &mut self,
+        to: ProcessId,
+        from: ProcessId,
+        payload: *mut c_void,
+        type_id: u64,
+    ) -> bool {
         if let Some(process) = self.processes.get_mut(&to) {
             if process.status == ProcessStatus::Terminated {
                 // Process is dead, decrement payload ARC
@@ -358,7 +385,13 @@ impl ProcessScheduler {
     }
 
     /// Send a message to a named process
-    pub fn send_to_name(&mut self, name: &str, from: ProcessId, payload: *mut c_void, type_id: u64) -> bool {
+    pub fn send_to_name(
+        &mut self,
+        name: &str,
+        from: ProcessId,
+        payload: *mut c_void,
+        type_id: u64,
+    ) -> bool {
         if let Some(&pid) = self.registry.get(name) {
             self.send(pid, from, payload, type_id)
         } else {
@@ -404,7 +437,8 @@ impl ProcessScheduler {
         if let Some(process) = self.processes.get_mut(&pid) {
             process.status = ProcessStatus::Waiting;
             process.current_promise = Some(promise as usize);
-            self.waiting.insert(pid, WaitReason::WaitingForPromise(promise as usize));
+            self.waiting
+                .insert(pid, WaitReason::WaitingForPromise(promise as usize));
         }
     }
 
@@ -414,21 +448,22 @@ impl ProcessScheduler {
             process.status = ProcessStatus::Waiting;
             let deadline = current_timestamp() + timeout_ms;
             self.timer_heap.push(Reverse(Timer::new(deadline, pid)));
-            self.waiting.insert(pid, WaitReason::WaitingForTimeout(deadline));
+            self.waiting
+                .insert(pid, WaitReason::WaitingForTimeout(deadline));
         }
     }
 
     /// Resume a process (move from waiting to runnable)
     pub fn resume(&mut self, pid: ProcessId) {
-        if let Some(process) = self.processes.get_mut(&pid) {
-            if process.status == ProcessStatus::Waiting {
-                process.status = ProcessStatus::Running;
-                self.waiting.remove(&pid);
-                // Add to appropriate priority queue
-                match process.priority {
-                    ProcessPriority::High => self.runnable_high.push_back(pid),
-                    ProcessPriority::Normal => self.runnable_normal.push_back(pid),
-                }
+        if let Some(process) = self.processes.get_mut(&pid)
+            && process.status == ProcessStatus::Waiting
+        {
+            process.status = ProcessStatus::Running;
+            self.waiting.remove(&pid);
+            // Add to appropriate priority queue
+            match process.priority {
+                ProcessPriority::High => self.runnable_high.push_back(pid),
+                ProcessPriority::Normal => self.runnable_normal.push_back(pid),
             }
         }
     }
@@ -442,15 +477,15 @@ impl ProcessScheduler {
             return false;
         }
         // We need to borrow separately to avoid multiple mutable borrows
-        if let Some(p1) = self.processes.get_mut(&pid1) {
-            if !p1.links.contains(&pid2) {
-                p1.links.push(pid2);
-            }
+        if let Some(p1) = self.processes.get_mut(&pid1)
+            && !p1.links.contains(&pid2)
+        {
+            p1.links.push(pid2);
         }
-        if let Some(p2) = self.processes.get_mut(&pid2) {
-            if !p2.links.contains(&pid1) {
-                p2.links.push(pid1);
-            }
+        if let Some(p2) = self.processes.get_mut(&pid2)
+            && !p2.links.contains(&pid1)
+        {
+            p2.links.push(pid1);
         }
         true
     }
@@ -536,8 +571,13 @@ impl ProcessScheduler {
     /// Notify linked and monitored processes of an exit
     fn notify_exit(&mut self, exited_pid: ProcessId, reason: &ExitReason) {
         // Collect PIDs to notify first to avoid borrowing issues
-        let (links, monitors, monitor_refs) = if let Some(exited) = self.processes.get(&exited_pid) {
-            (exited.links.clone(), exited.monitors.clone(), exited.monitor_refs.clone())
+        let (links, monitors, monitor_refs) = if let Some(exited) = self.processes.get(&exited_pid)
+        {
+            (
+                exited.links.clone(),
+                exited.monitors.clone(),
+                exited.monitor_refs.clone(),
+            )
         } else {
             return;
         };
@@ -562,7 +602,8 @@ impl ProcessScheduler {
         // Notify monitoring processes with monitor refs
         for monitor_pid in monitors {
             // Find monitor ref for this process (if any)
-            let _monitor_ref = monitor_refs.iter()
+            let _monitor_ref = monitor_refs
+                .iter()
                 .find(|(_, target_pid)| **target_pid == exited_pid)
                 .map(|(ref_val, _)| *ref_val);
 
@@ -623,11 +664,11 @@ impl ProcessScheduler {
             }
         }
 
-            // Remove from waiting/runnable queues
-            self.waiting.remove(&pid);
-            self.runnable_normal.retain(|&p| p != pid);
-            self.runnable_high.retain(|&p| p != pid);
-            self.process_count.fetch_sub(1, Ordering::Relaxed);
+        // Remove from waiting/runnable queues
+        self.waiting.remove(&pid);
+        self.runnable_normal.retain(|&p| p != pid);
+        self.runnable_high.retain(|&p| p != pid);
+        self.process_count.fetch_sub(1, Ordering::Relaxed);
 
         // Remove from registry if named
         if let Some(ref name) = process.name {
@@ -679,19 +720,19 @@ impl ProcessScheduler {
 
     /// Unregister a process name
     pub fn unregister(&mut self, name: &str) {
-        if let Some(pid) = self.registry.remove(name) {
-            if let Some(process) = self.processes.get_mut(&pid) {
-                process.name = None;
-            }
+        if let Some(pid) = self.registry.remove(name)
+            && let Some(process) = self.processes.get_mut(&pid)
+        {
+            process.name = None;
         }
     }
 
     /// Get next runnable process (prioritizes high priority)
     pub fn next_runnable(&mut self) -> Option<ProcessId> {
         // First check high priority queue
-        self.runnable_high.pop_front().or_else(|| {
-            self.runnable_normal.pop_front()
-        })
+        self.runnable_high
+            .pop_front()
+            .or_else(|| self.runnable_normal.pop_front())
     }
 
     /// Check and process expired timeouts
@@ -714,7 +755,8 @@ impl ProcessScheduler {
     pub fn check_promises(&mut self) {
         // Collect waiting process IDs and their promises
         // Note: We clone the PIDs and promises to avoid holding references while mutating
-        let waiting_pids: Vec<(ProcessId, usize)> = self.waiting
+        let waiting_pids: Vec<(ProcessId, usize)> = self
+            .waiting
             .iter()
             .filter_map(|(pid, reason)| {
                 if let WaitReason::WaitingForPromise(promise_addr) = reason {
@@ -761,7 +803,11 @@ impl ProcessScheduler {
     // ========== Supervisor Methods ==========
 
     /// Register a supervisor with configuration
-    pub fn register_supervisor(&mut self, supervisor_pid: ProcessId, config: SupervisorConfig) -> bool {
+    pub fn register_supervisor(
+        &mut self,
+        supervisor_pid: ProcessId,
+        config: SupervisorConfig,
+    ) -> bool {
         if !self.processes.contains_key(&supervisor_pid) {
             return false;
         }
@@ -775,7 +821,11 @@ impl ProcessScheduler {
     }
 
     /// Add a child to a supervisor
-    pub fn add_supervisor_child(&mut self, supervisor_pid: ProcessId, child_spec: ChildSpec) -> bool {
+    pub fn add_supervisor_child(
+        &mut self,
+        supervisor_pid: ProcessId,
+        child_spec: ChildSpec,
+    ) -> bool {
         if let Some(config) = self.supervisors.get_mut(&supervisor_pid) {
             // Set child's supervisor
             if let Some(child) = self.processes.get_mut(&child_spec.pid) {
@@ -793,7 +843,12 @@ impl ProcessScheduler {
     }
 
     /// Handle child process exit (called by supervisor)
-    pub fn handle_child_exit(&mut self, supervisor_pid: ProcessId, child_pid: ProcessId, reason: &ExitReason) -> bool {
+    pub fn handle_child_exit(
+        &mut self,
+        supervisor_pid: ProcessId,
+        child_pid: ProcessId,
+        reason: &ExitReason,
+    ) -> bool {
         if let Some(config) = self.supervisors.get_mut(&supervisor_pid) {
             // Find child spec
             if let Some(child_spec) = config.children.iter_mut().find(|c| c.pid == child_pid) {
@@ -818,7 +873,7 @@ impl ProcessScheduler {
                 let restart_window_start = now.saturating_sub(config.max_seconds * 1000);
 
                 // Clean old restart counts
-                let counts = self.restart_counts.entry(child_pid).or_insert_with(Vec::new);
+                let counts = self.restart_counts.entry(child_pid).or_default();
                 counts.retain(|(ts, _)| *ts > restart_window_start);
 
                 // Count restarts in window
@@ -826,7 +881,10 @@ impl ProcessScheduler {
 
                 if restart_count >= config.max_restarts {
                     // Too many restarts - shutdown supervisor
-                    self.exit(supervisor_pid, ExitReason::Error("max_restarts_exceeded".to_string()));
+                    self.exit(
+                        supervisor_pid,
+                        ExitReason::Error("max_restarts_exceeded".to_string()),
+                    );
                     return false;
                 }
 
@@ -842,7 +900,8 @@ impl ProcessScheduler {
                     }
                     RestartStrategy::OneForAll => {
                         // Restart all children
-                        let child_pids: Vec<ProcessId> = config.children.iter().map(|c| c.pid).collect();
+                        let child_pids: Vec<ProcessId> =
+                            config.children.iter().map(|c| c.pid).collect();
                         for pid in child_pids {
                             if pid != child_pid {
                                 self.exit(pid, ExitReason::Kill("one_for_all_restart".to_string()));
@@ -853,7 +912,9 @@ impl ProcessScheduler {
                     RestartStrategy::RestForOne => {
                         // Restart this child and all started after it
                         let mut restart_after = false;
-                        let child_pids: Vec<ProcessId> = config.children.iter()
+                        let child_pids: Vec<ProcessId> = config
+                            .children
+                            .iter()
                             .filter_map(|c| {
                                 if c.pid == child_pid {
                                     restart_after = true;
@@ -877,7 +938,12 @@ impl ProcessScheduler {
     }
 
     /// Restart a child process (creates new PID, supervisor must update child spec)
-    pub fn restart_child(&mut self, supervisor_pid: ProcessId, old_child_pid: ProcessId, _start_fn: fn() -> ProcessId) -> Option<ProcessId> {
+    pub fn restart_child(
+        &mut self,
+        supervisor_pid: ProcessId,
+        old_child_pid: ProcessId,
+        _start_fn: fn() -> ProcessId,
+    ) -> Option<ProcessId> {
         // Remove old child from supervisor
         if let Some(config) = self.supervisors.get_mut(&supervisor_pid) {
             config.children.retain(|c| c.pid != old_child_pid);
@@ -905,9 +971,7 @@ static SCHEDULER: OnceLock<Arc<Mutex<ProcessScheduler>>> = OnceLock::new();
 
 fn init_scheduler() -> Arc<Mutex<ProcessScheduler>> {
     SCHEDULER
-        .get_or_init(|| {
-            Arc::new(Mutex::new(ProcessScheduler::new()))
-        })
+        .get_or_init(|| Arc::new(Mutex::new(ProcessScheduler::new())))
         .clone()
 }
 
@@ -1031,7 +1095,9 @@ pub extern "C" fn process_send(
 
     let scheduler = init_scheduler();
     let Ok(mut sched) = scheduler.lock() else {
-        unsafe { rc_dec(payload); }
+        unsafe {
+            rc_dec(payload);
+        }
         return 0;
     };
 
@@ -1072,7 +1138,9 @@ pub extern "C" fn process_send_to_name(
 
     let scheduler = init_scheduler();
     let Ok(mut sched) = scheduler.lock() else {
-        unsafe { rc_dec(payload); }
+        unsafe {
+            rc_dec(payload);
+        }
         return 0;
     };
 
@@ -1275,11 +1343,7 @@ pub extern "C" fn process_register(pid_ptr: *const u64, name_ptr: *const libc::c
         return 0;
     };
 
-    if sched.register(name, pid) {
-        1
-    } else {
-        0
-    }
+    if sched.register(name, pid) { 1 } else { 0 }
 }
 
 /// Unregister a process name
@@ -1369,11 +1433,7 @@ pub extern "C" fn process_link(pid1_ptr: *const u64, pid2_ptr: *const u64) -> i3
     let pid2 = unsafe { *pid2_ptr };
     let scheduler = init_scheduler();
     if let Ok(mut sched) = scheduler.lock() {
-        if sched.link(pid1, pid2) {
-            1
-        } else {
-            0
-        }
+        if sched.link(pid1, pid2) { 1 } else { 0 }
     } else {
         0
     }
@@ -1401,7 +1461,10 @@ pub extern "C" fn process_unlink(pid1_ptr: *const u64, pid2_ptr: *const u64) {
 /// target_pid_ptr: pointer to u64 containing target ProcessId
 /// Returns pointer to u64 containing MonitorRef, or null on failure
 #[unsafe(no_mangle)]
-pub extern "C" fn process_monitor(monitor_pid_ptr: *const u64, target_pid_ptr: *const u64) -> *mut c_void {
+pub extern "C" fn process_monitor(
+    monitor_pid_ptr: *const u64,
+    target_pid_ptr: *const u64,
+) -> *mut c_void {
     if monitor_pid_ptr.is_null() || target_pid_ptr.is_null() {
         return std::ptr::null_mut();
     }
@@ -1433,7 +1496,10 @@ pub extern "C" fn process_monitor(monitor_pid_ptr: *const u64, target_pid_ptr: *
 /// monitor_ref_ptr: pointer to u64 containing MonitorRef
 /// Returns 1 on success, 0 on failure
 #[unsafe(no_mangle)]
-pub extern "C" fn process_demonitor(monitor_pid_ptr: *const u64, monitor_ref_ptr: *const u64) -> i32 {
+pub extern "C" fn process_demonitor(
+    monitor_pid_ptr: *const u64,
+    monitor_ref_ptr: *const u64,
+) -> i32 {
     if monitor_pid_ptr.is_null() || monitor_ref_ptr.is_null() {
         return 0;
     }
@@ -1711,16 +1777,16 @@ impl MultiThreadedScheduler {
                     // Try to steal work from other queues
                     let mut stolen = false;
                     for (idx, queue) in other_queues.iter().enumerate() {
-                        if idx != thread_id {
-                            if let Some(pid) = queue.steal() {
-                                if let Ok(_sched) = sched.lock() {
-                                    set_current_pid(pid);
-                                    // Process execution happens here
-                                    clear_current_pid();
-                                }
-                                stolen = true;
-                                break;
+                        if idx != thread_id
+                            && let Some(pid) = queue.steal()
+                        {
+                            if let Ok(_sched) = sched.lock() {
+                                set_current_pid(pid);
+                                // Process execution happens here
+                                clear_current_pid();
                             }
+                            stolen = true;
+                            break;
                         }
                     }
 
@@ -1769,4 +1835,3 @@ pub extern "C" fn process_scheduler_stop() {
         scheduler.stop();
     }
 }
-

@@ -5,10 +5,10 @@
 
 use anyhow::Result;
 use inkwell::OptimizationLevel;
+use inkwell::module::Module;
 use inkwell::targets::{
     CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine,
 };
-use inkwell::module::Module;
 use std::path::Path;
 use std::process::Command;
 
@@ -74,24 +74,28 @@ pub fn compile_to_object(module: &Module, config: &LinkingConfig) -> Result<Stri
             break;
         }
     }
-    let tm = tm.ok_or_else(|| {
-        anyhow::anyhow!("Failed to create TargetMachine with any CPU candidate")
-    })?;
+    let tm =
+        tm.ok_or_else(|| anyhow::anyhow!("Failed to create TargetMachine with any CPU candidate"))?;
 
     // Ensure output directory exists
     std::fs::create_dir_all(&config.out_dir).map_err(|e| {
-        anyhow::anyhow!("Failed to create output directory {}: {}", config.out_dir, e)
+        anyhow::anyhow!(
+            "Failed to create output directory {}: {}",
+            config.out_dir,
+            e
+        )
     })?;
 
     // Emit object file
     let out_obj_path = Path::new(&config.out_obj);
-    tm.write_to_file(module, FileType::Object, out_obj_path).map_err(|e| {
-        anyhow::anyhow!(
-            "TargetMachine failed to emit object file {}: {:?}",
-            config.out_obj,
-            e
-        )
-    })?;
+    tm.write_to_file(module, FileType::Object, out_obj_path)
+        .map_err(|e| {
+            anyhow::anyhow!(
+                "TargetMachine failed to emit object file {}: {:?}",
+                config.out_obj,
+                e
+            )
+        })?;
 
     Ok(config.out_obj.clone())
 }
@@ -235,7 +239,10 @@ pub fn link_executable(
         if !rt_main_obj.is_empty() {
             cmd.arg(rt_main_obj);
         }
-        cmd.arg(out_obj).arg(rust_lib).arg("-o").arg(&config.out_exe);
+        cmd.arg(out_obj)
+            .arg(rust_lib)
+            .arg("-o")
+            .arg(&config.out_exe);
         match cmd.status() {
             Ok(status) => {
                 if status.success() {
@@ -252,7 +259,9 @@ pub fn link_executable(
 
         // Add optimization flags
         let host_opt_level = config.opt_level;
-        if matches!(host_opt_level, OptimizationLevel::Aggressive) || config.build_profile == "release" {
+        if matches!(host_opt_level, OptimizationLevel::Aggressive)
+            || config.build_profile == "release"
+        {
             cmd.arg("-O3");
         }
 
@@ -287,7 +296,10 @@ pub fn link_executable(
         if !rt_main_obj.is_empty() {
             cmd.arg(rt_main_obj);
         }
-        cmd.arg(out_obj).arg(rust_lib).arg("-o").arg(&config.out_exe);
+        cmd.arg(out_obj)
+            .arg(rust_lib)
+            .arg("-o")
+            .arg(&config.out_exe);
         match cmd.status() {
             Ok(status) => {
                 if status.success() {
@@ -304,7 +316,10 @@ pub fn link_executable(
         if !rt_main_obj.is_empty() {
             cmd.arg(rt_main_obj);
         }
-        cmd.arg(out_obj).arg(rust_lib).arg("-o").arg(&config.out_exe);
+        cmd.arg(out_obj)
+            .arg(rust_lib)
+            .arg("-o")
+            .arg(&config.out_exe);
         match cmd.status() {
             Ok(status) => {
                 if status.success() {
@@ -337,4 +352,3 @@ pub fn link_executable(
 
     Ok(config.out_exe.clone())
 }
-

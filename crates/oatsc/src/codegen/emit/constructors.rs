@@ -2,8 +2,8 @@
 //!
 //! This module contains code generation logic for class constructors.
 
-use crate::diagnostics::Severity;
 use crate::codegen::emit::LocalsStackLocal;
+use crate::diagnostics::Severity;
 use inkwell::values::BasicValue;
 use oats_ast::*;
 use std::collections::HashMap;

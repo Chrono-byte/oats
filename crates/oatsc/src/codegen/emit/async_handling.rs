@@ -311,31 +311,33 @@ impl<'a> crate::codegen::CodeGen<'a> {
         let state_ptr = state_param.into_pointer_value();
 
         // Read state u32 at offset 8
-        let state_addr_int = match self
-            .builder
-            .build_ptr_to_int(state_ptr, self.i64_t, "state_addr")
-        {
-            Ok(v) => v,
-            Err(_) => {
-                return Err(crate::diagnostics::Diagnostic::simple_boxed(
-                    Severity::Error,
-                    "ptr_to_int failed in poll",
-                ));
-            }
-        };
+        let state_addr_int =
+            match self
+                .builder
+                .build_ptr_to_int(state_ptr, self.i64_t, "state_addr")
+            {
+                Ok(v) => v,
+                Err(_) => {
+                    return Err(crate::diagnostics::Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "ptr_to_int failed in poll",
+                    ));
+                }
+            };
         let state_off = self.i64_t.const_int(8, false);
-        let state_field_int = match self
-            .builder
-            .build_int_add(state_addr_int, state_off, "state_field_addr")
-        {
-            Ok(v) => v,
-            Err(_) => {
-                return Err(crate::diagnostics::Diagnostic::simple_boxed(
-                    Severity::Error,
-                    "int_add failed in poll",
-                ));
-            }
-        };
+        let state_field_int =
+            match self
+                .builder
+                .build_int_add(state_addr_int, state_off, "state_field_addr")
+            {
+                Ok(v) => v,
+                Err(_) => {
+                    return Err(crate::diagnostics::Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "int_add failed in poll",
+                    ));
+                }
+            };
         let state_field_ptr = match self.builder.build_int_to_ptr(
             state_field_int,
             self.context.ptr_type(inkwell::AddressSpace::default()),
@@ -411,8 +413,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             Option<String>,                 // nominal type name
             Option<crate::types::OatsType>, // oats_type for unions
         );
-        let mut locals_stack: Vec<HashMap<String, LocalEntry<'a>>> =
-            vec![HashMap::new()];
+        let mut locals_stack: Vec<HashMap<String, LocalEntry<'a>>> = vec![HashMap::new()];
 
         // Load each parameter from state and create allocas
         for (i, param) in func_decl.params.iter().enumerate() {
@@ -473,18 +474,19 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     ));
                 }
             };
-            let slot_ptr = match self
-                .builder
-                .build_int_to_ptr(slot_addr_int, self.i8ptr_t, "slot_ptr")
-            {
-                Ok(p) => p,
-                Err(_) => {
-                    return Err(crate::diagnostics::Diagnostic::simple_boxed(
-                        Severity::Error,
-                        "int_to_ptr failed loading param",
-                    ));
-                }
-            };
+            let slot_ptr =
+                match self
+                    .builder
+                    .build_int_to_ptr(slot_addr_int, self.i8ptr_t, "slot_ptr")
+                {
+                    Ok(p) => p,
+                    Err(_) => {
+                        return Err(crate::diagnostics::Diagnostic::simple_boxed(
+                            Severity::Error,
+                            "int_to_ptr failed loading param",
+                        ));
+                    }
+                };
 
             // Load and unbox if needed
             let loaded_ptr = match self
@@ -503,19 +505,19 @@ impl<'a> crate::codegen::CodeGen<'a> {
             match llvm_ty {
                 inkwell::types::BasicTypeEnum::FloatType(_) => {
                     let unbox_fn = self.get_union_unbox_f64();
-                    let cs = match self.builder.build_call(
-                        unbox_fn,
-                        &[loaded_ptr.into()],
-                        "unbox_param",
-                    ) {
-                        Ok(cs) => cs,
-                        Err(_) => {
-                            return Err(crate::diagnostics::Diagnostic::simple_boxed(
-                                Severity::Error,
-                                "union_unbox_f64 call failed",
-                            ));
-                        }
-                    };
+                    let cs =
+                        match self
+                            .builder
+                            .build_call(unbox_fn, &[loaded_ptr.into()], "unbox_param")
+                        {
+                            Ok(cs) => cs,
+                            Err(_) => {
+                                return Err(crate::diagnostics::Diagnostic::simple_boxed(
+                                    Severity::Error,
+                                    "union_unbox_f64 call failed",
+                                ));
+                            }
+                        };
                     let fv = cs
                         .try_as_basic_value()
                         .left()
@@ -708,18 +710,19 @@ impl<'a> crate::codegen::CodeGen<'a> {
         // store poll function pointer at offset 0 (first word of state)
         // cast poll_f to i8* and store at state_ptr
         let poll_ptr = poll_f.as_global_value().as_pointer_value();
-        let poll_ptr_i8 = match self
-            .builder
-            .build_pointer_cast(poll_ptr, self.i8ptr_t, "poll_i8ptr")
-        {
-            Ok(p) => p,
-            Err(_) => {
-                return Err(crate::diagnostics::Diagnostic::simple_boxed(
-                    Severity::Error,
-                    "pointer cast failed",
-                ));
-            }
-        };
+        let poll_ptr_i8 =
+            match self
+                .builder
+                .build_pointer_cast(poll_ptr, self.i8ptr_t, "poll_i8ptr")
+            {
+                Ok(p) => p,
+                Err(_) => {
+                    return Err(crate::diagnostics::Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "pointer cast failed",
+                    ));
+                }
+            };
         let _ = self
             .builder
             .build_store(state_ptr_wrapper, poll_ptr_i8.as_basic_value_enum());
@@ -927,12 +930,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 ) {
                                     Ok(v) => v,
                                     Err(_) => {
-                                        return Err(
-                                            crate::diagnostics::Diagnostic::simple_boxed(
-                                                Severity::Error,
-                                                "ptr_to_int failed when resuming locals",
-                                            ),
-                                        );
+                                        return Err(crate::diagnostics::Diagnostic::simple_boxed(
+                                            Severity::Error,
+                                            "ptr_to_int failed when resuming locals",
+                                        ));
                                     }
                                 };
                                 let off_const =
@@ -944,12 +945,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 ) {
                                     Ok(v) => v,
                                     Err(_) => {
-                                        return Err(
-                                            crate::diagnostics::Diagnostic::simple_boxed(
-                                                Severity::Error,
-                                                "int_add failed when resuming locals",
-                                            ),
-                                        );
+                                        return Err(crate::diagnostics::Diagnostic::simple_boxed(
+                                            Severity::Error,
+                                            "int_add failed when resuming locals",
+                                        ));
                                     }
                                 };
                                 let slot_ptr = match self.builder.build_int_to_ptr(
@@ -959,12 +958,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 ) {
                                     Ok(p) => p,
                                     Err(_) => {
-                                        return Err(
-                                            crate::diagnostics::Diagnostic::simple_boxed(
-                                                Severity::Error,
-                                                "int_to_ptr failed when resuming locals",
-                                            ),
-                                        );
+                                        return Err(crate::diagnostics::Diagnostic::simple_boxed(
+                                            Severity::Error,
+                                            "int_to_ptr failed when resuming locals",
+                                        ));
                                     }
                                 };
                                 let loaded_slot = match self.builder.build_load(
@@ -974,12 +971,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 ) {
                                     Ok(v) => v,
                                     Err(_) => {
-                                        return Err(
-                                            crate::diagnostics::Diagnostic::simple_boxed(
-                                                Severity::Error,
-                                                "failed to load from slot when resuming",
-                                            ),
-                                        );
+                                        return Err(crate::diagnostics::Diagnostic::simple_boxed(
+                                            Severity::Error,
+                                            "failed to load from slot when resuming",
+                                        ));
                                     }
                                 };
                                 // store into alloca (unbox for floats)
@@ -993,10 +988,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         ) {
                                             Ok(c) => c,
                                             Err(_) => {
-                                                return Err(crate::diagnostics::Diagnostic::simple_boxed(
-                                                    Severity::Error,
-                                                    "union_unbox_f64 call failed when resuming locals",
-                                                ));
+                                                return Err(
+                                                    crate::diagnostics::Diagnostic::simple_boxed(
+                                                        Severity::Error,
+                                                        "union_unbox_f64 call failed when resuming locals",
+                                                    ),
+                                                );
                                             }
                                         };
                                         let fv = cs
@@ -1022,16 +1019,17 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         ) {
                                             Ok(c) => c,
                                             Err(_) => {
-                                                return Err(crate::diagnostics::Diagnostic::simple_boxed(
-                                                    Severity::Error,
-                                                    "pointer cast failed when resuming locals",
-                                                ));
+                                                return Err(
+                                                    crate::diagnostics::Diagnostic::simple_boxed(
+                                                        Severity::Error,
+                                                        "pointer cast failed when resuming locals",
+                                                    ),
+                                                );
                                             }
                                         };
-                                        let _ = self.builder.build_store(
-                                            alloca_ptr,
-                                            casted.as_basic_value_enum(),
-                                        );
+                                        let _ = self
+                                            .builder
+                                            .build_store(alloca_ptr, casted.as_basic_value_enum());
                                     }
                                 }
                             }
@@ -1057,8 +1055,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
                 let param_count = llvm_param_types.len();
                 let local_slot_count = all_live_names.len();
-                let await_slot_offset =
-                    16 + (param_count * 8) + (local_slot_count * 8) + (i * 8);
+                let await_slot_offset = 16 + (param_count * 8) + (local_slot_count * 8) + (i * 8);
                 let base_int = match self.builder.build_ptr_to_int(
                     poll_state_ptr,
                     self.i64_t,
@@ -1100,18 +1097,19 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     }
                 };
                 // Load the promise pointer
-                let promise_ptr = match self
-                    .builder
-                    .build_load(self.i8ptr_t, slot_ptr, "resume_promise_load")
-                {
-                    Ok(v) => v,
-                    Err(_) => {
-                        return Err(crate::diagnostics::Diagnostic::simple_boxed(
-                            Severity::Error,
-                            "load failed when loading awaited promise",
-                        ));
-                    }
-                };
+                let promise_ptr =
+                    match self
+                        .builder
+                        .build_load(self.i8ptr_t, slot_ptr, "resume_promise_load")
+                    {
+                        Ok(v) => v,
+                        Err(_) => {
+                            return Err(crate::diagnostics::Diagnostic::simple_boxed(
+                                Severity::Error,
+                                "load failed when loading awaited promise",
+                            ));
+                        }
+                    };
 
                 // Allocate output slot and re-poll the promise
                 let out_alloca = match self.builder.build_alloca(self.i8ptr_t, "resume_await_out") {
@@ -1138,19 +1136,19 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     }
                 };
                 // Load the result (assuming it's ready now - executor wouldn't wake us if not)
-                let resumed_value = match self.builder.build_load(
-                    self.i8ptr_t,
-                    out_alloca,
-                    "resume_await_loaded",
-                ) {
-                    Ok(v) => v,
-                    Err(_) => {
-                        return Err(crate::diagnostics::Diagnostic::simple_boxed(
-                            Severity::Error,
-                            "load failed when loading resumed value",
-                        ));
-                    }
-                };
+                let resumed_value =
+                    match self
+                        .builder
+                        .build_load(self.i8ptr_t, out_alloca, "resume_await_loaded")
+                    {
+                        Ok(v) => v,
+                        Err(_) => {
+                            return Err(crate::diagnostics::Diagnostic::simple_boxed(
+                                Severity::Error,
+                                "load failed when loading resumed value",
+                            ));
+                        }
+                    };
 
                 let _ = self.builder.build_unconditional_branch(cont_bb);
 
@@ -1191,4 +1189,3 @@ impl<'a> crate::codegen::CodeGen<'a> {
         Ok(function)
     }
 }
-

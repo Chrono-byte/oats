@@ -135,7 +135,10 @@ pub fn handle_build(cli: &Cli, opts: BuildCommandOptions) -> Result<()> {
     }
 
     // Read out_dir from environment variable if not provided
-    let out_dir = opts.out_dir.clone().or_else(|| std::env::var("OATS_OUT_DIR").ok());
+    let out_dir = opts
+        .out_dir
+        .clone()
+        .or_else(|| std::env::var("OATS_OUT_DIR").ok());
 
     // Special case: if emit_object_only is requested and this is a single file with no dependencies,
     // compile it directly without the multi-module system

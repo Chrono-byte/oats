@@ -39,4 +39,3 @@ pub mod flags {
     /// Emit object only: `--emit-object-only`
     pub const EMIT_OBJECT_ONLY: &str = "--emit-object-only";
 }
-

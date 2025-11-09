@@ -89,8 +89,11 @@ impl Collector {
                     drop(guard);
                     if crate::COLLECTOR_LOG.load(Ordering::Relaxed) {
                         let _ = io::stderr().write_all(
-                            format!("[oats runtime] collector: processing {} roots\n", roots.len())
-                                .as_bytes(),
+                            format!(
+                                "[oats runtime] collector: processing {} roots\n",
+                                roots.len()
+                            )
+                            .as_bytes(),
                         );
                     }
                     // Use the more efficient Bacon's algorithm

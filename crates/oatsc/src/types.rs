@@ -90,8 +90,8 @@ pub enum OatsType {
         type_args: Vec<OatsType>,
     },
     // Process-related types
-    ProcessId,      // Process identifier (u64)
-    MonitorRef,     // Monitor reference (u64)
+    ProcessId,  // Process identifier (u64)
+    MonitorRef, // Monitor reference (u64)
 }
 
 #[derive(Debug, Clone)]
@@ -266,7 +266,9 @@ pub fn map_ts_type(ty: &TsType) -> Option<OatsType> {
 /// For generic type aliases, type arguments are substituted into the aliased type.
 pub fn map_ts_type_with_aliases(
     ty: &TsType,
-    type_aliases: Option<&std::collections::HashMap<String, (Option<Vec<String>>, oats_ast::TsType)>>,
+    type_aliases: Option<
+        &std::collections::HashMap<String, (Option<Vec<String>>, oats_ast::TsType)>,
+    >,
 ) -> Option<OatsType> {
     match ty {
         TsType::TsKeywordType(keyword) => match keyword {
@@ -300,47 +302,53 @@ pub fn map_ts_type_with_aliases(
                 }
 
                 // Check for type aliases before falling back to built-in types
-                if let Some(aliases) = type_aliases {
-                    if let Some((alias_type_params, aliased_type)) = aliases.get(&ident.sym) {
-                        // This is a type alias reference
-                        if let Some(type_params) = &type_ref.type_params {
-                            // Generic type alias instantiation: type Alias<T> = ...; used as Alias<Concrete>
-                            if let Some(alias_params) = alias_type_params {
-                                // Build substitution map: alias param -> concrete type arg
-                                let mut subst = std::collections::HashMap::new();
-                                for (i, alias_param) in alias_params.iter().enumerate() {
-                                    if let Some(concrete_arg) = type_params.params.get(i) {
-                                        if let Some(mapped_arg) = map_ts_type_with_aliases(concrete_arg, type_aliases) {
-                                            subst.insert(alias_param.clone(), mapped_arg);
-                                        }
-                                    }
+                if let Some(aliases) = type_aliases
+                    && let Some((alias_type_params, aliased_type)) = aliases.get(&ident.sym)
+                {
+                    // This is a type alias reference
+                    if let Some(type_params) = &type_ref.type_params {
+                        // Generic type alias instantiation: type Alias<T> = ...; used as Alias<Concrete>
+                        if let Some(alias_params) = alias_type_params {
+                            // Build substitution map: alias param -> concrete type arg
+                            let mut subst = std::collections::HashMap::new();
+                            for (i, alias_param) in alias_params.iter().enumerate() {
+                                if let Some(concrete_arg) = type_params.params.get(i)
+                                    && let Some(mapped_arg) =
+                                        map_ts_type_with_aliases(concrete_arg, type_aliases)
+                                {
+                                    subst.insert(alias_param.clone(), mapped_arg);
                                 }
-                                // Apply substitution to aliased type, then resolve any nested aliases
-                                if let Some(substituted) = crate::types::map_ts_type_with_subst(aliased_type, &subst) {
-                                    // The substituted type might still contain other type aliases,
-                                    // so we need to resolve them. However, we can't easily do that
-                                    // from here since we're working with OatsType, not TsType.
-                                    // For now, return the substituted type. Nested aliases will be
-                                    // resolved when the type is used in contexts that call
-                                    // map_ts_type_with_aliases.
-                                    return Some(substituted);
-                                }
-                                // If substitution failed, try resolving the aliased type directly
-                                // (for non-parameterized parts)
-                                return map_ts_type_with_aliases(aliased_type, type_aliases);
                             }
-                        } else {
-                            // Non-generic type alias: just resolve to the aliased type
+                            // Apply substitution to aliased type, then resolve any nested aliases
+                            if let Some(substituted) =
+                                crate::types::map_ts_type_with_subst(aliased_type, &subst)
+                            {
+                                // The substituted type might still contain other type aliases,
+                                // so we need to resolve them. However, we can't easily do that
+                                // from here since we're working with OatsType, not TsType.
+                                // For now, return the substituted type. Nested aliases will be
+                                // resolved when the type is used in contexts that call
+                                // map_ts_type_with_aliases.
+                                return Some(substituted);
+                            }
+                            // If substitution failed, try resolving the aliased type directly
+                            // (for non-parameterized parts)
                             return map_ts_type_with_aliases(aliased_type, type_aliases);
                         }
+                    } else {
+                        // Non-generic type alias: just resolve to the aliased type
+                        return map_ts_type_with_aliases(aliased_type, type_aliases);
                     }
                 }
                 // Check for generic classes or functions
                 if ident.sym.as_str() == "Generic"
                     && let Some(type_params) = &type_ref.type_params
                 {
-                    let mapped_params: Vec<_> =
-                        type_params.params.iter().filter_map(|p| map_ts_type_with_aliases(p, type_aliases)).collect();
+                    let mapped_params: Vec<_> = type_params
+                        .params
+                        .iter()
+                        .filter_map(|p| map_ts_type_with_aliases(p, type_aliases))
+                        .collect();
                     return Some(OatsType::Generic(mapped_params));
                 }
                 // Check if this is a Promise<T> type
@@ -447,7 +455,8 @@ pub fn map_ts_type_with_aliases(
         }
         TsType::TsArrayType(arr) => {
             // element type
-            map_ts_type_with_aliases(&arr.elem_type, type_aliases).map(|elem| OatsType::Array(Box::new(elem)))
+            map_ts_type_with_aliases(&arr.elem_type, type_aliases)
+                .map(|elem| OatsType::Array(Box::new(elem)))
         }
         // Map tuple types like `[A, B]` to an array-of-union of the element types.
         // This is a pragmatic compatibility choice: tuples are lowered to runtime
@@ -717,7 +726,10 @@ pub fn check_function_strictness(
                                             end: r.end,
                                         }
                                     },
-                                    message: format!("Parameter '{}' has unsupported type", ident.sym),
+                                    message: format!(
+                                        "Parameter '{}' has unsupported type",
+                                        ident.sym
+                                    ),
                                 }),
                         );
                         // Continue with default to allow compilation to proceed
@@ -733,7 +745,10 @@ pub fn check_function_strictness(
                                     start: param.span.start,
                                     end: param.span.end,
                                 },
-                                message: format!("Parameter '{}' requires a type annotation", ident.sym),
+                                message: format!(
+                                    "Parameter '{}' requires a type annotation",
+                                    ident.sym
+                                ),
                             }),
                     );
                     param_types.push(OatsType::Number);
@@ -753,7 +768,9 @@ pub fn check_function_strictness(
                                         start: param.span.start,
                                         end: param.span.end,
                                     },
-                                    message: "Array destructuring requires a supported type annotation".into(),
+                                    message:
+                                        "Array destructuring requires a supported type annotation"
+                                            .into(),
                                 }),
                         );
                         param_types.push(OatsType::Array(Box::new(OatsType::Number)));
@@ -767,7 +784,9 @@ pub fn check_function_strictness(
                                     start: param.span.start,
                                     end: param.span.end,
                                 },
-                                message: "Array destructuring parameters must have type annotations".into(),
+                                message:
+                                    "Array destructuring parameters must have type annotations"
+                                        .into(),
                             }),
                     );
                     param_types.push(OatsType::Array(Box::new(OatsType::Number)));
@@ -787,7 +806,9 @@ pub fn check_function_strictness(
                                         start: param.span.start,
                                         end: param.span.end,
                                     },
-                                    message: "Object destructuring requires a supported type annotation".into(),
+                                    message:
+                                        "Object destructuring requires a supported type annotation"
+                                            .into(),
                                 }),
                         );
                         param_types.push(OatsType::StructLiteral(Vec::new()));
@@ -801,7 +822,9 @@ pub fn check_function_strictness(
                                     start: param.span.start,
                                     end: param.span.end,
                                 },
-                                message: "Object destructuring parameters must have type annotations".into(),
+                                message:
+                                    "Object destructuring parameters must have type annotations"
+                                        .into(),
                             }),
                     );
                     param_types.push(OatsType::StructLiteral(Vec::new()));
@@ -821,7 +844,8 @@ pub fn check_function_strictness(
                                         start: param.span.start,
                                         end: param.span.end,
                                     },
-                                    message: "Rest parameters require a supported type annotation".into(),
+                                    message: "Rest parameters require a supported type annotation"
+                                        .into(),
                                 }),
                         );
                         param_types.push(OatsType::Array(Box::new(OatsType::Number)));
@@ -991,12 +1015,17 @@ fn infer_type_from_expr_with_depth(expr: &Expr, depth: usize) -> Option<OatsType
         Expr::ProcessSelf(_) => Some(OatsType::ProcessId),
         Expr::ProcessWhereis(_) => Some(OatsType::ProcessId), // Returns ProcessId or null
         Expr::ProcessMonitor(_) => Some(OatsType::MonitorRef),
-        Expr::ProcessLink(_) | Expr::ProcessUnlink(_) | Expr::ProcessRegister(_) | Expr::ProcessUnregister(_) | Expr::ProcessExit(_) | Expr::ProcessDemonitor(_) => {
+        Expr::ProcessLink(_)
+        | Expr::ProcessUnlink(_)
+        | Expr::ProcessRegister(_)
+        | Expr::ProcessUnregister(_)
+        | Expr::ProcessExit(_)
+        | Expr::ProcessDemonitor(_) => {
             // These return void or i32 (success/error), infer as Number
             Some(OatsType::Number)
         }
         Expr::Send(_) => Some(OatsType::Number), // Returns i32 (success/error)
-        Expr::Receive(_) => None, // Returns message payload (unknown type)
+        Expr::Receive(_) => None,                // Returns message payload (unknown type)
         _ => None,
     }
 }

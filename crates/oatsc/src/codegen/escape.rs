@@ -177,9 +177,7 @@ impl EscapeAnalyzer {
         }
 
         match stmt {
-            Stmt::ExprStmt(expr_stmt) => {
-                self.analyze_expr_with_depth(&expr_stmt.expr, depth + 1)
-            }
+            Stmt::ExprStmt(expr_stmt) => self.analyze_expr_with_depth(&expr_stmt.expr, depth + 1),
             Stmt::Return(ret) => {
                 if let Some(arg) = &ret.arg {
                     self.analyze_expr_as_escaping_with_depth(arg, depth + 1);
@@ -379,9 +377,7 @@ impl EscapeAnalyzer {
                     self.analyze_expr_as_escaping_with_depth(arg, depth + 1);
                 }
             }
-            Expr::Await(await_expr) => {
-                self.analyze_expr_with_depth(&await_expr.arg, depth + 1)
-            }
+            Expr::Await(await_expr) => self.analyze_expr_with_depth(&await_expr.arg, depth + 1),
             Expr::Paren(paren) => self.analyze_expr_with_depth(&paren.expr, depth + 1),
             Expr::Arrow(arrow) => {
                 // Analyze arrow function body for captured variables
@@ -437,11 +433,7 @@ impl EscapeAnalyzer {
         Self::collect_vars_from_expr_with_depth(expr, vars, 0)
     }
 
-    fn collect_vars_from_expr_with_depth(
-        expr: &Expr,
-        vars: &mut HashSet<String>,
-        depth: usize,
-    ) {
+    fn collect_vars_from_expr_with_depth(expr: &Expr, vars: &mut HashSet<String>, depth: usize) {
         // Prevent stack overflow from deeply nested expressions
         const MAX_VAR_COLLECTION_DEPTH: usize = 1000;
         if depth > MAX_VAR_COLLECTION_DEPTH {
@@ -605,5 +597,3 @@ impl AwaitLiveAnalyzer {
         }
     }
 }
-
-

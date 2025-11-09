@@ -604,48 +604,80 @@ impl<'a> super::CodeGen<'a> {
         // behavior can be adjusted.
         //
         // declare malloc(i64) -> i8*
-        if self.module.get_function(crate::runtime_functions::names::MALLOC).is_none() {
+        if self
+            .module
+            .get_function(crate::runtime_functions::names::MALLOC)
+            .is_none()
+        {
             let i8ptr = self.i8ptr_t;
             let i64t = self.i64_t;
             let malloc_ty = i8ptr.fn_type(&[i64t.into()], false);
-            let f = self.module.add_function(crate::runtime_functions::names::MALLOC, malloc_ty, None);
+            let f =
+                self.module
+                    .add_function(crate::runtime_functions::names::MALLOC, malloc_ty, None);
             self.fn_malloc.borrow_mut().replace(f);
         }
 
         // declare strlen(i8*) -> i64
-        if self.module.get_function(crate::runtime_functions::names::STRLEN).is_none() {
+        if self
+            .module
+            .get_function(crate::runtime_functions::names::STRLEN)
+            .is_none()
+        {
             let i8ptr = self.i8ptr_t;
             let i64t = self.i64_t;
             let strlen_ty = i64t.fn_type(&[i8ptr.into()], false);
-            let f = self.module.add_function(crate::runtime_functions::names::STRLEN, strlen_ty, None);
+            let f =
+                self.module
+                    .add_function(crate::runtime_functions::names::STRLEN, strlen_ty, None);
             self.fn_strlen.borrow_mut().replace(f);
         }
 
         // declare memcpy(i8*, i8*, i64) -> i8*
-        if self.module.get_function(crate::runtime_functions::names::MEMCPY).is_none() {
+        if self
+            .module
+            .get_function(crate::runtime_functions::names::MEMCPY)
+            .is_none()
+        {
             let i8ptr = self.i8ptr_t;
             let i64t = self.i64_t;
             let memcpy_ty = i8ptr.fn_type(&[i8ptr.into(), i8ptr.into(), i64t.into()], false);
-            let f = self.module.add_function(crate::runtime_functions::names::MEMCPY, memcpy_ty, None);
+            let f =
+                self.module
+                    .add_function(crate::runtime_functions::names::MEMCPY, memcpy_ty, None);
             self.fn_memcpy.borrow_mut().replace(f);
         }
 
         // declare free(i8*) -> void
-        if self.module.get_function(crate::runtime_functions::names::FREE).is_none() {
+        if self
+            .module
+            .get_function(crate::runtime_functions::names::FREE)
+            .is_none()
+        {
             let voidt = self.context.void_type();
             let i8ptr = self.i8ptr_t;
             let free_ty = voidt.fn_type(&[i8ptr.into()], false);
-            let f = self.module.add_function(crate::runtime_functions::names::FREE, free_ty, None);
+            let f = self
+                .module
+                .add_function(crate::runtime_functions::names::FREE, free_ty, None);
             self.fn_free.borrow_mut().replace(f);
         }
 
         // Declare runtime print helpers so user scripts can call them.
-        if self.module.get_function(crate::runtime_functions::names::PRINT_F64).is_none() {
+        if self
+            .module
+            .get_function(crate::runtime_functions::names::PRINT_F64)
+            .is_none()
+        {
             let print_ty = self
                 .context
                 .void_type()
                 .fn_type(&[self.f64_t.into()], false);
-            let f = self.module.add_function(crate::runtime_functions::names::PRINT_F64, print_ty, None);
+            let f = self.module.add_function(
+                crate::runtime_functions::names::PRINT_F64,
+                print_ty,
+                None,
+            );
             self.fn_print_f64.borrow_mut().replace(f);
         }
         // declare print_f64_no_nl(f64) -> void
@@ -656,10 +688,18 @@ impl<'a> super::CodeGen<'a> {
                 .fn_type(&[self.f64_t.into()], false);
             let _f = self.module.add_function("print_f64_no_nl", print_ty, None);
         }
-        if self.module.get_function(crate::runtime_functions::names::PRINT_STR).is_none() {
+        if self
+            .module
+            .get_function(crate::runtime_functions::names::PRINT_STR)
+            .is_none()
+        {
             let i8ptr = self.i8ptr_t;
             let print_str_ty = self.context.void_type().fn_type(&[i8ptr.into()], false);
-            let f = self.module.add_function(crate::runtime_functions::names::PRINT_STR, print_str_ty, None);
+            let f = self.module.add_function(
+                crate::runtime_functions::names::PRINT_STR,
+                print_str_ty,
+                None,
+            );
             self.fn_print_str.borrow_mut().replace(f);
         }
         // declare print_str_no_nl(i8*) -> void
@@ -778,153 +818,371 @@ impl<'a> super::CodeGen<'a> {
         let i64ptr = self.context.ptr_type(inkwell::AddressSpace::default());
 
         // declare process_spawn(i32 priority) -> i8*
-        if self.module.get_function(crate::runtime_functions::names::PROCESS_SPAWN).is_none() {
+        if self
+            .module
+            .get_function(crate::runtime_functions::names::PROCESS_SPAWN)
+            .is_none()
+        {
             let fn_type = i8ptr.fn_type(&[i32t.into()], false);
-            let _f = self.module.add_function(crate::runtime_functions::names::PROCESS_SPAWN, fn_type, None);
+            let _f = self.module.add_function(
+                crate::runtime_functions::names::PROCESS_SPAWN,
+                fn_type,
+                None,
+            );
         }
 
         // declare process_spawn_named(i8* name, i32 priority) -> i8*
-        if self.module.get_function(crate::runtime_functions::names::PROCESS_SPAWN_NAMED).is_none() {
+        if self
+            .module
+            .get_function(crate::runtime_functions::names::PROCESS_SPAWN_NAMED)
+            .is_none()
+        {
             let fn_type = i8ptr.fn_type(&[i8ptr.into(), i32t.into()], false);
-            let _f = self.module.add_function(crate::runtime_functions::names::PROCESS_SPAWN_NAMED, fn_type, None);
+            let _f = self.module.add_function(
+                crate::runtime_functions::names::PROCESS_SPAWN_NAMED,
+                fn_type,
+                None,
+            );
         }
 
         // declare process_send(i64* to_pid, i64* from_pid, i8* payload, i64 type_id) -> i32
-        if self.module.get_function(crate::runtime_functions::names::PROCESS_SEND).is_none() {
-            let fn_type = i32t.fn_type(&[i64ptr.into(), i64ptr.into(), i8ptr.into(), i64t.into()], false);
-            let _f = self.module.add_function(crate::runtime_functions::names::PROCESS_SEND, fn_type, None);
+        if self
+            .module
+            .get_function(crate::runtime_functions::names::PROCESS_SEND)
+            .is_none()
+        {
+            let fn_type = i32t.fn_type(
+                &[i64ptr.into(), i64ptr.into(), i8ptr.into(), i64t.into()],
+                false,
+            );
+            let _f = self.module.add_function(
+                crate::runtime_functions::names::PROCESS_SEND,
+                fn_type,
+                None,
+            );
         }
 
         // declare process_send_to_name(i8* name, i64* from_pid, i8* payload, i64 type_id) -> i32
-        if self.module.get_function(crate::runtime_functions::names::PROCESS_SEND_TO_NAME).is_none() {
-            let fn_type = i32t.fn_type(&[i8ptr.into(), i64ptr.into(), i8ptr.into(), i64t.into()], false);
-            let _f = self.module.add_function(crate::runtime_functions::names::PROCESS_SEND_TO_NAME, fn_type, None);
+        if self
+            .module
+            .get_function(crate::runtime_functions::names::PROCESS_SEND_TO_NAME)
+            .is_none()
+        {
+            let fn_type = i32t.fn_type(
+                &[i8ptr.into(), i64ptr.into(), i8ptr.into(), i64t.into()],
+                false,
+            );
+            let _f = self.module.add_function(
+                crate::runtime_functions::names::PROCESS_SEND_TO_NAME,
+                fn_type,
+                None,
+            );
         }
 
         // declare process_receive(i64* pid, i64 type_id) -> i8*
-        if self.module.get_function(crate::runtime_functions::names::PROCESS_RECEIVE).is_none() {
+        if self
+            .module
+            .get_function(crate::runtime_functions::names::PROCESS_RECEIVE)
+            .is_none()
+        {
             let fn_type = i8ptr.fn_type(&[i64ptr.into(), i64t.into()], false);
-            let _f = self.module.add_function(crate::runtime_functions::names::PROCESS_RECEIVE, fn_type, None);
+            let _f = self.module.add_function(
+                crate::runtime_functions::names::PROCESS_RECEIVE,
+                fn_type,
+                None,
+            );
         }
 
         // declare process_self() -> i8*
-        if self.module.get_function(crate::runtime_functions::names::PROCESS_SELF).is_none() {
+        if self
+            .module
+            .get_function(crate::runtime_functions::names::PROCESS_SELF)
+            .is_none()
+        {
             let fn_type = i8ptr.fn_type(&[], false);
-            let _f = self.module.add_function(crate::runtime_functions::names::PROCESS_SELF, fn_type, None);
+            let _f = self.module.add_function(
+                crate::runtime_functions::names::PROCESS_SELF,
+                fn_type,
+                None,
+            );
         }
 
         // declare process_exit(i64* pid, i32 reason_type, i8* reason_str) -> void
-        if self.module.get_function(crate::runtime_functions::names::PROCESS_EXIT).is_none() {
+        if self
+            .module
+            .get_function(crate::runtime_functions::names::PROCESS_EXIT)
+            .is_none()
+        {
             let fn_type = voidt.fn_type(&[i64ptr.into(), i32t.into(), i8ptr.into()], false);
-            let _f = self.module.add_function(crate::runtime_functions::names::PROCESS_EXIT, fn_type, None);
+            let _f = self.module.add_function(
+                crate::runtime_functions::names::PROCESS_EXIT,
+                fn_type,
+                None,
+            );
         }
 
         // declare process_whereis(i8* name) -> i8*
-        if self.module.get_function(crate::runtime_functions::names::PROCESS_WHEREIS).is_none() {
+        if self
+            .module
+            .get_function(crate::runtime_functions::names::PROCESS_WHEREIS)
+            .is_none()
+        {
             let fn_type = i8ptr.fn_type(&[i8ptr.into()], false);
-            let _f = self.module.add_function(crate::runtime_functions::names::PROCESS_WHEREIS, fn_type, None);
+            let _f = self.module.add_function(
+                crate::runtime_functions::names::PROCESS_WHEREIS,
+                fn_type,
+                None,
+            );
         }
 
         // declare process_register(i64* pid, i8* name) -> i32
-        if self.module.get_function(crate::runtime_functions::names::PROCESS_REGISTER).is_none() {
+        if self
+            .module
+            .get_function(crate::runtime_functions::names::PROCESS_REGISTER)
+            .is_none()
+        {
             let fn_type = i32t.fn_type(&[i64ptr.into(), i8ptr.into()], false);
-            let _f = self.module.add_function(crate::runtime_functions::names::PROCESS_REGISTER, fn_type, None);
+            let _f = self.module.add_function(
+                crate::runtime_functions::names::PROCESS_REGISTER,
+                fn_type,
+                None,
+            );
         }
 
         // declare process_unregister(i8* name) -> void
-        if self.module.get_function(crate::runtime_functions::names::PROCESS_UNREGISTER).is_none() {
+        if self
+            .module
+            .get_function(crate::runtime_functions::names::PROCESS_UNREGISTER)
+            .is_none()
+        {
             let fn_type = voidt.fn_type(&[i8ptr.into()], false);
-            let _f = self.module.add_function(crate::runtime_functions::names::PROCESS_UNREGISTER, fn_type, None);
+            let _f = self.module.add_function(
+                crate::runtime_functions::names::PROCESS_UNREGISTER,
+                fn_type,
+                None,
+            );
         }
 
         // declare process_link(i64* pid1, i64* pid2) -> i32
-        if self.module.get_function(crate::runtime_functions::names::PROCESS_LINK).is_none() {
+        if self
+            .module
+            .get_function(crate::runtime_functions::names::PROCESS_LINK)
+            .is_none()
+        {
             let fn_type = i32t.fn_type(&[i64ptr.into(), i64ptr.into()], false);
-            let _f = self.module.add_function(crate::runtime_functions::names::PROCESS_LINK, fn_type, None);
+            let _f = self.module.add_function(
+                crate::runtime_functions::names::PROCESS_LINK,
+                fn_type,
+                None,
+            );
         }
 
         // declare process_unlink(i64* pid1, i64* pid2) -> void
-        if self.module.get_function(crate::runtime_functions::names::PROCESS_UNLINK).is_none() {
+        if self
+            .module
+            .get_function(crate::runtime_functions::names::PROCESS_UNLINK)
+            .is_none()
+        {
             let fn_type = voidt.fn_type(&[i64ptr.into(), i64ptr.into()], false);
-            let _f = self.module.add_function(crate::runtime_functions::names::PROCESS_UNLINK, fn_type, None);
+            let _f = self.module.add_function(
+                crate::runtime_functions::names::PROCESS_UNLINK,
+                fn_type,
+                None,
+            );
         }
 
         // declare process_monitor(i64* monitor_pid, i64* target_pid) -> i8*
-        if self.module.get_function(crate::runtime_functions::names::PROCESS_MONITOR).is_none() {
+        if self
+            .module
+            .get_function(crate::runtime_functions::names::PROCESS_MONITOR)
+            .is_none()
+        {
             let fn_type = i8ptr.fn_type(&[i64ptr.into(), i64ptr.into()], false);
-            let _f = self.module.add_function(crate::runtime_functions::names::PROCESS_MONITOR, fn_type, None);
+            let _f = self.module.add_function(
+                crate::runtime_functions::names::PROCESS_MONITOR,
+                fn_type,
+                None,
+            );
         }
 
         // declare process_demonitor(i64* monitor_pid, i64* monitor_ref) -> i32
-        if self.module.get_function(crate::runtime_functions::names::PROCESS_DEMONITOR).is_none() {
+        if self
+            .module
+            .get_function(crate::runtime_functions::names::PROCESS_DEMONITOR)
+            .is_none()
+        {
             let fn_type = i32t.fn_type(&[i64ptr.into(), i64ptr.into()], false);
-            let _f = self.module.add_function(crate::runtime_functions::names::PROCESS_DEMONITOR, fn_type, None);
+            let _f = self.module.add_function(
+                crate::runtime_functions::names::PROCESS_DEMONITOR,
+                fn_type,
+                None,
+            );
         }
 
         // declare process_wait_for_promise(i64* pid, i8* promise) -> void
-        if self.module.get_function(crate::runtime_functions::names::PROCESS_WAIT_FOR_PROMISE).is_none() {
+        if self
+            .module
+            .get_function(crate::runtime_functions::names::PROCESS_WAIT_FOR_PROMISE)
+            .is_none()
+        {
             let fn_type = voidt.fn_type(&[i64ptr.into(), i8ptr.into()], false);
-            let _f = self.module.add_function(crate::runtime_functions::names::PROCESS_WAIT_FOR_PROMISE, fn_type, None);
+            let _f = self.module.add_function(
+                crate::runtime_functions::names::PROCESS_WAIT_FOR_PROMISE,
+                fn_type,
+                None,
+            );
         }
 
         // declare process_wait_for_timeout(i64* pid, i64 timeout_ms) -> void
-        if self.module.get_function(crate::runtime_functions::names::PROCESS_WAIT_FOR_TIMEOUT).is_none() {
+        if self
+            .module
+            .get_function(crate::runtime_functions::names::PROCESS_WAIT_FOR_TIMEOUT)
+            .is_none()
+        {
             let fn_type = voidt.fn_type(&[i64ptr.into(), i64t.into()], false);
-            let _f = self.module.add_function(crate::runtime_functions::names::PROCESS_WAIT_FOR_TIMEOUT, fn_type, None);
+            let _f = self.module.add_function(
+                crate::runtime_functions::names::PROCESS_WAIT_FOR_TIMEOUT,
+                fn_type,
+                None,
+            );
         }
 
         // declare process_scheduler_run() -> i32
-        if self.module.get_function(crate::runtime_functions::names::PROCESS_SCHEDULER_RUN).is_none() {
+        if self
+            .module
+            .get_function(crate::runtime_functions::names::PROCESS_SCHEDULER_RUN)
+            .is_none()
+        {
             let fn_type = i32t.fn_type(&[], false);
-            let _f = self.module.add_function(crate::runtime_functions::names::PROCESS_SCHEDULER_RUN, fn_type, None);
+            let _f = self.module.add_function(
+                crate::runtime_functions::names::PROCESS_SCHEDULER_RUN,
+                fn_type,
+                None,
+            );
         }
 
         // declare process_check_promises() -> void
-        if self.module.get_function(crate::runtime_functions::names::PROCESS_CHECK_PROMISES).is_none() {
+        if self
+            .module
+            .get_function(crate::runtime_functions::names::PROCESS_CHECK_PROMISES)
+            .is_none()
+        {
             let fn_type = voidt.fn_type(&[], false);
-            let _f = self.module.add_function(crate::runtime_functions::names::PROCESS_CHECK_PROMISES, fn_type, None);
+            let _f = self.module.add_function(
+                crate::runtime_functions::names::PROCESS_CHECK_PROMISES,
+                fn_type,
+                None,
+            );
         }
 
         // declare process_check_timeouts() -> void
-        if self.module.get_function(crate::runtime_functions::names::PROCESS_CHECK_TIMEOUTS).is_none() {
+        if self
+            .module
+            .get_function(crate::runtime_functions::names::PROCESS_CHECK_TIMEOUTS)
+            .is_none()
+        {
             let fn_type = voidt.fn_type(&[], false);
-            let _f = self.module.add_function(crate::runtime_functions::names::PROCESS_CHECK_TIMEOUTS, fn_type, None);
+            let _f = self.module.add_function(
+                crate::runtime_functions::names::PROCESS_CHECK_TIMEOUTS,
+                fn_type,
+                None,
+            );
         }
 
         // declare process_register_supervisor(i64* supervisor_pid, i32 strategy, i32 max_restarts, i64 max_seconds) -> i32
-        if self.module.get_function(crate::runtime_functions::names::PROCESS_REGISTER_SUPERVISOR).is_none() {
-            let fn_type = i32t.fn_type(&[i64ptr.into(), i32t.into(), i32t.into(), i64t.into()], false);
-            let _f = self.module.add_function(crate::runtime_functions::names::PROCESS_REGISTER_SUPERVISOR, fn_type, None);
+        if self
+            .module
+            .get_function(crate::runtime_functions::names::PROCESS_REGISTER_SUPERVISOR)
+            .is_none()
+        {
+            let fn_type = i32t.fn_type(
+                &[i64ptr.into(), i32t.into(), i32t.into(), i64t.into()],
+                false,
+            );
+            let _f = self.module.add_function(
+                crate::runtime_functions::names::PROCESS_REGISTER_SUPERVISOR,
+                fn_type,
+                None,
+            );
         }
 
         // declare process_add_supervisor_child(i64* supervisor_pid, i64* child_pid, i8* child_id, i32 restart, i64 shutdown_timeout) -> i32
-        if self.module.get_function(crate::runtime_functions::names::PROCESS_ADD_SUPERVISOR_CHILD).is_none() {
-            let fn_type = i32t.fn_type(&[i64ptr.into(), i64ptr.into(), i8ptr.into(), i32t.into(), i64t.into()], false);
-            let _f = self.module.add_function(crate::runtime_functions::names::PROCESS_ADD_SUPERVISOR_CHILD, fn_type, None);
+        if self
+            .module
+            .get_function(crate::runtime_functions::names::PROCESS_ADD_SUPERVISOR_CHILD)
+            .is_none()
+        {
+            let fn_type = i32t.fn_type(
+                &[
+                    i64ptr.into(),
+                    i64ptr.into(),
+                    i8ptr.into(),
+                    i32t.into(),
+                    i64t.into(),
+                ],
+                false,
+            );
+            let _f = self.module.add_function(
+                crate::runtime_functions::names::PROCESS_ADD_SUPERVISOR_CHILD,
+                fn_type,
+                None,
+            );
         }
 
         // declare process_set_max_processes(i64 max) -> void
-        if self.module.get_function(crate::runtime_functions::names::PROCESS_SET_MAX_PROCESSES).is_none() {
+        if self
+            .module
+            .get_function(crate::runtime_functions::names::PROCESS_SET_MAX_PROCESSES)
+            .is_none()
+        {
             let fn_type = voidt.fn_type(&[i64t.into()], false);
-            let _f = self.module.add_function(crate::runtime_functions::names::PROCESS_SET_MAX_PROCESSES, fn_type, None);
+            let _f = self.module.add_function(
+                crate::runtime_functions::names::PROCESS_SET_MAX_PROCESSES,
+                fn_type,
+                None,
+            );
         }
 
         // declare process_get_count() -> i64
-        if self.module.get_function(crate::runtime_functions::names::PROCESS_GET_COUNT).is_none() {
+        if self
+            .module
+            .get_function(crate::runtime_functions::names::PROCESS_GET_COUNT)
+            .is_none()
+        {
             let fn_type = i64t.fn_type(&[], false);
-            let _f = self.module.add_function(crate::runtime_functions::names::PROCESS_GET_COUNT, fn_type, None);
+            let _f = self.module.add_function(
+                crate::runtime_functions::names::PROCESS_GET_COUNT,
+                fn_type,
+                None,
+            );
         }
 
         // declare process_scheduler_init_multi_threaded(i64 num_threads) -> i32
-        if self.module.get_function(crate::runtime_functions::names::PROCESS_SCHEDULER_INIT_MULTI_THREADED).is_none() {
+        if self
+            .module
+            .get_function(crate::runtime_functions::names::PROCESS_SCHEDULER_INIT_MULTI_THREADED)
+            .is_none()
+        {
             let fn_type = i32t.fn_type(&[i64t.into()], false);
-            let _f = self.module.add_function(crate::runtime_functions::names::PROCESS_SCHEDULER_INIT_MULTI_THREADED, fn_type, None);
+            let _f = self.module.add_function(
+                crate::runtime_functions::names::PROCESS_SCHEDULER_INIT_MULTI_THREADED,
+                fn_type,
+                None,
+            );
         }
 
         // declare process_scheduler_stop() -> void
-        if self.module.get_function(crate::runtime_functions::names::PROCESS_SCHEDULER_STOP).is_none() {
+        if self
+            .module
+            .get_function(crate::runtime_functions::names::PROCESS_SCHEDULER_STOP)
+            .is_none()
+        {
             let fn_type = voidt.fn_type(&[], false);
-            let _f = self.module.add_function(crate::runtime_functions::names::PROCESS_SCHEDULER_STOP, fn_type, None);
+            let _f = self.module.add_function(
+                crate::runtime_functions::names::PROCESS_SCHEDULER_STOP,
+                fn_type,
+                None,
+            );
         }
     }
 
@@ -1006,7 +1264,11 @@ impl<'a> super::CodeGen<'a> {
     }
 
     pub(crate) fn gen_str_concat(&self) {
-        if self.module.get_function(crate::runtime_functions::names::STR_CONCAT).is_some() {
+        if self
+            .module
+            .get_function(crate::runtime_functions::names::STR_CONCAT)
+            .is_some()
+        {
             return;
         }
         // Instead of emitting a full definition here (which can cause
@@ -1021,7 +1283,9 @@ impl<'a> super::CodeGen<'a> {
 
         // Add the function declaration (no body). If a definition is needed
         // later (for a self-contained IR mode) we can change this behavior.
-        let _function = self.module.add_function(crate::runtime_functions::names::STR_CONCAT, fn_type, None);
+        let _function =
+            self.module
+                .add_function(crate::runtime_functions::names::STR_CONCAT, fn_type, None);
     }
 
     // Allocate a heap object with the standard header/meta/fields layout and

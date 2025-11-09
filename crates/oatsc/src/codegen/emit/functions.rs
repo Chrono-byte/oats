@@ -50,16 +50,14 @@ impl<'a> crate::codegen::CodeGen<'a> {
         // Convert to BasicMetadataTypeEnum for function type signature
         let llvm_param_types_meta: Vec<inkwell::types::BasicMetadataTypeEnum> = llvm_param_types
             .iter()
-            .map(|t| {
-                match *t {
-                    inkwell::types::BasicTypeEnum::FloatType(ft) => ft.into(),
-                    inkwell::types::BasicTypeEnum::IntType(it) => it.into(),
-                    inkwell::types::BasicTypeEnum::PointerType(pt) => pt.into(),
-                    inkwell::types::BasicTypeEnum::ArrayType(at) => at.into(),
-                    inkwell::types::BasicTypeEnum::VectorType(vt) => vt.into(),
-                    inkwell::types::BasicTypeEnum::StructType(st) => st.into(),
-                    inkwell::types::BasicTypeEnum::ScalableVectorType(svt) => svt.into(),
-                }
+            .map(|t| match *t {
+                inkwell::types::BasicTypeEnum::FloatType(ft) => ft.into(),
+                inkwell::types::BasicTypeEnum::IntType(it) => it.into(),
+                inkwell::types::BasicTypeEnum::PointerType(pt) => pt.into(),
+                inkwell::types::BasicTypeEnum::ArrayType(at) => at.into(),
+                inkwell::types::BasicTypeEnum::VectorType(vt) => vt.into(),
+                inkwell::types::BasicTypeEnum::StructType(st) => st.into(),
+                inkwell::types::BasicTypeEnum::ScalableVectorType(svt) => svt.into(),
             })
             .collect();
         let fn_type = self.build_llvm_fn_type(&llvm_param_types, ret_type);
@@ -254,4 +252,3 @@ impl<'a> crate::codegen::CodeGen<'a> {
         Ok(function)
     }
 }
-

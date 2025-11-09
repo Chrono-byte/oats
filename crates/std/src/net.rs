@@ -22,17 +22,13 @@ pub unsafe extern "C" fn oats_std_net_http_get(url: *const c_char) -> *mut c_cha
 
     // Use reqwest blocking client for HTTP requests
     match reqwest::blocking::get(url_str) {
-        Ok(response) => {
-            match response.text() {
-                Ok(body) => {
-                    match std::ffi::CString::new(body) {
-                        Ok(cstring) => cstring.into_raw(),
-                        Err(_) => std::ptr::null_mut(),
-                    }
-                }
+        Ok(response) => match response.text() {
+            Ok(body) => match std::ffi::CString::new(body) {
+                Ok(cstring) => cstring.into_raw(),
                 Err(_) => std::ptr::null_mut(),
-            }
-        }
+            },
+            Err(_) => std::ptr::null_mut(),
+        },
         Err(_) => std::ptr::null_mut(),
     }
 }
@@ -110,17 +106,13 @@ pub unsafe extern "C" fn oats_std_net_http_post(
     let client = reqwest::blocking::Client::new();
 
     match client.post(url_str).body(body_str.to_string()).send() {
-        Ok(response) => {
-            match response.text() {
-                Ok(body) => {
-                    match std::ffi::CString::new(body) {
-                        Ok(cstring) => cstring.into_raw(),
-                        Err(_) => std::ptr::null_mut(),
-                    }
-                }
+        Ok(response) => match response.text() {
+            Ok(body) => match std::ffi::CString::new(body) {
+                Ok(cstring) => cstring.into_raw(),
                 Err(_) => std::ptr::null_mut(),
-            }
-        }
+            },
+            Err(_) => std::ptr::null_mut(),
+        },
         Err(_) => std::ptr::null_mut(),
     }
 }
@@ -163,17 +155,13 @@ pub unsafe extern "C" fn oats_std_net_http_post_json(
         .body(json_str.to_string())
         .send()
     {
-        Ok(response) => {
-            match response.text() {
-                Ok(body) => {
-                    match std::ffi::CString::new(body) {
-                        Ok(cstring) => cstring.into_raw(),
-                        Err(_) => std::ptr::null_mut(),
-                    }
-                }
+        Ok(response) => match response.text() {
+            Ok(body) => match std::ffi::CString::new(body) {
+                Ok(cstring) => cstring.into_raw(),
                 Err(_) => std::ptr::null_mut(),
-            }
-        }
+            },
+            Err(_) => std::ptr::null_mut(),
+        },
         Err(_) => std::ptr::null_mut(),
     }
 }

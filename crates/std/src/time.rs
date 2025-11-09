@@ -63,7 +63,7 @@ pub extern "C" fn oats_std_time_sleep_nanos(nanos: c_longlong) {
 /// #[oats_export]
 #[no_mangle]
 pub extern "C" fn oats_std_time_format_rfc3339(timestamp: c_longlong) -> *mut libc::c_char {
-    use chrono::{Utc, TimeZone};
+    use chrono::{TimeZone, Utc};
     let dt = Utc.timestamp_opt(timestamp, 0);
     match dt {
         chrono::LocalResult::Single(dt) => {
@@ -84,7 +84,9 @@ pub extern "C" fn oats_std_time_format_rfc3339(timestamp: c_longlong) -> *mut li
 /// `rfc3339_str` must be a valid pointer to a null-terminated C string, or null.
 /// #[oats_export]
 #[no_mangle]
-pub unsafe extern "C" fn oats_std_time_parse_rfc3339(rfc3339_str: *const libc::c_char) -> c_longlong {
+pub unsafe extern "C" fn oats_std_time_parse_rfc3339(
+    rfc3339_str: *const libc::c_char,
+) -> c_longlong {
     if rfc3339_str.is_null() {
         return -1;
     }

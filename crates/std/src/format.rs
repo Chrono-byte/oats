@@ -62,10 +62,7 @@ pub unsafe extern "C" fn oats_std_format_string(
 /// `format` must be a valid pointer to a null-terminated C string.
 /// #[oats_export]
 #[no_mangle]
-pub unsafe extern "C" fn oats_std_format_number(
-    format: *const c_char,
-    value: f64,
-) -> *mut c_char {
+pub unsafe extern "C" fn oats_std_format_number(format: *const c_char, value: f64) -> *mut c_char {
     if format.is_null() {
         return std::ptr::null_mut();
     }
@@ -90,10 +87,7 @@ pub unsafe extern "C" fn oats_std_format_number(
 /// `format` must be a valid pointer to a null-terminated C string.
 /// #[oats_export]
 #[no_mangle]
-pub unsafe extern "C" fn oats_std_format_int(
-    format: *const c_char,
-    value: i64,
-) -> *mut c_char {
+pub unsafe extern "C" fn oats_std_format_int(format: *const c_char, value: i64) -> *mut c_char {
     if format.is_null() {
         return std::ptr::null_mut();
     }
@@ -110,4 +104,3 @@ pub unsafe extern "C" fn oats_std_format_int(
         Err(_) => std::ptr::null_mut(),
     }
 }
-

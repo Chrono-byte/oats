@@ -284,10 +284,12 @@ pub fn run_from_args(
         // Parse TypeScript-style function declarations from metadata
         for line in meta_content.lines() {
             let line = line.trim();
-            if line.starts_with("function ") && line.ends_with(";") {
-                if let Some((name, func_sig)) = crate::extern_resolution::parse_function_signature_from_metadata(line) {
-                    external_function_signatures.insert(name, (func_sig.params, func_sig.ret));
-                }
+            if line.starts_with("function ")
+                && line.ends_with(";")
+                && let Some((name, func_sig)) =
+                    crate::extern_resolution::parse_function_signature_from_metadata(line)
+            {
+                external_function_signatures.insert(name, (func_sig.params, func_sig.ret));
             }
         }
     }
@@ -353,7 +355,9 @@ pub fn run_from_args(
                         inkwell::types::BasicMetadataTypeEnum::ArrayType(at) => at.into(),
                         inkwell::types::BasicMetadataTypeEnum::VectorType(vt) => vt.into(),
                         inkwell::types::BasicMetadataTypeEnum::StructType(st) => st.into(),
-                        inkwell::types::BasicMetadataTypeEnum::ScalableVectorType(svt) => svt.into(),
+                        inkwell::types::BasicMetadataTypeEnum::ScalableVectorType(svt) => {
+                            svt.into()
+                        }
                         inkwell::types::BasicMetadataTypeEnum::MetadataType(_) => {
                             context.f64_type().into()
                         }
@@ -464,7 +468,10 @@ pub fn run_from_args(
                 None
             };
             // Store class hierarchy for persistent access
-            codegen.class_parents.borrow_mut().insert(class_name.clone(), parent_name_opt.clone());
+            codegen
+                .class_parents
+                .borrow_mut()
+                .insert(class_name.clone(), parent_name_opt.clone());
             // Also set current_class_parent for constructor codegen
             *codegen.current_class_parent.borrow_mut() = parent_name_opt.clone();
 
@@ -476,11 +483,11 @@ pub fn run_from_args(
                         let mname = m.ident.sym.clone();
 
                         // Use RTA to skip dead methods (dead code elimination)
-                        if let Some(ref rta) = codegen.rta_results {
-                            if !rta.is_method_live(&class_name, &mname) {
-                                // Method is not reachable, skip code generation
-                                continue;
-                            }
+                        if let Some(ref rta) = codegen.rta_results
+                            && !rta.is_method_live(&class_name, &mname)
+                        {
+                            // Method is not reachable, skip code generation
+                            continue;
                         }
 
                         // Convert MethodDecl to Function for type checking
@@ -563,7 +570,10 @@ pub fn run_from_args(
                                     // If the class property has an Oats type annotation, map it
                                     // to an OatsType; otherwise default to Number.
                                     let ftype = if let Some(type_ann) = &field.ty {
-                                        if let Some(mt) = crate::types::map_ts_type_with_aliases(type_ann, Some(&*codegen.type_aliases.borrow())) {
+                                        if let Some(mt) = crate::types::map_ts_type_with_aliases(
+                                            type_ann,
+                                            Some(&*codegen.type_aliases.borrow()),
+                                        ) {
                                             mt
                                         } else {
                                             crate::types::OatsType::Number
@@ -613,10 +623,16 @@ pub fn run_from_args(
             let alias_name = ta.ident.sym.clone();
             // Extract type parameter names if present
             let type_params = ta.type_params.as_ref().map(|params| {
-                params.iter().map(|p| p.ident.sym.clone()).collect::<Vec<String>>()
+                params
+                    .iter()
+                    .map(|p| p.ident.sym.clone())
+                    .collect::<Vec<String>>()
             });
             // Store the alias: name -> (type_params, aliased_type)
-            codegen.type_aliases.borrow_mut().insert(alias_name, (type_params, ta.ty.clone()));
+            codegen
+                .type_aliases
+                .borrow_mut()
+                .insert(alias_name, (type_params, ta.ty.clone()));
         }
     }
 
@@ -935,7 +951,13 @@ pub fn run_from_args(
         && let Some(ref sig) = func_sig
     {
         codegen
-            .gen_function_ir(crate::runtime_functions::names::OATS_MAIN, func, &sig.params, &sig.ret, None)
+            .gen_function_ir(
+                crate::runtime_functions::names::OATS_MAIN,
+                func,
+                &sig.params,
+                &sig.ret,
+                None,
+            )
             .map_err(|d| {
                 crate::diagnostics::emit_diagnostic(&d, Some(source.as_str()));
                 anyhow::anyhow!("{}", d.message)
@@ -1078,7 +1100,8 @@ pub fn run_from_args(
     let rt_main_obj = crate::linking::locate_rt_main(&out_dir, emitted_host_main)?;
 
     // Link final executable
-    let final_exe = crate::linking::link_executable(&linking_config, &out_obj, &rust_lib, &rt_main_obj)?;
+    let final_exe =
+        crate::linking::link_executable(&linking_config, &out_obj, &rust_lib, &rt_main_obj)?;
 
     println!("{}", final_exe);
     Ok(Some(final_exe))

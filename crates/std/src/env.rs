@@ -113,9 +113,7 @@ pub extern "C" fn oats_std_env_vars() -> *mut *mut c_char {
     }
 
     let ptr_size = std::mem::size_of::<*mut c_char>();
-    let array_ptr = unsafe {
-        libc::malloc((count + 1) * ptr_size) as *mut *mut c_char
-    };
+    let array_ptr = unsafe { libc::malloc((count + 1) * ptr_size) as *mut *mut c_char };
 
     if array_ptr.is_null() {
         return std::ptr::null_mut();
@@ -127,11 +125,9 @@ pub extern "C" fn oats_std_env_vars() -> *mut *mut c_char {
 
     for (i, var) in vars.iter().enumerate() {
         match std::ffi::CString::new(var.as_str()) {
-            Ok(cstring) => {
-                unsafe {
-                    *array_ptr.add(i + 1) = cstring.into_raw();
-                }
-            }
+            Ok(cstring) => unsafe {
+                *array_ptr.add(i + 1) = cstring.into_raw();
+            },
             Err(_) => {
                 unsafe {
                     for j in 0..i {
@@ -157,9 +153,7 @@ pub unsafe extern "C" fn oats_std_env_vars_count(vars_result: *mut *mut c_char) 
     if vars_result.is_null() {
         return 0;
     }
-    unsafe {
-        *vars_result as usize
-    }
+    unsafe { *vars_result as usize }
 }
 
 /// Get an environment variable at index (caller must free result)
@@ -181,9 +175,7 @@ pub unsafe extern "C" fn oats_std_env_vars_get(
         return std::ptr::null_mut();
     }
 
-    unsafe {
-        *vars_result.add(index + 1)
-    }
+    unsafe { *vars_result.add(index + 1) }
 }
 
 /// Free environment variables array

@@ -38,9 +38,7 @@ pub unsafe extern "C" fn oats_std_string_split(
 
     // Allocate array of pointers
     let ptr_size = std::mem::size_of::<*mut c_char>();
-    let array_ptr = unsafe {
-        libc::malloc((count + 1) * ptr_size) as *mut *mut c_char
-    };
+    let array_ptr = unsafe { libc::malloc((count + 1) * ptr_size) as *mut *mut c_char };
 
     if array_ptr.is_null() {
         return std::ptr::null_mut();
@@ -54,11 +52,9 @@ pub unsafe extern "C" fn oats_std_string_split(
     // Convert each part to CString and store pointer
     for (i, part) in parts.iter().enumerate() {
         match CString::new(part.as_str()) {
-            Ok(cstring) => {
-                unsafe {
-                    *array_ptr.add(i + 1) = cstring.into_raw();
-                }
-            }
+            Ok(cstring) => unsafe {
+                *array_ptr.add(i + 1) = cstring.into_raw();
+            },
             Err(_) => {
                 // Cleanup on error
                 unsafe {
@@ -85,9 +81,7 @@ pub unsafe extern "C" fn oats_std_string_split_count(split_result: *mut *mut c_c
     if split_result.is_null() {
         return 0;
     }
-    unsafe {
-        *split_result as usize
-    }
+    unsafe { *split_result as usize }
 }
 
 /// Get a split result at index (caller must free result)
@@ -109,9 +103,7 @@ pub unsafe extern "C" fn oats_std_string_split_get(
         return std::ptr::null_mut();
     }
 
-    unsafe {
-        *split_result.add(index + 1)
-    }
+    unsafe { *split_result.add(index + 1) }
 }
 
 /// Free a split result array
@@ -374,10 +366,7 @@ pub unsafe extern "C" fn oats_std_string_ends_with(
 /// `str` and `substring` must be valid pointers to null-terminated C strings, or null.
 /// #[oats_export]
 #[no_mangle]
-pub unsafe extern "C" fn oats_std_string_find(
-    str: *const c_char,
-    substring: *const c_char,
-) -> i64 {
+pub unsafe extern "C" fn oats_std_string_find(str: *const c_char, substring: *const c_char) -> i64 {
     if str.is_null() || substring.is_null() {
         return -1;
     }
@@ -438,10 +427,7 @@ pub unsafe extern "C" fn oats_std_string_substring(
 /// `str` must be a valid pointer to a null-terminated C string, or null.
 /// #[oats_export]
 #[no_mangle]
-pub unsafe extern "C" fn oats_std_string_repeat(
-    str: *const c_char,
-    count: usize,
-) -> *mut c_char {
+pub unsafe extern "C" fn oats_std_string_repeat(str: *const c_char, count: usize) -> *mut c_char {
     if str.is_null() || count == 0 {
         return std::ptr::null_mut();
     }
@@ -458,4 +444,3 @@ pub unsafe extern "C" fn oats_std_string_repeat(
         Err(_) => std::ptr::null_mut(),
     }
 }
-

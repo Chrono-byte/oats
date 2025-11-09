@@ -111,13 +111,8 @@ impl<'a> CodeGen<'a> {
                 Expr::Member(member) => {
                     // Handle super.method() calls - call parent class method
                     if let Expr::Super(_) = &*member.obj {
-                        return self.lower_super_method_call(
-                            member,
-                            call,
-                            function,
-                            param_map,
-                            locals,
-                        );
+                        return self
+                            .lower_super_method_call(member, call, function, param_map, locals);
                     }
                     // Handle member calls like console.log() or Temporal.now()
                     if let Expr::Ident(obj_ident) = &*member.obj {
@@ -210,8 +205,11 @@ impl<'a> CodeGen<'a> {
                                         && let Some(nom) = nominal_opt
                                     {
                                         // Try to devirtualize using RTA if available
-                                        let method_fn_name = if let Some(ref rta) = self.rta_results {
-                                            if let Some(devirt_target) = rta.can_devirtualize(&nom, &method_name) {
+                                        let method_fn_name = if let Some(ref rta) = self.rta_results
+                                        {
+                                            if let Some(devirt_target) =
+                                                rta.can_devirtualize(&nom, &method_name)
+                                            {
                                                 devirt_target
                                             } else {
                                                 format!("{}_{}", nom, method_name)
@@ -1053,7 +1051,10 @@ impl<'a> CodeGen<'a> {
             let prefix = &function_name[..underscore_pos];
             let suffix = &function_name[underscore_pos + 1..];
             // Handle constructor function names: Foo_ctor, Foo_ctor_impl, Foo_init
-            if suffix == "ctor" || suffix == "init" || (suffix == "impl" && prefix.ends_with("_ctor")) {
+            if suffix == "ctor"
+                || suffix == "init"
+                || (suffix == "impl" && prefix.ends_with("_ctor"))
+            {
                 // For Foo_ctor or Foo_init, the class name is the prefix
                 // For Foo_ctor_impl, we need to extract Foo from Foo_ctor
                 if suffix == "impl" {
@@ -1077,13 +1078,17 @@ impl<'a> CodeGen<'a> {
                 for (_class_name, class_parent) in class_parents.iter() {
                     if class_parent.as_ref() == Some(parent) {
                         // Found a class with this parent, use the parent directly
-                        return self.call_parent_method(parent, member, call, function, param_map, locals);
+                        return self
+                            .call_parent_method(parent, member, call, function, param_map, locals);
                     }
                 }
             }
             return Err(Diagnostic::simple_with_span_boxed(
                 Severity::Error,
-                format!("cannot determine class from function name '{}'", function_name),
+                format!(
+                    "cannot determine class from function name '{}'",
+                    function_name
+                ),
                 call.span.start,
             ));
         };
@@ -1122,7 +1127,6 @@ impl<'a> CodeGen<'a> {
         param_map: &HashMap<String, u32>,
         locals: &mut Vec<HashMap<String, LocalEntry<'a>>>,
     ) -> crate::diagnostics::DiagnosticResult<inkwell::values::BasicValueEnum<'a>> {
-
         // Get method name
         let method_name = if let MemberProp::Ident(prop_ident) = &member.prop {
             prop_ident.sym.clone()
@@ -1167,7 +1171,10 @@ impl<'a> CodeGen<'a> {
         // Call parent class method: {Parent}_{method_name}
         let method_fn_name = format!("{}_{}", parent, method_name);
         if let Some(method_fn) = self.module.get_function(&method_fn_name) {
-            let cs = match self.builder.build_call(method_fn, &call_args, "super_method_call") {
+            let cs = match self
+                .builder
+                .build_call(method_fn, &call_args, "super_method_call")
+            {
                 Ok(cs) => cs,
                 Err(_) => {
                     return Err(Diagnostic::simple_with_span_boxed(
@@ -1187,7 +1194,10 @@ impl<'a> CodeGen<'a> {
         } else {
             Err(Diagnostic::simple_with_span_boxed(
                 Severity::Error,
-                format!("super method '{}' not found in parent class '{}'", method_name, parent),
+                format!(
+                    "super method '{}' not found in parent class '{}'",
+                    method_name, parent
+                ),
                 call.span.start,
             ))
         }

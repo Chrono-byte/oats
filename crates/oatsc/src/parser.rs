@@ -1,74 +1,16 @@
 //! Oats parser utilities
 //!
-//! This wraps oats_parser parsing with some extra checks we need, like forcing semicolons
-//! and not allowing 'var'. It gives back a ParsedModule with the AST and source text
-//! for diagnostics later.
-//!
-//! For security, we limit source file size (10MB default, set OATS_MAX_SOURCE_BYTES)
-//! and recursion depth (32 levels in runtime) to prevent stack overflows.
+//! This is a thin wrapper around oats_parser that converts parser errors
+//! to compiler diagnostics. The actual parsing logic lives in oats_parser.
 
 use crate::diagnostics;
-use crate::types::FunctionSig;
+use crate::types::{FunctionSig, OatsType};
 use anyhow::Result;
 use oats_ast::*;
-use oats_parser;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-
-/// Maximum source file size in bytes (default: 10 MB)
-/// Override with OATS_MAX_SOURCE_BYTES environment variable
-static MAX_SOURCE_SIZE: AtomicUsize = AtomicUsize::new(10 * 1024 * 1024);
-
-/// Maximum AST nesting depth to prevent stack overflow attacks
-/// Override with OATS_MAX_AST_DEPTH environment variable
-static MAX_AST_DEPTH: AtomicUsize = AtomicUsize::new(100);
-
-/// Flag indicating limits have been initialized
-static LIMITS_INITIALIZED: AtomicBool = AtomicBool::new(false);
-
-/// Initialize parser resource limits from environment variables
-fn init_parser_limits() {
-    if LIMITS_INITIALIZED.load(Ordering::Relaxed) {
-        return;
-    }
-
-    // Parse OATS_MAX_SOURCE_BYTES (default: 10 MB)
-    if let Ok(val) = std::env::var("OATS_MAX_SOURCE_BYTES")
-        && let Ok(limit) = val.parse::<usize>()
-    {
-        MAX_SOURCE_SIZE.store(limit, Ordering::Relaxed);
-    }
-
-    // Parse OATS_MAX_AST_DEPTH (default: 100)
-    if let Ok(val) = std::env::var("OATS_MAX_AST_DEPTH")
-        && let Ok(limit) = val.parse::<usize>()
-    {
-        MAX_AST_DEPTH.store(limit, Ordering::Relaxed);
-    }
-
-    LIMITS_INITIALIZED.store(true, Ordering::Relaxed);
-}
-
-#[derive(Clone)]
-pub struct ParsedModule {
-    pub parsed: Module,
-    // Original source text (no preprocessing)
-    pub source: String,
-    // Set of VarDecl span start positions (byte index) that contain the
-    // `mut` token. This is computed at parse time by scanning the captured
-    // tokens inside each VarDecl span so downstream passes (codegen) can
-    // consult mutability information without string-searching the source.
-    pub mut_var_decls: std::collections::HashSet<usize>,
-    // Top-level `declare function` declarations found in the source.
-    // Each entry contains the declared name and its function signature.
-    pub declared_fns: Vec<DeclaredFn>,
-    // Token stream for the parsed source code
-    // This is exposed for testing and tooling purposes
-    pub tokens: Vec<oats_parser::tokenizer::Token>,
-}
+use oats_parser::{ParsedModule as ParserParsedModule, parse_module_with_metadata};
 
 /// Lightweight representation of a top-level `declare function` signature
-/// extracted from source text. We intentionally keep this small and textual
-/// to avoid modifying oats_ast types; the builder will convert these into
+/// extracted from source text. The builder will convert these into
 /// compiler `FunctionSig` entries and LLVM declarations.
 #[derive(Debug, Clone)]
 pub struct DeclaredFn {
@@ -76,148 +18,64 @@ pub struct DeclaredFn {
     pub sig: FunctionSig,
 }
 
-/// Recursively collect mutable variable declarations from the AST
-fn collect_mut_var_decls(stmt: &Stmt, source: &str, out: &mut std::collections::HashSet<usize>) {
-    collect_mut_var_decls_with_depth(stmt, source, out, 0)
+/// A parsed module with compiler-specific metadata.
+///
+/// This wraps the parser's ParsedModule and adds compiler-specific
+/// conversions (like converting DeclareFn AST nodes to DeclaredFn).
+#[derive(Clone)]
+pub struct ParsedModule {
+    pub parsed: Module,
+    pub source: String,
+    pub mut_var_decls: std::collections::HashSet<usize>,
+    pub declared_fns: Vec<DeclaredFn>,
+    pub tokens: Vec<oats_parser::tokenizer::Token>,
 }
 
-/// Internal helper with recursion depth tracking to prevent stack overflow.
-fn collect_mut_var_decls_with_depth(
-    stmt: &Stmt,
-    source: &str,
-    out: &mut std::collections::HashSet<usize>,
-    depth: usize,
-) {
-    // Prevent stack overflow from deeply nested AST structures
-    const MAX_AST_COLLECTION_DEPTH: usize = 1000;
-    if depth > MAX_AST_COLLECTION_DEPTH {
-        return;
-    }
+/// Convert a parser ParsedModule to a compiler ParsedModule.
+fn convert_parsed_module(parser_mod: ParserParsedModule) -> ParsedModule {
+    // Convert DeclareFn AST nodes to DeclaredFn with FunctionSig
+    let mut declared_fns = Vec::new();
+    for declare_fn in &parser_mod.declared_fns {
+        let name = declare_fn.ident.sym.clone();
 
-    match stmt {
-        Stmt::VarDecl(vd) => {
-            // Check if this is a mutable declaration by scanning the source
-            // for "let mut" or "const mut" patterns near the span
-            let span_start = vd.span.start;
-            if span_start < source.len() {
-                // Look for "let mut" or "const mut" pattern
-                let snippet = if span_start + 20 < source.len() {
-                    &source[span_start..span_start + 20]
+        // Convert parameter types from TsType to OatsType
+        let mut param_types = Vec::new();
+        for param in &declare_fn.params {
+            if let Some(ref ts_type) = param.ty {
+                // Convert TsType to OatsType
+                if let Some(oats_type) = crate::types::map_ts_type(ts_type) {
+                    param_types.push(oats_type);
                 } else {
-                    &source[span_start..]
-                };
-                if snippet.contains("let mut") || snippet.contains("const mut") {
-                    out.insert(span_start);
+                    // If conversion fails, default to Number
+                    param_types.push(OatsType::Number);
                 }
-            }
-            // Recursively check nested statements in initializers
-            for decl in &vd.decls {
-                if let Some(init) = &decl.init {
-                    collect_mut_from_expr(init, source, out);
-                }
+            } else {
+                // If no type annotation, default to Number
+                param_types.push(OatsType::Number);
             }
         }
-        Stmt::Block(block) => {
-            for s in &block.stmts {
-                collect_mut_var_decls_with_depth(s, source, out, depth + 1);
-            }
-        }
-        Stmt::If(if_stmt) => {
-            collect_mut_var_decls_with_depth(&if_stmt.cons, source, out, depth + 1);
-            if let Some(alt) = &if_stmt.alt {
-                collect_mut_var_decls_with_depth(alt, source, out, depth + 1);
-            }
-        }
-        Stmt::For(for_stmt) => {
-            if let Some(ForInit::VarDecl(vd)) = &for_stmt.init {
-                let span_start = vd.span.start;
-                if span_start < source.len() {
-                    let snippet = if span_start + 20 < source.len() {
-                        &source[span_start..span_start + 20]
-                    } else {
-                        &source[span_start..]
-                    };
-                    if snippet.contains("let mut") || snippet.contains("const mut") {
-                        out.insert(span_start);
-                    }
-                }
-            }
-            collect_mut_var_decls_with_depth(&for_stmt.body, source, out, depth + 1);
-        }
-        Stmt::ForIn(for_in) => {
-            if let ForHead::VarDecl(vd) = &for_in.left {
-                let span_start = vd.span.start;
-                if span_start < source.len() {
-                    let snippet = if span_start + 20 < source.len() {
-                        &source[span_start..span_start + 20]
-                    } else {
-                        &source[span_start..]
-                    };
-                    if snippet.contains("let mut") || snippet.contains("const mut") {
-                        out.insert(span_start);
-                    }
-                }
-            }
-            collect_mut_var_decls_with_depth(&for_in.body, source, out, depth + 1);
-        }
-        Stmt::ForOf(for_of) => {
-            if let ForHead::VarDecl(vd) = &for_of.left {
-                let span_start = vd.span.start;
-                if span_start < source.len() {
-                    let snippet = if span_start + 20 < source.len() {
-                        &source[span_start..span_start + 20]
-                    } else {
-                        &source[span_start..]
-                    };
-                    if snippet.contains("let mut") || snippet.contains("const mut") {
-                        out.insert(span_start);
-                    }
-                }
-            }
-            collect_mut_var_decls_with_depth(&for_of.body, source, out, depth + 1);
-        }
-        Stmt::While(while_stmt) => {
-            collect_mut_var_decls_with_depth(&while_stmt.body, source, out, depth + 1);
-        }
-        Stmt::DoWhile(do_while) => {
-            collect_mut_var_decls_with_depth(&do_while.body, source, out, depth + 1);
-        }
-        Stmt::Switch(switch) => {
-            for case in &switch.cases {
-                for s in &case.cons {
-                    collect_mut_var_decls_with_depth(s, source, out, depth + 1);
-                }
-            }
-        }
-        Stmt::Try(try_stmt) => {
-            for s in &try_stmt.block.stmts {
-                collect_mut_var_decls_with_depth(s, source, out, depth + 1);
-            }
-            if let Some(handler) = &try_stmt.handler {
-                for s in &handler.body.stmts {
-                    collect_mut_var_decls_with_depth(s, source, out, depth + 1);
-                }
-            }
-            if let Some(finalizer) = &try_stmt.finalizer {
-                for s in &finalizer.stmts {
-                    collect_mut_var_decls_with_depth(s, source, out, depth + 1);
-                }
-            }
-        }
-        Stmt::FnDecl(fn_decl) => {
-            if let Some(body) = &fn_decl.body {
-                for s in &body.stmts {
-                    collect_mut_var_decls_with_depth(s, source, out, depth + 1);
-                }
-            }
-        }
-        _ => {}
-    }
-}
 
-fn collect_mut_from_expr(_expr: &Expr, _source: &str, _out: &mut std::collections::HashSet<usize>) {
-    // For now, we don't need to track mutability in expressions
-    // This is a placeholder for future expansion
+        // Convert return type from TsType to OatsType
+        let ret_type = crate::types::map_ts_type(&declare_fn.return_type).unwrap_or(OatsType::Void);
+
+        // Extract type parameters if available
+        let type_params = vec![]; // Type parameters not directly available in DeclareFn
+
+        let sig = FunctionSig {
+            params: param_types,
+            ret: ret_type,
+            type_params,
+        };
+        declared_fns.push(DeclaredFn { name, sig });
+    }
+
+    ParsedModule {
+        parsed: parser_mod.parsed,
+        source: parser_mod.source,
+        mut_var_decls: parser_mod.mut_var_decls,
+        declared_fns,
+        tokens: parser_mod.tokens,
+    }
 }
 
 /// Parse an Oats source string into a `ParsedModule` and run
@@ -242,30 +100,9 @@ pub fn parse_oats_module_with_options(
     _enforce_semicolons: bool,
 ) -> Result<(Option<ParsedModule>, Vec<diagnostics::Diagnostic>)> {
     let diags = Vec::new();
-    // Initialize resource limits on first call
-    init_parser_limits();
-
-    // SECURITY: Check source size limit before parsing
-    let max_size = MAX_SOURCE_SIZE.load(Ordering::Relaxed);
-    if source_code.len() > max_size {
-        anyhow::bail!(
-            "Source file too large: {} bytes (limit: {} bytes). \
-             Set OATS_MAX_SOURCE_BYTES to increase.",
-            source_code.len(),
-            max_size
-        );
-    }
-
-    // Strip BOM (Byte Order Mark) if present
-    // UTF-8 BOM is 0xEF 0xBB 0xBF
-    let source_without_bom = if let Some(stripped) = source_code.strip_prefix('\u{FEFF}') {
-        stripped
-    } else {
-        source_code
-    };
 
     // Parse using oats_parser
-    let module = match oats_parser::parse_module(source_without_bom) {
+    let parser_mod = match parse_module_with_metadata(source_code) {
         Ok(m) => m,
         Err(error) => {
             // Convert parse error to diagnostic
@@ -277,7 +114,7 @@ pub fn parse_oats_module_with_options(
                 labels: vec![diagnostics::Label {
                     span: diagnostics::Span {
                         start: 0,
-                        end: source_without_bom.len(),
+                        end: source_code.len(),
                     },
                     message: "parse error".to_string(),
                 }],
@@ -288,63 +125,8 @@ pub fn parse_oats_module_with_options(
         }
     };
 
-    // Collect mutable variable declarations
-    let mut mut_var_decls = std::collections::HashSet::new();
-    for stmt in &module.body {
-        collect_mut_var_decls_with_depth(stmt, source_code, &mut mut_var_decls, 0);
-    }
-
-    // Collect declare function statements
-    let mut declared_fns = Vec::new();
-    for stmt in &module.body {
-        if let Stmt::DeclareFn(declare_fn) = stmt {
-            // Extract function signature from declare function
-            let name = declare_fn.ident.sym.clone();
-
-            // Convert parameter types from TsType to OatsType
-            let mut param_types = Vec::new();
-            for param in &declare_fn.params {
-                if let Some(ref ts_type) = param.ty {
-                    // Convert TsType to OatsType
-                    if let Some(oats_type) = crate::types::map_ts_type(ts_type) {
-                        param_types.push(oats_type);
-                    } else {
-                        // If conversion fails, default to Number
-                        param_types.push(crate::types::OatsType::Number);
-                    }
-                } else {
-                    // If no type annotation, default to Number
-                    param_types.push(crate::types::OatsType::Number);
-                }
-            }
-
-            // Convert return type from TsType to OatsType
-            let ret_type = crate::types::map_ts_type(&declare_fn.return_type)
-                .unwrap_or(crate::types::OatsType::Void);
-
-            // Extract type parameters if available (DeclareFn doesn't have type params directly,
-            // but we can check the return type for generic patterns)
-            let type_params = vec![]; // Type parameters not directly available in DeclareFn
-
-            let sig = FunctionSig {
-                params: param_types,
-                ret: ret_type,
-                type_params,
-            };
-            declared_fns.push(DeclaredFn { name, sig });
-        }
-    }
-
-    // Tokenize the source code for exposure in ParsedModule
-    let tokens = oats_parser::tokenizer::tokenize(source_code);
-
-    let parsed_module = ParsedModule {
-        parsed: module,
-        source: source_code.to_string(),
-        mut_var_decls,
-        declared_fns,
-        tokens,
-    };
+    // Convert to compiler ParsedModule
+    let parsed_module = convert_parsed_module(parser_mod);
 
     Ok((Some(parsed_module), diags))
 }

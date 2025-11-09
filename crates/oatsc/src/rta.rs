@@ -139,12 +139,13 @@ impl RTAResults {
     /// Split a method name in format "class_method" into (class, method).
     /// Returns None if it's not a method name.
     fn split_method_name(&self, name: &str) -> Option<(String, String)> {
-        if let Some(last_underscore) = name.rfind('_') {
-            if last_underscore > 0 && last_underscore < name.len() - 1 {
-                let class = name[..last_underscore].to_string();
-                let method = name[last_underscore + 1..].to_string();
-                return Some((class, method));
-            }
+        if let Some(last_underscore) = name.rfind('_')
+            && last_underscore > 0
+            && last_underscore < name.len() - 1
+        {
+            let class = name[..last_underscore].to_string();
+            let method = name[last_underscore + 1..].to_string();
+            return Some((class, method));
         }
         None
     }

@@ -328,7 +328,13 @@ pub extern "C" fn oats_std_actor_add_supervisor_child(
         ) -> i32;
     }
     unsafe {
-        process_add_supervisor_child(supervisor_pid, child_pid, child_id, restart, shutdown_timeout)
+        process_add_supervisor_child(
+            supervisor_pid,
+            child_pid,
+            child_id,
+            restart,
+            shutdown_timeout,
+        )
     }
 }
 
@@ -377,4 +383,3 @@ pub extern "C" fn oats_std_actor_scheduler_stop() {
         process_scheduler_stop();
     }
 }
-

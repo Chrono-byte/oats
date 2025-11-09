@@ -38,9 +38,10 @@ impl<'a> CodeGen<'a> {
         let obj_val = self.lower_expr(&optional.obj, function, param_map, locals)?;
 
         // Get the current basic block
-        let current_block = self.builder.get_insert_block().ok_or_else(|| {
-            Diagnostic::simple_boxed(Severity::Error, "no current basic block")
-        })?;
+        let current_block = self
+            .builder
+            .get_insert_block()
+            .ok_or_else(|| Diagnostic::simple_boxed(Severity::Error, "no current basic block"))?;
 
         // For non-pointer types, they can't be null, so just do regular member access
         let ptr = match obj_val {
@@ -61,14 +62,17 @@ impl<'a> CodeGen<'a> {
         let merge_block = self.context.append_basic_block(function, "opt_merge");
 
         // Check if object is null
-        let is_null = self.builder
+        let is_null = self
+            .builder
             .build_is_null(ptr, "is_null")
             .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "failed to build null check"))?;
 
         // Branch: if null, go to merge (return null), else access
         self.builder
             .build_conditional_branch(is_null, merge_block, access_block)
-            .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "failed to build conditional branch"))?;
+            .map_err(|_| {
+                Diagnostic::simple_boxed(Severity::Error, "failed to build conditional branch")
+            })?;
 
         // In access_block: perform member access
         self.builder.position_at_end(access_block);
@@ -90,7 +94,9 @@ impl<'a> CodeGen<'a> {
                 // For now, return null as a conservative approach
                 self.builder
                     .build_unconditional_branch(merge_block)
-                    .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "failed to build branch"))?;
+                    .map_err(|_| {
+                        Diagnostic::simple_boxed(Severity::Error, "failed to build branch")
+                    })?;
                 self.builder.position_at_end(merge_block);
                 return Ok(self.i8ptr_t.const_null().as_basic_value_enum());
             }
@@ -113,4 +119,3 @@ impl<'a> CodeGen<'a> {
         Ok(phi.as_basic_value().as_basic_value_enum())
     }
 }
-

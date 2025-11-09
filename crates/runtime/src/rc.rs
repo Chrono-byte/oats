@@ -1,13 +1,13 @@
 //! Reference-counting helpers
 use libc::c_void;
+use std::cell::RefCell;
 use std::io::{self, Write};
 use std::ptr;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::cell::RefCell;
 
 // Import header helpers from sibling module (parent has already imported header)
-use crate::header::*;
 use crate::MAX_RECURSION_DEPTH;
+use crate::header::*;
 
 // Thread-local recursion depth counter for rc_dec destructor calls
 thread_local! {
@@ -113,7 +113,9 @@ pub(crate) unsafe fn get_object_base(p: *mut c_void) -> *mut c_void {
         let obj_is_static = (obj_header_val & HEADER_STATIC_BIT) != 0;
 
         // Heuristic: if the offset header looks valid, return it
-        if obj_is_static || (obj_rc > 0 && obj_rc < 10000 && (obj_header_val & HEADER_FLAGS_MASK) != 0) {
+        if obj_is_static
+            || (obj_rc > 0 && obj_rc < 10000 && (obj_header_val & HEADER_FLAGS_MASK) != 0)
+        {
             return obj_ptr;
         }
 

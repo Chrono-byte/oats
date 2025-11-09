@@ -32,7 +32,9 @@ pub mod ident;
 pub mod literals;
 pub mod member_access;
 pub mod new_expr;
+pub mod optional_chaining;
 pub mod paren;
+pub mod super_expr;
 pub mod this;
 pub mod unary_ops;
 
@@ -101,6 +103,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             // propagate closure-local typing information.
             Expr::Ident(id) => self.lower_ident_expr(id, function, param_map, locals),
             Expr::This(this_expr) => self.lower_this_expr(this_expr, function, param_map, locals),
+            Expr::Super(super_expr) => self.lower_super_expr(super_expr, function, param_map, locals),
             Expr::Call(call) => self.lower_call_expr(call, function, param_map, locals),
             // (Duplicate closure-call lowering removed; handled in the primary Call arm above.)
             Expr::Assign(assign) => self.lower_assign_expr(assign, function, param_map, locals),
@@ -111,6 +114,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 self, arr, function, param_map, locals,
             )?),
             Expr::Member(member) => self.lower_member_expr(member, function, param_map, locals),
+            Expr::OptionalMember(optional) => {
+                self.lower_optional_member_expr(optional, function, param_map, locals)
+            }
             Expr::New(new_expr) => self.lower_new_expr(new_expr, function, param_map, locals),
             Expr::Await(await_expr) => {
                 self.lower_await_expr(await_expr, function, param_map, locals)

@@ -6,8 +6,7 @@ use std::ffi::CStr;
 use crate::{MAX_RECURSION_DEPTH, is_plausible_addr};
 
 /// Helper: stringify an arbitrary pointer-or-raw-8-bytes value with depth guard.
-#[allow(dead_code)]
-pub(crate) fn stringify_value_raw(val_raw: u64, depth: usize) -> String {
+pub fn stringify_value_raw(val_raw: u64, depth: usize) -> String {
     if depth > MAX_RECURSION_DEPTH {
         return "...".to_string();
     }

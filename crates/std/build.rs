@@ -32,6 +32,7 @@ fn generate_type_definitions() -> String {
         ("console", "src/console.rs"),
         ("fs", "src/fs.rs"),
         ("process", "src/process.rs"),
+        ("actor", "src/actor.rs"),
         ("path", "src/path.rs"),
         ("net", "src/net.rs"),
         ("env", "src/env.rs"),

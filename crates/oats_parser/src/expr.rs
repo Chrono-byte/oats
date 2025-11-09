@@ -5,6 +5,7 @@
 
 use super::common;
 use super::function;
+use super::process;
 use super::stmt;
 use chumsky::prelude::*;
 use oats_ast::*;
@@ -47,6 +48,19 @@ pub fn expr_parser() -> impl Parser<char, Expr, Error = Simple<char>> {
             object_lit_parser(expr.clone()),
             function::arrow_expr_parser(expr.clone(), recursive(stmt::stmt_parser)),
             function::fn_expr_parser(recursive(stmt::stmt_parser)),
+            // Process model expressions
+            process::spawn_expr_parser(expr.clone()),
+            process::send_expr_parser(expr.clone()),
+            process::receive_expr_parser(expr.clone()),
+            process::process_self_expr_parser(),
+            process::process_exit_expr_parser(expr.clone()),
+            process::process_link_expr_parser(expr.clone()),
+            process::process_unlink_expr_parser(expr.clone()),
+            process::process_monitor_expr_parser(expr.clone()),
+            process::process_demonitor_expr_parser(expr.clone()),
+            process::process_whereis_expr_parser(expr.clone()),
+            process::process_register_expr_parser(expr.clone()),
+            process::process_unregister_expr_parser(expr.clone()),
         ));
 
         // Member access and call expressions (postfix operators)
@@ -647,6 +661,18 @@ fn get_expr_span(expr: &Expr) -> std::ops::Range<usize> {
         Expr::Yield(y) => y.span.clone(),
         Expr::Super(s) => s.span.clone(),
         Expr::Tpl(t) => t.span.clone(),
+        Expr::Spawn(s) => s.span.clone(),
+        Expr::Send(s) => s.span.clone(),
+        Expr::Receive(r) => r.span.clone(),
+        Expr::ProcessSelf(p) => p.span.clone(),
+        Expr::ProcessExit(p) => p.span.clone(),
+        Expr::ProcessLink(p) => p.span.clone(),
+        Expr::ProcessUnlink(p) => p.span.clone(),
+        Expr::ProcessMonitor(p) => p.span.clone(),
+        Expr::ProcessDemonitor(p) => p.span.clone(),
+        Expr::ProcessWhereis(p) => p.span.clone(),
+        Expr::ProcessRegister(p) => p.span.clone(),
+        Expr::ProcessUnregister(p) => p.span.clone(),
     }
 }
 

@@ -34,6 +34,7 @@ pub mod member_access;
 pub mod new_expr;
 pub mod optional_chaining;
 pub mod paren;
+pub mod process;
 pub mod super_expr;
 pub mod this;
 pub mod unary_ops;
@@ -130,6 +131,19 @@ impl<'a> crate::codegen::CodeGen<'a> {
             )?),
             Expr::Unary(unary) => self.lower_unary_expr(unary, function, param_map, locals),
             Expr::Update(update) => self.lower_update_expr(update, function, param_map, locals),
+            // Process model expressions
+            Expr::Spawn(spawn) => self.lower_spawn_expr(spawn, function, param_map, locals),
+            Expr::Send(send) => self.lower_send_expr(send, function, param_map, locals),
+            Expr::Receive(receive) => self.lower_receive_expr(receive, function, param_map, locals),
+            Expr::ProcessSelf(self_expr) => self.lower_process_self_expr(self_expr),
+            Expr::ProcessExit(exit) => self.lower_process_exit_expr(exit, function, param_map, locals),
+            Expr::ProcessLink(link) => self.lower_process_link_expr(link, function, param_map, locals),
+            Expr::ProcessUnlink(unlink) => self.lower_process_unlink_expr(unlink, function, param_map, locals),
+            Expr::ProcessMonitor(monitor) => self.lower_process_monitor_expr(monitor, function, param_map, locals),
+            Expr::ProcessDemonitor(demonitor) => self.lower_process_demonitor_expr(demonitor, function, param_map, locals),
+            Expr::ProcessWhereis(whereis) => self.lower_process_whereis_expr(whereis, function, param_map, locals),
+            Expr::ProcessRegister(register) => self.lower_process_register_expr(register, function, param_map, locals),
+            Expr::ProcessUnregister(unregister) => self.lower_process_unregister_expr(unregister, function, param_map, locals),
             _ => Err(Diagnostic::simple_boxed(
                 Severity::Error,
                 "operation not supported",

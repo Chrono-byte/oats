@@ -512,6 +512,19 @@ pub enum Expr {
     Yield(YieldExpr),
     Super(SuperExpr),
     Tpl(TplExpr),
+    // Process model expressions
+    Spawn(SpawnExpr),
+    Send(SendExpr),
+    Receive(ReceiveExpr),
+    ProcessSelf(ProcessSelfExpr),
+    ProcessExit(ProcessExitExpr),
+    ProcessLink(ProcessLinkExpr),
+    ProcessUnlink(ProcessUnlinkExpr),
+    ProcessMonitor(ProcessMonitorExpr),
+    ProcessDemonitor(ProcessDemonitorExpr),
+    ProcessWhereis(ProcessWhereisExpr),
+    ProcessRegister(ProcessRegisterExpr),
+    ProcessUnregister(ProcessUnregisterExpr),
     // Add more as needed
 }
 
@@ -826,6 +839,95 @@ pub struct TplExpr {
 pub struct TplElement {
     pub raw: String,
     pub cooked: Option<String>,
+    pub span: Span,
+}
+
+/// Spawn expression: spawn a new process
+#[derive(Debug, Clone)]
+pub struct SpawnExpr {
+    pub name: Option<Box<Expr>>,      // Optional process name (string)
+    pub priority: Option<Box<Expr>>,  // Optional priority (0=Normal, 1=High)
+    pub span: Span,
+}
+
+/// Send expression: send a message to a process
+#[derive(Debug, Clone)]
+pub struct SendExpr {
+    pub to: Box<Expr>,                // Target process (ProcessId or string name)
+    pub message: Box<Expr>,            // Message payload
+    pub span: Span,
+}
+
+/// Receive expression: receive a message
+#[derive(Debug, Clone)]
+pub struct ReceiveExpr {
+    pub type_id: Option<Box<Expr>>,   // Optional type filter (i64)
+    pub span: Span,
+}
+
+/// Process self expression: get current process ID
+#[derive(Debug, Clone)]
+pub struct ProcessSelfExpr {
+    pub span: Span,
+}
+
+/// Process exit expression: exit a process
+#[derive(Debug, Clone)]
+pub struct ProcessExitExpr {
+    pub pid: Option<Box<Expr>>,       // Optional process ID (defaults to self)
+    pub reason: Option<Box<Expr>>,    // Optional exit reason (string or number)
+    pub span: Span,
+}
+
+/// Process link expression: link two processes
+#[derive(Debug, Clone)]
+pub struct ProcessLinkExpr {
+    pub pid1: Box<Expr>,              // First process ID
+    pub pid2: Box<Expr>,               // Second process ID
+    pub span: Span,
+}
+
+/// Process unlink expression: unlink two processes
+#[derive(Debug, Clone)]
+pub struct ProcessUnlinkExpr {
+    pub pid1: Box<Expr>,               // First process ID
+    pub pid2: Box<Expr>,               // Second process ID
+    pub span: Span,
+}
+
+/// Process monitor expression: monitor a process
+#[derive(Debug, Clone)]
+pub struct ProcessMonitorExpr {
+    pub target: Box<Expr>,            // Target process ID
+    pub span: Span,
+}
+
+/// Process demonitor expression: stop monitoring a process
+#[derive(Debug, Clone)]
+pub struct ProcessDemonitorExpr {
+    pub monitor_ref: Box<Expr>,       // Monitor reference
+    pub span: Span,
+}
+
+/// Process whereis expression: lookup process by name
+#[derive(Debug, Clone)]
+pub struct ProcessWhereisExpr {
+    pub name: Box<Expr>,               // Process name (string)
+    pub span: Span,
+}
+
+/// Process register expression: register a process name
+#[derive(Debug, Clone)]
+pub struct ProcessRegisterExpr {
+    pub pid: Box<Expr>,                // Process ID
+    pub name: Box<Expr>,               // Process name (string)
+    pub span: Span,
+}
+
+/// Process unregister expression: unregister a process name
+#[derive(Debug, Clone)]
+pub struct ProcessUnregisterExpr {
+    pub name: Box<Expr>,               // Process name (string)
     pub span: Span,
 }
 

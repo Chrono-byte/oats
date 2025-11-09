@@ -211,7 +211,7 @@ fn init_executor() -> Arc<Exec> {
                             continue;
                         }
                     }
-                    
+
                     if let Some(p_addr) = guard.pop_front() {
                         drop(guard);
                         let p = p_addr as *mut std::ffi::c_void;
@@ -229,6 +229,8 @@ fn init_executor() -> Arc<Exec> {
                                 w.cv.notify_one();
                             } else {
                                 crate::runtime_free(out_mem as *mut c_void);
+                                // Check if any processes are waiting for this promise
+                                crate::process::process_check_promises();
                             }
                         }
                     }

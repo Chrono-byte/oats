@@ -106,7 +106,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 | OatsType::Weak(_)
                 | OatsType::Unowned(_)
                 | OatsType::Option(_)
-                | OatsType::Enum(_, _) => self.i8ptr_t.into(),
+                | OatsType::Enum(_, _)
+                // ProcessId and MonitorRef are represented as i8* (pointers to heap-allocated u64)
+                | OatsType::ProcessId
+                | OatsType::MonitorRef => self.i8ptr_t.into(),
                 OatsType::Boolean => self.bool_t.into(),
                 OatsType::Union(parts) => {
                     let any_ptr = parts.iter().any(|p| {

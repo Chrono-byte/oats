@@ -10,6 +10,7 @@ pub mod raw;
 pub mod sys;
 
 // Public API modules
+pub mod actor;
 pub mod console;
 pub mod env;
 pub mod format;

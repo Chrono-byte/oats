@@ -22,8 +22,7 @@
 //!   where required so destructors observe prior writes.
 //!
 
-use libc::{c_char, c_void};
-use std::ffi::CStr;
+use libc::c_void;
 use std::mem;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
@@ -58,6 +57,7 @@ pub mod ffi;
 pub mod header;
 pub mod heap;
 pub mod object;
+pub mod process;
 pub mod rc;
 pub mod string;
 pub mod utils;
@@ -77,6 +77,9 @@ pub use crate::array::{array_alloc, array_to_string};
 
 // Re-export string functions
 pub use crate::string::{heap_str_from_cstr, rc_dec_str};
+
+// Re-export utils functions
+pub use crate::utils::stringify_value_raw;
 
 // Global runtime logging flag for ad-hoc diagnostics. Disabled by default.
 // Set OATS_RUNTIME_LOG=1 in the environment to enable.
@@ -272,39 +275,9 @@ fn is_plausible_addr(addr: usize) -> bool {
     }
 }
 
-// Helper: stringify an arbitrary pointer-or-raw-8-bytes value with depth guard.
-fn stringify_value_raw(val_raw: u64, depth: usize) -> String {
-    if depth > MAX_RECURSION_DEPTH {
-        return "...".to_string();
-    }
-    // Heuristic: treat values that look like plausible addresses as pointers
-    let addr = val_raw as usize;
-    if is_plausible_addr(addr) {
-        let p = addr as *mut c_void;
-        // Try array/tuple/string recursion
-        let s_ptr = unsafe { array_to_string(p) };
-        if !s_ptr.is_null() {
-            let s = unsafe { CStr::from_ptr(s_ptr) };
-            let res = s.to_string_lossy().into_owned();
-            unsafe {
-                rc_dec_str(s_ptr);
-            }
-            return res;
-        }
-        // Fallback: try to interpret as a C string
-        let maybe = unsafe { CStr::from_ptr(p as *const c_char) };
-        if let Ok(st) = maybe.to_str() {
-            return format!("\"{}\"", st);
-        }
-        return format!("<ptr {:p}>", p);
-    }
-    // Otherwise interpret as f64 bits
-    let f = f64::from_bits(val_raw);
-    format!("{}", f)
-}
-
 // `tuple_to_string` implementation moved to `object.rs`; the C ABI symbol is
 // exported from that module. Keep this file free of duplicate exports.
+// `stringify_value_raw` is implemented in `utils.rs` and re-exported above.
 
 // --- Array Operations ---
 //

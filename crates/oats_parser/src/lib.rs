@@ -12,6 +12,7 @@ mod class;
 mod common;
 mod expr;
 mod function;
+mod process;
 mod stmt;
 pub mod tokenizer;
 mod types;

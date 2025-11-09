@@ -89,6 +89,9 @@ pub enum OatsType {
         base_name: String,
         type_args: Vec<OatsType>,
     },
+    // Process-related types
+    ProcessId,      // Process identifier (u64)
+    MonitorRef,     // Monitor reference (u64)
 }
 
 #[derive(Debug, Clone)]
@@ -290,6 +293,9 @@ pub fn map_ts_type_with_aliases(
                     "f32" => return Some(OatsType::F32),
                     "f64" => return Some(OatsType::F64),
                     "char" => return Some(OatsType::Char),
+                    // Process-related types
+                    "ProcessId" => return Some(OatsType::ProcessId),
+                    "MonitorRef" => return Some(OatsType::MonitorRef),
                     _ => {}
                 }
 
@@ -968,6 +974,17 @@ pub fn infer_type_from_expr(expr: &Expr) -> Option<OatsType> {
                 None
             }
         }
+        // Process model expressions
+        Expr::Spawn(_) => Some(OatsType::ProcessId),
+        Expr::ProcessSelf(_) => Some(OatsType::ProcessId),
+        Expr::ProcessWhereis(_) => Some(OatsType::ProcessId), // Returns ProcessId or null
+        Expr::ProcessMonitor(_) => Some(OatsType::MonitorRef),
+        Expr::ProcessLink(_) | Expr::ProcessUnlink(_) | Expr::ProcessRegister(_) | Expr::ProcessUnregister(_) | Expr::ProcessExit(_) | Expr::ProcessDemonitor(_) => {
+            // These return void or i32 (success/error), infer as Number
+            Some(OatsType::Number)
+        }
+        Expr::Send(_) => Some(OatsType::Number), // Returns i32 (success/error)
+        Expr::Receive(_) => None, // Returns message payload (unknown type)
         _ => None,
     }
 }

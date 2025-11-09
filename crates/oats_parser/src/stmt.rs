@@ -364,12 +364,68 @@ fn interface_decl_parser<'a>(
 
 /// Parser for interface body: `{ members }`
 fn interface_body_parser<'a>() -> impl Parser<'a, &'a str, Vec<InterfaceMember>> + 'a {
-    // Simplified - just parse empty body for now
-    just("{")
-        .padded()
-        .ignore_then(just("}").padded())
-        .to(Vec::new())
+    interface_member_parser()
+        .separated_by(just(",").padded())
+        .allow_trailing()
+        .collect::<Vec<_>>()
+        .delimited_by(just("{").padded(), just("}").padded())
         .labelled("interface body")
+}
+
+/// Parser for interface members
+fn interface_member_parser<'a>() -> impl Parser<'a, &'a str, InterfaceMember> + 'a {
+    choice((
+        // Property: name: type or name?: type or readonly name: type
+        text::keyword("readonly")
+            .padded()
+            .or_not()
+            .then(common::ident_parser())
+            .then(just("?").padded().or_not())
+            .then(just(":").padded().ignore_then(super::types::ts_type_parser()))
+            .then_ignore(just(";").padded().or_not())
+            .map_with(|(((readonly, ident), optional), ty), extra| {
+                InterfaceMember::Property(InterfaceProperty {
+                    ident,
+                    ty,
+                    optional: optional.is_some(),
+                    readonly: readonly.is_some(),
+                    span: extra.span().into(),
+                })
+            }),
+        // Method: name(params): type or name?(params): type
+        common::ident_parser()
+            .then(just("?").padded().or_not())
+            .then(common::param_list_parser())
+            .then(just(":").padded().ignore_then(super::types::ts_type_parser()))
+            .then_ignore(just(";").padded().or_not())
+            .map_with(|(((ident, optional), params), return_type), extra| {
+                InterfaceMember::Method(InterfaceMethod {
+                    ident,
+                    params,
+                    return_type,
+                    optional: optional.is_some(),
+                    span: extra.span().into(),
+                })
+            }),
+        // Index signature: [key: type]: type
+        just("[")
+            .padded()
+            .ignore_then(common::ident_parser())
+            .then(just(":").padded().ignore_then(super::types::ts_type_parser()))
+            .then_ignore(just("]").padded())
+            .then(just(":").padded().ignore_then(super::types::ts_type_parser()))
+            .then_ignore(just(";").padded().or_not())
+            .map_with(|((key_name, key_type), value_type), extra| {
+                InterfaceMember::IndexSignature(IndexSignature {
+                    key_name,
+                    key_type,
+                    value_type,
+                    readonly: false,
+                    span: extra.span().into(),
+                })
+            }),
+    ))
+    .labelled("interface member")
 }
 
 /// Parser for enum declarations: `enum Name { Variant1, Variant2 }`
@@ -461,38 +517,62 @@ fn class_decl_parser<'a>(
         .labelled("class declaration")
 }
 
-/// Parser for class members (simplified)
+/// Parser for class members
 fn class_member_parser<'a>(
     stmt: impl Parser<'a, &'a str, Stmt> + Clone + 'a,
     _expr: impl Parser<'a, &'a str, Expr> + Clone + 'a,
 ) -> impl Parser<'a, &'a str, ClassMember> + 'a {
-    // Simplified - parse method declarations
     choice((
-        // Method: name(params): type { body }
-        common::ident_parser()
-            .then(common::param_list_parser())
-            .then(common::optional_type_annotation())
-            .then(common::optional_block_parser(stmt))
-            .map_with(|(((ident, params), return_type), body), extra| {
-                ClassMember::Method(MethodDecl {
-                    ident,
+        // Constructor: constructor(params) { body }
+        text::keyword("constructor")
+            .padded()
+            .ignore_then(common::param_list_parser())
+            .then(common::optional_block_parser(stmt.clone()))
+            .map_with(|(params, body), extra| {
+                ClassMember::Constructor(ConstructorDecl {
                     params,
                     body,
-                    return_type,
                     span: extra.span().into(),
                 })
             }),
-        // Field: name: type;
-        common::ident_parser()
-            .then(common::optional_type_annotation())
-            .then_ignore(just(";").padded())
-            .map_with(|(ident, ty), extra| {
-                ClassMember::Field(FieldDecl {
-                    ident,
-                    ty,
-                    span: extra.span().into(),
-                })
-            }),
+        // Method: name(params): type { body }
+        // Also supports access modifiers: public, private, protected
+        choice((
+            text::keyword("public").padded().to(()),
+            text::keyword("private").padded().to(()),
+            text::keyword("protected").padded().to(()),
+        ))
+        .or_not()
+        .ignore_then(common::ident_parser())
+        .then(common::param_list_parser())
+        .then(common::optional_type_annotation())
+        .then(common::optional_block_parser(stmt.clone()))
+        .map_with(|(((ident, params), return_type), body), extra| {
+            ClassMember::Method(MethodDecl {
+                ident,
+                params,
+                body,
+                return_type,
+                span: extra.span().into(),
+            })
+        }),
+        // Field: name: type; or public/private name: type;
+        choice((
+            text::keyword("public").padded().to(()),
+            text::keyword("private").padded().to(()),
+            text::keyword("protected").padded().to(()),
+        ))
+        .or_not()
+        .ignore_then(common::ident_parser())
+        .then(common::optional_type_annotation())
+        .then_ignore(just(";").padded())
+        .map_with(|(ident, ty), extra| {
+            ClassMember::Field(FieldDecl {
+                ident,
+                ty,
+                span: extra.span().into(),
+            })
+        }),
     ))
 }
 

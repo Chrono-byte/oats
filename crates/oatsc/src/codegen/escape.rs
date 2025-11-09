@@ -1,20 +1,22 @@
 use oats_ast::*;
 use std::collections::{HashMap, HashSet};
 
-/// Enhanced intra-procedural escape analysis with def-use tracking and control flow awareness.
+/// Escape analysis results for a function.
+///
+/// Tracks which variables escape the function scope, enabling RC optimization.
 #[derive(Debug, Clone, Default)]
 pub struct EscapeInfo {
-    /// Set of local variable names that escape the current function.
+    /// Variables that escape the function
     pub escapes: HashSet<String>,
-    /// Variable definitions found in the function.
+    /// Variable definitions found in the function
     pub definitions: HashSet<String>,
-    /// Variables used before definition (potential parameters or captured vars).
+    /// Variables used before definition (parameters or captured)
     pub uses_before_def: HashSet<String>,
-    /// Variables live across await points (async-specific).
+    /// Variables live across await points
     pub await_live: HashSet<String>,
-    /// Variables that are captured by closures (for inter-procedural analysis).
+    /// Variables captured by closures
     pub captured: HashSet<String>,
-    /// Function calls that may cause escapes (for inter-procedural tracking).
+    /// Function calls that may cause escapes
     pub escape_calls: HashSet<String>,
 }
 
@@ -24,12 +26,12 @@ impl EscapeInfo {
         Self::default()
     }
 
-    /// Checks if a variable is marked as escaping.
+    /// Returns whether `name` escapes the function.
     pub fn escapes(&self, name: &str) -> bool {
         self.escapes.contains(name)
     }
 
-    /// Marks a variable as escaping.
+    /// Marks `name` as escaping.
     pub fn mark_escaping(&mut self, name: String) {
         self.escapes.insert(name);
     }
@@ -39,43 +41,39 @@ impl EscapeInfo {
         self.definitions.insert(name);
     }
 
-    /// Records a variable use, marking it as a use-before-def if not yet defined.
+    /// Records a variable use, marking as use-before-def if not yet defined.
     pub fn use_var(&mut self, name: &str) {
         if !self.definitions.contains(name) {
             self.uses_before_def.insert(name.to_string());
         }
     }
 
-    /// Marks a variable as being live across an await point.
+    /// Marks `name` as live across an await point.
     pub fn mark_await_live(&mut self, name: String) {
         self.await_live.insert(name);
     }
 
-    /// Marks a variable as captured by a closure.
+    /// Marks `name` as captured by a closure.
     pub fn mark_captured(&mut self, name: String) {
         self.captured.insert(name);
     }
 
-    /// Marks a function call as potentially causing escapes.
+    /// Marks `func_name` as potentially causing escapes.
     pub fn mark_escape_call(&mut self, func_name: String) {
         self.escape_calls.insert(func_name);
     }
 
-    /// Checks if a variable is captured by closures.
+    /// Returns whether `name` is captured by closures.
     pub fn is_captured(&self, name: &str) -> bool {
         self.captured.contains(name)
     }
 }
 
 impl crate::codegen::CodeGen<'_> {
-    /// Analyzes a function's AST to determine which variables escape its scope.
+    /// Analyzes a function to determine which variables escape its scope.
     ///
-    /// This implementation provides significantly better precision than a naive
-    /// conservative approach by:
-    /// - Tracking variable definitions versus uses to distinguish locals from parameters.
-    /// - Analyzing control flow through loops, conditionals, and blocks.
-    /// - Performing precise async analysis to identify variables live across `await` points.
-    /// - Providing comprehensive statement and expression coverage.
+    /// Tracks definitions vs uses, analyzes control flow, and identifies
+    /// variables live across await points for async functions.
     pub fn analyze_fn(&self, func: &Function) -> EscapeInfo {
         let mut analyzer = EscapeAnalyzer::new();
 
@@ -387,7 +385,7 @@ impl EscapeAnalyzer {
                 // Remove parameters from captured set (they're not captured)
                 let mut params = HashSet::new();
                 for param in &arrow.params {
-                    Self::collect_vars_from_pat(param, &mut params);
+                    Self::collect_vars_from_pat(&param.pat, &mut params);
                 }
 
                 for param in params {

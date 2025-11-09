@@ -13,19 +13,21 @@ use crate::string::{heap_str_from_cstr, rc_dec_str};
 use crate::{ARRAY_HEADER_SIZE, MIN_ARRAY_CAPACITY, RUNTIME_LOG};
 
 /// Called when an array index is out-of-bounds. Prints a helpful message
-/// to stderr and panics the process to avoid undefined behavior.
-fn runtime_index_oob_panic(_arr: *mut c_void, idx: usize, len: usize) -> ! {
-    // Try to print a best-effort diagnostic. Avoid panicking inside the
-    // runtime; just write to stderr and panic.
-    let _ = io::stderr().write_all(b"OATS runtime: array index out of bounds\n");
-    let _ = io::stderr().write_all(b"Index: ");
-    let s = idx.to_string();
-    let _ = io::stderr().write_all(s.as_bytes());
-    let _ = io::stderr().write_all(b"\nLength: ");
-    let s2 = len.to_string();
-    let _ = io::stderr().write_all(s2.as_bytes());
-    let _ = io::stderr().write_all(b"\n");
-    panic!("Array index out of bounds: index={}, length={}", idx, len);
+/// to stderr and returns gracefully to avoid undefined behavior.
+/// This function does not return (-> !) but is called from contexts that
+/// can handle the early return.
+fn runtime_index_oob_error(_arr: *mut c_void, idx: usize, len: usize) {
+    // Print diagnostic message to stderr
+    if crate::RUNTIME_LOG.load(Ordering::Relaxed) {
+        let _ = io::stderr().write_all(b"OATS runtime: array index out of bounds\n");
+        let _ = io::stderr().write_all(b"Index: ");
+        let s = idx.to_string();
+        let _ = io::stderr().write_all(s.as_bytes());
+        let _ = io::stderr().write_all(b"\nLength: ");
+        let s2 = len.to_string();
+        let _ = io::stderr().write_all(s2.as_bytes());
+        let _ = io::stderr().write_all(b"\n");
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -93,10 +95,28 @@ pub extern "C" fn array_get_f64(arr: *mut c_void, idx: usize) -> f64 {
         let len_ptr = (arr as *mut u8).add(mem::size_of::<u64>()) as *const u64;
         let len = *len_ptr as usize;
         if idx >= len {
-            runtime_index_oob_panic(arr, idx, len);
+            runtime_index_oob_error(arr, idx, len);
+            return 0.0;
         }
+        // Validate element offset calculation to prevent overflow
+        let elem_offset = match idx.checked_mul(mem::size_of::<f64>()) {
+            Some(offset) => offset,
+            None => {
+                if RUNTIME_LOG.load(Ordering::Relaxed) {
+                    let _ = io::stderr().write_all(
+                        format!(
+                            "[oats runtime] array_get_f64: integer overflow in element offset (idx={})\n",
+                            idx
+                        )
+                        .as_bytes(),
+                    );
+                }
+                return 0.0;
+            }
+        };
+
         let data_start = (arr as *mut u8).add(ARRAY_HEADER_SIZE);
-        let elem_ptr = data_start.add(idx * mem::size_of::<f64>()) as *const f64;
+        let elem_ptr = data_start.add(elem_offset) as *const f64;
         *elem_ptr
     }
 }
@@ -114,10 +134,28 @@ pub extern "C" fn array_get_ptr(arr: *mut c_void, idx: usize) -> *mut c_void {
         let len_ptr = (arr as *mut u8).add(mem::size_of::<u64>()) as *const u64;
         let len = *len_ptr as usize;
         if idx >= len {
-            runtime_index_oob_panic(arr, idx, len);
+            runtime_index_oob_error(arr, idx, len);
+            return ptr::null_mut();
         }
+        // Validate element offset calculation to prevent overflow
+        let elem_offset = match idx.checked_mul(mem::size_of::<*mut c_void>()) {
+            Some(offset) => offset,
+            None => {
+                if RUNTIME_LOG.load(Ordering::Relaxed) {
+                    let _ = io::stderr().write_all(
+                        format!(
+                            "[oats runtime] array_get_ptr: integer overflow in element offset (idx={})\n",
+                            idx
+                        )
+                        .as_bytes(),
+                    );
+                }
+                return ptr::null_mut();
+            }
+        };
+
         let data_start = (arr as *mut u8).add(ARRAY_HEADER_SIZE);
-        let elem_ptr = data_start.add(idx * mem::size_of::<*mut c_void>()) as *const *mut c_void;
+        let elem_ptr = data_start.add(elem_offset) as *const *mut c_void;
         let p = *elem_ptr;
         if !p.is_null() {
             rc_inc(p);
@@ -148,10 +186,28 @@ pub extern "C" fn array_get_ptr_borrow(arr: *mut c_void, idx: usize) -> *mut c_v
         let len_ptr = (arr as *mut u8).add(mem::size_of::<u64>()) as *const u64;
         let len = *len_ptr as usize;
         if idx >= len {
-            runtime_index_oob_panic(arr, idx, len);
+            runtime_index_oob_error(arr, idx, len);
+            return ptr::null_mut();
         }
+        // Validate element offset calculation to prevent overflow
+        let elem_offset = match idx.checked_mul(mem::size_of::<*mut c_void>()) {
+            Some(offset) => offset,
+            None => {
+                if RUNTIME_LOG.load(Ordering::Relaxed) {
+                    let _ = io::stderr().write_all(
+                        format!(
+                            "[oats runtime] array_get_ptr_borrow: integer overflow in element offset (idx={})\n",
+                            idx
+                        )
+                        .as_bytes(),
+                    );
+                }
+                return ptr::null_mut();
+            }
+        };
+
         let data_start = (arr as *mut u8).add(ARRAY_HEADER_SIZE);
-        let elem_ptr = data_start.add(idx * mem::size_of::<*mut c_void>()) as *const *mut c_void;
+        let elem_ptr = data_start.add(elem_offset) as *const *mut c_void;
         *elem_ptr
     }
 }
@@ -182,8 +238,48 @@ unsafe fn array_grow(arr: *mut c_void, min_capacity: usize) -> *mut c_void {
         let old_capacity = *cap_ptr as usize;
 
         // Calculate new capacity with geometric growth (1.5x)
-        let mut new_capacity = old_capacity + (old_capacity / 2).max(1);
+        // Validate old_capacity to prevent overflow in growth calculation
+        const MAX_SAFE_CAPACITY: usize = usize::MAX / 3; // Ensure 1.5x growth doesn't overflow
+        if old_capacity > MAX_SAFE_CAPACITY {
+            if RUNTIME_LOG.load(Ordering::Relaxed) {
+                let _ = io::stderr().write_all(
+                    format!(
+                        "[oats runtime] array_grow: capacity {} exceeds safe limit\n",
+                        old_capacity
+                    )
+                    .as_bytes(),
+                );
+            }
+            return ptr::null_mut();
+        }
+
+        // Use checked arithmetic to prevent overflow
+        let growth = old_capacity / 2;
+        let mut new_capacity = match old_capacity.checked_add(growth.max(1)) {
+            Some(cap) => cap,
+            None => {
+                if RUNTIME_LOG.load(Ordering::Relaxed) {
+                    let _ = io::stderr().write_all(
+                        b"[oats runtime] array_grow: integer overflow in capacity calculation\n",
+                    );
+                }
+                return ptr::null_mut();
+            }
+        };
         if new_capacity < min_capacity {
+            // Validate min_capacity doesn't exceed maximum safe value
+            if min_capacity > MAX_SAFE_CAPACITY {
+                if RUNTIME_LOG.load(Ordering::Relaxed) {
+                    let _ = io::stderr().write_all(
+                        format!(
+                            "[oats runtime] array_grow: min_capacity {} exceeds safe limit\n",
+                            min_capacity
+                        )
+                        .as_bytes(),
+                    );
+                }
+                return ptr::null_mut();
+            }
             new_capacity = min_capacity;
         }
 
@@ -202,9 +298,43 @@ unsafe fn array_grow(arr: *mut c_void, min_capacity: usize) -> *mut c_void {
         let new_len_ptr = (new_arr as *mut u8).add(mem::size_of::<u64>()) as *mut u64;
         *new_len_ptr = len as u64;
 
+        // Validate copy size to prevent overflow
+        let copy_size = match len.checked_mul(elem_size) {
+            Some(size) => size,
+            None => {
+                if RUNTIME_LOG.load(Ordering::Relaxed) {
+                    let _ = io::stderr().write_all(
+                        format!(
+                            "[oats runtime] array_grow: integer overflow in copy size (len={}, elem_size={})\n",
+                            len, elem_size
+                        )
+                        .as_bytes(),
+                    );
+                }
+                // Clean up allocated array before returning
+                rc_dec(new_arr);
+                return ptr::null_mut();
+            }
+        };
+
+        // Ensure len doesn't exceed old_capacity (safety check)
+        if len > old_capacity {
+            if RUNTIME_LOG.load(Ordering::Relaxed) {
+                let _ = io::stderr().write_all(
+                    format!(
+                        "[oats runtime] array_grow: length {} exceeds capacity {}\n",
+                        len, old_capacity
+                    )
+                    .as_bytes(),
+                );
+            }
+            rc_dec(new_arr);
+            return ptr::null_mut();
+        }
+
         let old_data = (arr as *mut u8).add(ARRAY_HEADER_SIZE);
         let new_data = (new_arr as *mut u8).add(ARRAY_HEADER_SIZE);
-        ptr::copy_nonoverlapping(old_data, new_data, len * elem_size);
+        ptr::copy_nonoverlapping(old_data, new_data, copy_size);
 
         if elem_is_number == 0 {
             let ptrs = new_data as *mut *mut c_void;
@@ -261,18 +391,80 @@ pub unsafe extern "C" fn array_set_f64(arr_ptr: *mut *mut c_void, idx: usize, v:
 
         // If index is beyond length, zero-fill and extend length
         if idx >= len {
-            let data_start = (arr as *mut u8).add(ARRAY_HEADER_SIZE);
-            let zeros_start = data_start.add(len * mem::size_of::<f64>()) as *mut f64;
+            // Validate index doesn't cause overflow when extending length
+            let new_len = match idx.checked_add(1) {
+                Some(nl) => nl,
+                None => {
+                    if RUNTIME_LOG.load(Ordering::Relaxed) {
+                        let _ = io::stderr().write_all(
+                            format!(
+                                "[oats runtime] array_set_f64: index {} would cause length overflow\n",
+                                idx
+                            )
+                            .as_bytes(),
+                        );
+                    }
+                    return;
+                }
+            };
+
+            // Validate zeros_count calculation doesn't overflow
             let zeros_count = idx - len;
+            // Ensure zeros_count is reasonable (prevent excessive zero-filling)
+            const MAX_ZERO_FILL: usize = 1_000_000; // 1M elements max
+            if zeros_count > MAX_ZERO_FILL {
+                if RUNTIME_LOG.load(Ordering::Relaxed) {
+                    let _ = io::stderr().write_all(
+                        format!(
+                            "[oats runtime] array_set_f64: zero-fill count {} exceeds limit\n",
+                            zeros_count
+                        )
+                        .as_bytes(),
+                    );
+                }
+                return;
+            }
+
+            let data_start = (arr as *mut u8).add(ARRAY_HEADER_SIZE);
+            // Validate offset calculation for zeros_start
+            let zeros_offset = match len.checked_mul(mem::size_of::<f64>()) {
+                Some(offset) => offset,
+                None => {
+                    if RUNTIME_LOG.load(Ordering::Relaxed) {
+                        let _ = io::stderr().write_all(
+                            b"[oats runtime] array_set_f64: integer overflow in zeros offset\n",
+                        );
+                    }
+                    return;
+                }
+            };
+            let zeros_start = data_start.add(zeros_offset) as *mut f64;
             for i in 0..zeros_count {
                 *zeros_start.add(i) = 0.0;
             }
-            *len_ptr = (idx + 1) as u64;
+            *len_ptr = new_len as u64;
         }
 
         // Set the value
+        // Validate element offset calculation to prevent overflow
+        let elem_offset = match idx.checked_mul(mem::size_of::<f64>()) {
+            Some(offset) => offset,
+            None => {
+                if RUNTIME_LOG.load(Ordering::Relaxed) {
+                    let _ = io::stderr().write_all(
+                        format!(
+                            "[oats runtime] array_set_f64: integer overflow in element offset (idx={})\n",
+                            idx
+                        )
+                        .as_bytes(),
+                    );
+                }
+                return;
+            }
+        };
+
         let data_start = (arr as *mut u8).add(ARRAY_HEADER_SIZE);
-        let elem_ptr = data_start.add(idx * mem::size_of::<f64>()) as *mut f64;
+        let elem_ptr = data_start.add(elem_offset) as *mut f64;
         *elem_ptr = v;
     }
 }
@@ -319,19 +511,79 @@ pub unsafe extern "C" fn array_set_ptr(arr_ptr: *mut *mut c_void, idx: usize, p:
 
         // If index is beyond length, null-fill and extend length
         if idx >= len {
-            let data_start = (arr as *mut u8).add(ARRAY_HEADER_SIZE);
-            let nulls_start =
-                data_start.add(len * mem::size_of::<*mut c_void>()) as *mut *mut c_void;
+            // Validate index doesn't cause overflow when extending length
+            let new_len = match idx.checked_add(1) {
+                Some(nl) => nl,
+                None => {
+                    if RUNTIME_LOG.load(Ordering::Relaxed) {
+                        let _ = io::stderr().write_all(
+                            format!(
+                                "[oats runtime] array_set_ptr: index {} would cause length overflow\n",
+                                idx
+                            )
+                            .as_bytes(),
+                        );
+                    }
+                    return;
+                }
+            };
+
+            // Validate nulls_count calculation doesn't overflow
             let nulls_count = idx - len;
+            // Ensure nulls_count is reasonable (prevent excessive null-filling)
+            const MAX_NULL_FILL: usize = 1_000_000; // 1M elements max
+            if nulls_count > MAX_NULL_FILL {
+                if RUNTIME_LOG.load(Ordering::Relaxed) {
+                    let _ = io::stderr().write_all(
+                        format!(
+                            "[oats runtime] array_set_ptr: null-fill count {} exceeds limit\n",
+                            nulls_count
+                        )
+                        .as_bytes(),
+                    );
+                }
+                return;
+            }
+
+            let data_start = (arr as *mut u8).add(ARRAY_HEADER_SIZE);
+            // Validate offset calculation for nulls_start
+            let nulls_offset = match len.checked_mul(mem::size_of::<*mut c_void>()) {
+                Some(offset) => offset,
+                None => {
+                    if RUNTIME_LOG.load(Ordering::Relaxed) {
+                        let _ = io::stderr().write_all(
+                            b"[oats runtime] array_set_ptr: integer overflow in nulls offset\n",
+                        );
+                    }
+                    return;
+                }
+            };
+            let nulls_start = data_start.add(nulls_offset) as *mut *mut c_void;
             for i in 0..nulls_count {
                 *nulls_start.add(i) = ptr::null_mut();
             }
-            *len_ptr = (idx + 1) as u64;
+            *len_ptr = new_len as u64;
         }
 
+        // Validate element offset calculation to prevent overflow
+        let elem_offset = match idx.checked_mul(mem::size_of::<*mut c_void>()) {
+            Some(offset) => offset,
+            None => {
+                if RUNTIME_LOG.load(Ordering::Relaxed) {
+                    let _ = io::stderr().write_all(
+                        format!(
+                            "[oats runtime] array_set_ptr: integer overflow in element offset (idx={})\n",
+                            idx
+                        )
+                        .as_bytes(),
+                    );
+                }
+                return;
+            }
+        };
+
         let data_start = (arr as *mut u8).add(ARRAY_HEADER_SIZE);
-        let elem_ptr =
-            data_start.add(idx * mem::size_of::<*mut c_void>()) as *mut AtomicPtr<c_void>;
+        let elem_ptr = data_start.add(elem_offset) as *mut AtomicPtr<c_void>;
 
         // Increment the new pointer's refcount *before* swapping it in.
         if !p.is_null() {
@@ -367,7 +619,8 @@ pub unsafe extern "C" fn array_set_ptr_weak(arr: *mut c_void, idx: usize, p: *mu
         let len_ptr = (arr as *mut u8).add(mem::size_of::<u64>()) as *const u64;
         let len = *len_ptr as usize;
         if idx >= len {
-            runtime_index_oob_panic(arr, idx, len);
+            runtime_index_oob_error(arr, idx, len);
+            return;
         }
         let data_start = (arr as *mut u8).add(ARRAY_HEADER_SIZE);
         let elem_ptr =
@@ -404,19 +657,19 @@ pub extern "C" fn array_push_f64(arr: *mut c_void, value: f64) {
         let capacity = *cap_ptr as usize;
 
         if len >= capacity {
-            let _ = io::stderr().write_all(b"OATS runtime: array push capacity exceeded\n");
-            let _ = io::stderr().write_all(b"Length: ");
-            let s = len.to_string();
-            let _ = io::stderr().write_all(s.as_bytes());
-            let _ = io::stderr().write_all(b"\nCapacity: ");
-            let s2 = capacity.to_string();
-            let _ = io::stderr().write_all(s2.as_bytes());
-            let _ =
-                io::stderr().write_all(b"\nConsider using array[i] = value for dynamic growth\n");
-            panic!(
-                "Array push capacity exceeded: length={}, capacity={}",
-                len, capacity
-            );
+            if crate::RUNTIME_LOG.load(Ordering::Relaxed) {
+                let _ = io::stderr().write_all(b"OATS runtime: array push capacity exceeded\n");
+                let _ = io::stderr().write_all(b"Length: ");
+                let s = len.to_string();
+                let _ = io::stderr().write_all(s.as_bytes());
+                let _ = io::stderr().write_all(b"\nCapacity: ");
+                let s2 = capacity.to_string();
+                let _ = io::stderr().write_all(s2.as_bytes());
+                let _ = io::stderr()
+                    .write_all(b"\nConsider using array[i] = value for dynamic growth\n");
+            }
+            // Return early instead of panicking - caller should handle capacity growth
+            return;
         }
 
         let data_start = (arr as *mut u8).add(ARRAY_HEADER_SIZE);

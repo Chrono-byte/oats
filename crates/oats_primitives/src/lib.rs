@@ -18,6 +18,27 @@ pub unsafe extern "C" fn print_str(s: *const c_char) {
         if s.is_null() {
             return;
         }
+        // Validate pointer before creating CStr to avoid undefined behavior
+        // Note: We can't use runtime::is_plausible_addr here as this is a separate crate
+        // Basic validation: check pointer is not in obviously invalid ranges
+        let addr = s as usize;
+        #[cfg(target_pointer_width = "64")]
+        {
+            const LOW_BOUND: usize = 0x10000; // 64 KiB
+            const HIGH_BOUND: usize = 0x0001_0000_0000_0000; // 2^48
+            if !(LOW_BOUND..HIGH_BOUND).contains(&addr) || (addr & 7) != 0 {
+                // Invalid address range or not aligned - skip printing
+                return;
+            }
+        }
+        #[cfg(target_pointer_width = "32")]
+        {
+            const LOW_BOUND: usize = 0x10000; // 64 KiB
+            if addr < LOW_BOUND || (addr & 7) != 0 {
+                return;
+            }
+        }
+        // CStr::from_ptr can still fail if string is not null-terminated, but we've validated the pointer
         let cstr = CStr::from_ptr(s);
         // Use runtime-safe println via libc stdout
         let _ = io::stdout().write_all(cstr.to_bytes());
@@ -46,6 +67,23 @@ pub unsafe extern "C" fn print_str_no_nl(s: *const c_char) {
     unsafe {
         if s.is_null() {
             return;
+        }
+        // Validate pointer before creating CStr to avoid undefined behavior
+        let addr = s as usize;
+        #[cfg(target_pointer_width = "64")]
+        {
+            const LOW_BOUND: usize = 0x10000; // 64 KiB
+            const HIGH_BOUND: usize = 0x0001_0000_0000_0000; // 2^48
+            if !(LOW_BOUND..HIGH_BOUND).contains(&addr) || (addr & 7) != 0 {
+                return;
+            }
+        }
+        #[cfg(target_pointer_width = "32")]
+        {
+            const LOW_BOUND: usize = 0x10000; // 64 KiB
+            if addr < LOW_BOUND || (addr & 7) != 0 {
+                return;
+            }
         }
         let cstr = CStr::from_ptr(s);
         let _ = io::stdout().write_all(cstr.to_bytes());

@@ -90,11 +90,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
             Ok(true) // continue terminates the current block
         } else {
-            // Continue outside of loop is a semantic error. Currently the
-            // implementation ignores it; it should instead emit a
-            // diagnostic. See issue #TODO (add issue) to track reporting
-            // of control-flow errors.
-            Ok(false)
+            Err(crate::diagnostics::Diagnostic::simple_boxed(
+                Severity::Error,
+                "continue statement outside of loop",
+            ))
         }
     }
 }

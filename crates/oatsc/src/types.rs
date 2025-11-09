@@ -515,6 +515,20 @@ pub fn map_ts_type_with_subst(
     ty: &TsType,
     subst: &std::collections::HashMap<String, OatsType>,
 ) -> Option<OatsType> {
+    map_ts_type_with_subst_depth(ty, subst, 0)
+}
+
+fn map_ts_type_with_subst_depth(
+    ty: &TsType,
+    subst: &std::collections::HashMap<String, OatsType>,
+    depth: usize,
+) -> Option<OatsType> {
+    // Prevent stack overflow from deeply nested type structures
+    const MAX_TYPE_SUBST_DEPTH: usize = 1000;
+    if depth > MAX_TYPE_SUBST_DEPTH {
+        return None;
+    }
+
     match ty {
         TsType::TsKeywordType(_) => map_ts_type(ty),
         TsType::TsTypeRef(type_ref) => {
@@ -532,7 +546,7 @@ pub fn map_ts_type_with_subst(
                     if let Some(type_params) = &type_ref.type_params
                         && let Some(first_param) = type_params.params.first()
                     {
-                        return map_ts_type_with_subst(first_param, subst)
+                        return map_ts_type_with_subst_depth(first_param, subst, depth + 1)
                             .map(|inner| OatsType::Promise(Box::new(inner)));
                     }
                     return Some(OatsType::Promise(Box::new(OatsType::Void)));
@@ -541,7 +555,7 @@ pub fn map_ts_type_with_subst(
                     if let Some(type_params) = &type_ref.type_params
                         && let Some(first_param) = type_params.params.first()
                     {
-                        return map_ts_type_with_subst(first_param, subst)
+                        return map_ts_type_with_subst_depth(first_param, subst, depth + 1)
                             .map(|inner| OatsType::Array(Box::new(inner)));
                     }
                     return Some(OatsType::Array(Box::new(OatsType::Number)));
@@ -550,7 +564,7 @@ pub fn map_ts_type_with_subst(
                     if let Some(type_params) = &type_ref.type_params
                         && let Some(first_param) = type_params.params.first()
                     {
-                        return map_ts_type_with_subst(first_param, subst)
+                        return map_ts_type_with_subst_depth(first_param, subst, depth + 1)
                             .map(|inner| OatsType::Weak(Box::new(inner)));
                     }
                     return None;
@@ -559,7 +573,7 @@ pub fn map_ts_type_with_subst(
                     if let Some(type_params) = &type_ref.type_params
                         && let Some(first_param) = type_params.params.first()
                     {
-                        return map_ts_type_with_subst(first_param, subst)
+                        return map_ts_type_with_subst_depth(first_param, subst, depth + 1)
                             .map(|inner| OatsType::Option(Box::new(inner)));
                     }
                     return None;
@@ -1091,6 +1105,17 @@ pub fn infer_type(ts_type: Option<&TsType>, expr: Option<&Expr>) -> OatsType {
 /// When no inferred types are available, generic placeholders default to
 /// `Number` type as the most conservative choice for the Oats type system.
 pub fn apply_inferred_subst(ty: &OatsType, inferred: &[OatsType]) -> OatsType {
+    apply_inferred_subst_depth(ty, inferred, 0)
+}
+
+fn apply_inferred_subst_depth(ty: &OatsType, inferred: &[OatsType], depth: usize) -> OatsType {
+    // Prevent stack overflow from deeply nested type structures
+    const MAX_INFERRED_SUBST_DEPTH: usize = 1000;
+    if depth > MAX_INFERRED_SUBST_DEPTH {
+        // Return a safe fallback type to avoid stack overflow
+        return OatsType::Number;
+    }
+
     match ty {
         OatsType::Generic(_) => {
             if !inferred.is_empty() {
@@ -1107,30 +1132,49 @@ pub fn apply_inferred_subst(ty: &OatsType, inferred: &[OatsType]) -> OatsType {
                     OatsType::Option(Box::new(OatsType::Number))
                 }
             }
-            other => OatsType::Option(Box::new(apply_inferred_subst(other, inferred))),
+            other => OatsType::Option(Box::new(apply_inferred_subst_depth(
+                other,
+                inferred,
+                depth + 1,
+            ))),
         },
-        OatsType::Array(inner) => OatsType::Array(Box::new(apply_inferred_subst(inner, inferred))),
+        OatsType::Array(inner) => OatsType::Array(Box::new(apply_inferred_subst_depth(
+            inner,
+            inferred,
+            depth + 1,
+        ))),
         OatsType::Union(parts) => {
             let new_parts = parts
                 .iter()
-                .map(|p| apply_inferred_subst(p, inferred))
+                .map(|p| apply_inferred_subst_depth(p, inferred, depth + 1))
                 .collect();
             OatsType::Union(new_parts)
         }
         OatsType::Tuple(elems) => OatsType::Tuple(
             elems
                 .iter()
-                .map(|e| apply_inferred_subst(e, inferred))
+                .map(|e| apply_inferred_subst_depth(e, inferred, depth + 1))
                 .collect(),
         ),
-        OatsType::Weak(inner) => OatsType::Weak(Box::new(apply_inferred_subst(inner, inferred))),
-        OatsType::Promise(inner) => {
-            OatsType::Promise(Box::new(apply_inferred_subst(inner, inferred)))
-        }
+        OatsType::Weak(inner) => OatsType::Weak(Box::new(apply_inferred_subst_depth(
+            inner,
+            inferred,
+            depth + 1,
+        ))),
+        OatsType::Promise(inner) => OatsType::Promise(Box::new(apply_inferred_subst_depth(
+            inner,
+            inferred,
+            depth + 1,
+        ))),
         OatsType::StructLiteral(fields) => OatsType::StructLiteral(
             fields
                 .iter()
-                .map(|(n, t)| (n.clone(), apply_inferred_subst(t, inferred)))
+                .map(|(n, t)| {
+                    (
+                        n.clone(),
+                        apply_inferred_subst_depth(t, inferred, depth + 1),
+                    )
+                })
                 .collect(),
         ),
         OatsType::GenericInstance {

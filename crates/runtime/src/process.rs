@@ -588,6 +588,9 @@ impl ProcessScheduler {
             return; // Failed to create message
         }
 
+        // Track successful sends to ensure message is properly cleaned up
+        let mut successful_sends = 0;
+
         // Notify linked processes and remove links
         for linked_pid in links {
             // Remove bidirectional link
@@ -596,7 +599,9 @@ impl ProcessScheduler {
             }
             // Send exit notification message
             // Type ID 0xDEADBEEF for exit notifications (temporary - codegen will use proper types)
-            let _ = self.send(exited_pid, linked_pid, exit_msg, 0xDEADBEEF);
+            if self.send(exited_pid, linked_pid, exit_msg, 0xDEADBEEF) {
+                successful_sends += 1;
+            }
         }
 
         // Notify monitoring processes with monitor refs
@@ -609,12 +614,19 @@ impl ProcessScheduler {
 
             // Create message with monitor ref (similar structure but with ref field)
             // For now, send the same message - codegen will handle proper structure
-            let _ = self.send(exited_pid, monitor_pid, exit_msg, 0xDEADBEEF);
+            if self.send(exited_pid, monitor_pid, exit_msg, 0xDEADBEEF) {
+                successful_sends += 1;
+            }
         }
 
-        // Decrement ARC on exit message (it was incremented for each send)
-        // Actually, each send increments it, so we need to account for that
-        // For simplicity, we'll let the receivers handle cleanup
+        // If no successful sends, decrement the message reference count
+        // (it was created with RC=1, and each successful send increments it)
+        // If all receivers are dead/terminated, the message would leak otherwise
+        if successful_sends == 0 {
+            unsafe {
+                rc_dec(exit_msg);
+            }
+        }
     }
 
     /// Exit a process
@@ -646,7 +658,11 @@ impl ProcessScheduler {
         self.notify_exit(pid, &reason);
 
         // Get mutable borrow again for cleanup
-        let process = self.processes.get_mut(&pid).unwrap();
+        // Process should exist at this point, but handle gracefully if it doesn't
+        let Some(process) = self.processes.get_mut(&pid) else {
+            // Process was already removed - this shouldn't happen but handle gracefully
+            return;
+        };
 
         // Cleanup: decrement ARC on all messages in mailbox
         while let Some(msg) = process.mailbox.dequeue() {
@@ -742,7 +758,11 @@ impl ProcessScheduler {
             if timer.deadline > now {
                 break; // No more expired timers
             }
-            let Reverse(timer) = self.timer_heap.pop().unwrap();
+            // Pop the timer we just peeked - should always succeed after peek
+            let Some(Reverse(timer)) = self.timer_heap.pop() else {
+                // Heap was modified between peek and pop - break to avoid infinite loop
+                break;
+            };
             if let Some(WaitReason::WaitingForTimeout(_)) = self.waiting.get(&timer.process_id) {
                 // Timeout expired, wake up process
                 self.resume(timer.process_id);
@@ -1177,8 +1197,10 @@ pub extern "C" fn process_receive(pid_ptr: *const u64, type_id: u64) -> *mut c_v
             let size = std::mem::size_of::<u64>() * 4 + std::mem::size_of::<*mut c_void>();
             let mem = runtime_malloc(size) as *mut u8;
             if mem.is_null() {
-                // Need to put message back or decrement ARC
-                // For now, just leak it (shouldn't happen)
+                // Allocation failed - decrement payload reference count since message was dequeued
+                // The message payload's reference count must be decremented to prevent leak
+                let payload = msg.payload as *mut c_void;
+                rc_dec(payload);
                 return std::ptr::null_mut();
             }
 

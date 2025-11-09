@@ -157,7 +157,8 @@ pub fn lower_array<'a>(
     locals: &mut crate::codegen::LocalsStackLocal<'a>,
 ) -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
     // Lower array literal: determine element kinds by lowering each elt
-    let mut lowered_elems: Vec<BasicValueEnum> = Vec::new();
+    // Pre-allocate with known capacity (some elements might be None, but this is the max)
+    let mut lowered_elems: Vec<BasicValueEnum> = Vec::with_capacity(arr.elems.len());
     for opt in &arr.elems {
         if let Some(expr) = opt {
             if let Ok(ev) = codegen.lower_expr(expr, function, param_map, locals) {
@@ -535,11 +536,184 @@ pub fn lower_object<'a>(
                     ));
                 }
             }
-            PropOrSpread::Spread(_) => {
-                return Err(Diagnostic::simple_boxed(
-                    Severity::Error,
-                    "spread properties not supported in object literal",
-                ));
+            PropOrSpread::Spread(spread) => {
+                // Spread properties: { ...obj } copies all enumerable properties from obj
+                // For statically known class types, we can copy all fields at compile time
+
+                // Lower the spread expression to get the source object
+                let spread_obj_val = codegen.lower_expr(&spread.expr, function, param_map, locals)?;
+                let spread_obj_ptr = if let BasicValueEnum::PointerValue(pv) = spread_obj_val {
+                    pv
+                } else {
+                    return Err(Diagnostic::simple_with_span_boxed(
+                        Severity::Error,
+                        "spread operator requires an object (pointer type)",
+                        spread.span.start,
+                    ));
+                };
+
+                // Try to infer the class name from the spread expression
+                // All types must be known at compile time - if we can't infer the type, it's an error
+                let mut class_name_opt: Option<String> = None;
+                if let Expr::Ident(ident) = &spread.expr {
+                    let ident_name = ident.sym.clone();
+                    // Check locals for nominal annotation
+                    if let Some((_, _ty, _init, _is_const, _is_weak, nominal, _oats_type)) =
+                        codegen.find_local(locals, &ident_name)
+                        && let Some(nom) = nominal
+                    {
+                        class_name_opt = Some(nom);
+                    } else if let Some(param_idx) = param_map.get(&ident_name)
+                        && let Some(param_types) = codegen
+                            .fn_param_types
+                            .borrow()
+                            .get(function.get_name().to_str().unwrap_or(""))
+                    {
+                        let idx = *param_idx as usize;
+                        if idx < param_types.len()
+                            && let crate::types::OatsType::NominalStruct(n) = &param_types[idx]
+                        {
+                            class_name_opt = Some(n.clone());
+                        }
+                    }
+                } else if let Expr::New(new_expr) = &spread.expr
+                    && let Expr::Ident(ident) = &*new_expr.callee
+                {
+                    // new ClassName() - get class name from callee
+                    class_name_opt = Some(ident.sym.clone());
+                } else if let Expr::Member(member) = &spread.expr
+                    && let Expr::Ident(ident) = &*member.obj
+                {
+                    // obj.field - try to infer from obj
+                    let ident_name = ident.sym.clone();
+                    if let Some((_, _ty, _init, _is_const, _is_weak, nominal, _oats_type)) =
+                        codegen.find_local(locals, &ident_name)
+                        && let Some(nom) = nominal
+                    {
+                        class_name_opt = Some(nom);
+                    }
+                }
+
+                // Get field names from class metadata
+                if let Some(class_name) = class_name_opt {
+                    if let Some(fields) = codegen.class_fields.borrow().get(&class_name) {
+                        // Copy each field from the source object
+                        for (field_idx, (field_name, field_ty)) in fields.iter().enumerate() {
+                            // Compute field offset: header (8) + meta (8) + field_idx * 8
+                            let hdr_size = codegen.i64_t.const_int(8u64, false);
+                            let meta_slot = codegen.i64_t.const_int(8u64, false);
+                            let ptr_sz = codegen.i64_t.const_int(8u64, false);
+                            let idx_const = codegen.i64_t.const_int(field_idx as u64, false);
+                            let mul = codegen
+                                .builder
+                                .build_int_mul(idx_const, ptr_sz, "fld_off_mul")
+                                .map_err(|_| Diagnostic::error("LLVM builder error"))?;
+                            let tmp = codegen
+                                .builder
+                                .build_int_add(hdr_size, meta_slot, "hdr_plus_meta")
+                                .map_err(|_| Diagnostic::error("LLVM builder error"))?;
+                            let offset = codegen
+                                .builder
+                                .build_int_add(tmp, mul, "fld_off")
+                                .map_err(|_| Diagnostic::error("LLVM builder error"))?;
+
+                            // Get field pointer
+                            let field_i8ptr = codegen
+                                .i8_ptr_from_offset_i64(spread_obj_ptr, offset, "spread_field_i8ptr")
+                                .map_err(|_| Diagnostic::error("operation failed"))?;
+
+                            // Load field value based on type
+                            let field_val = match field_ty {
+                                crate::types::OatsType::Number => {
+                                    let f64_ptr = codegen
+                                        .builder
+                                        .build_pointer_cast(
+                                            field_i8ptr,
+                                            codegen.context.ptr_type(inkwell::AddressSpace::default()),
+                                            "f64_ptr_cast",
+                                        )
+                                        .map_err(|_| Diagnostic::error("LLVM builder error"))?;
+                                    let loaded = codegen
+                                        .builder
+                                        .build_load(codegen.f64_t, f64_ptr, "spread_field_f64_load")
+                                        .map_err(|_| Diagnostic::error("operation failed"))?;
+                                    loaded.as_basic_value_enum()
+                                }
+                                crate::types::OatsType::String
+                                | crate::types::OatsType::NominalStruct(_)
+                                | crate::types::OatsType::Array(_) => {
+                                    let slot_ptr_ty = codegen.context.ptr_type(inkwell::AddressSpace::default());
+                                    let slot_ptr = codegen
+                                        .builder
+                                        .build_pointer_cast(field_i8ptr, slot_ptr_ty, "slot_ptr_cast")
+                                        .map_err(|_| Diagnostic::error("operation failed"))?;
+                                    let loaded = codegen
+                                        .builder
+                                        .build_load(codegen.i8ptr_t, slot_ptr, "spread_field_load")
+                                        .map_err(|_| Diagnostic::error("operation failed"))?;
+                                    // Increment refcount for pointer types
+                                    if let BasicValueEnum::PointerValue(pv) = loaded {
+                                        let rc_inc = codegen.get_rc_inc();
+                                        let _ = codegen.builder.build_call(
+                                            rc_inc,
+                                            &[pv.into()],
+                                            "rc_inc_spread_field",
+                                        );
+                                    }
+                                    loaded
+                                }
+                                crate::types::OatsType::Union(_) => {
+                                    let slot_ptr_ty = codegen.context.ptr_type(inkwell::AddressSpace::default());
+                                    let slot_ptr = codegen
+                                        .builder
+                                        .build_pointer_cast(field_i8ptr, slot_ptr_ty, "slot_ptr_cast")
+                                        .map_err(|_| Diagnostic::error("operation failed"))?;
+                                    let boxed = codegen
+                                        .builder
+                                        .build_load(codegen.i8ptr_t, slot_ptr, "spread_union_boxed_load")
+                                        .map_err(|_| Diagnostic::error("operation failed"))?;
+                                    if let BasicValueEnum::PointerValue(boxed_ptr) = boxed {
+                                        // Increment refcount for union boxed values
+                                        let rc_inc = codegen.get_rc_inc();
+                                        let _ = codegen.builder.build_call(
+                                            rc_inc,
+                                            &[boxed_ptr.into()],
+                                            "rc_inc_spread_union",
+                                        );
+                                        boxed
+                                    } else {
+                                        return Err(Diagnostic::simple_boxed(
+                                            crate::diagnostics::Severity::Error,
+                                            "union field load failed",
+                                        ));
+                                    }
+                                }
+                                _ => {
+                                    return Err(Diagnostic::simple_with_span_boxed(
+                                        Severity::Error,
+                                        format!("unsupported field type in spread for field '{}'", field_name),
+                                        spread.span.start,
+                                    ));
+                                }
+                            };
+                            field_values.push(field_val);
+                        }
+                    } else {
+                        return Err(Diagnostic::simple_with_span_boxed(
+                            Severity::Error,
+                            format!("class '{}' has no registered fields", class_name),
+                            spread.span.start,
+                        ));
+                    }
+                } else {
+                    // Cannot determine class type at compile time
+                    // All types must be known at compile time - this is a type inference failure
+                    return Err(Diagnostic::simple_with_span_boxed(
+                        Severity::Error,
+                        "cannot determine object type for spread operator: all types must be known at compile time",
+                        spread.span.start,
+                    ));
+                }
             }
         }
     }

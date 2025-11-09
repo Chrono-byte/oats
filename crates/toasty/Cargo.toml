@@ -25,6 +25,9 @@ tar = "0.4"
 [dependencies.oatsc]
 path = "../oatsc"
 
+[dependencies.oats_ast]
+path = "../oats_ast"
+
 [dev-dependencies]
 assert_cmd = "2.0"
 predicates = "2.1"

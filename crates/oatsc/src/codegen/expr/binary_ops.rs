@@ -456,12 +456,29 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     Ok(v.as_basic_value_enum())
                 }
                 BinaryOp::Exp => {
-                    // Exponentiation: use pow function
-                    // For now, return error - would need runtime helper
-                    Err(Diagnostic::simple_boxed(
-                        Severity::Error,
-                        "exponentiation (**) not yet supported in compound assignments",
-                    ))
+                    // Exponentiation: use standard library pow function
+                    // Declare pow(double, double) -> double if not already declared
+                    let pow_fn = self.module.get_function("pow").unwrap_or_else(|| {
+                        let fn_type = self.f64_t.fn_type(
+                            &[self.f64_t.into(), self.f64_t.into()],
+                            false,
+                        );
+                        self.module.add_function("pow", fn_type, None)
+                    });
+
+                    // Call pow(base, exponent)
+                    let call_site = builder
+                        .build_call(pow_fn, &[lf.into(), rf.into()], "pow_call")
+                        .map_err(|_| Diagnostic::error("pow call failed"))?;
+
+                    if let inkwell::Either::Left(bv) = call_site.try_as_basic_value() {
+                        Ok(bv)
+                    } else {
+                        Err(Diagnostic::simple_boxed(
+                            crate::diagnostics::Severity::Error,
+                            "pow returned void",
+                        ))
+                    }
                 }
                 _ => Err(Diagnostic::simple_boxed(
                     Severity::Error,

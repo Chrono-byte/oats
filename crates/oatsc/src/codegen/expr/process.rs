@@ -61,9 +61,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
             self.i32_t.const_int(0, false) // Normal priority
         };
 
-        let (spawn_fn, name_ptr_opt) = if spawn_expr.name.is_some() {
+        let (spawn_fn, name_ptr_opt) = if let Some(name_expr) = spawn_expr.name.as_ref() {
             // Use process_spawn_named if name is provided
-            let name_expr = spawn_expr.name.as_ref().unwrap();
             let name_val = self.lower_expr(name_expr, function, param_map, locals)?;
             let name_ptr = if let BasicValueEnum::PointerValue(pv) = name_val {
                 pv

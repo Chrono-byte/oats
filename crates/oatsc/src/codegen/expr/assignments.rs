@@ -138,15 +138,561 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     self.set_local_initialized(locals, &name, true);
                     return Ok(result);
                 }
-            } else if let AssignTarget::Member(_) = &assign.left {
+            } else if let AssignTarget::Member(member) = &assign.left {
                 // Compound assignment for member access (e.g., obj.field += 5)
-                // This is more complex - we'd need to load the field, perform the operation, and store back
-                // For now, return an error suggesting to use explicit assignment
-                return Err(Diagnostic::simple_with_span_boxed(
-                    Severity::Error,
-                    "compound assignment to member fields not yet supported; use explicit assignment",
-                    assign.span.start,
-                ));
+                // Load the field, perform the operation, and store back
+
+                // Only support dot-member (obj.prop), not computed (obj[expr])
+                use oats_ast::*;
+                if let MemberProp::Ident(prop_ident) = &member.prop {
+                    let field_name = prop_ident.sym.clone();
+
+                    // Lower the object to get its pointer
+                    let obj_val = self.lower_expr(&member.obj, function, param_map, locals)?;
+                    let obj_ptr = if let BasicValueEnum::PointerValue(pv) = obj_val {
+                        pv
+                    } else {
+                        return Err(Diagnostic::simple_with_span_boxed(
+                            Severity::Error,
+                            "member assignment requires object pointer",
+                            assign.span.start,
+                        ));
+                    };
+
+                    // Determine class name to get field information
+                    // All types must be known at compile time - if we can't infer the type, it's an error
+                    let mut class_name_opt: Option<String> = None;
+                    if let Expr::Ident(ident) = &*member.obj {
+                        let ident_name = ident.sym.clone();
+                        if let Some((_, _ty, _init, _is_const, _is_weak, nominal, _oats_type)) =
+                            self.find_local(locals, &ident_name)
+                            && let Some(nom) = nominal
+                        {
+                            class_name_opt = Some(nom);
+                        } else if let Some(param_idx) = param_map.get(&ident_name)
+                            && let Some(param_types) = self
+                                .fn_param_types
+                                .borrow()
+                                .get(function.get_name().to_str().unwrap_or(""))
+                        {
+                            let idx = *param_idx as usize;
+                            if idx < param_types.len()
+                                && let crate::types::OatsType::NominalStruct(n) = &param_types[idx]
+                            {
+                                class_name_opt = Some(n.clone());
+                            }
+                        }
+                    } else if matches!(&*member.obj, Expr::This(_)) {
+                        let fname = function.get_name().to_str().unwrap_or("");
+                        if let Some(param_types) = self.fn_param_types.borrow().get(fname)
+                            && !param_types.is_empty()
+                            && let crate::types::OatsType::NominalStruct(n) = &param_types[0]
+                        {
+                            class_name_opt = Some(n.clone());
+                        }
+                    }
+
+                    // Get field information
+                    if let Some(class_name) = class_name_opt {
+                        if let Some(fields) = self.class_fields.borrow().get(&class_name) {
+                            if let Some((field_idx, (_fname, field_ty))) = fields
+                                .iter()
+                                .enumerate()
+                                .find(|(_, (n, _))| n == &field_name)
+                            {
+                                // Compute field offset
+                                let hdr_size = self.i64_t.const_int(8u64, false);
+                                let meta_slot = self.i64_t.const_int(8u64, false);
+                                let ptr_sz = self.i64_t.const_int(8u64, false);
+                                let idx_const = self.i64_t.const_int(field_idx as u64, false);
+                                let mul = self
+                                    .builder
+                                    .build_int_mul(idx_const, ptr_sz, "fld_off_mul")
+                                    .map_err(|_| Diagnostic::error("LLVM builder error"))?;
+                                let tmp = self
+                                    .builder
+                                    .build_int_add(hdr_size, meta_slot, "hdr_plus_meta")
+                                    .map_err(|_| Diagnostic::error("LLVM builder error"))?;
+                                let offset = self
+                                    .builder
+                                    .build_int_add(tmp, mul, "fld_off")
+                                    .map_err(|_| Diagnostic::error("LLVM builder error"))?;
+
+                                let field_i8ptr = self
+                                    .i8_ptr_from_offset_i64(obj_ptr, offset, "field_i8ptr")
+                                    .map_err(|_| Diagnostic::error("operation failed"))?;
+
+                                // Load current field value
+                                let current_val = match field_ty {
+                                    crate::types::OatsType::Number => {
+                                        let f64_ptr = self
+                                            .builder
+                                            .build_pointer_cast(
+                                                field_i8ptr,
+                                                self.context.ptr_type(AddressSpace::default()),
+                                                "f64_ptr_cast",
+                                            )
+                                            .map_err(|_| Diagnostic::error("LLVM builder error"))?;
+                                        let loaded = self
+                                            .builder
+                                            .build_load(self.f64_t, f64_ptr, "field_f64_load")
+                                            .map_err(|_| Diagnostic::error("operation failed"))?;
+                                        loaded.as_basic_value_enum()
+                                    }
+                                    crate::types::OatsType::String
+                                    | crate::types::OatsType::NominalStruct(_)
+                                    | crate::types::OatsType::Array(_) => {
+                                        let slot_ptr_ty = self.context.ptr_type(AddressSpace::default());
+                                        let slot_ptr = self
+                                            .builder
+                                            .build_pointer_cast(field_i8ptr, slot_ptr_ty, "slot_ptr_cast")
+                                            .map_err(|_| Diagnostic::error("operation failed"))?;
+                                        let loaded = self
+                                            .builder
+                                            .build_load(self.i8ptr_t, slot_ptr, "field_load")
+                                            .map_err(|_| Diagnostic::error("operation failed"))?;
+                                        loaded
+                                    }
+                                    _ => {
+                                        return Err(Diagnostic::simple_with_span_boxed(
+                                            Severity::Error,
+                                            format!("compound assignment not supported for field type"),
+                                            assign.span.start,
+                                        ));
+                                    }
+                                };
+
+                                // Lower right-hand side
+                                let rhs_val = self.lower_expr(&assign.right, function, param_map, locals)?;
+
+                                // Convert compound assignment operator to binary operator
+                                let bin_op = match assign.op {
+                                    AssignOp::PlusEq => BinaryOp::Plus,
+                                    AssignOp::MinusEq => BinaryOp::Minus,
+                                    AssignOp::MulEq => BinaryOp::Mul,
+                                    AssignOp::DivEq => BinaryOp::Div,
+                                    AssignOp::ModEq => BinaryOp::Mod,
+                                    AssignOp::LShiftEq => BinaryOp::LShift,
+                                    AssignOp::RShiftEq => BinaryOp::RShift,
+                                    AssignOp::URShiftEq => BinaryOp::URShift,
+                                    AssignOp::BitwiseAndEq => BinaryOp::BitwiseAnd,
+                                    AssignOp::BitwiseOrEq => BinaryOp::BitwiseOr,
+                                    AssignOp::BitwiseXorEq => BinaryOp::BitwiseXor,
+                                    AssignOp::ExpEq => BinaryOp::Exp,
+                                    AssignOp::Eq => unreachable!(),
+                                };
+
+                                // Perform binary operation
+                                let result = self.lower_binary_expr_with_values(
+                                    &bin_op,
+                                    current_val,
+                                    rhs_val,
+                                    function,
+                                    param_map,
+                                    locals,
+                                )?;
+
+                                // Store result back to field
+                                match field_ty {
+                                    crate::types::OatsType::Number => {
+                                        if let BasicValueEnum::FloatValue(fv) = result {
+                                            let f64_ptr = self
+                                                .builder
+                                                .build_pointer_cast(
+                                                    field_i8ptr,
+                                                    self.context.ptr_type(AddressSpace::default()),
+                                                    "f64_ptr_cast",
+                                                )
+                                                .map_err(|_| Diagnostic::error("LLVM builder error"))?;
+                                            let _ = self.builder.build_store(f64_ptr, fv);
+                                            return Ok(result);
+                                        } else {
+                                            return Err(Diagnostic::simple_with_span_boxed(
+                                                Severity::Error,
+                                                "compound assignment result type mismatch for number field",
+                                                assign.span.start,
+                                            ));
+                                        }
+                                    }
+                                    crate::types::OatsType::String
+                                    | crate::types::OatsType::NominalStruct(_)
+                                    | crate::types::OatsType::Array(_) => {
+                                        if let BasicValueEnum::PointerValue(new_pv) = result {
+                                            let slot_ptr_ty = self.context.ptr_type(AddressSpace::default());
+                                            let slot_ptr = self
+                                                .builder
+                                                .build_pointer_cast(field_i8ptr, slot_ptr_ty, "slot_ptr_cast")
+                                                .map_err(|_| Diagnostic::error("operation failed"))?;
+
+                                            // Load old value for RC decrement
+                                            let old_val = self
+                                                .builder
+                                                .build_load(self.i8ptr_t, slot_ptr, "old_field_val")
+                                                .map_err(|_| Diagnostic::error("operation failed"))?;
+
+                                            // Store new value
+                                            let _ = self.builder.build_store(slot_ptr, result);
+
+                                            // RC PROTOCOL: Increment new value, then decrement old
+                                            let rc_inc = self.get_rc_inc();
+                                            let _ = self
+                                                .builder
+                                                .build_call(rc_inc, &[new_pv.into()], "rc_inc_new_field")
+                                                .map_err(|_| Diagnostic::error("operation failed"))?;
+
+                                            if let BasicValueEnum::PointerValue(old_pv) = old_val {
+                                                let rc_dec = self.get_rc_dec();
+                                                let _ = self
+                                                    .builder
+                                                    .build_call(rc_dec, &[old_pv.into()], "rc_dec_old_field")
+                                                    .map_err(|_| Diagnostic::error("operation failed"))?;
+                                            }
+
+                                            return Ok(result);
+                                        } else {
+                                            return Err(Diagnostic::simple_with_span_boxed(
+                                                Severity::Error,
+                                                "compound assignment result type mismatch for pointer field",
+                                                assign.span.start,
+                                            ));
+                                        }
+                                    }
+                                    _ => {
+                                        return Err(Diagnostic::simple_with_span_boxed(
+                                            Severity::Error,
+                                            format!("compound assignment not supported for field type"),
+                                            assign.span.start,
+                                        ));
+                                    }
+                                }
+                            } else {
+                                return Err(Diagnostic::simple_with_span_boxed(
+                                    Severity::Error,
+                                    format!("field '{}' not found in class '{}'", field_name, class_name),
+                                    assign.span.start,
+                                ));
+                            }
+                        } else {
+                            return Err(Diagnostic::simple_with_span_boxed(
+                                Severity::Error,
+                                format!("class '{}' has no registered fields", class_name),
+                                assign.span.start,
+                            ));
+                        }
+                    } else {
+                        // Cannot determine class type at compile time
+                        // All types must be known at compile time - this is a type inference failure
+                        return Err(Diagnostic::simple_with_span_boxed(
+                            Severity::Error,
+                            "cannot determine object type for compound assignment: all types must be known at compile time",
+                            assign.span.start,
+                        ));
+                    }
+                } else if let MemberProp::Computed(computed_expr) = &member.prop {
+                    // Compound assignment for computed member access (e.g., obj["field"] += 5 or obj[0] += 5)
+                    // Support both string literal indices and compile-time constant integer indices
+
+                    // Lower the object to get its pointer
+                    let obj_val = self.lower_expr(&member.obj, function, param_map, locals)?;
+                    let obj_ptr = if let BasicValueEnum::PointerValue(pv) = obj_val {
+                        pv
+                    } else {
+                        return Err(Diagnostic::simple_with_span_boxed(
+                            Severity::Error,
+                            "member assignment requires object pointer",
+                            assign.span.start,
+                        ));
+                    };
+
+                    // Determine class name to get field information
+                    let mut class_name_opt: Option<String> = None;
+                    if let Expr::Ident(ident) = &*member.obj {
+                        let ident_name = ident.sym.clone();
+                        if let Some((_, _ty, _init, _is_const, _is_weak, nominal, _oats_type)) =
+                            self.find_local(locals, &ident_name)
+                            && let Some(nom) = nominal
+                        {
+                            class_name_opt = Some(nom);
+                        } else if let Some(param_idx) = param_map.get(&ident_name)
+                            && let Some(param_types) = self
+                                .fn_param_types
+                                .borrow()
+                                .get(function.get_name().to_str().unwrap_or(""))
+                        {
+                            let idx = *param_idx as usize;
+                            if idx < param_types.len()
+                                && let crate::types::OatsType::NominalStruct(n) = &param_types[idx]
+                            {
+                                class_name_opt = Some(n.clone());
+                            }
+                        }
+                    } else if matches!(&*member.obj, Expr::This(_)) {
+                        let fname = function.get_name().to_str().unwrap_or("");
+                        if let Some(param_types) = self.fn_param_types.borrow().get(fname)
+                            && !param_types.is_empty()
+                            && let crate::types::OatsType::NominalStruct(n) = &param_types[0]
+                        {
+                            class_name_opt = Some(n.clone());
+                        }
+                    }
+
+                    // Try to evaluate the computed index as a compile-time constant
+                    // Support both string literals (field names) and integer literals (field indices)
+                    let (field_idx, field_ty) = if let Some(class_name) = class_name_opt.clone() {
+                        if let Some(fields) = self.class_fields.borrow().get(&class_name) {
+                            // Try to evaluate as string literal first (field name)
+                            if let Ok(crate::codegen::const_eval::ConstValue::Str(s)) =
+                                crate::codegen::const_eval::eval_const_expr(
+                                    computed_expr,
+                                    member.span.start,
+                                    &std::collections::HashMap::new(),
+                                )
+                            {
+                                // Look up field by name
+                                if let Some((idx, (_name, ty))) = fields
+                                    .iter()
+                                    .enumerate()
+                                    .find(|(_, (name, _))| name == &s)
+                                {
+                                    (idx, ty.clone())
+                                } else {
+                                    return Err(Diagnostic::simple_with_span_boxed(
+                                        Severity::Error,
+                                        format!("field '{}' not found in class '{}'", s, class_name),
+                                        assign.span.start,
+                                    ));
+                                }
+                            } else {
+                                // Try to evaluate as integer literal (field index)
+                                let idx_val = self.lower_expr(computed_expr, function, param_map, locals)?;
+                                let idx_i64 = match idx_val {
+                                    BasicValueEnum::IntValue(iv) => self
+                                        .builder
+                                        .build_int_cast(iv, self.i64_t, "idx_i64")
+                                        .map_err(|_| Diagnostic::error("LLVM builder error"))?,
+                                    BasicValueEnum::FloatValue(fv) => self
+                                        .builder
+                                        .build_float_to_signed_int(fv, self.i64_t, "f2i")
+                                        .map_err(|_| Diagnostic::error("LLVM builder error"))?,
+                                    _ => {
+                                        return Err(Diagnostic::simple_with_span_boxed(
+                                            Severity::Error,
+                                            "computed index must be a compile-time constant (string or integer literal)",
+                                            assign.span.start,
+                                        ));
+                                    }
+                                };
+
+                                if let Some(const_idx) = idx_i64.get_zero_extended_constant() {
+                                    let idx_usize = const_idx as usize;
+                                    if let Some((idx, (_name, ty))) = fields
+                                        .iter()
+                                        .enumerate()
+                                        .find(|(i, _)| *i == idx_usize)
+                                    {
+                                        (idx, ty.clone())
+                                    } else {
+                                        return Err(Diagnostic::simple_with_span_boxed(
+                                            Severity::Error,
+                                            format!("field index {} out of bounds for class '{}'", idx_usize, class_name),
+                                            assign.span.start,
+                                        ));
+                                    }
+                                } else {
+                                    return Err(Diagnostic::simple_with_span_boxed(
+                                        Severity::Error,
+                                        "computed index must be a compile-time constant (string or integer literal)",
+                                        assign.span.start,
+                                    ));
+                                }
+                            }
+                        } else {
+                            return Err(Diagnostic::simple_with_span_boxed(
+                                Severity::Error,
+                                format!("class '{}' has no registered fields", class_name),
+                                assign.span.start,
+                            ));
+                        }
+                    } else {
+                        return Err(Diagnostic::simple_with_span_boxed(
+                            Severity::Error,
+                            "cannot determine object type for computed member assignment: all types must be known at compile time",
+                            assign.span.start,
+                        ));
+                    };
+
+                    // Compute field offset (same as dot-member access)
+                    let hdr_size = self.i64_t.const_int(8u64, false);
+                    let meta_slot = self.i64_t.const_int(8u64, false);
+                    let ptr_sz = self.i64_t.const_int(8u64, false);
+                    let idx_const = self.i64_t.const_int(field_idx as u64, false);
+                    let mul = self
+                        .builder
+                        .build_int_mul(idx_const, ptr_sz, "fld_off_mul")
+                        .map_err(|_| Diagnostic::error("LLVM builder error"))?;
+                    let tmp = self
+                        .builder
+                        .build_int_add(hdr_size, meta_slot, "hdr_plus_meta")
+                        .map_err(|_| Diagnostic::error("LLVM builder error"))?;
+                    let offset = self
+                        .builder
+                        .build_int_add(tmp, mul, "fld_off")
+                        .map_err(|_| Diagnostic::error("LLVM builder error"))?;
+
+                    let field_i8ptr = self
+                        .i8_ptr_from_offset_i64(obj_ptr, offset, "field_i8ptr")
+                        .map_err(|_| Diagnostic::error("operation failed"))?;
+
+                    // Load current field value
+                    let current_val = match field_ty {
+                        crate::types::OatsType::Number => {
+                            let f64_ptr = self
+                                .builder
+                                .build_pointer_cast(
+                                    field_i8ptr,
+                                    self.context.ptr_type(AddressSpace::default()),
+                                    "f64_ptr_cast",
+                                )
+                                .map_err(|_| Diagnostic::error("LLVM builder error"))?;
+                            let loaded = self
+                                .builder
+                                .build_load(self.f64_t, f64_ptr, "field_f64_load")
+                                .map_err(|_| Diagnostic::error("operation failed"))?;
+                            loaded.as_basic_value_enum()
+                        }
+                        crate::types::OatsType::String
+                        | crate::types::OatsType::NominalStruct(_)
+                        | crate::types::OatsType::Array(_) => {
+                            let slot_ptr_ty = self.context.ptr_type(AddressSpace::default());
+                            let slot_ptr = self
+                                .builder
+                                .build_pointer_cast(field_i8ptr, slot_ptr_ty, "slot_ptr_cast")
+                                .map_err(|_| Diagnostic::error("operation failed"))?;
+                            let loaded = self
+                                .builder
+                                .build_load(self.i8ptr_t, slot_ptr, "field_load")
+                                .map_err(|_| Diagnostic::error("operation failed"))?;
+                            loaded
+                        }
+                        _ => {
+                            return Err(Diagnostic::simple_with_span_boxed(
+                                Severity::Error,
+                                format!("compound assignment not supported for field type"),
+                                assign.span.start,
+                            ));
+                        }
+                    };
+
+                    // Lower right-hand side
+                    let rhs_val = self.lower_expr(&assign.right, function, param_map, locals)?;
+
+                    // Convert compound assignment operator to binary operator
+                    let bin_op = match assign.op {
+                        AssignOp::PlusEq => BinaryOp::Plus,
+                        AssignOp::MinusEq => BinaryOp::Minus,
+                        AssignOp::MulEq => BinaryOp::Mul,
+                        AssignOp::DivEq => BinaryOp::Div,
+                        AssignOp::ModEq => BinaryOp::Mod,
+                        AssignOp::LShiftEq => BinaryOp::LShift,
+                        AssignOp::RShiftEq => BinaryOp::RShift,
+                        AssignOp::URShiftEq => BinaryOp::URShift,
+                        AssignOp::BitwiseAndEq => BinaryOp::BitwiseAnd,
+                        AssignOp::BitwiseOrEq => BinaryOp::BitwiseOr,
+                        AssignOp::BitwiseXorEq => BinaryOp::BitwiseXor,
+                        AssignOp::ExpEq => BinaryOp::Exp,
+                        AssignOp::Eq => unreachable!(),
+                    };
+
+                    // Perform binary operation
+                    let result = self.lower_binary_expr_with_values(
+                        &bin_op,
+                        current_val,
+                        rhs_val,
+                        function,
+                        param_map,
+                        locals,
+                    )?;
+
+                    // Store result back to field
+                    match field_ty {
+                        crate::types::OatsType::Number => {
+                            if let BasicValueEnum::FloatValue(fv) = result {
+                                let f64_ptr = self
+                                    .builder
+                                    .build_pointer_cast(
+                                        field_i8ptr,
+                                        self.context.ptr_type(AddressSpace::default()),
+                                        "f64_ptr_cast",
+                                    )
+                                    .map_err(|_| Diagnostic::error("LLVM builder error"))?;
+                                let _ = self.builder.build_store(f64_ptr, fv);
+                                return Ok(result);
+                            } else {
+                                return Err(Diagnostic::simple_with_span_boxed(
+                                    Severity::Error,
+                                    "compound assignment result type mismatch for number field",
+                                    assign.span.start,
+                                ));
+                            }
+                        }
+                        crate::types::OatsType::String
+                        | crate::types::OatsType::NominalStruct(_)
+                        | crate::types::OatsType::Array(_) => {
+                            if let BasicValueEnum::PointerValue(new_pv) = result {
+                                let slot_ptr_ty = self.context.ptr_type(AddressSpace::default());
+                                let slot_ptr = self
+                                    .builder
+                                    .build_pointer_cast(field_i8ptr, slot_ptr_ty, "slot_ptr_cast")
+                                    .map_err(|_| Diagnostic::error("operation failed"))?;
+
+                                // Load old value for RC decrement
+                                let old_val = self
+                                    .builder
+                                    .build_load(self.i8ptr_t, slot_ptr, "old_field_val")
+                                    .map_err(|_| Diagnostic::error("operation failed"))?;
+
+                                // Store new value
+                                let _ = self.builder.build_store(slot_ptr, result);
+
+                                // RC PROTOCOL: Increment new value, then decrement old
+                                let rc_inc = self.get_rc_inc();
+                                let _ = self
+                                    .builder
+                                    .build_call(rc_inc, &[new_pv.into()], "rc_inc_new_field")
+                                    .map_err(|_| Diagnostic::error("operation failed"))?;
+
+                                if let BasicValueEnum::PointerValue(old_pv) = old_val {
+                                    let rc_dec = self.get_rc_dec();
+                                    let _ = self
+                                        .builder
+                                        .build_call(rc_dec, &[old_pv.into()], "rc_dec_old_field")
+                                        .map_err(|_| Diagnostic::error("operation failed"))?;
+                                }
+
+                                return Ok(result);
+                            } else {
+                                return Err(Diagnostic::simple_with_span_boxed(
+                                    Severity::Error,
+                                    "compound assignment result type mismatch for pointer field",
+                                    assign.span.start,
+                                ));
+                            }
+                        }
+                        _ => {
+                            return Err(Diagnostic::simple_with_span_boxed(
+                                Severity::Error,
+                                format!("compound assignment not supported for field type"),
+                                assign.span.start,
+                            ));
+                        }
+                    }
+                } else {
+                    return Err(Diagnostic::simple_with_span_boxed(
+                        Severity::Error,
+                        "compound assignment to private name member access not yet supported",
+                        assign.span.start,
+                    ));
+                }
             }
         }
 

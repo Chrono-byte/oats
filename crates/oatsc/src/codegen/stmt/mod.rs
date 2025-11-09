@@ -15,6 +15,7 @@ pub mod break_continue;
 pub mod control_flow;
 pub mod decl;
 pub mod expr_stmt;
+pub mod for_in;
 pub mod for_of;
 pub mod labeled;
 pub mod return_stmt;
@@ -92,6 +93,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 self.lower_labeled_stmt(labeled, function, param_map, locals_stack)
             }
             Stmt::ForOf(forof) => self.lower_for_of_stmt(forof, function, param_map, locals_stack),
+            Stmt::ForIn(for_in) => self.lower_for_in_stmt(for_in, function, param_map, locals_stack),
             Stmt::For(forstmt) => self.lower_for_stmt(forstmt, function, param_map, locals_stack),
             Stmt::While(while_stmt) => {
                 self.lower_while_stmt(while_stmt, function, param_map, locals_stack)
@@ -108,6 +110,15 @@ impl<'a> crate::codegen::CodeGen<'a> {
             }
             Stmt::FnDecl(_) | Stmt::ClassDecl(_) => {
                 // Function and class declarations are handled at module level
+                Ok(false)
+            }
+            Stmt::Debugger(_) => {
+                // Debugger statement is a no-op in codegen
+                // It's a debugging aid that doesn't generate any code
+                Ok(false)
+            }
+            Stmt::Import(_) | Stmt::TypeAlias(_) | Stmt::InterfaceDecl(_) | Stmt::EnumDecl(_) | Stmt::NamespaceDecl(_) | Stmt::DeclareFn(_) => {
+                // These are handled at module level, not in statement lowering
                 Ok(false)
             }
             _ => Err(crate::diagnostics::Diagnostic::simple_boxed(

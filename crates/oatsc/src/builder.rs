@@ -422,6 +422,15 @@ pub fn run_from_args(
         closure_local_rettype: RefCell::new(HashMap::new()),
         last_expr_origin_local: RefCell::new(None),
         async_await_live_sets: RefCell::new(None),
+        generator_yield_live_sets: RefCell::new(None),
+        generator_local_name_to_slot: RefCell::new(None),
+        generator_resume_blocks: RefCell::new(None),
+        generator_cont_blocks: RefCell::new(None),
+        generator_next_function: RefCell::new(None),
+        generator_yield_counter: std::cell::Cell::new(0),
+        generator_param_count: std::cell::Cell::new(0),
+        generator_local_slot_count: std::cell::Cell::new(0),
+        generator_next_locals: RefCell::new(None),
         async_local_name_to_slot: RefCell::new(None),
         async_resume_blocks: RefCell::new(None),
         async_cont_blocks: RefCell::new(None),
@@ -633,6 +642,35 @@ pub fn run_from_args(
                 .type_aliases
                 .borrow_mut()
                 .insert(alias_name, (type_params, ta.ty.clone()));
+        }
+
+        // Handle interface declarations: `interface Name { ... }`
+        // Interfaces are structural types in TypeScript/Oats - they don't generate runtime code
+        // but are used for type checking. For now, we just store them for potential future use.
+        if let Stmt::InterfaceDecl(interface) = stmt {
+            let interface_name = interface.ident.sym.clone();
+            // Interfaces are type-only constructs - no codegen needed
+            // They may be used in future type checking passes
+            // For now, we just acknowledge their presence
+            // TODO: Store interface metadata for type checking if needed
+            let _ = interface_name; // Suppress unused variable warning
+        }
+
+        // Handle namespace declarations: `namespace Name { ... }`
+        // Namespaces provide scoping and name mangling. For now, we handle them
+        // by processing their body statements in the same scope (simplified approach).
+        // TODO: Implement proper namespace scoping and name mangling
+        if let Stmt::NamespaceDecl(namespace) = stmt {
+            let namespace_name = namespace.ident.sym.clone();
+            // For now, process namespace body statements as if they were at module level
+            // This is a simplified approach - proper implementation would need:
+            // 1. Namespace scoping (qualified names like Namespace::member)
+            // 2. Name mangling for codegen (e.g., Namespace_member)
+            // 3. Support for nested namespaces
+            // TODO: Implement proper namespace handling
+            let _ = namespace_name; // Suppress unused variable warning
+            // Note: Namespace body statements are already processed in the main loop
+            // since they're part of the module's body. This is a placeholder for future work.
         }
     }
 
@@ -884,23 +922,9 @@ pub fn run_from_args(
         // Arrow functions need special handling because their structure differs slightly
         use oats_ast::*;
 
-        // Convert arrow params (Vec<Pat>) to function params (Vec<Param>)
-        // For now, we need to extract type annotations from the patterns
-        // This is a simplified version - in a full implementation, we'd need to
-        // handle type annotations properly from the arrow function parameters
-        let func_params: Vec<Param> = arrow
-            .params
-            .iter()
-            .map(|pat| {
-                // Extract type from pattern if available
-                // For now, create a param with no type annotation
-                Param {
-                    pat: pat.clone(),
-                    ty: None, // TODO: Extract type annotation from arrow param
-                    span: arrow.span.clone(),
-                }
-            })
-            .collect();
+        // Convert arrow params (Vec<Param>) to function params (Vec<Param>)
+        // ArrowExpr.params is now Vec<Param>, so we can directly use the type annotations
+        let func_params: Vec<Param> = arrow.params.clone();
 
         // Convert arrow body to function body (BlockStmt)
         let func_body = match &arrow.body {

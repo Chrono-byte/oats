@@ -2,12 +2,28 @@
 
 use libc::c_char;
 
-/// HTTP GET request (returns response body as string, caller must free)
+/// HTTP GET request (returns response body as string).
+///
+/// The returned pointer must be freed using `runtime_free_cstring()`.
+/// Passing the pointer to `libc::free()` or not freeing it will cause a memory leak.
 ///
 /// # Safety
 ///
 /// `url` must be a valid pointer to a null-terminated C string, or null.
 /// If non-null, the string must remain valid for the duration of this call.
+///
+/// # Returns
+/// A pointer to a null-terminated C string containing the response body, or null on error.
+/// The caller is responsible for freeing the string using `runtime_free_cstring()`.
+///
+/// # Example
+/// ```c
+/// char* response = oats_std_net_http_get(url);
+/// if (response != NULL) {
+///     // use response...
+///     runtime_free_cstring(response);
+/// }
+/// ```
 /// #[oats_export]
 #[no_mangle]
 pub unsafe extern "C" fn oats_std_net_http_get(url: *const c_char) -> *mut c_char {
@@ -73,12 +89,28 @@ pub unsafe extern "C" fn oats_std_net_url_reachable(url: *const c_char) -> libc:
     }
 }
 
-/// HTTP POST request (returns response body as string, caller must free)
+/// HTTP POST request (returns response body as string).
+///
+/// The returned pointer must be freed using `runtime_free_cstring()`.
+/// Passing the pointer to `libc::free()` or not freeing it will cause a memory leak.
 ///
 /// # Safety
 ///
 /// `url` and `body` must be valid pointers to null-terminated C strings, or null.
 /// If non-null, the strings must remain valid for the duration of this call.
+///
+/// # Returns
+/// A pointer to a null-terminated C string containing the response body, or null on error.
+/// The caller is responsible for freeing the string using `runtime_free_cstring()`.
+///
+/// # Example
+/// ```c
+/// char* response = oats_std_net_http_post(url, body);
+/// if (response != NULL) {
+///     // use response...
+///     runtime_free_cstring(response);
+/// }
+/// ```
 /// #[oats_export]
 #[no_mangle]
 pub unsafe extern "C" fn oats_std_net_http_post(
@@ -117,12 +149,28 @@ pub unsafe extern "C" fn oats_std_net_http_post(
     }
 }
 
-/// HTTP POST request with JSON body (returns response body as string, caller must free)
+/// HTTP POST request with JSON body (returns response body as string).
+///
+/// The returned pointer must be freed using `runtime_free_cstring()`.
+/// Passing the pointer to `libc::free()` or not freeing it will cause a memory leak.
 ///
 /// # Safety
 ///
 /// `url` and `json_body` must be valid pointers to null-terminated C strings, or null.
 /// If non-null, the strings must remain valid for the duration of this call.
+///
+/// # Returns
+/// A pointer to a null-terminated C string containing the response body, or null on error.
+/// The caller is responsible for freeing the string using `runtime_free_cstring()`.
+///
+/// # Example
+/// ```c
+/// char* response = oats_std_net_http_post_json(url, json_body);
+/// if (response != NULL) {
+///     // use response...
+///     runtime_free_cstring(response);
+/// }
+/// ```
 /// #[oats_export]
 #[no_mangle]
 pub unsafe extern "C" fn oats_std_net_http_post_json(

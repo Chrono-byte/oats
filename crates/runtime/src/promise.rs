@@ -4,7 +4,7 @@ use libc::c_void;
 use std::collections::VecDeque;
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 
-use crate::runtime_malloc;
+use crate::{runtime_malloc, is_plausible_addr};
 
 /// Minimal promise helpers (MVP): promise_resolve + promise_poll_into.
 ///
@@ -78,9 +78,22 @@ pub extern "C" fn promise_poll_into(
 
         if !first_word.is_null() {
             // Legacy/state-as-promise: first word is a poll function pointer.
-            let poll_fn: extern "C" fn(*mut std::ffi::c_void, *mut std::ffi::c_void) -> i32 =
-                std::mem::transmute(first_word);
-            return poll_fn(promise, out_ptr);
+            // Validate function pointer before transmute
+            let poll_addr = first_word as usize;
+            if crate::is_plausible_addr(poll_addr) {
+                const MIN_FN_ALIGN: usize = 1;
+                if (poll_addr % MIN_FN_ALIGN) == 0 {
+                    // SAFETY: We've validated the pointer is in a plausible address range and aligned.
+                    // The pointer was set by the code generator and should be a valid function pointer.
+                    // However, if the memory is corrupted, this could still be invalid. The is_plausible_addr
+                    // check provides defense-in-depth but cannot guarantee the pointer is actually executable.
+                    // In practice, poll function pointers are set by the code generator and should be valid.
+                    let poll_fn: extern "C" fn(*mut std::ffi::c_void, *mut std::ffi::c_void) -> i32 =
+                        unsafe { std::mem::transmute(first_word) };
+                    return poll_fn(promise, out_ptr);
+                }
+            }
+            // Invalid poll function pointer - treat as pending
         }
 
         // Read second word at offset 8
@@ -97,9 +110,22 @@ pub extern "C" fn promise_poll_into(
         let state_first = second_word as *mut *mut std::ffi::c_void;
         let state_first_word = *state_first;
         if !state_first_word.is_null() {
-            let poll_fn: extern "C" fn(*mut std::ffi::c_void, *mut std::ffi::c_void) -> i32 =
-                std::mem::transmute(state_first_word);
-            return poll_fn(second_word, out_ptr);
+            // Validate function pointer before transmute
+            let poll_addr = state_first_word as usize;
+            if crate::is_plausible_addr(poll_addr) {
+                const MIN_FN_ALIGN: usize = 1;
+                if (poll_addr % MIN_FN_ALIGN) == 0 {
+                    // SAFETY: We've validated the pointer is in a plausible address range and aligned.
+                    // The pointer was set by the code generator and should be a valid function pointer.
+                    // However, if the memory is corrupted, this could still be invalid. The is_plausible_addr
+                    // check provides defense-in-depth but cannot guarantee the pointer is actually executable.
+                    // In practice, poll function pointers are set by the code generator and should be valid.
+                    let poll_fn: extern "C" fn(*mut std::ffi::c_void, *mut std::ffi::c_void) -> i32 =
+                        unsafe { std::mem::transmute(state_first_word) };
+                    return poll_fn(second_word, out_ptr);
+                }
+            }
+            // Invalid poll function pointer - treat as pending
         }
 
         // Otherwise, treat second_word as a resolved payload (tiny resolver

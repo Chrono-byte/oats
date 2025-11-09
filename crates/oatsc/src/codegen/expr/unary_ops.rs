@@ -184,6 +184,23 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     ))
                 }
             }
+            UnaryOp::Void => {
+                // Void operator: evaluate expression, return undefined (null pointer)
+                // Evaluate the expression for side effects
+                let _ = self.lower_expr(&unary.arg, function, param_map, locals)?;
+                // Return undefined (null pointer)
+                Ok(self.i8ptr_t.const_null().as_basic_value_enum())
+            }
+            UnaryOp::Delete => {
+                // Delete operator: delete a property from an object
+                // This requires runtime support for object property deletion
+                // For now, evaluate the expression and return true (success)
+                // TODO: Implement proper property deletion when runtime support is available
+                let _ = self.lower_expr(&unary.arg, function, param_map, locals)?;
+                // Return true (1) to indicate successful deletion
+                // Note: In JavaScript, delete returns a boolean
+                Ok(self.context.bool_type().const_int(1, false).as_basic_value_enum())
+            }
             _ => Err(Diagnostic::simple_boxed(
                 Severity::Error,
                 "unsupported unary operator",

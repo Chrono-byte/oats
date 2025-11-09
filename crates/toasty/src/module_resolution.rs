@@ -143,13 +143,23 @@ pub fn load_modules_with_verbosity(
             .with_context(|| format!("Failed to parse module: {}", path))?;
 
         // Discover and enqueue relative imports from this module
-        // Note: oats_ast doesn't yet support import statements in the AST
-        // TODO: Add import statement support to oats_ast and update this code
-        // For now, we skip import discovery
-        // use oats_ast::*;
-        // for stmt in &parsed.parsed.body {
-        //     // Import statements would be handled here when added to oats_ast
-        // }
+        use oats_ast::*;
+        for stmt in &parsed.parsed.body {
+            if let Stmt::Import(import_stmt) = stmt {
+                let import_src = &import_stmt.source;
+                // Process only relative import paths
+                if import_src.starts_with("./") || import_src.starts_with("../") {
+                    if let Some(imported_path) = resolve_relative_import(&path, import_src, project_root) {
+                        if !modules.contains_key(&imported_path) {
+                            queue.push_back(imported_path);
+                            if verbose {
+                                eprintln!("  Discovered new dependency: {}", imported_path);
+                            }
+                        }
+                    }
+                }
+            }
+        }
         modules.insert(path.clone(), parsed);
     }
 
@@ -214,28 +224,15 @@ pub fn build_dependency_graph(
             ))?;
 
         // Discover and enqueue relative imports from this module
-        // Note: oats_ast doesn't yet support import statements in the AST
-        // TODO: Add import statement support to oats_ast and update this code
-        // For now, we skip import discovery
-        // use oats_ast::*;
-        // for stmt in &parsed.parsed.body {
-        //     // Import statements would be handled here when added to oats_ast
-        // }
-        let _ = parsed; // Suppress unused warning
-        /*
-        for item_ref in parsed.parsed.program_ref().body() {
-            if let deno_ast::ModuleItemRef::ModuleDecl(module_decl) = item_ref
-                && let deno_ast::swc::ast::ModuleDecl::Import(import_decl) = module_decl
-            {
-                let import_src = import_decl.src.value.to_string();
+        use oats_ast::*;
+        for stmt in &parsed.parsed.body {
+            if let Stmt::Import(import_stmt) = stmt {
+                let import_src = &import_stmt.source;
                 // Process only relative import paths
-                if (import_src.starts_with("./") || import_src.starts_with("../"))
-                    && let Some(imported_path) =
-                        resolve_relative_import(&current_path, &import_src, project_root)
-                {
-                    // Add dependency edge: current -> imported (current depends on imported)
-                    let imported_node =
-                        if let Some(&existing_node) = node_indices.get(&imported_path) {
+                if import_src.starts_with("./") || import_src.starts_with("../") {
+                    if let Some(imported_path) = resolve_relative_import(&current_path, &import_src, project_root) {
+                        // Add dependency edge: current -> imported (current depends on imported)
+                        let imported_node = if let Some(&existing_node) = node_indices.get(&imported_path) {
                             existing_node
                         } else {
                             let new_node = graph.add_node(imported_path.clone());
@@ -247,12 +244,12 @@ pub fn build_dependency_graph(
                             new_node
                         };
 
-                    // Add edge: current depends on imported
-                    graph.add_edge(current_node, imported_node, ());
+                        // Add edge: current depends on imported
+                        graph.add_edge(current_node, imported_node, ());
+                    }
                 }
             }
         }
-        */
     }
 
     let entry_node_index = *node_indices

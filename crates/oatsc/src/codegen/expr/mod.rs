@@ -28,6 +28,9 @@ pub mod async_expr;
 pub mod binary_ops;
 pub mod calls;
 pub mod control_flow_expr;
+pub mod fn_expr;
+pub mod seq_expr;
+pub mod yield_expr;
 pub mod ident;
 pub mod literals;
 pub mod member_access;
@@ -125,6 +128,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 self.lower_await_expr(await_expr, function, param_map, locals)
             }
             Expr::Arrow(arrow) => self.lower_arrow_expr(arrow, function, param_map, locals),
+            Expr::Fn(fn_expr) => self.lower_fn_expr(fn_expr, function, param_map, locals),
+            Expr::Seq(seq) => self.lower_seq_expr(seq, function, param_map, locals),
             Expr::Object(obj_lit) => Ok(literals::lower_object(
                 self, obj_lit, function, param_map, locals,
             )?),
@@ -162,6 +167,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             Expr::ProcessUnregister(unregister) => {
                 self.lower_process_unregister_expr(unregister, function, param_map, locals)
             }
+            Expr::Yield(yield_expr) => self.lower_yield_expr(yield_expr, function, param_map, locals),
             _ => Err(Diagnostic::simple_boxed(
                 Severity::Error,
                 "operation not supported",

@@ -86,36 +86,59 @@ impl<'a> CodeGen<'a> {
 
         let access_result = self.lower_member_expr(&member_expr, function, param_map, locals)?;
 
-        // Ensure access result is a pointer for the phi node
-        let access_ptr = match access_result {
-            BasicValueEnum::PointerValue(p) => p,
-            _ => {
-                // For non-pointer results, we need to box them or return null
-                // For now, return null as a conservative approach
-                self.builder
-                    .build_unconditional_branch(merge_block)
-                    .map_err(|_| {
-                        Diagnostic::simple_boxed(Severity::Error, "failed to build branch")
-                    })?;
-                self.builder.position_at_end(merge_block);
-                return Ok(self.i8ptr_t.const_null().as_basic_value_enum());
-            }
-        };
-
+        // Branch to merge block after accessing the member
         self.builder
             .build_unconditional_branch(merge_block)
             .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "failed to build branch"))?;
 
-        // In merge_block: create phi node
+        // In merge_block: create phi node with the correct type based on access_result
         self.builder.position_at_end(merge_block);
-        let null_ptr = self.i8ptr_t.const_null();
-        let phi = self
-            .builder
-            .build_phi(self.i8ptr_t, "opt_result")
-            .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "failed to create phi node"))?;
 
-        // Add incoming values: null from current_block, access result from access_block
-        phi.add_incoming(&[(&null_ptr, current_block), (&access_ptr, access_block)]);
-        Ok(phi.as_basic_value().as_basic_value_enum())
+        // Determine the type and create appropriate zero/null value for the null case
+        match access_result {
+            BasicValueEnum::PointerValue(p) => {
+                let null_ptr = self.i8ptr_t.const_null();
+                let phi = self
+                    .builder
+                    .build_phi(self.i8ptr_t, "opt_result")
+                    .map_err(|_| {
+                        Diagnostic::simple_boxed(Severity::Error, "failed to create phi node")
+                    })?;
+                phi.add_incoming(&[(&null_ptr, current_block), (&p, access_block)]);
+                Ok(phi.as_basic_value().as_basic_value_enum())
+            }
+            BasicValueEnum::FloatValue(f) => {
+                let zero_float = self.f64_t.const_float(0.0);
+                let phi = self
+                    .builder
+                    .build_phi(self.f64_t, "opt_result")
+                    .map_err(|_| {
+                        Diagnostic::simple_boxed(Severity::Error, "failed to create phi node")
+                    })?;
+                phi.add_incoming(&[(&zero_float, current_block), (&f, access_block)]);
+                Ok(phi.as_basic_value().as_basic_value_enum())
+            }
+            BasicValueEnum::IntValue(i) => {
+                let int_type = i.get_type();
+                let zero_int = int_type.const_int(0, false);
+                let phi = self
+                    .builder
+                    .build_phi(int_type, "opt_result")
+                    .map_err(|_| {
+                        Diagnostic::simple_boxed(Severity::Error, "failed to create phi node")
+                    })?;
+                phi.add_incoming(&[(&zero_int, current_block), (&i, access_block)]);
+                Ok(phi.as_basic_value().as_basic_value_enum())
+            }
+            _ => {
+                // Unsupported return type from member access
+                // This should not happen in practice, but handle it gracefully
+                Err(Diagnostic::simple_with_span_boxed(
+                    Severity::Error,
+                    "optional chaining: unsupported member access return type",
+                    optional.span.start,
+                ))
+            }
+        }
     }
 }

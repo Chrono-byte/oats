@@ -622,7 +622,7 @@ fn create_cache_dir_tag(dir_path: &str) -> Result<()> {
 }
 
 /// Extract exported function names from an Oats source file
-fn extract_exported_symbols(file_path: &str) -> Result<Vec<String>> {
+pub fn extract_exported_symbols(file_path: &str) -> Result<Vec<String>> {
     use std::fs;
 
     let content = fs::read_to_string(file_path).map_err(|e| ToastyError::io(file_path, e))?;

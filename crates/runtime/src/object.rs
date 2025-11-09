@@ -40,13 +40,39 @@ pub unsafe extern "C" fn tuple_to_string(obj: *mut c_void) -> *mut c_char {
     }
 
     let len = unsafe { ((*meta) & 0xffffffffu64) as usize };
+    // Validate metadata length is reasonable
+    const MAX_META_LEN: usize = 10_000; // 10K fields max
+    if len > MAX_META_LEN {
+        return ptr::null_mut();
+    }
     let offsets_ptr = unsafe { meta.add(1) as *const i32 };
 
-    let mut parts: Vec<String> = Vec::new();
+    // Pre-allocate with known capacity to avoid reallocations
+    let mut parts: Vec<String> = Vec::with_capacity(len);
     for i in 0..len {
         let off_i32 = unsafe { *offsets_ptr.add(i) };
+        if off_i32 <= 0 {
+            // Invalid offset - skip this field
+            continue;
+        }
         let off = off_i32 as isize as usize;
+        // Validate offset alignment and bounds
+        if (off & 7) != 0 {
+            // Offset must be 8-byte aligned
+            continue;
+        }
+        // Validate offset doesn't exceed reasonable object size
+        const MAX_FIELD_OFFSET: usize = 1 << 20; // 1 MiB conservative bound
+        if off > MAX_FIELD_OFFSET {
+            // Offset too large - skip this field
+            continue;
+        }
+        // Validate that the field address is plausible before dereferencing
         let field_addr = unsafe { (base as *mut u8).add(off) as *const u64 };
+        if !crate::is_plausible_addr(field_addr as usize) {
+            // Invalid field address - skip this field
+            continue;
+        }
         let raw = unsafe { *field_addr as u64 };
         // Reuse the stringify helper from crate root if available
         let s = crate::stringify_value_raw(raw, 0);

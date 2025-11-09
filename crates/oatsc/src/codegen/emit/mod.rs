@@ -18,6 +18,7 @@ pub mod async_handling;
 pub mod constructors;
 pub mod enums;
 pub mod functions;
+pub mod generator_handling;
 
 // Type alias for the `locals_stack` used during statement lowering.
 //

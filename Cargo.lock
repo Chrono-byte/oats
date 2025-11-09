@@ -1890,6 +1890,7 @@ dependencies = [
  "colored",
  "dirs",
  "flate2",
+ "oats_ast",
  "oatsc",
  "pathdiff",
  "petgraph",

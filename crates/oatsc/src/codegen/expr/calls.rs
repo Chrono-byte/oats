@@ -124,170 +124,235 @@ impl<'a> CodeGen<'a> {
                         if self.find_local(locals, &obj_name).is_some() {
                             // Handle as complex member call on a local value.
                             use oats_ast::*;
-                            if let MemberProp::Ident(prop_ident) = &member.prop {
-                                let method_name = prop_ident.sym.clone();
 
-                                if let Ok(obj_val) =
-                                    self.lower_expr(&member.obj, function, param_map, locals)
-                                {
-                                    // Support weak reference helpers: downgrade()/upgrade()
-                                    if method_name == "downgrade" {
-                                        if !call.args.is_empty() {
-                                            return Err(Diagnostic::simple_boxed(
-                                                Severity::Error,
-                                                "expression lowering failed",
-                                            ))?;
-                                        }
-                                        if let BasicValueEnum::PointerValue(pv) = obj_val {
-                                            let f = self.get_rc_weak_inc();
-                                            let _ = self.builder.build_call(
-                                                f,
-                                                &[pv.into()],
-                                                "rc_weak_inc_call",
-                                            );
-                                            return Ok(pv.as_basic_value_enum());
-                                        } else {
-                                            return Err(Diagnostic::simple_boxed(
-                                                Severity::Error,
-                                                "downgrade on non-pointer",
-                                            ))?;
-                                        }
-                                    }
-                                    if method_name == "upgrade" {
-                                        if !call.args.is_empty() {
-                                            return Err(Diagnostic::simple_boxed(
-                                                Severity::Error,
-                                                "expression lowering failed",
-                                            ))?;
-                                        }
-                                        if let BasicValueEnum::PointerValue(pv) = obj_val {
-                                            let f = self.get_rc_weak_upgrade();
-                                            let cs = self.builder.build_call(
-                                                f,
-                                                &[pv.into()],
-                                                "rc_weak_upgrade_call",
-                                            );
-                                            if let Ok(cs) = cs
-                                                && let inkwell::Either::Left(bv) =
-                                                    cs.try_as_basic_value()
-                                            {
-                                                return Ok(bv);
-                                            }
-                                            return Err(Diagnostic::simple_boxed(
-                                                Severity::Error,
-                                                "upgrade failed",
-                                            ))?;
-                                        } else {
-                                            return Err(Diagnostic::simple_boxed(
-                                                Severity::Error,
-                                                "upgrade on non-pointer",
-                                            ))?;
-                                        }
-                                    }
-
-                                    // Lower args and attempt to call a class method if present
-                                    let mut call_args: Vec<
-                                        inkwell::values::BasicMetadataValueEnum,
-                                    > = Vec::new();
-                                    call_args.push(obj_val.into());
-                                    for a in &call.args {
-                                        let val =
-                                            match self.lower_expr(a, function, param_map, locals) {
-                                                Ok(v) => v,
-                                                Err(d) => return Err(d)?,
-                                            };
-                                        call_args.push(val.into());
-                                    }
-
-                                    // Check nominal on local to resolve class method name
-                                    if let Some((_, _, _, _, _, nominal_opt, _)) =
-                                        self.find_local(locals, &obj_name)
-                                        && let Some(nom) = nominal_opt
-                                    {
-                                        // Try to devirtualize using RTA if available
-                                        let method_fn_name = if let Some(ref rta) = self.rta_results
-                                        {
-                                            if let Some(devirt_target) =
-                                                rta.can_devirtualize(&nom, &method_name)
-                                            {
-                                                devirt_target
-                                            } else {
-                                                format!("{}_{}", nom, method_name)
-                                            }
-                                        } else {
-                                            format!("{}_{}", nom, method_name)
-                                        };
-
-                                        if let Some(method_fn) =
-                                            self.module.get_function(&method_fn_name)
-                                        {
-                                            let cs = match self.builder.build_call(
-                                                method_fn,
-                                                &call_args,
-                                                "class_method_call",
-                                            ) {
-                                                Ok(cs) => cs,
-                                                Err(_) => {
-                                                    return Err(Box::new(
-                                                        Diagnostic::simple(
-                                                            Severity::Error,
-                                                            "class method call failed",
-                                                        )
-                                                        .with_note(format!("Failed to call method '{}' on class '{}'", method_name, nom))
-                                                        .with_help(format!("Ensure the method '{}' exists in class '{}'", method_name, nom))
-                                                    ));
-                                                }
-                                            };
-                                            let either = cs.try_as_basic_value();
-                                            if let inkwell::Either::Left(bv) = either {
-                                                return Ok(bv);
-                                            } else {
-                                                let zero = self.f64_t.const_float(0.0);
-                                                return Ok(zero.as_basic_value_enum());
-                                            }
-                                        }
-                                    }
-
-                                    // Fallback: fall through to error (no std handler for locals)
+                            // Support both direct property access (obj.prop()) and computed property access (obj[prop]())
+                            let method_name = match &member.prop {
+                                MemberProp::Ident(prop_ident) => prop_ident.sym.clone(),
+                                MemberProp::PrivateName(_) => {
                                     return Err(Box::new(
-                                        Diagnostic::simple(
+                                        Diagnostic::simple_with_span(
                                             Severity::Error,
-                                            format!("method '{}' not found on object '{}'", method_name, obj_name),
+                                            "private name property calls not supported",
+                                            member.span.start,
                                         )
-                                        .with_note(format!("The object '{}' does not have a method named '{}'", obj_name, method_name))
-                                        .with_help(format!("Check that '{}' is a class instance with method '{}', or use optional chaining: {}.?{}()", obj_name, method_name, obj_name, method_name))
-                                    ));
-                                } else {
-                                    return Err(Box::new(
-                                        Diagnostic::simple(
-                                            Severity::Error,
-                                            format!("failed to lower object expression for method call '{}'", method_name),
-                                        )
-                                        .with_note(format!("The object expression '{}' could not be evaluated", obj_name))
-                                        .with_help("Ensure the object is properly initialized before calling methods on it")
+                                        .with_note("Private name properties are not yet supported in method calls")
                                     ));
                                 }
+                                MemberProp::Computed(computed_expr) => {
+                                    // Try to evaluate the computed property as a compile-time constant
+                                    // Support string literals: obj["methodName"]()
+                                    let span_start = member.span.start;
+                                    match crate::codegen::const_eval::eval_const_expr(
+                                        computed_expr,
+                                        span_start,
+                                        &std::collections::HashMap::new(),
+                                    ) {
+                                        Ok(crate::codegen::const_eval::ConstValue::Str(s)) => s,
+                                        Ok(_) => {
+                                            return Err(Box::new(
+                                                Diagnostic::simple_with_span(
+                                                    Severity::Error,
+                                                    "computed property must be a string literal",
+                                                    span_start,
+                                                )
+                                                .with_note("Only string literal computed properties are supported (e.g., obj[\"method\"]())")
+                                                .with_help("Use a string literal: obj[\"methodName\"]() instead of obj[prop]()")
+                                            ));
+                                        }
+                                        Err(_) => {
+                                            return Err(Box::new(
+                                                Diagnostic::simple_with_span(
+                                                    Severity::Error,
+                                                    "computed property must be a compile-time constant string",
+                                                    span_start,
+                                                )
+                                                .with_note("Only string literal computed properties are supported (e.g., obj[\"method\"]())")
+                                                .with_help("Use a string literal: obj[\"methodName\"]() instead of a variable")
+                                            ));
+                                        }
+                                    }
+                                }
+                            };
+
+                            if let Ok(obj_val) =
+                                self.lower_expr(&member.obj, function, param_map, locals)
+                            {
+                                // Support weak reference helpers: downgrade()/upgrade()
+                                if method_name == "downgrade" {
+                                    if !call.args.is_empty() {
+                                        return Err(Diagnostic::simple_boxed(
+                                            Severity::Error,
+                                            "expression lowering failed",
+                                        ))?;
+                                    }
+                                    if let BasicValueEnum::PointerValue(pv) = obj_val {
+                                        let f = self.get_rc_weak_inc();
+                                        let _ = self.builder.build_call(
+                                            f,
+                                            &[pv.into()],
+                                            "rc_weak_inc_call",
+                                        );
+                                        return Ok(pv.as_basic_value_enum());
+                                    } else {
+                                        return Err(Diagnostic::simple_boxed(
+                                            Severity::Error,
+                                            "downgrade on non-pointer",
+                                        ))?;
+                                    }
+                                }
+                            if method_name == "upgrade" {
+                                if !call.args.is_empty() {
+                                    return Err(Diagnostic::simple_boxed(
+                                        Severity::Error,
+                                        "expression lowering failed",
+                                    ))?;
+                                }
+                                if let BasicValueEnum::PointerValue(pv) = obj_val {
+                                    let f = self.get_rc_weak_upgrade();
+                                    let cs = self.builder.build_call(
+                                        f,
+                                        &[pv.into()],
+                                        "rc_weak_upgrade_call",
+                                    );
+                                    if let Ok(cs) = cs
+                                        && let inkwell::Either::Left(bv) =
+                                            cs.try_as_basic_value()
+                                    {
+                                        return Ok(bv);
+                                    }
+                                    return Err(Diagnostic::simple_boxed(
+                                        Severity::Error,
+                                        "upgrade failed",
+                                    ))?;
+                                } else {
+                                    return Err(Diagnostic::simple_boxed(
+                                        Severity::Error,
+                                        "upgrade on non-pointer",
+                                    ))?;
+                                }
+                            }
+
+                            // Lower args and attempt to call a class method if present
+                            let mut call_args: Vec<
+                                inkwell::values::BasicMetadataValueEnum,
+                            > = Vec::new();
+                            call_args.push(obj_val.into());
+                            for a in &call.args {
+                                let val =
+                                    match self.lower_expr(a, function, param_map, locals) {
+                                        Ok(v) => v,
+                                        Err(d) => return Err(d)?,
+                                    };
+                                call_args.push(val.into());
+                            }
+
+                            // Check nominal on local to resolve class method name
+                            if let Some((_, _, _, _, _, nominal_opt, _)) =
+                                self.find_local(locals, &obj_name)
+                                && let Some(nom) = nominal_opt
+                            {
+                                // Try to devirtualize using RTA if available
+                                let method_fn_name = if let Some(ref rta) = self.rta_results
+                                {
+                                    if let Some(devirt_target) =
+                                        rta.can_devirtualize(&nom, &method_name)
+                                    {
+                                        devirt_target
+                                    } else {
+                                        format!("{}_{}", nom, method_name)
+                                    }
+                                } else {
+                                    format!("{}_{}", nom, method_name)
+                                };
+
+                                if let Some(method_fn) =
+                                    self.module.get_function(&method_fn_name)
+                                {
+                                    let cs = match self.builder.build_call(
+                                        method_fn,
+                                        &call_args,
+                                        "class_method_call",
+                                    ) {
+                                        Ok(cs) => cs,
+                                        Err(_) => {
+                                            return Err(Box::new(
+                                                Diagnostic::simple(
+                                                    Severity::Error,
+                                                    "class method call failed",
+                                                )
+                                                .with_note(format!("Failed to call method '{}' on class '{}'", method_name, nom))
+                                                .with_help(format!("Ensure the method '{}' exists in class '{}'", method_name, nom))
+                                            ));
+                                        }
+                                    };
+                                    let either = cs.try_as_basic_value();
+                                    if let inkwell::Either::Left(bv) = either {
+                                        return Ok(bv);
+                                    } else {
+                                        let zero = self.f64_t.const_float(0.0);
+                                        return Ok(zero.as_basic_value_enum());
+                                    }
+                                }
+                            }
+
+                            // Fallback: fall through to error (no std handler for locals)
+                            return Err(Box::new(
+                                Diagnostic::simple(
+                                    Severity::Error,
+                                    format!("method '{}' not found on object '{}'", method_name, obj_name),
+                                )
+                                .with_note(format!("The object '{}' does not have a method named '{}'", obj_name, method_name))
+                                .with_help(format!("Check that '{}' is a class instance with method '{}', or use optional chaining: {}.?{}()", obj_name, method_name, obj_name, method_name))
+                            ));
                             } else {
                                 return Err(Box::new(
-                                    Diagnostic::simple_with_span(
+                                    Diagnostic::simple(
                                         Severity::Error,
-                                        "computed property calls not supported",
-                                        call.span.start,
+                                        format!("failed to lower object expression for method call '{}'", method_name),
                                     )
-                                    .with_note("Method calls with computed property names (e.g., obj[prop]()) are not yet supported")
-                                    .with_help("Use a direct property access instead: obj.prop()")
+                                    .with_note(format!("The object expression '{}' could not be evaluated", obj_name))
+                                    .with_help("Ensure the object is properly initialized before calling methods on it")
                                 ));
                             }
+                        } else {
+                            // Non-local object - handled below in std namespace section
                         }
 
+                        // Support both direct property access and computed property access (string literals)
+                        // This handles std namespace calls like Math.max() or Math["max"]()
                         let prop_name = match &member.prop {
                             MemberProp::Ident(prop_ident) => prop_ident.sym.clone(),
-                            _ => {
+                            MemberProp::PrivateName(_) => {
                                 return Err(Diagnostic::simple_with_span_boxed(
                                     Severity::Error,
-                                    "computed property calls not supported",
-                                    call.span.start,
+                                    "private name property calls not supported",
+                                    member.span.start,
                                 ));
+                            }
+                            MemberProp::Computed(computed_expr) => {
+                                // Try to evaluate the computed property as a compile-time constant
+                                // Support string literals: Math["max"]()
+                                match crate::codegen::const_eval::eval_const_expr(
+                                    computed_expr,
+                                    member.span.start,
+                                    &std::collections::HashMap::new(),
+                                ) {
+                                    Ok(crate::codegen::const_eval::ConstValue::Str(s)) => s,
+                                    Ok(_) => {
+                                        return Err(Diagnostic::simple_with_span_boxed(
+                                            Severity::Error,
+                                            "computed property must be a string literal",
+                                            member.span.start,
+                                        ));
+                                    }
+                                    Err(_) => {
+                                        return Err(Diagnostic::simple_with_span_boxed(
+                                            Severity::Error,
+                                            "computed property must be a compile-time constant string",
+                                            member.span.start,
+                                        ));
+                                    }
+                                }
                             }
                         };
 

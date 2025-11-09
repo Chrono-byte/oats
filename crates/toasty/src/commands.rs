@@ -246,17 +246,71 @@ pub fn handle_build(cli: &Cli, opts: BuildCommandOptions) -> Result<()> {
             },
         );
 
-        // For Phase 1: if this is not the first module, add extern_oats for previous modules
-        // TODO: In Phase 2, this will be based on actual package metadata
+        // For Phase 2: if this is not the first module, add extern_oats for previous modules
+        // Extract exported symbols from package metadata or source files
         if i > 0 {
-            // Hardcode exported symbols for known modules (Phase 1 only)
             for prev_module in &compilation_order[0..i] {
-                if prev_module.ends_with("math.oats") {
-                    options
-                        .extern_oats
-                        .insert("./math".to_string(), "add,multiply".to_string());
+                // Determine the import path (relative to current module)
+                // For now, use the module file stem as the import path
+                let import_path = std::path::Path::new(prev_module)
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .map(|s| format!("./{}", s))
+                    .unwrap_or_else(|| "./module".to_string());
+
+                // Try to find or generate metadata file for this module
+                let meta_path = if let Some(out_dir) = &out_dir {
+                    // Check if metadata file exists in output directory
+                    let module_stem = std::path::Path::new(prev_module)
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("module");
+                    let potential_meta = std::path::Path::new(out_dir)
+                        .join(format!("{}_pkg.oats.meta", module_stem));
+
+                    if potential_meta.exists() {
+                        Some(potential_meta.to_string_lossy().to_string())
+                    } else {
+                        // Extract exported symbols from source and create metadata file
+                        if let Ok(exported_symbols) =
+                            crate::build::extract_exported_symbols(prev_module)
+                        {
+                            if !exported_symbols.is_empty() {
+                                // Generate metadata file with function signatures
+                                let meta_content = exported_symbols
+                                    .iter()
+                                    .map(|name| format!("function {}(): number;", name))
+                                    .collect::<Vec<_>>()
+                                    .join("\n");
+
+                                let meta_file = std::path::Path::new(out_dir)
+                                    .join(format!("{}.oats.meta", module_stem));
+
+                                if let Err(e) = std::fs::write(&meta_file, meta_content) {
+                                    eprintln!(
+                                        "Warning: Failed to write metadata file {}: {}",
+                                        meta_file.display(),
+                                        e
+                                    );
+                                    None
+                                } else {
+                                    Some(meta_file.to_string_lossy().to_string())
+                                }
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    }
+                } else {
+                    None
+                };
+
+                // Add to extern_oats if we have a metadata file
+                if let Some(meta) = meta_path {
+                    options.extern_oats.insert(import_path, meta);
                 }
-                // Add more hardcoded mappings as needed
             }
         }
 

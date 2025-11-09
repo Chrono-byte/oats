@@ -1,23 +1,38 @@
 use crate::diagnostics::{Diagnostic, Severity};
 use oats_ast::*;
 
-/// Small enum representing compile-time constant values supported in phase 1.
+/// Compile-time constant values.
 #[derive(Clone, Debug)]
 pub enum ConstValue {
+    /// f64 number
     Number(f64),
+    /// Boolean
     Bool(bool),
+    /// String
     Str(String),
+    /// i64 integer
     I64(i64),
+    /// i32 integer
     I32(i32),
+    /// i16 integer
     I16(i16),
+    /// i8 integer
     I8(i8),
+    /// u64 integer
     U64(u64),
+    /// u32 integer
     U32(u32),
+    /// u16 integer
     U16(u16),
+    /// u8 integer
     U8(u8),
+    /// f32 float
     F32(f32),
+    /// Character
     Char(char),
+    /// Array of constants
     Array(Vec<ConstValue>),
+    /// Object with string keys and constant values
     Object(std::collections::HashMap<String, ConstValue>),
 }
 
@@ -50,8 +65,15 @@ impl ConstValue {
     }
 }
 
-/// Evaluate a limited subset of expressions as compile-time constants.
-/// Supported: numeric, boolean, string literals, unary -, binary + - * /, comparisons
+/// Evaluates an expression as a compile-time constant.
+///
+/// Supports: literals, unary `-` and `!`, binary `+`, `-`, `*`, `/`, comparisons,
+/// `&&`, `||`, conditionals, arrays, objects, and `Math.*` calls.
+///
+/// # Parameters
+/// - `expr`: Expression to evaluate
+/// - `span_start`: Source span start for error reporting
+/// - `const_items`: Map of const item names to values (for identifier resolution)
 pub fn eval_const_expr(
     expr: &Expr,
     span_start: usize,

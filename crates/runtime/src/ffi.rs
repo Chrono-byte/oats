@@ -58,3 +58,26 @@ pub unsafe fn runtime_strlen(s: *const c_char) -> size_t {
     let c = unsafe { CStr::from_ptr(s) };
     c.to_bytes().len() as size_t
 }
+
+/// Free a CString that was previously returned by `CString::into_raw()`.
+///
+/// This function safely reclaims memory from a CString that was converted
+/// to a raw pointer using `CString::into_raw()`. It should be called to free
+/// strings returned by functions like `oats_std_io_read_line`, `oats_std_fs_read_file`,
+/// `oats_std_net_http_get`, etc.
+///
+/// # Safety
+/// `ptr` must be a pointer previously returned by `CString::into_raw()`, or null.
+/// Passing an invalid pointer or a pointer that has already been freed is undefined behavior.
+/// After calling this function, the pointer must not be used again.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn runtime_free_cstring(ptr: *mut c_char) {
+    if ptr.is_null() {
+        return;
+    }
+    // SAFETY: The caller guarantees this pointer was returned by CString::into_raw().
+    // CString::from_raw() takes ownership and will free the memory when dropped.
+    unsafe {
+        let _ = CString::from_raw(ptr);
+    }
+}

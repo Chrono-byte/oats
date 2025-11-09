@@ -3,13 +3,30 @@
 use libc::c_char;
 use std::ffi::{CStr, CString};
 use std::fs;
+use runtime::heap::{runtime_malloc, runtime_free};
 
-/// Read entire file into a string
+/// Read entire file into a string.
+///
+/// The returned pointer must be freed using `runtime_free_cstring()`.
+/// Passing the pointer to `libc::free()` or not freeing it will cause a memory leak.
 ///
 /// # Safety
 ///
 /// `path` must be a valid pointer to a null-terminated C string, or null.
 /// If non-null, the string must remain valid for the duration of this call.
+///
+/// # Returns
+/// A pointer to a null-terminated C string containing the file contents, or null on error.
+/// The caller is responsible for freeing the string using `runtime_free_cstring()`.
+///
+/// # Example
+/// ```c
+/// char* content = oats_std_fs_read_file(path);
+/// if (content != NULL) {
+///     // use content...
+///     runtime_free_cstring(content);
+/// }
+/// ```
 /// #[oats_export]
 #[no_mangle]
 pub unsafe extern "C" fn oats_std_fs_read_file(path: *const c_char) -> *mut c_char {
@@ -307,9 +324,11 @@ pub unsafe extern "C" fn oats_std_fs_read_dir(path: *const c_char) -> *mut *mut 
         return std::ptr::null_mut();
     }
 
-    // Allocate array of pointers
+    // Allocate array of pointers using runtime allocator for consistency
     let ptr_size = std::mem::size_of::<*mut c_char>();
-    let array_ptr = unsafe { libc::malloc((count + 1) * ptr_size) as *mut *mut c_char };
+    let array_ptr = unsafe {
+        runtime_malloc((count + 1) * ptr_size) as *mut *mut c_char
+    };
 
     if array_ptr.is_null() {
         return std::ptr::null_mut();
@@ -327,12 +346,16 @@ pub unsafe extern "C" fn oats_std_fs_read_dir(path: *const c_char) -> *mut *mut 
                 *array_ptr.add(i + 1) = cstring.into_raw();
             },
             Err(_) => {
-                // Cleanup on error
+                // Cleanup on error - free CStrings and array
                 unsafe {
                     for j in 0..i {
-                        libc::free(*array_ptr.add(j + 1) as *mut libc::c_void);
+                        let cstr_ptr = *array_ptr.add(j + 1);
+                        if !cstr_ptr.is_null() {
+                            // CString::from_raw will take ownership and free on drop
+                            let _ = CString::from_raw(cstr_ptr);
+                        }
                     }
-                    libc::free(array_ptr as *mut libc::c_void);
+                    runtime_free(array_ptr as *mut std::ffi::c_void);
                 }
                 return std::ptr::null_mut();
             }
@@ -393,9 +416,10 @@ pub unsafe extern "C" fn oats_std_fs_read_dir_free(dir_result: *mut *mut c_char)
         for i in 0..count {
             let ptr = *dir_result.add(i + 1);
             if !ptr.is_null() {
-                libc::free(ptr as *mut libc::c_void);
+                // CString::from_raw will take ownership and free on drop
+                let _ = CString::from_raw(ptr);
             }
         }
-        libc::free(dir_result as *mut libc::c_void);
+        runtime_free(dir_result as *mut std::ffi::c_void);
     }
 }

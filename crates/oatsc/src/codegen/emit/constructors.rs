@@ -60,8 +60,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
         let fname = format!("{}_ctor", class_name);
         let init_name = format!("{}_init", class_name);
 
-        let mut param_types_vec: Vec<crate::types::OatsType> = Vec::new();
-        let mut param_names: Vec<String> = Vec::new();
+        let mut param_types_vec = Vec::new();
+        let mut param_names = Vec::new();
 
         for param in &ctor.params {
             let pname = match &param.pat {
@@ -86,7 +86,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             .borrow_mut()
             .insert(fname.clone(), param_types_vec.clone());
 
-        let mut llvm_param_types: Vec<inkwell::types::BasicMetadataTypeEnum> = Vec::new();
+        let mut llvm_param_types = Vec::new();
         for pty in &param_types_vec {
             let llvm_ty = match pty {
                 OatsType::Number | OatsType::F64 => self.f64_t.into(),
@@ -117,11 +117,16 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             p,
                             OatsType::String
                                 | OatsType::NominalStruct(_)
+                                | OatsType::StructLiteral(_)
                                 | OatsType::Array(_)
+                                | OatsType::Tuple(_)
                                 | OatsType::Promise(_)
                                 | OatsType::Weak(_)
                                 | OatsType::Unowned(_)
                                 | OatsType::Option(_)
+                                | OatsType::Enum(_, _)
+                                | OatsType::ProcessId
+                                | OatsType::MonitorRef
                         )
                     });
                     if any_ptr {
@@ -488,7 +493,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         // can traverse object pointer fields. This is a simple array of i64 offsets
         // named `<class_name>_field_map` and will be used by the cycle collector.
         {
-            let mut ptr_field_offsets: Vec<inkwell::values::BasicValueEnum> = Vec::new();
+            let mut ptr_field_offsets = Vec::new();
             for (field_idx, (_field_name, field_type)) in combined_fields.iter().enumerate() {
                 // Determine if this field is pointer-like
                 let is_ptr = matches!(
@@ -658,7 +663,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         let _ = self.builder.build_store(header_ptr, header_val);
 
         // call init(this, ...) - prepare args
-        let mut init_args: Vec<inkwell::values::BasicMetadataValueEnum> = Vec::new();
+        let mut init_args = Vec::new();
         init_args.push(malloc_ret2.as_basic_value_enum().into());
         for i in 0..llvm_param_types.len() {
             if let Some(p) = impl_f.get_nth_param(i as u32) {
@@ -721,7 +726,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         // Now perform an indirect call to the final constructor pointer.
         // Build a function type matching ctor_fn_ty and perform the call.
         // Collect wrapper parameters and forward them.
-        let mut args: Vec<inkwell::values::BasicMetadataValueEnum> = Vec::new();
+        let mut args = Vec::new();
         for i in 0..llvm_param_types.len() {
             if let Some(p) = wrapper_f.get_nth_param(i as u32) {
                 args.push(p.into());

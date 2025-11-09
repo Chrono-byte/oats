@@ -34,29 +34,42 @@ impl<'a> CodeGen<'a> {
         // Diagnostic: capture listing is emitted here. Full closure
         // lowering will be implemented separately.
         // (boxed environments + trampolines) is planned in Phase 2.
-        fn collect_idents_in_expr(expr: &Expr, out: &mut std::collections::HashSet<String>) {
+        fn collect_idents_in_expr_with_depth(
+            expr: &Expr,
+            out: &mut std::collections::HashSet<String>,
+            depth: usize,
+        ) {
+            // Prevent stack overflow from deeply nested or circular AST structures
+            const MAX_IDENT_COLLECTION_DEPTH: usize = 1000;
+            if depth > MAX_IDENT_COLLECTION_DEPTH {
+                return;
+            }
+
             match expr {
                 Expr::Ident(id) => {
                     out.insert(id.sym.clone());
                 }
                 Expr::Bin(b) => {
-                    collect_idents_in_expr(&b.left, out);
-                    collect_idents_in_expr(&b.right, out);
+                    collect_idents_in_expr_with_depth(&b.left, out, depth + 1);
+                    collect_idents_in_expr_with_depth(&b.right, out, depth + 1);
                 }
                 Expr::Unary(u) => {
-                    collect_idents_in_expr(&u.arg, out);
+                    collect_idents_in_expr_with_depth(&u.arg, out, depth + 1);
                 }
                 Expr::Call(c) => {
                     match &c.callee {
-                        Callee::Expr(e) => collect_idents_in_expr(e, out),
+                        Callee::Expr(e) => collect_idents_in_expr_with_depth(e, out, depth + 1),
                         Callee::Super(_) => {} // Callee::Import doesn't exist in oats_ast
                     }
                     for a in &c.args {
-                        collect_idents_in_expr(a, out);
+                        collect_idents_in_expr_with_depth(a, out, depth + 1);
                     }
                 }
                 Expr::Member(m) => {
-                    collect_idents_in_expr(&m.obj, out);
+                    collect_idents_in_expr_with_depth(&m.obj, out, depth + 1);
+                    if let MemberProp::Computed(expr) = &m.prop {
+                        collect_idents_in_expr_with_depth(expr, out, depth + 1);
+                    }
                 }
                 Expr::Arrow(a) => {
                     // nested arrow: scan body
@@ -64,12 +77,12 @@ impl<'a> CodeGen<'a> {
                         ArrowBody::Block(b) => {
                             for s in &b.stmts {
                                 if let Stmt::ExprStmt(es) = s {
-                                    collect_idents_in_expr(&es.expr, out);
+                                    collect_idents_in_expr_with_depth(&es.expr, out, depth + 1);
                                 }
                             }
                         }
                         ArrowBody::Expr(e) => {
-                            collect_idents_in_expr(e, out);
+                            collect_idents_in_expr_with_depth(e, out, depth + 1);
                         }
                     }
                 }
@@ -78,25 +91,56 @@ impl<'a> CodeGen<'a> {
                         if let PropOrSpread::Prop(p) = prop
                             && let Prop::KeyValue(kv) = p
                         {
-                            collect_idents_in_expr(&kv.value, out);
+                            collect_idents_in_expr_with_depth(&kv.value, out, depth + 1);
                         }
                     }
                 }
                 Expr::Array(a) => {
                     for elem in a.elems.iter().flatten() {
-                        collect_idents_in_expr(elem, out);
+                        collect_idents_in_expr_with_depth(elem, out, depth + 1);
                     }
                 }
                 Expr::Assign(asg) => {
-                    collect_idents_in_expr(&asg.right, out);
+                    collect_idents_in_expr_with_depth(&asg.right, out, depth + 1);
                 }
                 Expr::Cond(cnd) => {
-                    collect_idents_in_expr(&cnd.test, out);
-                    collect_idents_in_expr(&cnd.cons, out);
-                    collect_idents_in_expr(&cnd.alt, out);
+                    collect_idents_in_expr_with_depth(&cnd.test, out, depth + 1);
+                    collect_idents_in_expr_with_depth(&cnd.cons, out, depth + 1);
+                    collect_idents_in_expr_with_depth(&cnd.alt, out, depth + 1);
+                }
+                Expr::Tpl(tpl) => {
+                    // Template literals have interpolated expressions that may contain identifiers
+                    for expr in &tpl.exprs {
+                        collect_idents_in_expr_with_depth(expr, out, depth + 1);
+                    }
+                }
+                Expr::Paren(p) => {
+                    collect_idents_in_expr_with_depth(&p.expr, out, depth + 1);
+                }
+                Expr::New(new_expr) => {
+                    collect_idents_in_expr_with_depth(&new_expr.callee, out, depth + 1);
+                    for arg in &new_expr.args {
+                        collect_idents_in_expr_with_depth(arg, out, depth + 1);
+                    }
+                }
+                Expr::Update(update) => {
+                    collect_idents_in_expr_with_depth(&update.arg, out, depth + 1);
+                }
+                Expr::Await(await_expr) => {
+                    collect_idents_in_expr_with_depth(&await_expr.arg, out, depth + 1);
+                }
+                Expr::OptionalMember(om) => {
+                    collect_idents_in_expr_with_depth(&om.obj, out, depth + 1);
+                    if let MemberProp::Computed(expr) = &om.prop {
+                        collect_idents_in_expr_with_depth(expr, out, depth + 1);
+                    }
                 }
                 _ => {}
             }
+        }
+
+        fn collect_idents_in_expr(expr: &Expr, out: &mut std::collections::HashSet<String>) {
+            collect_idents_in_expr_with_depth(expr, out, 0);
         }
 
         // Build a set of names visible in the surrounding locals stack
@@ -124,8 +168,8 @@ impl<'a> CodeGen<'a> {
 
         // Remove arrow params from used
         for param in &arrow.params {
-            match param {
-                Pat::Ident(ident) => {
+            match &param.pat {
+                oats_ast::Pat::Ident(ident) => {
                     used.remove(&ident.sym);
                 }
                 _ => {
@@ -147,16 +191,20 @@ impl<'a> CodeGen<'a> {
         self.next_str_id.set(self.next_str_id.get() + 1);
 
         // Extract parameter types from arrow.params
-        // NOTE: ArrowExpr.params is Vec<Pat>, not Vec<Param>, so type annotations
-        // are not directly available in the AST. This requires AST changes to support.
-        // For now, we default to Number type for all parameters.
-        // TODO: Update oats_ast to support type annotations on arrow function parameters
+        // ArrowExpr.params is now Vec<Param>, so we can extract type annotations
         let mut param_types = Vec::new();
-        for _param in &arrow.params {
-            // Since Pat doesn't have type information, we default to Number
-            // In the future, this should extract types from the Param structure
-            // when ArrowExpr is updated to use Vec<Param> instead of Vec<Pat>
-            param_types.push(crate::types::OatsType::Number);
+        for param in &arrow.params {
+            // Extract type from parameter annotation, or default to Number
+            let param_type = if let Some(type_ann) = &param.ty {
+                if let Some(mapped) = crate::types::map_ts_type(type_ann) {
+                    mapped
+                } else {
+                    crate::types::OatsType::Number
+                }
+            } else {
+                crate::types::OatsType::Number
+            };
+            param_types.push(param_type);
         }
 
         // Determine return type from arrow.return_type or infer from body
@@ -207,8 +255,8 @@ impl<'a> CodeGen<'a> {
         // shift user parameters by +1.
         let mut arrow_param_map = HashMap::new();
         for (idx, param) in arrow.params.iter().enumerate() {
-            match param {
-                Pat::Ident(ident) => {
+            match &param.pat {
+                oats_ast::Pat::Ident(ident) => {
                     let mapped_idx = if !captures.is_empty() {
                         (idx as u32) + 1
                     } else {

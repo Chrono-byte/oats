@@ -734,7 +734,7 @@ pub struct FnExpr {
 /// Arrow expression.
 #[derive(Debug, Clone)]
 pub struct ArrowExpr {
-    pub params: Vec<Pat>,
+    pub params: Vec<Param>,
     pub body: ArrowBody,
     pub return_type: Option<TsType>,
     pub span: Span,

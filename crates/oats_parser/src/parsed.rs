@@ -253,9 +253,10 @@ pub fn parse_module_with_metadata(source_code: &str) -> Result<ParsedModule, Str
     let module = super::parse_module(source_without_bom)?;
 
     // Collect mutable variable declarations
+    // Use source_without_bom to match AST spans which are relative to the stripped source
     let mut mut_var_decls = HashSet::new();
     for stmt in &module.body {
-        collect_mut_var_decls(stmt, source_code, &mut mut_var_decls);
+        collect_mut_var_decls(stmt, source_without_bom, &mut mut_var_decls);
     }
 
     // Collect declare function statements
@@ -267,7 +268,8 @@ pub fn parse_module_with_metadata(source_code: &str) -> Result<ParsedModule, Str
     }
 
     // Tokenize the source code for exposure in ParsedModule
-    let tokens = tokenizer::tokenize(source_code);
+    // Use source_without_bom to match AST spans which are relative to the stripped source
+    let tokens = tokenizer::tokenize(source_without_bom);
 
     Ok(ParsedModule {
         parsed: module,

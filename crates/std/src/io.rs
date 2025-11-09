@@ -4,7 +4,23 @@ use libc::c_char;
 use std::ffi::{CStr, CString};
 use std::io::{self, Read, Write};
 
-/// Read from stdin into a buffer (caller must free result)
+/// Read from stdin into a buffer.
+///
+/// The returned pointer must be freed using `runtime_free_cstring()`.
+/// Passing the pointer to `libc::free()` or not freeing it will cause a memory leak.
+///
+/// # Returns
+/// A pointer to a null-terminated C string, or null on error.
+/// The caller is responsible for freeing the string using `runtime_free_cstring()`.
+///
+/// # Example
+/// ```c
+/// char* line = oats_std_io_read_line();
+/// if (line != NULL) {
+///     // use line...
+///     runtime_free_cstring(line);
+/// }
+/// ```
 /// #[oats_export]
 #[no_mangle]
 pub extern "C" fn oats_std_io_read_line() -> *mut c_char {

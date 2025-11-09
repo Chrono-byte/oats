@@ -17,17 +17,30 @@ pub fn stringify_value_raw(val_raw: u64, depth: usize) -> String {
         // Try array/tuple/string recursion
         let s_ptr = unsafe { crate::array_to_string(p) };
         if !s_ptr.is_null() {
-            let s = unsafe { CStr::from_ptr(s_ptr) };
-            let res = s.to_string_lossy().into_owned();
-            unsafe {
-                crate::rc_dec_str(s_ptr);
+            // Validate pointer before creating CStr
+            if crate::is_plausible_addr(s_ptr as usize) {
+                let s = unsafe { CStr::from_ptr(s_ptr) };
+                let res = s.to_string_lossy().into_owned();
+                unsafe {
+                    crate::rc_dec_str(s_ptr);
+                }
+                return res;
+            } else {
+                // Invalid pointer, clean up and continue
+                unsafe {
+                    crate::rc_dec_str(s_ptr);
+                }
             }
-            return res;
         }
         // Fallback: try to interpret as a C string
-        let maybe = unsafe { CStr::from_ptr(p as *const c_char) };
-        if let Ok(st) = maybe.to_str() {
-            return format!("\"{}\"", st);
+        // Validate pointer before creating CStr to avoid undefined behavior
+        if crate::is_plausible_addr(p as usize) {
+            // CStr::from_ptr can still fail if the string is not null-terminated,
+            // but we've validated the pointer is in a reasonable address range
+            let maybe = unsafe { CStr::from_ptr(p as *const c_char) };
+            if let Ok(st) = maybe.to_str() {
+                return format!("\"{}\"", st);
+            }
         }
         return format!("<ptr {:p}>", p);
     }

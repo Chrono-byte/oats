@@ -81,9 +81,37 @@ pub fn runtime_malloc(size: size_t) -> *mut c_void {
             return std::ptr::null_mut();
         }
 
+        // Validate total size is reasonable before attempting allocation
+        const MAX_REASONABLE_SIZE: usize = 1 << 30; // 1 GB max
+        if total > MAX_REASONABLE_SIZE {
+            if RUNTIME_LOG.load(Ordering::Relaxed) {
+                let _ = io::stderr().write_all(
+                    format!(
+                        "[oats runtime] runtime_malloc: size {} exceeds reasonable limit\n",
+                        total
+                    )
+                    .as_bytes(),
+                );
+            }
+            release_allocation(total as u64);
+            return std::ptr::null_mut();
+        }
+
         let layout = match Layout::from_size_align(total, 8) {
             Ok(layout) => layout,
-            Err(_) => return std::ptr::null_mut(),
+            Err(_) => {
+                if RUNTIME_LOG.load(Ordering::Relaxed) {
+                    let _ = io::stderr().write_all(
+                        format!(
+                            "[oats runtime] runtime_malloc: invalid layout for size {}\n",
+                            total
+                        )
+                        .as_bytes(),
+                    );
+                }
+                release_allocation(total as u64);
+                return std::ptr::null_mut();
+            }
         };
         let base = std::alloc::alloc(layout);
         if base.is_null() {
@@ -110,9 +138,57 @@ pub unsafe fn runtime_free(p: *mut c_void) {
             return;
         }
         let base = (p as *mut u8).sub(std::mem::size_of::<u64>());
+        // Validate base pointer is plausible before dereferencing
+        if !crate::is_plausible_addr(base as usize) {
+            if RUNTIME_LOG.load(Ordering::Relaxed) {
+                let _ = io::stderr().write_all(
+                    format!(
+                        "[oats runtime] runtime_free: base pointer {:p} is not plausible\n",
+                        base
+                    )
+                    .as_bytes(),
+                );
+            }
+            return;
+        }
         let size_ptr = base as *mut u64;
         let total = *size_ptr as usize;
         if total == 0 {
+            return;
+        }
+
+        // Validate total size is reasonable (prevent corrupted size fields)
+        const MAX_REASONABLE_SIZE: usize = 1 << 30; // 1 GB max
+        if total > MAX_REASONABLE_SIZE {
+            if RUNTIME_LOG.load(Ordering::Relaxed) {
+                let _ = io::stderr().write_all(
+                    format!(
+                        "[oats runtime] runtime_free: size {} exceeds reasonable limit, skipping\n",
+                        total
+                    )
+                    .as_bytes(),
+                );
+            }
+            // Still release accounting to prevent drift, even though we can't trust the size
+            // This is conservative - we'd rather have slightly inaccurate accounting than
+            // prevent future allocations due to accounting thinking heap is full
+            release_allocation(total as u64);
+            return;
+        }
+
+        // Validate total size is at least the header size
+        if total < std::mem::size_of::<u64>() {
+            if RUNTIME_LOG.load(Ordering::Relaxed) {
+                let _ = io::stderr().write_all(
+                    format!(
+                        "[oats runtime] runtime_free: size {} is less than header size, skipping\n",
+                        total
+                    )
+                    .as_bytes(),
+                );
+            }
+            // Still release accounting to prevent drift
+            release_allocation(total as u64);
             return;
         }
 

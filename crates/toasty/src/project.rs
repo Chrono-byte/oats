@@ -379,6 +379,7 @@ pub fn load_modules_with_verbosity(
     // Initialize module loading with the entry point file
     let entry_abs = std::fs::canonicalize(entry_path)?;
     let entry_str = entry_abs.to_string_lossy().to_string();
+    let project_root = entry_abs.parent().unwrap_or(&entry_abs);
     queue.push_back(entry_str.clone());
 
     // PHASE 1: Transitive module loading and dependency resolution
@@ -412,13 +413,23 @@ pub fn load_modules_with_verbosity(
         };
 
         // Discover and enqueue relative imports from this module
-        // Note: oats_ast doesn't yet support import statements in the AST
-        // TODO: Add import statement support to oats_ast and update this code
-        // For now, we skip import discovery
-        // use oats_ast::*;
-        // for stmt in &parsed.parsed.body {
-        //     // Import statements would be handled here when added to oats_ast
-        // }
+        use oats_ast::*;
+        for stmt in &parsed.parsed.body {
+            if let Stmt::Import(import_stmt) = stmt {
+                let import_src = &import_stmt.source;
+                // Process only relative import paths
+                if (import_src.starts_with("./") || import_src.starts_with("../"))
+                    && let Some(imported_path) =
+                        resolve_relative_import(&path, import_src, project_root)
+                    && !modules.contains_key(&imported_path)
+                {
+                    if verbose {
+                        eprintln!("  Discovered new dependency: {}", imported_path);
+                    }
+                    queue.push_back(imported_path);
+                }
+            }
+        }
         modules.insert(path.clone(), parsed);
     }
 
@@ -454,6 +465,7 @@ pub fn build_dependency_graph(
     // Canonicalize entry path
     let entry_abs = std::fs::canonicalize(entry_path)?;
     let entry_str = entry_abs.to_string_lossy().to_string();
+    let project_root = entry_abs.parent().unwrap_or(&entry_abs);
 
     // Add entry node
     let entry_node = graph.add_node(entry_str.clone());
@@ -479,10 +491,8 @@ pub fn build_dependency_graph(
             })?;
 
         // Check if parsing was successful
-        match parsed_opt {
-            Some(_pm) => {
-                // Parsing successful, continue processing
-            }
+        let parsed = match parsed_opt {
+            Some(pm) => pm,
             None => {
                 // Emit diagnostics for parsing failure
                 for diag in parse_diags {
@@ -490,10 +500,10 @@ pub fn build_dependency_graph(
                 }
                 continue;
             }
-        }
+        };
 
         // Get current node (verify it exists)
-        let _ = node_indices.get(&current_path).ok_or_else(|| {
+        let current_node = *node_indices.get(&current_path).ok_or_else(|| {
             ToastyError::other(format!(
                 "Internal error: node not found in dependency graph for path: {}",
                 current_path
@@ -501,13 +511,34 @@ pub fn build_dependency_graph(
         })?;
 
         // Discover and enqueue relative imports from this module
-        // Note: oats_ast doesn't yet support import statements in the AST
-        // TODO: Add import statement support to oats_ast and update this code
-        // For now, we skip import discovery
-        // use oats_ast::*;
-        // for stmt in &_parsed.parsed.body {
-        //     // Import statements would be handled here when added to oats_ast
-        // }
+        use oats_ast::*;
+        for stmt in &parsed.parsed.body {
+            if let Stmt::Import(import_stmt) = stmt {
+                let import_src = &import_stmt.source;
+                // Process only relative import paths
+                if (import_src.starts_with("./") || import_src.starts_with("../"))
+                    && let Some(imported_path) =
+                        resolve_relative_import(&current_path, import_src, project_root)
+                {
+                    // Add dependency edge: current -> imported (current depends on imported)
+                    let imported_node =
+                        if let Some(&existing_node) = node_indices.get(&imported_path) {
+                            existing_node
+                        } else {
+                            let new_node = graph.add_node(imported_path.clone());
+                            node_indices.insert(imported_path.clone(), new_node);
+                            queue.push_back(imported_path.clone());
+                            if verbose {
+                                eprintln!("  Discovered new dependency: {}", imported_path);
+                            }
+                            new_node
+                        };
+
+                    // Add edge: current depends on imported
+                    graph.add_edge(current_node, imported_node, ());
+                }
+            }
+        }
     }
 
     let entry_node_index = *node_indices.get(&entry_str).ok_or_else(|| {

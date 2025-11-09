@@ -85,6 +85,18 @@ impl<'a> crate::codegen::CodeGen<'a> {
             );
         }
 
+        // If this is a `generator` function, delegate to generator handling
+        if func_decl.is_generator {
+            return self.gen_generator_function_ir(
+                func_name,
+                func_decl,
+                &llvm_param_types_meta,
+                ret_type,
+                function,
+                entry,
+            );
+        }
+
         // 3. If any parameter types are anonymous struct literals, register
         // them as nominal structs in `class_fields` under a generated name so
         // downstream lowering (which expects nominal names) can resolve

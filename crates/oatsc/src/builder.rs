@@ -1,12 +1,27 @@
+//! Main compilation driver and orchestration.
+//!
+//! This module orchestrates the complete compilation pipeline from source files
+//! to executables. It coordinates parsing, type checking, RTA analysis, code
+//! generation, and linking.
+//!
+//! The compilation process follows these stages:
+//! 1. **Parsing**: Convert source text to AST
+//! 2. **Type Checking**: Validate types and function signatures
+//! 3. **RTA Analysis**: Determine reachable classes and methods
+//! 4. **Code Generation**: Emit LLVM IR
+//! 5. **Linking**: Compile IR to object files and link with runtime
+//!
+//! External dependencies and linking are handled by separate modules:
+//! - `extern_resolution`: External dependency handling
+//! - `linking`: Object file generation and linking
+
 use anyhow::Result;
 use std::fs::File;
 use std::io::Write;
-use std::process::Command;
 
 use std::cell::Cell;
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::path::Path;
 
 use crate::codegen::CodeGen;
 use crate::diagnostics;
@@ -15,9 +30,8 @@ use crate::types::{SymbolTable, check_function_strictness};
 
 use inkwell::OptimizationLevel;
 use inkwell::context::Context;
-use inkwell::targets::{
-    CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine,
-};
+use inkwell::targets::TargetMachine;
+use inkwell::types::BasicType;
 
 /// Compiles a source file with the given options.
 ///
@@ -236,20 +250,29 @@ pub fn run_from_args(
     };
 
     let context = Context::create();
-    let module = context.create_module("oats_aot");
+    let module = context.create_module(crate::runtime_functions::modules::OATS_AOT);
     // Set the module target triple to the host default so clang doesn't warn
     let triple = TargetMachine::get_default_triple();
     module.set_triple(&triple);
 
-    // Declare external functions for imported symbols
-    // Read metadata files to extract function signatures
+    // Declare std functions first (console.log functions)
+    let void_t = context.void_type();
+    let i8ptr_t = context.ptr_type(inkwell::AddressSpace::default());
+    module.add_function(
+        crate::runtime_functions::names::STD_CONSOLE_LOG,
+        void_t.fn_type(&[i8ptr_t.into()], false),
+        None,
+    );
+
+    // Resolve external dependencies and declare them in the LLVM module
+    // We inline this to avoid lifetime issues with Module's invariant lifetime
     let mut external_function_signatures: std::collections::HashMap<
         String,
         (Vec<crate::types::OatsType>, crate::types::OatsType),
     > = std::collections::HashMap::new();
 
+    // First pass: read metadata files and extract function signatures
     for meta_path in extern_oats.values() {
-        // Read metadata file
         let meta_content = match std::fs::read_to_string(meta_path) {
             Ok(content) => content,
             Err(e) => {
@@ -258,50 +281,32 @@ pub fn run_from_args(
             }
         };
 
-        // Parse metadata file - currently it contains package info (name, version, entry)
-        // TODO: Extend metadata format to include exported function signatures
-        // For now, we'll try to extract symbols from the file or use a fallback
-
-        // Check if the metadata file contains symbol information
-        // If not, we'll need to fall back to the old behavior or use default signatures
-        // For now, we'll parse any function declarations if they exist in the metadata
-
-        // Try to parse TypeScript-style function declarations from metadata
-        // Format: function name(param1: type1, param2: type2): returnType;
+        // Parse TypeScript-style function declarations from metadata
         for line in meta_content.lines() {
             let line = line.trim();
             if line.starts_with("function ") && line.ends_with(";") {
-                // Parse function signature
-                // Example: function foo(x: number, y: number): number;
-                if let Some((name, func_sig)) = parse_function_signature_from_metadata(line) {
+                if let Some((name, func_sig)) = crate::extern_resolution::parse_function_signature_from_metadata(line) {
                     external_function_signatures.insert(name, (func_sig.params, func_sig.ret));
                 }
             }
         }
     }
 
-    // Declare external functions with their signatures (or defaults)
+    // Second pass: declare external functions in LLVM module
     for meta_path in extern_oats.values() {
-        // For now, if we don't have signature info, we need to know what symbols to declare
-        // The old code treated values as comma-separated symbol strings
-        // For backward compatibility, check if the value looks like a file path or symbol list
         let symbols: Vec<String> = if std::path::Path::new(meta_path).exists() {
-            // It's a file path - we've already read it above
-            // Extract symbols from external_function_signatures or use a default list
             external_function_signatures.keys().cloned().collect()
         } else {
-            // Backward compatibility: treat as comma-separated symbol list
             meta_path.split(',').map(|s| s.trim().to_string()).collect()
         };
 
         for symbol in symbols {
-            // Get function signature or use default
             let (param_types, ret_type) = external_function_signatures
                 .get(&symbol)
                 .cloned()
                 .unwrap_or_else(|| (vec![], crate::types::OatsType::Number));
 
-            // Convert OatsType to LLVM types
+            // Convert OatsType to LLVM types inline
             let llvm_param_types: Vec<inkwell::types::BasicMetadataTypeEnum> = param_types
                 .iter()
                 .map(|ty| match ty {
@@ -316,7 +321,7 @@ pub fn run_from_args(
                     crate::types::OatsType::String => {
                         context.ptr_type(inkwell::AddressSpace::default()).into()
                     }
-                    _ => context.f64_type().into(), // Default to f64 for complex types
+                    _ => context.f64_type().into(),
                 })
                 .collect();
 
@@ -325,115 +330,40 @@ pub fn run_from_args(
                     let void_t = context.void_type();
                     void_t.fn_type(&llvm_param_types, false)
                 }
-                crate::types::OatsType::Number | crate::types::OatsType::F64 => {
-                    let f64_t = context.f64_type();
-                    f64_t.fn_type(&llvm_param_types, false)
-                }
-                crate::types::OatsType::F32 => {
-                    let f32_t = context.f32_type();
-                    f32_t.fn_type(&llvm_param_types, false)
-                }
-                crate::types::OatsType::I64 => {
-                    let i64_t = context.i64_type();
-                    i64_t.fn_type(&llvm_param_types, false)
-                }
-                crate::types::OatsType::I32 => {
-                    let i32_t = context.i32_type();
-                    i32_t.fn_type(&llvm_param_types, false)
-                }
-                crate::types::OatsType::I8 => {
-                    let i8_t = context.i8_type();
-                    i8_t.fn_type(&llvm_param_types, false)
-                }
-                crate::types::OatsType::Boolean => {
-                    let bool_t = context.bool_type();
-                    bool_t.fn_type(&llvm_param_types, false)
-                }
-                crate::types::OatsType::String => {
-                    let ptr_t = context.ptr_type(inkwell::AddressSpace::default());
-                    ptr_t.fn_type(&llvm_param_types, false)
-                }
                 _ => {
-                    // Default to f64 for complex types
-                    let f64_t = context.f64_type();
-                    f64_t.fn_type(&llvm_param_types, false)
+                    let ret_llvm_type = match ret_type {
+                        crate::types::OatsType::Number | crate::types::OatsType::F64 => {
+                            context.f64_type().into()
+                        }
+                        crate::types::OatsType::F32 => context.f32_type().into(),
+                        crate::types::OatsType::I64 => context.i64_type().into(),
+                        crate::types::OatsType::I32 => context.i32_type().into(),
+                        crate::types::OatsType::I8 => context.i8_type().into(),
+                        crate::types::OatsType::Boolean => context.bool_type().into(),
+                        crate::types::OatsType::String => {
+                            context.ptr_type(inkwell::AddressSpace::default()).into()
+                        }
+                        _ => context.f64_type().into(),
+                    };
+                    // Convert BasicMetadataTypeEnum to BasicTypeEnum for fn_type
+                    let ret_basic_type: inkwell::types::BasicTypeEnum = match ret_llvm_type {
+                        inkwell::types::BasicMetadataTypeEnum::FloatType(ft) => ft.into(),
+                        inkwell::types::BasicMetadataTypeEnum::IntType(it) => it.into(),
+                        inkwell::types::BasicMetadataTypeEnum::PointerType(pt) => pt.into(),
+                        inkwell::types::BasicMetadataTypeEnum::ArrayType(at) => at.into(),
+                        inkwell::types::BasicMetadataTypeEnum::VectorType(vt) => vt.into(),
+                        inkwell::types::BasicMetadataTypeEnum::StructType(st) => st.into(),
+                        inkwell::types::BasicMetadataTypeEnum::ScalableVectorType(svt) => svt.into(),
+                        inkwell::types::BasicMetadataTypeEnum::MetadataType(_) => {
+                            context.f64_type().into()
+                        }
+                    };
+                    ret_basic_type.fn_type(&llvm_param_types, false)
                 }
             };
             module.add_function(&symbol, fn_type, None);
         }
     }
-
-    // Helper function to parse function signatures from metadata
-    fn parse_function_signature_from_metadata(
-        line: &str,
-    ) -> Option<(String, crate::types::FunctionSig)> {
-        // Parse: function name(param1: type1, param2: type2): returnType;
-        let line = line.trim().strip_suffix(';')?;
-        if !line.starts_with("function ") {
-            return None;
-        }
-        let after_fn = &line[9..]; // Skip "function "
-        let paren_pos = after_fn.find('(')?;
-        let name = after_fn[..paren_pos].trim().to_string();
-
-        let after_paren = &after_fn[paren_pos + 1..];
-        let close_paren_pos = after_paren.find(')')?;
-        let params_str = &after_paren[..close_paren_pos];
-
-        // Parse return type
-        let ret_str = after_paren[close_paren_pos + 1..].trim();
-        let ret_type = if let Some(stripped) = ret_str.strip_prefix(": ") {
-            parse_oats_type(stripped)
-        } else {
-            crate::types::OatsType::Void
-        };
-
-        // Parse parameters
-        let mut param_types = Vec::new();
-        if !params_str.trim().is_empty() {
-            for param in params_str.split(',') {
-                let param = param.trim();
-                if let Some(colon_pos) = param.find(':') {
-                    let type_str = param[colon_pos + 1..].trim();
-                    param_types.push(parse_oats_type(type_str));
-                }
-            }
-        }
-
-        Some((
-            name,
-            crate::types::FunctionSig {
-                type_params: vec![],
-                params: param_types,
-                ret: ret_type,
-            },
-        ))
-    }
-
-    fn parse_oats_type(type_str: &str) -> crate::types::OatsType {
-        match type_str.trim() {
-            "number" => crate::types::OatsType::Number,
-            "f64" => crate::types::OatsType::F64,
-            "f32" => crate::types::OatsType::F32,
-            "i64" => crate::types::OatsType::I64,
-            "i32" => crate::types::OatsType::I32,
-            "i8" => crate::types::OatsType::I8,
-            "boolean" => crate::types::OatsType::Boolean,
-            "string" => crate::types::OatsType::String,
-            "void" => crate::types::OatsType::Void,
-            _ => crate::types::OatsType::Number, // Default
-        }
-    }
-
-    // Declare std functions
-    // console.log functions
-    let void_t = context.void_type();
-    let i8ptr_t = context.ptr_type(inkwell::AddressSpace::default());
-    module.add_function(
-        "oats_std_console_log",
-        void_t.fn_type(&[i8ptr_t.into()], false),
-        None,
-    );
 
     // Perform Rapid Type Analysis on all modules
     // For now, we only have a single module, but RTA is designed to work with multiple modules
@@ -544,6 +474,15 @@ pub fn run_from_args(
                     ClassMember::Method(m) => {
                         // method name
                         let mname = m.ident.sym.clone();
+
+                        // Use RTA to skip dead methods (dead code elimination)
+                        if let Some(ref rta) = codegen.rta_results {
+                            if !rta.is_method_live(&class_name, &mname) {
+                                // Method is not reachable, skip code generation
+                                continue;
+                            }
+                        }
+
                         // Convert MethodDecl to Function for type checking
                         let method_func = Function {
                             params: m.params.clone(),
@@ -996,7 +935,7 @@ pub fn run_from_args(
         && let Some(ref sig) = func_sig
     {
         codegen
-            .gen_function_ir("oats_main", func, &sig.params, &sig.ret, None)
+            .gen_function_ir(crate::runtime_functions::names::OATS_MAIN, func, &sig.params, &sig.ret, None)
             .map_err(|d| {
                 crate::diagnostics::emit_diagnostic(&d, Some(source.as_str()));
                 anyhow::anyhow!("{}", d.message)
@@ -1014,7 +953,7 @@ pub fn run_from_args(
     // Note: LLVM optimizations (inlining, loop opts) are applied via clang -O3 during compilation
     let ir = codegen.module.print_to_string().to_string();
 
-    // determine output directory (optional)
+    // Determine output directory and file names
     let out_dir = options
         .as_ref()
         .and_then(|o| o.out_dir.as_ref())
@@ -1026,7 +965,6 @@ pub fn run_from_args(
         .and_then(|s| s.to_str())
         .unwrap_or("out");
     let out_ll = format!("{}/{}.ll", out_dir, src_filename);
-    // Allow overriding output name with options or OATS_OUT_NAME
     let out_exe = if let Some(ref opts) = options {
         if let Some(ref name) = opts.out_name {
             format!("{}/{}", out_dir, name)
@@ -1040,54 +978,17 @@ pub fn run_from_args(
     };
     let out_obj = format!("{}/{}.o", out_dir, src_filename);
 
-    // Ensure output directory exists so File::create doesn't fail with ENOENT.
+    // Ensure output directory exists
     if let Err(e) = std::fs::create_dir_all(&out_dir) {
         anyhow::bail!("failed to create output directory {}: {}", out_dir, e);
     }
 
+    // Write LLVM IR to file
     let mut f = File::create(&out_ll)?;
     f.write_all(ir.as_bytes())?;
     f.sync_all()?;
 
-    // Compile IR to object file using LLVM's in-process TargetMachine. This
-    // avoids shelling out to clang for the IR -> object step and is more
-    // robust when used programmatically.
-
-    // Initialize native target and get the default target triple for LLVM
-    Target::initialize_native(&InitializationConfig::default()).map_err(|e| anyhow::anyhow!(e))?;
-    let triple = if let Some(ref opts) = options {
-        if let Some(ref triple_str) = opts.target_triple {
-            inkwell::targets::TargetTriple::create(triple_str)
-        } else {
-            TargetMachine::get_default_triple()
-        }
-    } else {
-        TargetMachine::get_default_triple()
-    };
-
-    // Read overrides (optional) for CPU/features
-    let env_cpu = options
-        .as_ref()
-        .and_then(|o| o.target_cpu.as_ref())
-        .cloned()
-        .or_else(|| std::env::var("OATS_TARGET_CPU").ok());
-    let env_features = options
-        .as_ref()
-        .and_then(|o| o.target_features.as_ref())
-        .cloned()
-        .or_else(|| std::env::var("OATS_TARGET_FEATURES").ok());
-    let cpu_candidates = if let Some(c) = env_cpu.clone() {
-        vec![c, "".to_string()]
-    } else {
-        // Prefer a generic CPU (empty) before trying 'native' which can be
-        // misinterpreted for some LLVM targets (causing subtarget errors).
-        vec!["".to_string(), "native".to_string()]
-    };
-    // Determine optimization level. Priority:
-    // 1. Options opt_level (explicit)
-    // 2. OATS_OPT_LEVEL env var (explicit)
-    // 3. OATS_BUILD_PROFILE=release -> Aggressive
-    // 4. Default -> None (fastest)
+    // Determine optimization level and build profile
     let build_profile = options
         .as_ref()
         .and_then(|o| o.build_profile.as_ref())
@@ -1119,46 +1020,49 @@ pub fn run_from_args(
     } else {
         OptimizationLevel::None
     };
-    let features = env_features.unwrap_or_default();
 
-    // Get the target from the triple
-    let target = Target::from_triple(&triple).map_err(|e| anyhow::anyhow!("{}", e))?;
+    // Create linking configuration
+    let linking_config = crate::linking::LinkingConfig {
+        out_dir: out_dir.clone(),
+        out_obj: out_obj.clone(),
+        out_exe: out_exe.clone(),
+        opt_level,
+        target_triple: options
+            .as_ref()
+            .and_then(|o| o.target_triple.as_ref())
+            .cloned(),
+        target_cpu: options
+            .as_ref()
+            .and_then(|o| o.target_cpu.as_ref())
+            .cloned()
+            .or_else(|| std::env::var("OATS_TARGET_CPU").ok()),
+        target_features: options
+            .as_ref()
+            .and_then(|o| o.target_features.as_ref())
+            .cloned()
+            .or_else(|| std::env::var("OATS_TARGET_FEATURES").ok()),
+        build_profile,
+        lto: options
+            .as_ref()
+            .and_then(|o| o.lto.as_ref())
+            .cloned()
+            .or_else(|| std::env::var("OATS_LTO").ok()),
+        linker: options
+            .as_ref()
+            .and_then(|o| o.linker.as_ref())
+            .cloned()
+            .or_else(|| std::env::var("OATS_LINKER").ok()),
+        emit_object_only: options
+            .as_ref()
+            .map(|o| o.emit_object_only)
+            .unwrap_or_else(|| std::env::var("OATS_EMIT_OBJECT_ONLY").is_ok()),
+    };
 
-    // Create TargetMachine, trying CPU candidates in order
-    let mut tm = None;
-    for cpu in &cpu_candidates {
-        if let Some(machine) = target.create_target_machine(
-            &triple,
-            cpu,
-            &features,
-            opt_level,
-            RelocMode::Default,
-            CodeModel::Default,
-        ) {
-            tm = Some(machine);
-            break;
-        }
-    }
-    let tm =
-        tm.ok_or_else(|| anyhow::anyhow!("Failed to create TargetMachine with any CPU candidate"))?;
-
-    // Emit object file directly from the in-memory module.
-    let out_obj_path = std::path::Path::new(&out_obj);
-    tm.write_to_file(&codegen.module, FileType::Object, out_obj_path)
-        .map_err(|e| {
-            anyhow::anyhow!(
-                "TargetMachine failed to emit object file {}: {:?}",
-                out_obj,
-                e
-            )
-        })?;
+    // Compile LLVM IR to object file
+    crate::linking::compile_to_object(&codegen.module, &linking_config)?;
 
     // If requested, only emit the object and skip the final host linking step.
-    let emit_object_only = options
-        .as_ref()
-        .map(|o| o.emit_object_only)
-        .unwrap_or_else(|| std::env::var("OATS_EMIT_OBJECT_ONLY").is_ok());
-    if emit_object_only {
+    if linking_config.emit_object_only {
         eprintln!(
             "OATS_EMIT_OBJECT_ONLY set; emitted {} and skipping link",
             out_obj
@@ -1168,243 +1072,14 @@ pub fn run_from_args(
     }
 
     // Build the runtime library
-    let rust_lib = {
-        let mut cargo_cmd = Command::new("cargo");
-        cargo_cmd
-            .arg("build")
-            .arg("--release")
-            .arg("--package")
-            .arg("runtime");
-        match cargo_cmd.status() {
-            Ok(status) => {
-                if !status.success() {
-                    anyhow::bail!("cargo failed to build runtime");
-                }
-            }
-            Err(e) => {
-                if e.kind() == std::io::ErrorKind::NotFound {
-                    anyhow::bail!("cargo not found in PATH");
-                } else {
-                    return Err(e.into());
-                }
-            }
-        }
-        "target/release/libruntime.a".to_string()
-    };
+    let rust_lib = crate::linking::build_runtime_library()?;
 
-    // Locate or produce rt_main object. Prefer an existing top-level `rt_main.o` so
-    // the repo can ship a prebuilt small host object. Otherwise try to compile
-    // `runtime/rt_main/src/main.rs` if it exists.
-    let rt_main_obj = if emitted_host_main {
-        // host main emitted into the module; no external rt_main.o requi
-        String::new()
-    } else if Path::new("rt_main.o").exists() {
-        // Use the repo-provided object file
-        String::from("rt_main.o")
-    } else if Path::new("crates/runtime/rt_main/src/main.rs").exists() {
-        let rt_main_obj = format!("{}/rt_main.o", out_dir);
-        // Compile rt_main with rustc; check for missing rustc binary explicitly
-        let mut rustc_cmd = Command::new("rustc");
-        rustc_cmd
-            .arg("--crate-type")
-            .arg("bin")
-            .arg("--emit=obj")
-            .arg("crates/runtime/rt_main/src/main.rs")
-            .arg("-O")
-            .arg("-o")
-            .arg(&rt_main_obj);
-        match rustc_cmd.status() {
-            Ok(status) => {
-                if !status.success() {
-                    anyhow::bail!("rustc failed to compile rt_main to object");
-                }
-            }
-            Err(e) => {
-                if e.kind() == std::io::ErrorKind::NotFound {
-                    anyhow::bail!(
-                        "`rustc` not found in PATH; please install Rust toolchain or ensure `rustc` is available"
-                    );
-                } else {
-                    return Err(e.into());
-                }
-            }
-        }
-        rt_main_obj
-    } else {
-        anyhow::bail!(
-            "No rt_main.o found and no runtime/rt_main/src/main.rs available; please provide a runtime main (rt_main.o) or add a runtime/rt_main/src/main.rs"
-        );
-    };
+    // Locate or compile rt_main object
+    let rt_main_obj = crate::linking::locate_rt_main(&out_dir, emitted_host_main)?;
 
-    // Link final binary. Prefer explicit linker via options or OATS_LINKER, otherwise
-    // use clang (with -fuse-ld=lld when available) or fall back to ld.lld/lld.
-    let oats_linker = options
-        .as_ref()
-        .and_then(|o| o.linker.as_ref())
-        .cloned()
-        .or_else(|| std::env::var("OATS_LINKER").ok());
+    // Link final executable
+    let final_exe = crate::linking::link_executable(&linking_config, &out_obj, &rust_lib, &rt_main_obj)?;
 
-    // helper to test whether a program is runnable
-    fn is_prog_available(name: &str) -> bool {
-        use std::process::Stdio;
-        // Respect TOASTY_VERBOSE to allow printing --version output
-        let verbose = std::env::var("TOASTY_VERBOSE").is_ok();
-        let status = if verbose {
-            Command::new(name).arg("--version").status()
-        } else {
-            Command::new(name)
-                .arg("--version")
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status()
-        };
-        match status {
-            Ok(s) => s.success(),
-            Err(_) => false,
-        }
-    }
-
-    // Detect available tools
-    let clang_candidates = ["clang", "clang-18", "clang-17"];
-    let mut found_clang: Option<String> = None;
-    for &c in &clang_candidates {
-        if is_prog_available(c) {
-            found_clang = Some(c.to_string());
-            break;
-        }
-    }
-    // detect lld (prefer ld.lld then lld)
-    let lld_candidate = if is_prog_available("ld.lld") || is_prog_available("lld") {
-        Some("lld".to_string())
-    } else {
-        None
-    };
-
-    let mut linked_ok = false;
-    let mut link_run_err: Option<std::io::Error> = None;
-
-    if let Some(linker) = oats_linker {
-        // Try the user-specified linker exactly once
-        let mut cmd = Command::new(&linker);
-        if !rt_main_obj.is_empty() {
-            cmd.arg(&rt_main_obj);
-        }
-        cmd.arg(&out_obj).arg(&rust_lib).arg("-o").arg(&out_exe);
-        match cmd.status() {
-            Ok(status) => {
-                if status.success() {
-                    linked_ok = true;
-                } else {
-                    anyhow::bail!("{} failed to link final binary", linker);
-                }
-            }
-            Err(e) => link_run_err = Some(e),
-        }
-    } else if let Some(clang_bin) = found_clang.clone() {
-        // Use clang; if lld is present, prefer clang + -fuse-ld=lld so we keep clang's driver behavior
-        let mut cmd = Command::new(&clang_bin);
-        // Host-side optimization flags / LTO
-        let lto_mode = if let Some(ref opts) = options {
-            opts.lto.clone().unwrap_or_else(|| {
-                if build_profile == "release" {
-                    "auto".to_string()
-                } else {
-                    "none".to_string()
-                }
-            })
-        } else {
-            std::env::var("OATS_LTO").unwrap_or_else(|_| {
-                if build_profile == "release" {
-                    "auto".to_string()
-                } else {
-                    "none".to_string()
-                }
-            })
-        };
-        // opt-level may also instruct host flags
-        let host_opt_level = if let Some(ref opts) = options {
-            opts.opt_level.clone()
-        } else {
-            std::env::var("OATS_OPT_LEVEL").ok()
-        };
-        if let Some(opt_str) = host_opt_level {
-            if opt_str == "3" || opt_str == "aggressive" {
-                cmd.arg("-O3");
-            }
-        } else if build_profile == "release" {
-            cmd.arg("-O3");
-        }
-        // LTO handling
-        match lto_mode.as_str() {
-            "none" => {}
-            "thin" => {
-                cmd.arg("-flto=thin");
-            }
-            "fat" | "full" => {
-                cmd.arg("-flto");
-            }
-            "auto" => {
-                if build_profile == "release" {
-                    cmd.arg("-flto");
-                }
-            }
-            _ => {}
-        }
-        if let Some(ref lld) = lld_candidate {
-            // use clang driver with lld
-            cmd.arg(format!("-fuse-ld={}", lld));
-        }
-        if !rt_main_obj.is_empty() {
-            cmd.arg(&rt_main_obj);
-        }
-        cmd.arg(&out_obj).arg(&rust_lib).arg("-o").arg(&out_exe);
-        match cmd.status() {
-            Ok(status) => {
-                if status.success() {
-                    linked_ok = true;
-                } else {
-                    anyhow::bail!("{} failed to link final binary", clang_bin);
-                }
-            }
-            Err(e) => link_run_err = Some(e),
-        }
-    } else if let Some(lld_bin) = lld_candidate.clone() {
-        // Last resort: call lld directly (may not support LTO flags)
-        let mut cmd = Command::new(&lld_bin);
-        if !rt_main_obj.is_empty() {
-            cmd.arg(&rt_main_obj);
-        }
-        cmd.arg(&out_obj).arg(&rust_lib).arg("-o").arg(&out_exe);
-        match cmd.status() {
-            Ok(status) => {
-                if status.success() {
-                    linked_ok = true;
-                } else {
-                    anyhow::bail!("{} failed to link final binary", lld_bin);
-                }
-            }
-            Err(e) => link_run_err = Some(e),
-        }
-    } else {
-        anyhow::bail!(
-            "No suitable linker found: please install clang or lld, or set OATS_LINKER to a linker path"
-        );
-    }
-
-    if !linked_ok {
-        if let Some(e) = link_run_err {
-            if e.kind() == std::io::ErrorKind::NotFound {
-                anyhow::bail!(
-                    "linker not found in PATH; install clang or lld, or set OATS_LINKER to a path"
-                );
-            } else {
-                return Err(e.into());
-            }
-        } else {
-            anyhow::bail!("failed to link final binary");
-        }
-    }
-
-    println!("{}", out_exe);
-    Ok(Some(out_exe))
+    println!("{}", final_exe);
+    Ok(Some(final_exe))
 }

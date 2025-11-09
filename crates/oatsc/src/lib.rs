@@ -1,8 +1,12 @@
 pub mod builder;
 pub mod codegen;
+pub mod constants;
 pub mod diagnostics;
+pub mod extern_resolution;
+pub mod linking;
 pub mod parser;
 pub mod rta;
+pub mod runtime_functions;
 pub mod types;
 
 /// Compilation options for the Oats compiler.

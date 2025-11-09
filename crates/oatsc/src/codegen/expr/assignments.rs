@@ -280,8 +280,6 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 use oats_ast::*;
                 if let MemberProp::Ident(prop_ident) = &member.prop {
                     let field_name = prop_ident.sym.clone();
-                    eprintln!("DEBUG: field_name set to '{}'", field_name);
-                    eprintln!("DEBUG: About to do enum check");
 
                     // Lower the object to get its pointer
                     let lowered_obj_res = self.lower_expr(&member.obj, function, param_map, locals);

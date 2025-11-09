@@ -689,28 +689,151 @@ pub fn check_function_strictness(
         return Ok((None, diagnostics));
     };
 
-    // Collect param types
+    // Collect param types with strict checking
     let mut param_types = Vec::new();
     for param in &func_decl.params {
         match &param.pat {
-            Pat::Ident(_ident) => {
-                if let Some(ty) = &param.ty
-                    && let Some(mapped) = map_ts_type(ty)
-                {
-                    param_types.push(mapped);
-                    continue;
+            Pat::Ident(ident) => {
+                if let Some(ty) = &param.ty {
+                    if let Some(mapped) = map_ts_type(ty) {
+                        param_types.push(mapped);
+                        continue;
+                    } else {
+                        // Type annotation present but unsupported
+                        diagnostics.push(
+                            Diagnostic::error("Unsupported parameter type")
+                                .with_code("E1003")
+                                .with_label(Label {
+                                    span: {
+                                        let r = ts_type_span(ty);
+                                        Span {
+                                            start: r.start,
+                                            end: r.end,
+                                        }
+                                    },
+                                    message: format!("Parameter '{}' has unsupported type", ident.sym),
+                                }),
+                        );
+                        // Continue with default to allow compilation to proceed
+                        param_types.push(OatsType::Number);
+                    }
+                } else {
+                    // Missing type annotation - emit warning but allow compilation
+                    diagnostics.push(
+                        Diagnostic::error("Missing parameter type annotation")
+                            .with_code("E1004")
+                            .with_label(Label {
+                                span: Span {
+                                    start: param.span.start,
+                                    end: param.span.end,
+                                },
+                                message: format!("Parameter '{}' requires a type annotation", ident.sym),
+                            }),
+                    );
+                    param_types.push(OatsType::Number);
                 }
-                // If no type annotation, default to Number for now
-                param_types.push(OatsType::Number);
             } // oats_ast only supports Ident patterns for parameters
             Pat::Array(_) => {
-                param_types.push(OatsType::Array(Box::new(OatsType::Number)));
+                // Array destructuring - require type annotation
+                if let Some(ty) = &param.ty {
+                    if let Some(mapped) = map_ts_type(ty) {
+                        param_types.push(mapped);
+                    } else {
+                        diagnostics.push(
+                            Diagnostic::error("Unsupported array destructuring type")
+                                .with_code("E1005")
+                                .with_label(Label {
+                                    span: Span {
+                                        start: param.span.start,
+                                        end: param.span.end,
+                                    },
+                                    message: "Array destructuring requires a supported type annotation".into(),
+                                }),
+                        );
+                        param_types.push(OatsType::Array(Box::new(OatsType::Number)));
+                    }
+                } else {
+                    diagnostics.push(
+                        Diagnostic::error("Array destructuring requires type annotation")
+                            .with_code("E1006")
+                            .with_label(Label {
+                                span: Span {
+                                    start: param.span.start,
+                                    end: param.span.end,
+                                },
+                                message: "Array destructuring parameters must have type annotations".into(),
+                            }),
+                    );
+                    param_types.push(OatsType::Array(Box::new(OatsType::Number)));
+                }
             }
             Pat::Object(_) => {
-                param_types.push(OatsType::StructLiteral(Vec::new()));
+                // Object destructuring - require type annotation
+                if let Some(ty) = &param.ty {
+                    if let Some(mapped) = map_ts_type(ty) {
+                        param_types.push(mapped);
+                    } else {
+                        diagnostics.push(
+                            Diagnostic::error("Unsupported object destructuring type")
+                                .with_code("E1007")
+                                .with_label(Label {
+                                    span: Span {
+                                        start: param.span.start,
+                                        end: param.span.end,
+                                    },
+                                    message: "Object destructuring requires a supported type annotation".into(),
+                                }),
+                        );
+                        param_types.push(OatsType::StructLiteral(Vec::new()));
+                    }
+                } else {
+                    diagnostics.push(
+                        Diagnostic::error("Object destructuring requires type annotation")
+                            .with_code("E1008")
+                            .with_label(Label {
+                                span: Span {
+                                    start: param.span.start,
+                                    end: param.span.end,
+                                },
+                                message: "Object destructuring parameters must have type annotations".into(),
+                            }),
+                    );
+                    param_types.push(OatsType::StructLiteral(Vec::new()));
+                }
             }
             Pat::Rest(_) => {
-                param_types.push(OatsType::Array(Box::new(OatsType::Number)));
+                // Rest parameters - require type annotation
+                if let Some(ty) = &param.ty {
+                    if let Some(mapped) = map_ts_type(ty) {
+                        param_types.push(mapped);
+                    } else {
+                        diagnostics.push(
+                            Diagnostic::error("Unsupported rest parameter type")
+                                .with_code("E1009")
+                                .with_label(Label {
+                                    span: Span {
+                                        start: param.span.start,
+                                        end: param.span.end,
+                                    },
+                                    message: "Rest parameters require a supported type annotation".into(),
+                                }),
+                        );
+                        param_types.push(OatsType::Array(Box::new(OatsType::Number)));
+                    }
+                } else {
+                    diagnostics.push(
+                        Diagnostic::error("Rest parameter requires type annotation")
+                            .with_code("E1010")
+                            .with_label(Label {
+                                span: Span {
+                                    start: param.span.start,
+                                    end: param.span.end,
+                                },
+                                message: "Rest parameters must have type annotations".into(),
+                            }),
+                    );
+                    param_types.push(OatsType::Array(Box::new(OatsType::Number)));
+                }
             }
         }
     }

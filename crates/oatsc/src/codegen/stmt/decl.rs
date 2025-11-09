@@ -909,10 +909,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 let mut declared_nominal = type_info.declared_nominal;
                 let init_inferred = type_info.init_inferred;
 
-                eprintln!(
-                    "[debug] Processing var decl: {} kind={:?}",
-                    name, var_decl.kind
-                );
+                // Processing var decl: {} kind={:?}
 
                 if let Some(init) = &decl.init {
                     // Handle const evaluation

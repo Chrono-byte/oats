@@ -32,7 +32,6 @@ impl<'a> CodeGen<'a> {
         // Support both computed member access (obj[expr]) and dot-member (obj.prop)
         match &member.prop {
             MemberProp::Computed(expr) => {
-                eprintln!("DEBUG: Computed member access");
                 // lower object and index separately so we can produce clearer diagnostics
                 let obj_res = self.lower_expr(&member.obj, function, param_map, locals);
                 let idx_res = self.lower_expr(expr, function, param_map, locals);
@@ -364,11 +363,8 @@ impl<'a> CodeGen<'a> {
                 }
             }
             MemberProp::Ident(prop_ident) => {
-                eprintln!("DEBUG: Entered Ident case");
-                eprintln!("DEBUG: Dot member access");
                 // dot-member access like obj.prop
                 let field_name = prop_ident.sym.to_string();
-                eprintln!("DEBUG: field_name created");
                 let ident_name = if let Expr::Ident(ident) = &*member.obj {
                     ident.sym.clone()
                 } else if let Expr::This(_) = &*member.obj {

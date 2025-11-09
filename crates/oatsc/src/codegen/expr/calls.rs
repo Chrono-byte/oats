@@ -27,7 +27,6 @@ impl<'a> CodeGen<'a> {
         param_map: &HashMap<String, u32>,
         locals: &mut Vec<HashMap<String, LocalEntry<'a>>>,
     ) -> crate::diagnostics::DiagnosticResult<inkwell::values::BasicValueEnum<'a>> {
-        eprintln!("[debug lower_call_expr] callee={:?}", call.callee);
         // Support simple identifier callees and member-callee method calls.
         //
         // We intentionally support a small set of call shapes in the
@@ -210,7 +209,17 @@ impl<'a> CodeGen<'a> {
                                         self.find_local(locals, &obj_name)
                                         && let Some(nom) = nominal_opt
                                     {
-                                        let method_fn_name = format!("{}_{}", nom, method_name);
+                                        // Try to devirtualize using RTA if available
+                                        let method_fn_name = if let Some(ref rta) = self.rta_results {
+                                            if let Some(devirt_target) = rta.can_devirtualize(&nom, &method_name) {
+                                                devirt_target
+                                            } else {
+                                                format!("{}_{}", nom, method_name)
+                                            }
+                                        } else {
+                                            format!("{}_{}", nom, method_name)
+                                        };
+
                                         if let Some(method_fn) =
                                             self.module.get_function(&method_fn_name)
                                         {
@@ -221,9 +230,13 @@ impl<'a> CodeGen<'a> {
                                             ) {
                                                 Ok(cs) => cs,
                                                 Err(_) => {
-                                                    return Err(Diagnostic::simple_boxed(
-                                                        Severity::Error,
-                                                        "class method call failed",
+                                                    return Err(Box::new(
+                                                        Diagnostic::simple(
+                                                            Severity::Error,
+                                                            "class method call failed",
+                                                        )
+                                                        .with_note(format!("Failed to call method '{}' on class '{}'", method_name, nom))
+                                                        .with_help(format!("Ensure the method '{}' exists in class '{}'", method_name, nom))
                                                     ));
                                                 }
                                             };
@@ -238,21 +251,33 @@ impl<'a> CodeGen<'a> {
                                     }
 
                                     // Fallback: fall through to error (no std handler for locals)
-                                    return Err(Diagnostic::simple_boxed(
-                                        Severity::Error,
-                                        "object method not found",
+                                    return Err(Box::new(
+                                        Diagnostic::simple(
+                                            Severity::Error,
+                                            format!("method '{}' not found on object '{}'", method_name, obj_name),
+                                        )
+                                        .with_note(format!("The object '{}' does not have a method named '{}'", obj_name, method_name))
+                                        .with_help(format!("Check that '{}' is a class instance with method '{}', or use optional chaining: {}.?{}()", obj_name, method_name, obj_name, method_name))
                                     ));
                                 } else {
-                                    return Err(Diagnostic::simple_boxed(
-                                        Severity::Error,
-                                        "object expression lowering failed",
+                                    return Err(Box::new(
+                                        Diagnostic::simple(
+                                            Severity::Error,
+                                            format!("failed to lower object expression for method call '{}'", method_name),
+                                        )
+                                        .with_note(format!("The object expression '{}' could not be evaluated", obj_name))
+                                        .with_help("Ensure the object is properly initialized before calling methods on it")
                                     ));
                                 }
                             } else {
-                                return Err(Diagnostic::simple_with_span_boxed(
-                                    Severity::Error,
-                                    "computed property calls not supported",
-                                    call.span.start,
+                                return Err(Box::new(
+                                    Diagnostic::simple_with_span(
+                                        Severity::Error,
+                                        "computed property calls not supported",
+                                        call.span.start,
+                                    )
+                                    .with_note("Method calls with computed property names (e.g., obj[prop]()) are not yet supported")
+                                    .with_help("Use a direct property access instead: obj.prop()")
                                 ));
                             }
                         }
@@ -665,7 +690,6 @@ impl<'a> CodeGen<'a> {
                     if let Expr::Ident(ident) = &**boxed_expr {
                         let fn_name = ident.sym.to_string();
                         if let Some(fv) = self.module.get_function(&fn_name) {
-                            eprintln!("[debug call] found module function '{}'", fn_name);
                             // Lower arguments
                             let mut call_args: Vec<inkwell::values::BasicMetadataValueEnum> =
                                 Vec::new();
@@ -700,12 +724,6 @@ impl<'a> CodeGen<'a> {
                         // to generate a specialized instance name and declare it so
                         // the IR contains the specialization name (tests look for it).
                         let has_nested = self.nested_generic_fns.borrow().contains_key(&fn_name);
-                        eprintln!(
-                            "[debug call] fn='{}' has_module_fn={} has_nested_generic={}",
-                            fn_name,
-                            self.module.get_function(&fn_name).is_some(),
-                            has_nested
-                        );
                         if has_nested {
                             // Try to infer type arguments from the first argument if it's an array
                             if !call.args.is_empty() {

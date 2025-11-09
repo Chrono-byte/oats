@@ -31,13 +31,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         // Ternary expression: test ? cons : alt
         // Lower test to an i1
         let test_val = self.lower_expr(&cond.test, function, param_map, locals)?;
-        // Debug: log the kind of the lowered test expression
-        match &test_val {
-            BasicValueEnum::PointerValue(_) => eprintln!("[debug cond test] kind=pointer"),
-            BasicValueEnum::FloatValue(_) => eprintln!("[debug cond test] kind=float"),
-            BasicValueEnum::IntValue(_) => eprintln!("[debug cond test] kind=int"),
-            _ => eprintln!("[debug cond test] kind=other"),
-        }
+        // Test expression lowered successfully
         let cond_i1 = match test_val {
             BasicValueEnum::IntValue(iv) => iv.as_basic_value_enum(),
             BasicValueEnum::FloatValue(fv) => {
@@ -178,36 +172,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
         // then
         self.builder.position_at_end(then_bb);
         let then_val = self.lower_expr(&cond.cons, function, param_map, locals);
-        // Debug: record whether then arm lowered and its ABI kind
-        match &then_val {
-            Ok(v) => {
-                let ty_str = match v.get_type() {
-                    inkwell::types::BasicTypeEnum::PointerType(_) => "pointer",
-                    inkwell::types::BasicTypeEnum::FloatType(_) => "float",
-                    inkwell::types::BasicTypeEnum::IntType(_) => "int",
-                    _ => "other",
-                };
-                eprintln!("[debug cond] then arm lowered: ok, kind={}", ty_str);
-            }
-            Err(_) => eprintln!("[debug cond] then arm lowered: err"),
-        }
 
         // else
         self.builder.position_at_end(else_bb);
         let else_val = self.lower_expr(&cond.alt, function, param_map, locals);
-        // Debug: record whether else arm lowered and its ABI kind
-        match &else_val {
-            Ok(v) => {
-                let ty_str = match v.get_type() {
-                    inkwell::types::BasicTypeEnum::PointerType(_) => "pointer",
-                    inkwell::types::BasicTypeEnum::FloatType(_) => "float",
-                    inkwell::types::BasicTypeEnum::IntType(_) => "int",
-                    _ => "other",
-                };
-                eprintln!("[debug cond] else arm lowered: ok, kind={}", ty_str);
-            }
-            Err(_) => eprintln!("[debug cond] else arm lowered: err"),
-        }
 
         // Fallback: if else arm failed to lower but is the identifier `undefined`,
         // treat it as a null pointer so ternaries like `x ? y : undefined` work.
@@ -217,9 +185,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 if let oats_ast::Expr::Ident(id) = &*cond.alt {
                     if id.sym == "undefined" {
                         let null_ptr = self.i8ptr_t.const_null();
-                        eprintln!(
-                            "[debug cond] else arm is `undefined` -> using null pointer fallback"
-                        );
+                        // else arm is `undefined` -> using null pointer fallback
                         Ok(null_ptr.as_basic_value_enum())
                     } else {
                         Err(Diagnostic::simple_boxed(

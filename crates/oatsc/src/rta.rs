@@ -47,6 +47,184 @@ pub struct RTAResults {
     pub call_graph: CallGraph,
 }
 
+impl RTAResults {
+    /// Check if a class is live (instantiated at runtime).
+    pub fn is_class_live(&self, class_name: &str) -> bool {
+        self.live_classes.contains(class_name)
+    }
+
+    /// Check if a method is live (reachable at runtime).
+    ///
+    /// # Arguments
+    /// * `class_name` - Name of the class
+    /// * `method_name` - Name of the method
+    ///
+    /// # Returns
+    /// `true` if the method is live, `false` otherwise
+    pub fn is_method_live(&self, class_name: &str, method_name: &str) -> bool {
+        self.live_methods
+            .get(class_name)
+            .map(|methods| methods.contains(method_name))
+            .unwrap_or(false)
+    }
+
+    /// Check if a function is live (reachable at runtime).
+    ///
+    /// Uses call graph analysis to determine reachability from entry points.
+    /// Entry points include:
+    /// - `main` function
+    /// - All exported functions
+    /// - All class constructors (since classes can be instantiated)
+    ///
+    /// # Arguments
+    /// * `function_name` - Name of the function to check
+    ///
+    /// # Returns
+    /// `true` if the function is live, `false` otherwise
+    pub fn is_function_live(&self, function_name: &str) -> bool {
+        // Entry points: main and exported functions are always live
+        if function_name == "main" {
+            return true;
+        }
+
+        // Check if function is reachable from any entry point via call graph
+        // We do a simple reachability analysis: if any live function calls this one,
+        // or if this function is called by any live function, it's live.
+        // Start from entry points and propagate reachability.
+        let mut visited = HashSet::new();
+        let mut worklist = VecDeque::new();
+
+        // Add entry points: main and all functions that are called
+        // For now, we consider main as the only entry point
+        // In the future, we could track exported functions
+        worklist.push_back("main".to_string());
+        visited.insert("main".to_string());
+
+        // Also consider all class constructors as entry points
+        for class_name in &self.live_classes {
+            let ctor_name = format!("{}_ctor", class_name);
+            if !visited.contains(&ctor_name) {
+                worklist.push_back(ctor_name.clone());
+                visited.insert(ctor_name);
+            }
+        }
+
+        // Propagate reachability through call graph
+        while let Some(caller) = worklist.pop_front() {
+            if caller == function_name {
+                return true;
+            }
+
+            // Check all functions this caller calls
+            if let Some(callees) = self.call_graph.get(&caller) {
+                for callee in callees {
+                    if !visited.contains(callee) {
+                        visited.insert(callee.clone());
+                        worklist.push_back(callee.clone());
+                    }
+                }
+            }
+        }
+
+        // If not found through call graph, check if it's a method of a live class
+        if let Some((class_name, _)) = self.split_method_name(function_name) {
+            return self.live_classes.contains(&class_name);
+        }
+
+        // Default: consider top-level functions as live for safety
+        // This is conservative - we could make it more aggressive in the future
+        true
+    }
+
+    /// Split a method name in format "class_method" into (class, method).
+    /// Returns None if it's not a method name.
+    fn split_method_name(&self, name: &str) -> Option<(String, String)> {
+        if let Some(last_underscore) = name.rfind('_') {
+            if last_underscore > 0 && last_underscore < name.len() - 1 {
+                let class = name[..last_underscore].to_string();
+                let method = name[last_underscore + 1..].to_string();
+                return Some((class, method));
+            }
+        }
+        None
+    }
+
+    /// Check if a method call can be devirtualized (has only one possible target).
+    ///
+    /// Devirtualization allows direct method calls instead of virtual dispatch,
+    /// which improves performance. This uses the call graph to determine if
+    /// a method call has a single target.
+    ///
+    /// # Arguments
+    /// * `class_name` - Name of the class
+    /// * `method_name` - Name of the method
+    ///
+    /// # Returns
+    /// `Some(target_method_name)` if devirtualization is possible, `None` otherwise
+    pub fn can_devirtualize(&self, class_name: &str, method_name: &str) -> Option<String> {
+        // Check if this method is only implemented in one class
+        // For now, we do a simple check: if the method is only in one live class
+        let mut found_classes = Vec::new();
+
+        // Check the class itself
+        if self.is_method_live(class_name, method_name) {
+            found_classes.push(class_name.to_string());
+        }
+
+        // Check subclasses (if any)
+        if let Some(subclasses) = self.hierarchy.get(class_name) {
+            for subclass in subclasses {
+                if self.is_method_live(subclass, method_name) {
+                    found_classes.push(subclass.clone());
+                }
+            }
+        }
+
+        // If only one class has this method live, we can devirtualize
+        if found_classes.len() == 1 {
+            return Some(format!("{}_{}", found_classes[0], method_name));
+        }
+
+        None
+    }
+
+    /// Get all possible targets for a method call (for virtual dispatch).
+    ///
+    /// Returns a list of method names that could be called for this method invocation.
+    /// This is useful for generating efficient virtual dispatch code.
+    ///
+    /// # Arguments
+    /// * `class_name` - Name of the class
+    /// * `method_name` - Name of the method
+    ///
+    /// # Returns
+    /// Vector of possible target method names in format "class_method"
+    pub fn get_method_call_targets(&self, class_name: &str, method_name: &str) -> Vec<String> {
+        let mut targets = Vec::new();
+
+        // Check if the method exists in the class
+        if self.is_method_live(class_name, method_name) {
+            targets.push(format!("{}_{}", class_name, method_name));
+        }
+
+        // Check subclasses
+        if let Some(subclasses) = self.hierarchy.get(class_name) {
+            for subclass in subclasses {
+                if self.is_method_live(subclass, method_name) {
+                    targets.push(format!("{}_{}", subclass, method_name));
+                }
+            }
+        }
+
+        targets
+    }
+
+    /// Get all live methods for a class.
+    pub fn get_live_methods(&self, class_name: &str) -> Option<&HashSet<String>> {
+        self.live_methods.get(class_name)
+    }
+}
+
 /// Extracts the class name from a method name in format "class_method"
 /// Returns None if it's not a method name (doesn't contain underscore)
 fn extract_class_from_method_name(method_name: &str) -> Option<String> {
@@ -67,13 +245,11 @@ pub fn analyze(modules: &HashMap<String, ParsedModule>) -> RTAResults {
     let live_classes = find_instantiations(modules);
     let methods = collect_methods(modules);
 
-    // Simple RTA: all methods of live classes are live
-    let mut live_methods = HashMap::new();
-    for (class, meths) in &methods {
-        if live_classes.contains(class) {
-            live_methods.insert(class.clone(), meths.clone());
-        }
-    }
+    // Collect all function ASTs for worklist processing
+    let functions = collect_function_asts(modules);
+
+    // Use worklist algorithm for more precise analysis
+    let live_methods = run_worklist(&live_classes, &methods, &functions);
 
     // Build call graph by analyzing all functions and methods
     let call_graph = build_call_graph(modules, &methods);
@@ -288,7 +464,6 @@ fn collect_function_asts(modules: &HashMap<String, ParsedModule>) -> HashMap<Str
 }
 
 /// Runs the RTA worklist algorithm to find precisely live methods
-#[allow(dead_code)]
 fn run_worklist(
     live_classes: &LiveClasses,
     methods: &HashMap<String, HashSet<String>>,

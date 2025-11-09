@@ -756,10 +756,7 @@ pub fn lower_template<'a>(
             // Lower the interpolated expression and capture its origin
             // We'll also consult `last_expr_origin_local` which other
             // paths set when the lowered expr was an identifier/param.
-            eprintln!(
-                "[debug tpl] about to lower interpolated expr: {:?}",
-                &tpl.exprs[i]
-            );
+            // Lowering interpolated expression
             let expr_val = codegen.lower_expr(&tpl.exprs[i], function, param_map, locals)?;
             let mut expr_str_is_num_tmp = false;
             // Determine whether the resulting expr_str is a temporary

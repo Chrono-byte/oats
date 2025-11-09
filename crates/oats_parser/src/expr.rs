@@ -4,6 +4,10 @@ use super::common;
 use chumsky::prelude::*;
 use oats_ast::*;
 
+/// Parser limits to prevent stack overflow from pathological inputs.
+/// These are conservative caps on operator chain lengths.
+const MAX_OPERATOR_CHAIN_LENGTH: usize = 1024;
+
 /// Expression parser with proper precedence handling.
 ///
 /// Uses recursive descent with precedence levels.
@@ -116,8 +120,9 @@ fn logical_or_expr_parser<'a>(
                 just("||").padded().to(BinaryOp::Or),
                 just("??").padded().to(BinaryOp::NullishCoalesce),
             ))
-            .then(expr.clone())
+            .then(logical_and_expr_parser(expr.clone(), stmt.clone()))
             .repeated()
+            .at_most(MAX_OPERATOR_CHAIN_LENGTH)
             .collect::<Vec<_>>(),
         )
         .map_with(|(mut left, ops), extra| {
@@ -144,8 +149,9 @@ fn logical_and_expr_parser<'a>(
         .then(
             just("&&")
                 .padded()
-                .then(expr.clone())
+                .then(bitwise_or_expr_parser(expr.clone(), stmt.clone()))
                 .repeated()
+                .at_most(MAX_OPERATOR_CHAIN_LENGTH)
                 .collect::<Vec<_>>(),
         )
         .map_with(|(mut left, ops), extra| {
@@ -172,8 +178,9 @@ fn bitwise_or_expr_parser<'a>(
         .then(
             just("|")
                 .padded()
-                .then(expr.clone())
+                .then(bitwise_xor_expr_parser(expr.clone(), stmt.clone()))
                 .repeated()
+                .at_most(MAX_OPERATOR_CHAIN_LENGTH)
                 .collect::<Vec<_>>(),
         )
         .map_with(|(mut left, ops), extra| {
@@ -200,8 +207,9 @@ fn bitwise_xor_expr_parser<'a>(
         .then(
             just("^")
                 .padded()
-                .then(expr.clone())
+                .then(bitwise_and_expr_parser(expr.clone(), stmt.clone()))
                 .repeated()
+                .at_most(MAX_OPERATOR_CHAIN_LENGTH)
                 .collect::<Vec<_>>(),
         )
         .map_with(|(mut left, ops), extra| {
@@ -228,8 +236,9 @@ fn bitwise_and_expr_parser<'a>(
         .then(
             just("&")
                 .padded()
-                .then(expr.clone())
+                .then(equality_expr_parser(expr.clone(), stmt.clone()))
                 .repeated()
+                .at_most(MAX_OPERATOR_CHAIN_LENGTH)
                 .collect::<Vec<_>>(),
         )
         .map_with(|(mut left, ops), extra| {
@@ -260,7 +269,7 @@ fn equality_expr_parser<'a>(
                 just("===").padded().to(BinaryOp::EqEq), // Using EqEq for ===
                 just("!==").padded().to(BinaryOp::NotEq), // Using NotEq for !==
             ))
-            .then(expr.clone())
+            .then(relational_expr_parser(expr.clone(), stmt.clone()))
             .or_not(),
         )
         .map_with(|(left, op_and_right), extra| {
@@ -291,7 +300,7 @@ fn relational_expr_parser<'a>(
                 just("<=").padded().to(BinaryOp::LtEq),
                 just(">=").padded().to(BinaryOp::GtEq),
             ))
-            .then(expr.clone())
+            .then(shift_expr_parser(expr.clone(), stmt.clone()))
             .or_not(),
         )
         .map_with(|(left, op_and_right), extra| {
@@ -321,7 +330,7 @@ fn shift_expr_parser<'a>(
                 just(">>").padded().to(BinaryOp::RShift),
                 just(">>>").padded().to(BinaryOp::URShift),
             ))
-            .then(expr.clone())
+            .then(additive_expr_parser(expr.clone(), stmt.clone()))
             .or_not(),
         )
         .map_with(|(left, op_and_right), extra| {
@@ -350,8 +359,9 @@ fn additive_expr_parser<'a>(
                 just("+").padded().to(BinaryOp::Plus),
                 just("-").padded().to(BinaryOp::Minus),
             ))
-            .then(expr.clone())
+            .then(multiplicative_expr_parser(expr.clone(), stmt.clone()))
             .repeated()
+            .at_most(MAX_OPERATOR_CHAIN_LENGTH)
             .collect::<Vec<_>>(),
         )
         .map_with(|(mut left, ops), extra| {
@@ -381,8 +391,9 @@ fn multiplicative_expr_parser<'a>(
                 just("/").padded().to(BinaryOp::Div),
                 just("%").padded().to(BinaryOp::Mod),
             ))
-            .then(expr.clone())
+            .then(exponentiation_expr_parser(expr.clone(), stmt.clone()))
             .repeated()
+            .at_most(MAX_OPERATOR_CHAIN_LENGTH)
             .collect::<Vec<_>>(),
         )
         .map_with(|(mut left, ops), extra| {
@@ -405,20 +416,29 @@ fn exponentiation_expr_parser<'a>(
     expr: impl Parser<'a, &'a str, Expr> + Clone + 'a,
     stmt: impl Parser<'a, &'a str, Stmt> + Clone + 'a,
 ) -> impl Parser<'a, &'a str, Expr> + 'a {
-    // Parse left side, then optionally ** and right side (using full expr for right-associativity)
+    // Parse a chain of `unary ** unary ** ...` and fold right-to-left iteratively
     unary_expr_parser(expr.clone(), stmt.clone())
-        .then(just("**").padded().then(expr.clone()).or_not())
-        .map_with(|(left, op_and_right), extra| {
-            if let Some((_, right)) = op_and_right {
-                Expr::Bin(BinExpr {
+        .then(
+            just("**")
+                .padded()
+                .then(unary_expr_parser(expr.clone(), stmt.clone()))
+                .repeated()
+                .at_most(MAX_OPERATOR_CHAIN_LENGTH)
+                .collect::<Vec<_>>(),
+        )
+        .map_with(|(mut left, ops), extra| {
+            let span: std::ops::Range<usize> = extra.span().into();
+            // Fold right-to-left: a ** b ** c should be a ** (b ** c)
+            // Process ops in reverse to achieve right-associativity
+            for (_, right) in ops.into_iter().rev() {
+                left = Expr::Bin(BinExpr {
                     op: BinaryOp::Exp,
                     left: Box::new(left),
                     right: Box::new(right),
-                    span: extra.span().into(),
-                })
-            } else {
-                left
+                    span: span.clone(),
+                });
             }
+            left
         })
         .labelled("exponentiation expression")
 }

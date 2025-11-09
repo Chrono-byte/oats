@@ -394,4 +394,140 @@ mod tests {
             panic!("Expected FnDecl, got {:?}", module.body[0]);
         }
     }
+
+    // Stack overflow regression tests
+    // These test cases previously could cause stack overflows; they should now parse successfully.
+
+    #[test]
+    fn test_long_additive_chain() {
+        // 200x + operator chain should not cause stack overflow
+        let mut input = "function f(): void { 1".to_string();
+        for _ in 0..200 {
+            input.push_str(" + 1");
+        }
+        input.push_str("; }");
+        let result = parse_module(&input);
+        assert!(result.is_ok(), "Long additive chain should parse without stack overflow");
+    }
+
+    #[test]
+    fn test_long_logical_or_chain() {
+        // 200x || operator chain should not cause stack overflow
+        let mut input = "function f(): void { true".to_string();
+        for _ in 0..200 {
+            input.push_str(" || false");
+        }
+        input.push_str("; }");
+        let result = parse_module(&input);
+        assert!(result.is_ok(), "Long logical OR chain should parse without stack overflow");
+    }
+
+    #[test]
+    fn test_long_logical_and_chain() {
+        // 200x && operator chain should not cause stack overflow
+        let mut input = "function f(): void { true".to_string();
+        for _ in 0..200 {
+            input.push_str(" && false");
+        }
+        input.push_str("; }");
+        let result = parse_module(&input);
+        assert!(result.is_ok(), "Long logical AND chain should parse without stack overflow");
+    }
+
+    #[test]
+    fn test_long_bitwise_or_chain() {
+        // 200x | operator chain should not cause stack overflow
+        let mut input = "function f(): void { 1".to_string();
+        for _ in 0..200 {
+            input.push_str(" | 0");
+        }
+        input.push_str("; }");
+        let result = parse_module(&input);
+        assert!(result.is_ok(), "Long bitwise OR chain should parse without stack overflow");
+    }
+
+    #[test]
+    fn test_mixed_operator_chain() {
+        // Mix of different operators should not cause stack overflow
+        let mut input = "function f(): void { 1".to_string();
+        for i in 0..100 {
+            match i % 5 {
+                0 => input.push_str(" + 1"),
+                1 => input.push_str(" * 1"),
+                2 => input.push_str(" - 1"),
+                3 => input.push_str(" / 1"),
+                _ => input.push_str(" % 1"),
+            }
+        }
+        input.push_str("; }");
+        let result = parse_module(&input);
+        assert!(result.is_ok(), "Mixed operator chain should parse without stack overflow");
+    }
+
+    #[test]
+    fn test_deep_block_nesting() {
+        // 50x nested blocks should not cause stack overflow
+        let mut input = String::new();
+        for _ in 0..50 {
+            input.push_str("{ ");
+        }
+        input.push_str("1");
+        for _ in 0..50 {
+            input.push_str(" }");
+        }
+        let result = parse_module(&input);
+        assert!(result.is_ok(), "Deep block nesting should parse without stack overflow");
+    }
+
+    #[test]
+    fn test_long_union_type() {
+        // 200-member union type should not cause stack overflow
+        let mut input = "type T = number".to_string();
+        for _ in 0..200 {
+            input.push_str(" | string");
+        }
+        input.push_str(";");
+        let result = parse_module(&input);
+        assert!(result.is_ok(), "Long union type should parse without stack overflow");
+    }
+
+    #[test]
+    fn test_deep_array_type() {
+        // 200-deep array type: number[][]...[][] should not cause stack overflow
+        let mut input = "type T = number".to_string();
+        for _ in 0..200 {
+            input.push_str("[]");
+        }
+        input.push_str(";");
+        let result = parse_module(&input);
+        assert!(result.is_ok(), "Deep array type should parse without stack overflow");
+    }
+
+    #[test]
+    fn test_complex_expression_with_calls_and_members() {
+        // Complex expression with nested calls and member access
+        let mut input = "function f(): void { x".to_string();
+        for i in 0..50 {
+            if i % 2 == 0 {
+                input.push_str(&format!(".a{}()", i));
+            } else {
+                input.push_str(".b[x]");
+            }
+        }
+        input.push_str("; }");
+        let result = parse_module(&input);
+        assert!(result.is_ok(), "Complex expression with calls and members should parse without stack overflow");
+    }
+
+    #[test]
+    fn test_exponentiation_chain() {
+        // Right-associative exponentiation chain
+        let mut input = "function f(): void { 2".to_string();
+        for _ in 0..30 {
+            input.push_str(" ** 2");
+        }
+        input.push_str("; }");
+        let result = parse_module(&input);
+        assert!(result.is_ok(), "Exponentiation chain should parse without stack overflow");
+    }
 }

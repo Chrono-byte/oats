@@ -4,6 +4,9 @@ use super::common;
 use chumsky::prelude::*;
 use oats_ast::*;
 
+/// Parser limits to prevent stack overflow from pathological inputs.
+const MAX_TYPE_CHAIN_LENGTH: usize = 1024;
+
 /// Parser for TypeScript-style types.
 /// Workaround: Clone ty only once and reuse to avoid construction-time cycles.
 pub fn ts_type_parser<'a>() -> impl Parser<'a, &'a str, TsType> + 'a {
@@ -24,7 +27,7 @@ pub fn ts_type_parser<'a>() -> impl Parser<'a, &'a str, TsType> + 'a {
         // Primary type: base + array suffixes
         let primary = base_type
             .then(
-                just("[").padded().then(just("]").padded()).repeated().collect::<Vec<_>>(),
+                just("[").padded().then(just("]").padded()).repeated().at_most(MAX_TYPE_CHAIN_LENGTH).collect::<Vec<_>>(),
             )
             .map_with(|(mut elem_type, array_suffixes), extra| {
                 for _ in array_suffixes {
@@ -45,6 +48,7 @@ pub fn ts_type_parser<'a>() -> impl Parser<'a, &'a str, TsType> + 'a {
                     .padded()
                     .then(primary)
                     .repeated()
+                    .at_most(MAX_TYPE_CHAIN_LENGTH)
                     .collect::<Vec<_>>(),
             )
             .map_with(|(first, rest), extra| {
@@ -71,6 +75,7 @@ pub fn ts_type_parser<'a>() -> impl Parser<'a, &'a str, TsType> + 'a {
                     .padded()
                     .then(intersection)
                     .repeated()
+                    .at_most(MAX_TYPE_CHAIN_LENGTH)
                     .collect::<Vec<_>>(),
             )
             .map_with(|(first, rest), extra| {
@@ -90,58 +95,6 @@ pub fn ts_type_parser<'a>() -> impl Parser<'a, &'a str, TsType> + 'a {
             .labelled("type")
             .boxed()
     })
-}
-
-/// Parser for intersection types: type1 & type2 & type3
-fn intersection_type_parser<'a>(
-    ty: impl Parser<'a, &'a str, TsType> + Clone + 'a,
-) -> impl Parser<'a, &'a str, TsType> + 'a {
-    primary_type_parser(ty.clone())
-        .then(
-            just("&")
-                .padded()
-                .then(primary_type_parser(ty.clone()))
-                .repeated()
-                .collect::<Vec<_>>(),
-        )
-        .map_with(|(first, rest), extra| {
-            if rest.is_empty() {
-                first
-            } else {
-                let mut types = vec![first];
-                for (_, ty) in rest {
-                    types.push(ty);
-                }
-                TsType::TsIntersectionType(TsIntersectionType {
-                    types,
-                    span: extra.span().into(),
-                })
-            }
-        })
-        .labelled("intersection type")
-}
-
-/// Parser for primary types (non-union, non-intersection)
-fn primary_type_parser<'a>(
-    ty: impl Parser<'a, &'a str, TsType> + Clone + 'a,
-) -> impl Parser<'a, &'a str, TsType> + 'a {
-    // Parse base type, then optionally apply array suffixes
-    // Use base_type_parser which includes parenthesized types
-    base_type_parser(ty.clone())
-        .then(
-            just("[").padded().then(just("]").padded()).repeated().collect::<Vec<_>>(),
-        )
-        .map_with(|(mut elem_type, array_suffixes), extra| {
-            // Apply array suffixes from right to left
-            for _ in array_suffixes {
-                elem_type = TsType::TsArrayType(TsArrayType {
-                    elem_type: Box::new(elem_type),
-                    span: extra.span().into(),
-                });
-            }
-            elem_type
-        })
-        .labelled("primary type")
 }
 
 /// Parser for keyword types: number, string, boolean, void
@@ -195,45 +148,6 @@ fn type_ref_parser<'a>(
             })
         })
         .labelled("type reference")
-}
-
-/// Parser for parenthesized types: (type)
-/// Matches the expression parser pattern: paren_expr_parser(expr) calls the full recursive expr.
-fn paren_type_parser<'a>(
-    ty: impl Parser<'a, &'a str, TsType> + Clone + 'a,
-) -> impl Parser<'a, &'a str, TsType> + 'a {
-    ty.delimited_by(just("(").padded(), just(")").padded())
-        .labelled("parenthesized type")
-}
-
-/// Parser for base types (without array suffixes)
-fn base_type_parser<'a>(
-    ty: impl Parser<'a, &'a str, TsType> + Clone + 'a,
-) -> impl Parser<'a, &'a str, TsType> + 'a {
-    choice((
-        // Keyword types (no nested types, so safe)
-        keyword_type_parser().boxed(),
-        // Type references: TypeName or TypeName<T1, T2>
-        // For type parameters, use the full type parser (ty) - this is OK because
-        // type parameters are inside <>, not parentheses, so no cycle
-        type_ref_parser(ty.clone()).boxed(),
-        // Tuple types: [type1, type2, ...]
-        // For tuple elements, use the full type parser (ty) - this is OK because
-        // tuple elements are inside [], not parentheses, so no cycle
-        tuple_type_parser(ty.clone()).boxed(),
-        // Type literals: { prop: type, ... }
-        // For property types, use the full type parser (ty) - this is OK because
-        // property types are inside {}, not parentheses, so no cycle
-        type_literal_parser(ty.clone()).boxed(),
-        // Function types: (params) => type
-        // For return type, use the full type parser (ty) - this is OK because
-        // function types use =>, not parentheses for grouping, so no cycle
-        function_type_parser(ty.clone()).boxed(),
-        // Parenthesized types: (type)
-        // Use a separate function (like expression parser's paren_expr_parser) to match the pattern
-        paren_type_parser(ty.clone()).boxed(),
-    ))
-    .labelled("base type")
 }
 
 /// Parser for tuple types: [type1, type2, ...]

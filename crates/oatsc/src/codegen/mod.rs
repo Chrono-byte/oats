@@ -651,7 +651,6 @@ impl<'a> CodeGen<'a> {
             .unwrap_or_else(|| self.module.add_function("promise_poll_into", fn_type, None))
     }
 
-    #[allow(dead_code)]
     fn get_promise_new_from_state(&self) -> FunctionValue<'a> {
         // promise_new_from_state(i8*) -> i8*
         let fn_type = self.i8ptr_t.fn_type(&[self.i8ptr_t.into()], false);
@@ -663,7 +662,6 @@ impl<'a> CodeGen<'a> {
             })
     }
 
-    #[allow(dead_code)]
     fn get_executor_enqueue(&self) -> FunctionValue<'a> {
         // executor_enqueue(i8*) -> void
         let fn_type = self
@@ -675,7 +673,6 @@ impl<'a> CodeGen<'a> {
             .unwrap_or_else(|| self.module.add_function("executor_enqueue", fn_type, None))
     }
 
-    #[allow(dead_code)]
     fn get_executor_run(&self) -> FunctionValue<'a> {
         // executor_run() -> void
         let fn_type = self.context.void_type().fn_type(&[], false);

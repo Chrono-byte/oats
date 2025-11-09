@@ -25,6 +25,9 @@ use std::collections::{HashMap, HashSet, VecDeque};
 /// Key: class name, Value: list of direct subclasses
 pub type ClassHierarchy = HashMap<String, Vec<String>>;
 
+/// Reverse lookup: maps class name to its parent class (None if no parent)
+pub type ParentMap = HashMap<String, Option<String>>;
+
 /// Set of live (instantiated) classes
 pub type LiveClasses = HashSet<String>;
 
@@ -44,9 +47,23 @@ pub struct RTAResults {
     pub call_graph: CallGraph,
 }
 
+/// Extracts the class name from a method name in format "class_method"
+/// Returns None if it's not a method name (doesn't contain underscore)
+fn extract_class_from_method_name(method_name: &str) -> Option<String> {
+    if let Some(last_underscore) = method_name.rfind('_') {
+        if last_underscore > 0 && last_underscore < method_name.len() - 1 {
+            Some(method_name[..last_underscore].to_string())
+        } else {
+            None
+        }
+    } else {
+        None
+    }
+}
+
 /// Performs Rapid Type Analysis on the given modules
 pub fn analyze(modules: &HashMap<String, ParsedModule>) -> RTAResults {
-    let hierarchy = build_class_hierarchy(modules);
+    let (hierarchy, _parent_map) = build_class_hierarchy(modules);
     let live_classes = find_instantiations(modules);
     let methods = collect_methods(modules);
 
@@ -70,8 +87,10 @@ pub fn analyze(modules: &HashMap<String, ParsedModule>) -> RTAResults {
 }
 
 /// Builds the class hierarchy by traversing all class declarations
-fn build_class_hierarchy(modules: &HashMap<String, ParsedModule>) -> ClassHierarchy {
+/// Returns both the hierarchy (parent -> subclasses) and parent map (class -> parent)
+fn build_class_hierarchy(modules: &HashMap<String, ParsedModule>) -> (ClassHierarchy, ParentMap) {
     let mut hierarchy: ClassHierarchy = HashMap::new();
+    let mut parent_map: ParentMap = HashMap::new();
 
     for module in modules.values() {
         for stmt in &module.parsed.body {
@@ -83,19 +102,23 @@ fn build_class_hierarchy(modules: &HashMap<String, ParsedModule>) -> ClassHierar
                     if let Expr::Ident(super_ident) = super_class {
                         let super_name = super_ident.sym.clone();
                         hierarchy
-                            .entry(super_name)
+                            .entry(super_name.clone())
                             .or_default()
                             .push(class_name.clone());
+                        parent_map.insert(class_name.clone(), Some(super_name));
+                    } else {
+                        parent_map.insert(class_name.clone(), None);
                     }
                 } else {
                     // Root class, ensure it's in the map
-                    hierarchy.entry(class_name).or_default();
+                    hierarchy.entry(class_name.clone()).or_default();
+                    parent_map.insert(class_name, None);
                 }
             }
         }
     }
 
-    hierarchy
+    (hierarchy, parent_map)
 }
 
 /// Finds all explicit class instantiations to form the initial live set
@@ -194,6 +217,9 @@ fn build_call_graph(
     for (caller_name, func) in &functions {
         let mut callees = Vec::new();
         let method_calls = find_method_calls(func);
+
+        // Extract class context from caller_name if it's a method (format: "class_method")
+        let _class_context = extract_class_from_method_name(caller_name);
 
         // Convert method calls to callee names in format "class_method"
         for (class_name, method_name) in method_calls {

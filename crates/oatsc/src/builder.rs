@@ -435,6 +435,16 @@ pub fn run_from_args(
         None,
     );
 
+    // Perform Rapid Type Analysis on all modules
+    // For now, we only have a single module, but RTA is designed to work with multiple modules
+    // We create a HashMap with the single module for RTA analysis
+    let mut modules_map = std::collections::HashMap::new();
+    // Clone parsed_mod since we need it later and RTA only reads from it
+    modules_map.insert(src_path.clone(), parsed_mod.clone());
+
+    // Run RTA analysis between parsing and code generation
+    let rta_results = crate::rta::analyze(&modules_map);
+
     let builder = context.create_builder();
     let codegen = CodeGen {
         context: &context,
@@ -500,7 +510,7 @@ pub fn run_from_args(
         symbol_table: RefCell::new(symbols),
         external_std_fns: RefCell::new(HashMap::new()),
         current_label: RefCell::new(None),
-        rta_results: None,
+        rta_results: Some(rta_results),
         uses_async: Cell::new(false),
     };
 

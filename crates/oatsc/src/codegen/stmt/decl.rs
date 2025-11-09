@@ -30,6 +30,8 @@ struct DeclTypeInfo {
     declared_is_weak: bool,
     declared_nominal: Option<String>,
     init_inferred: Option<crate::types::OatsType>,
+    // effective_type is computed and used locally but not stored/accessed elsewhere
+    // Keeping it for potential future use or debugging
     #[allow(dead_code)]
     effective_type: crate::types::OatsType,
 }

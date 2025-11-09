@@ -78,19 +78,6 @@ pub use crate::array::{array_alloc, array_to_string};
 // Re-export string functions
 pub use crate::string::{heap_str_from_cstr, rc_dec_str};
 
-// Ensure placeholder modules are referenced during incremental refactor.
-// This function is called by tests or the binary runner to initialize
-// runtime logging/limits and to anchor the placeholder modules so the
-// compiler does not warn about unused imports while we migrate code.
-#[allow(dead_code)]
-pub(crate) fn init_runtime_placeholders() {
-    // Call per-module no-op initializers so the modules are considered used.
-    // crate::object::init_object_placeholders();
-    // crate::rc::init_rc_placeholders();
-    // Ensure ffi is referenced
-    // crate::ffi::ffi_init();
-}
-
 // Global runtime logging flag for ad-hoc diagnostics. Disabled by default.
 // Set OATS_RUNTIME_LOG=1 in the environment to enable.
 pub static RUNTIME_LOG: AtomicBool = AtomicBool::new(false);

@@ -48,6 +48,7 @@ fn init_parser_limits() {
     LIMITS_INITIALIZED.store(true, Ordering::Relaxed);
 }
 
+#[derive(Clone)]
 pub struct ParsedModule {
     pub parsed: Module,
     // Original source text (no preprocessing)

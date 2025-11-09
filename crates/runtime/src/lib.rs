@@ -49,7 +49,7 @@ thread_local! {
 ///
 /// The value of 128 provides reasonable depth for most use cases while preventing
 /// stack exhaustion on typical systems.
-const MAX_RECURSION_DEPTH: usize = 128;
+pub(crate) const MAX_RECURSION_DEPTH: usize = 128;
 
 // Module placeholders for incremental refactor.
 pub mod array;

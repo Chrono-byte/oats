@@ -858,6 +858,17 @@ pub fn check_function_strictness(
 /// - **Arrays**: Element type inferred from first non-null element
 /// - **Complex expressions**: Currently unsupported, returns `None`
 pub fn infer_type_from_expr(expr: &Expr) -> Option<OatsType> {
+    infer_type_from_expr_with_depth(expr, 0)
+}
+
+/// Internal helper with recursion depth tracking to prevent stack overflow.
+fn infer_type_from_expr_with_depth(expr: &Expr, depth: usize) -> Option<OatsType> {
+    // Prevent stack overflow from deeply nested expressions
+    const MAX_TYPE_INFERENCE_DEPTH: usize = 1000;
+    if depth > MAX_TYPE_INFERENCE_DEPTH {
+        return None;
+    }
+
     match expr {
         Expr::Lit(lit) => match lit {
             Lit::F64(_)
@@ -881,7 +892,7 @@ pub fn infer_type_from_expr(expr: &Expr) -> Option<OatsType> {
         Expr::Array(arr) => {
             // Infer array element type from first non-null element
             if let Some(Some(first_elem)) = arr.elems.first() {
-                infer_type_from_expr(first_elem)
+                infer_type_from_expr_with_depth(first_elem, depth + 1)
                     .map(|elem_type| OatsType::Array(Box::new(elem_type)))
             } else {
                 None
@@ -894,7 +905,7 @@ pub fn infer_type_from_expr(expr: &Expr) -> Option<OatsType> {
                 if let PropOrSpread::Prop(prop) = prop
                     && let Prop::KeyValue(kv) = prop
                     && let PropName::Ident(ident) = &kv.key
-                    && let Some(field_type) = infer_type_from_expr(&kv.value)
+                    && let Some(field_type) = infer_type_from_expr_with_depth(&kv.value, depth + 1)
                 {
                     fields.push((ident.sym.clone(), field_type));
                 }
@@ -916,7 +927,7 @@ pub fn infer_type_from_expr(expr: &Expr) -> Option<OatsType> {
         }
         Expr::Unary(unary) => {
             // Unary operations generally preserve the operand type
-            infer_type_from_expr(&unary.arg)
+            infer_type_from_expr_with_depth(&unary.arg, depth + 1)
         }
         Expr::Bin(bin) => {
             // Binary operations: most return numbers, but some might return other types
@@ -932,13 +943,14 @@ pub fn infer_type_from_expr(expr: &Expr) -> Option<OatsType> {
                 }
                 _ => {
                     // Arithmetic operations return the type of the operands (usually number)
-                    infer_type_from_expr(&bin.left).or_else(|| infer_type_from_expr(&bin.right))
+                    infer_type_from_expr_with_depth(&bin.left, depth + 1)
+                        .or_else(|| infer_type_from_expr_with_depth(&bin.right, depth + 1))
                 }
             }
         }
         Expr::Paren(paren) => {
             // Parenthesized expressions have the same type as their contents
-            infer_type_from_expr(&paren.expr)
+            infer_type_from_expr_with_depth(&paren.expr, depth + 1)
         }
         Expr::Tpl(_tpl) => {
             // Template literals are strings
@@ -954,8 +966,8 @@ pub fn infer_type_from_expr(expr: &Expr) -> Option<OatsType> {
         }
         Expr::Cond(cond) => {
             // For conditional expressions, infer from cons and alt if they have the same type
-            let cons_type = infer_type_from_expr(&cond.cons);
-            let alt_type = infer_type_from_expr(&cond.alt);
+            let cons_type = infer_type_from_expr_with_depth(&cond.cons, depth + 1);
+            let alt_type = infer_type_from_expr_with_depth(&cond.alt, depth + 1);
             if cons_type == alt_type {
                 cons_type
             } else {
@@ -964,7 +976,7 @@ pub fn infer_type_from_expr(expr: &Expr) -> Option<OatsType> {
         }
         Expr::Await(await_expr) => {
             // For await expressions, infer the unwrapped type if it's a promise
-            if let Some(inner) = infer_type_from_expr(&await_expr.arg) {
+            if let Some(inner) = infer_type_from_expr_with_depth(&await_expr.arg, depth + 1) {
                 if let OatsType::Promise(boxed) = inner {
                     Some(*boxed)
                 } else {

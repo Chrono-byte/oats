@@ -165,85 +165,98 @@ impl EscapeAnalyzer {
 
     /// Analyzes a statement for escape patterns.
     fn analyze_stmt(&mut self, stmt: &Stmt) {
+        self.analyze_stmt_with_depth(stmt, 0)
+    }
+
+    /// Internal helper with recursion depth tracking to prevent stack overflow.
+    fn analyze_stmt_with_depth(&mut self, stmt: &Stmt, depth: usize) {
+        // Prevent stack overflow from deeply nested AST structures
+        const MAX_ESCAPE_ANALYSIS_DEPTH: usize = 1000;
+        if depth > MAX_ESCAPE_ANALYSIS_DEPTH {
+            return;
+        }
+
         match stmt {
-            Stmt::ExprStmt(expr_stmt) => self.analyze_expr(&expr_stmt.expr),
+            Stmt::ExprStmt(expr_stmt) => {
+                self.analyze_expr_with_depth(&expr_stmt.expr, depth + 1)
+            }
             Stmt::Return(ret) => {
                 if let Some(arg) = &ret.arg {
-                    self.analyze_expr_as_escaping(arg);
+                    self.analyze_expr_as_escaping_with_depth(arg, depth + 1);
                 }
             }
-            Stmt::VarDecl(vd) => self.analyze_var_decl(vd),
+            Stmt::VarDecl(vd) => self.analyze_var_decl_with_depth(vd, depth + 1),
             Stmt::FnDecl(fn_decl) => self.info.define_var(fn_decl.ident.sym.clone()),
             Stmt::If(if_stmt) => {
-                self.analyze_expr(&if_stmt.test);
+                self.analyze_expr_with_depth(&if_stmt.test, depth + 1);
                 self.enter_scope();
-                self.analyze_stmt(&if_stmt.cons);
+                self.analyze_stmt_with_depth(&if_stmt.cons, depth + 1);
                 self.exit_scope();
                 if let Some(alt) = &if_stmt.alt {
                     self.enter_scope();
-                    self.analyze_stmt(alt);
+                    self.analyze_stmt_with_depth(alt, depth + 1);
                     self.exit_scope();
                 }
             }
             Stmt::Block(block) => {
                 self.enter_scope();
                 for s in &block.stmts {
-                    self.analyze_stmt(s);
+                    self.analyze_stmt_with_depth(s, depth + 1);
                 }
                 self.exit_scope();
             }
             Stmt::While(while_stmt) => {
-                self.analyze_expr(&while_stmt.test);
+                self.analyze_expr_with_depth(&while_stmt.test, depth + 1);
                 self.enter_scope();
-                self.analyze_stmt(&while_stmt.body);
+                self.analyze_stmt_with_depth(&while_stmt.body, depth + 1);
                 self.exit_scope();
             }
             Stmt::For(for_stmt) => {
                 self.enter_scope();
                 if let Some(init) = &for_stmt.init {
                     match init {
-                        ForInit::VarDecl(vd) => self.analyze_var_decl(vd),
-                        ForInit::Expr(e) => self.analyze_expr(e),
+                        ForInit::VarDecl(vd) => self.analyze_var_decl_with_depth(vd, depth + 1),
+                        ForInit::Expr(e) => self.analyze_expr_with_depth(e, depth + 1),
                     }
                 }
                 if let Some(test) = &for_stmt.test {
-                    self.analyze_expr(test);
+                    self.analyze_expr_with_depth(test, depth + 1);
                 }
                 if let Some(update) = &for_stmt.update {
-                    self.analyze_expr(update);
+                    self.analyze_expr_with_depth(update, depth + 1);
                 }
-                self.analyze_stmt(&for_stmt.body);
+                self.analyze_stmt_with_depth(&for_stmt.body, depth + 1);
                 self.exit_scope();
             }
             Stmt::ForIn(for_in) => {
                 self.enter_scope();
                 // Simplified: just analyze the expression parts for now
-                self.analyze_expr(&for_in.right);
-                self.analyze_stmt(&for_in.body);
+                self.analyze_expr_with_depth(&for_in.right, depth + 1);
+                self.analyze_stmt_with_depth(&for_in.body, depth + 1);
                 self.exit_scope();
             }
             Stmt::ForOf(for_of) => {
                 self.enter_scope();
                 // Simplified: just analyze the expression parts for now
-                self.analyze_expr(&for_of.right);
-                self.analyze_stmt(&for_of.body);
+                self.analyze_expr_with_depth(&for_of.right, depth + 1);
+                self.analyze_stmt_with_depth(&for_of.body, depth + 1);
                 self.exit_scope();
             }
             Stmt::Try(try_stmt) => {
                 self.enter_scope();
-                self.analyze_block_stmt(&try_stmt.block);
+                self.analyze_block_stmt_with_depth(&try_stmt.block, depth + 1);
                 self.exit_scope();
                 if let Some(handler) = &try_stmt.handler {
                     self.enter_scope();
                     if let Some(param) = &handler.param {
                         self.collect_param_names(param);
                     }
-                    self.analyze_block_stmt(&handler.body);
+                    self.analyze_block_stmt_with_depth(&handler.body, depth + 1);
                     self.exit_scope();
                 }
                 if let Some(finalizer) = &try_stmt.finalizer {
                     self.enter_scope();
-                    self.analyze_block_stmt(finalizer);
+                    self.analyze_block_stmt_with_depth(finalizer, depth + 1);
                     self.exit_scope();
                 }
             }
@@ -253,23 +266,42 @@ impl EscapeAnalyzer {
 
     /// Analyzes a variable declaration list.
     fn analyze_var_decl(&mut self, var_decl: &VarDecl) {
+        self.analyze_var_decl_with_depth(var_decl, 0)
+    }
+
+    fn analyze_var_decl_with_depth(&mut self, var_decl: &VarDecl, depth: usize) {
         for declarator in &var_decl.decls {
             self.collect_param_names(&declarator.name);
             if let Some(init) = &declarator.init {
-                self.analyze_expr(init);
+                self.analyze_expr_with_depth(init, depth + 1);
             }
         }
     }
 
     /// Analyzes a block statement.
     fn analyze_block_stmt(&mut self, block: &BlockStmt) {
+        self.analyze_block_stmt_with_depth(block, 0)
+    }
+
+    fn analyze_block_stmt_with_depth(&mut self, block: &BlockStmt, depth: usize) {
         for stmt in &block.stmts {
-            self.analyze_stmt(stmt);
+            self.analyze_stmt_with_depth(stmt, depth + 1);
         }
     }
 
     /// Analyzes an expression for variable uses and escape patterns.
     fn analyze_expr(&mut self, expr: &Expr) {
+        self.analyze_expr_with_depth(expr, 0)
+    }
+
+    /// Internal helper with recursion depth tracking to prevent stack overflow.
+    fn analyze_expr_with_depth(&mut self, expr: &Expr, depth: usize) {
+        // Prevent stack overflow from deeply nested expressions
+        const MAX_ESCAPE_ANALYSIS_DEPTH: usize = 1000;
+        if depth > MAX_ESCAPE_ANALYSIS_DEPTH {
+            return;
+        }
+
         match expr {
             Expr::Ident(ident) => self.info.use_var(&ident.sym),
             Expr::Call(call) => {
@@ -285,21 +317,21 @@ impl EscapeAnalyzer {
                             self.info.mark_escape_call(func_name.clone());
                             // All arguments to escape calls are considered escaping
                             for arg in &call.args {
-                                self.analyze_expr_as_escaping(arg);
+                                self.analyze_expr_as_escaping_with_depth(arg, depth + 1);
                             }
                             return;
                         }
                     }
-                    self.analyze_expr(callee_expr);
+                    self.analyze_expr_with_depth(callee_expr, depth + 1);
                 }
                 for arg in &call.args {
-                    self.analyze_expr_as_escaping(arg);
+                    self.analyze_expr_as_escaping_with_depth(arg, depth + 1);
                 }
             }
             Expr::Member(member) => {
-                self.analyze_expr(&member.obj);
+                self.analyze_expr_with_depth(&member.obj, depth + 1);
                 if let MemberProp::Computed(comp) = &member.prop {
-                    self.analyze_expr(comp);
+                    self.analyze_expr_with_depth(comp, depth + 1);
                 }
             }
             Expr::Assign(assign) => {
@@ -310,43 +342,47 @@ impl EscapeAnalyzer {
                         self.info.define_var(name);
                     }
                 }
-                self.analyze_expr(&assign.right);
+                self.analyze_expr_with_depth(&assign.right, depth + 1);
             }
             Expr::Bin(bin) => {
-                self.analyze_expr(&bin.left);
-                self.analyze_expr(&bin.right);
+                self.analyze_expr_with_depth(&bin.left, depth + 1);
+                self.analyze_expr_with_depth(&bin.right, depth + 1);
             }
-            Expr::Unary(unary) => self.analyze_expr(&unary.arg),
+            Expr::Unary(unary) => self.analyze_expr_with_depth(&unary.arg, depth + 1),
             Expr::Cond(cond) => {
-                self.analyze_expr(&cond.test);
-                self.analyze_expr(&cond.cons);
-                self.analyze_expr(&cond.alt);
+                self.analyze_expr_with_depth(&cond.test, depth + 1);
+                self.analyze_expr_with_depth(&cond.cons, depth + 1);
+                self.analyze_expr_with_depth(&cond.alt, depth + 1);
             }
             Expr::Array(arr) => {
                 for elem in arr.elems.iter().flatten() {
-                    self.analyze_expr(elem);
+                    self.analyze_expr_with_depth(elem, depth + 1);
                 }
             }
             Expr::Object(obj) => {
                 for prop in &obj.props {
                     match prop {
-                        PropOrSpread::Spread(spread) => self.analyze_expr(&spread.expr),
+                        PropOrSpread::Spread(spread) => {
+                            self.analyze_expr_with_depth(&spread.expr, depth + 1)
+                        }
                         PropOrSpread::Prop(Prop::KeyValue(kv)) => {
                             // PropName doesn't have Computed in oats_ast, skip for now
-                            self.analyze_expr(&kv.value);
+                            self.analyze_expr_with_depth(&kv.value, depth + 1);
                         }
                         PropOrSpread::Prop(Prop::Shorthand(_)) => {}
                     }
                 }
             }
             Expr::New(new) => {
-                self.analyze_expr(&new.callee);
+                self.analyze_expr_with_depth(&new.callee, depth + 1);
                 for arg in &new.args {
-                    self.analyze_expr_as_escaping(arg);
+                    self.analyze_expr_as_escaping_with_depth(arg, depth + 1);
                 }
             }
-            Expr::Await(await_expr) => self.analyze_expr(&await_expr.arg),
-            Expr::Paren(paren) => self.analyze_expr(&paren.expr),
+            Expr::Await(await_expr) => {
+                self.analyze_expr_with_depth(&await_expr.arg, depth + 1)
+            }
+            Expr::Paren(paren) => self.analyze_expr_with_depth(&paren.expr, depth + 1),
             Expr::Arrow(arrow) => {
                 // Analyze arrow function body for captured variables
                 let mut captured = HashSet::new();
@@ -371,10 +407,10 @@ impl EscapeAnalyzer {
 
                 // Analyze the body
                 match &arrow.body {
-                    ArrowBody::Expr(e) => self.analyze_expr(e),
+                    ArrowBody::Expr(e) => self.analyze_expr_with_depth(e, depth + 1),
                     ArrowBody::Block(block) => {
                         self.enter_scope();
-                        self.analyze_block_stmt(block);
+                        self.analyze_block_stmt_with_depth(block, depth + 1);
                         self.exit_scope();
                     }
                 }
@@ -385,8 +421,12 @@ impl EscapeAnalyzer {
 
     /// Analyzes an expression where all contained variables are considered escaping.
     fn analyze_expr_as_escaping(&mut self, expr: &Expr) {
+        self.analyze_expr_as_escaping_with_depth(expr, 0)
+    }
+
+    fn analyze_expr_as_escaping_with_depth(&mut self, expr: &Expr, depth: usize) {
         let mut vars = HashSet::new();
-        Self::collect_vars_from_expr(expr, &mut vars);
+        Self::collect_vars_from_expr_with_depth(expr, &mut vars, depth);
         for var in vars {
             self.info.mark_escaping(var);
         }
@@ -394,41 +434,61 @@ impl EscapeAnalyzer {
 
     /// Recursively collects all variable names from an expression.
     fn collect_vars_from_expr(expr: &Expr, vars: &mut HashSet<String>) {
+        Self::collect_vars_from_expr_with_depth(expr, vars, 0)
+    }
+
+    fn collect_vars_from_expr_with_depth(
+        expr: &Expr,
+        vars: &mut HashSet<String>,
+        depth: usize,
+    ) {
+        // Prevent stack overflow from deeply nested expressions
+        const MAX_VAR_COLLECTION_DEPTH: usize = 1000;
+        if depth > MAX_VAR_COLLECTION_DEPTH {
+            return;
+        }
+
         match expr {
             Expr::Ident(ident) => {
                 vars.insert(ident.sym.clone());
             }
             Expr::Call(call) => {
                 if let Callee::Expr(callee_expr) = &call.callee {
-                    Self::collect_vars_from_expr(callee_expr, vars);
+                    Self::collect_vars_from_expr_with_depth(callee_expr, vars, depth + 1);
                 }
                 for arg in &call.args {
-                    Self::collect_vars_from_expr(arg, vars);
+                    Self::collect_vars_from_expr_with_depth(arg, vars, depth + 1);
                 }
             }
             Expr::Member(member) => {
-                Self::collect_vars_from_expr(&member.obj, vars);
+                Self::collect_vars_from_expr_with_depth(&member.obj, vars, depth + 1);
                 if let MemberProp::Computed(comp) = &member.prop {
-                    Self::collect_vars_from_expr(comp, vars);
+                    Self::collect_vars_from_expr_with_depth(comp, vars, depth + 1);
                 }
             }
             Expr::Bin(bin) => {
-                Self::collect_vars_from_expr(&bin.left, vars);
-                Self::collect_vars_from_expr(&bin.right, vars);
+                Self::collect_vars_from_expr_with_depth(&bin.left, vars, depth + 1);
+                Self::collect_vars_from_expr_with_depth(&bin.right, vars, depth + 1);
             }
-            Expr::Unary(unary) => Self::collect_vars_from_expr(&unary.arg, vars),
+            Expr::Unary(unary) => {
+                Self::collect_vars_from_expr_with_depth(&unary.arg, vars, depth + 1)
+            }
             Expr::Cond(cond) => {
-                Self::collect_vars_from_expr(&cond.test, vars);
-                Self::collect_vars_from_expr(&cond.cons, vars);
-                Self::collect_vars_from_expr(&cond.alt, vars);
+                Self::collect_vars_from_expr_with_depth(&cond.test, vars, depth + 1);
+                Self::collect_vars_from_expr_with_depth(&cond.cons, vars, depth + 1);
+                Self::collect_vars_from_expr_with_depth(&cond.alt, vars, depth + 1);
             }
             Expr::Array(arr) => {
                 for elem in arr.elems.iter().flatten() {
-                    Self::collect_vars_from_expr(elem, vars);
+                    Self::collect_vars_from_expr_with_depth(elem, vars, depth + 1);
                 }
             }
-            Expr::Assign(assign) => Self::collect_vars_from_expr(&assign.right, vars),
-            Expr::Paren(paren) => Self::collect_vars_from_expr(&paren.expr, vars),
+            Expr::Assign(assign) => {
+                Self::collect_vars_from_expr_with_depth(&assign.right, vars, depth + 1)
+            }
+            Expr::Paren(paren) => {
+                Self::collect_vars_from_expr_with_depth(&paren.expr, vars, depth + 1)
+            }
             _ => {}
         }
     }
@@ -545,3 +605,5 @@ impl AwaitLiveAnalyzer {
         }
     }
 }
+
+

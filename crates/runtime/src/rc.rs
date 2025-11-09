@@ -3,9 +3,16 @@ use libc::c_void;
 use std::io::{self, Write};
 use std::ptr;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::cell::RefCell;
 
 // Import header helpers from sibling module (parent has already imported header)
 use crate::header::*;
+use crate::MAX_RECURSION_DEPTH;
+
+// Thread-local recursion depth counter for rc_dec destructor calls
+thread_local! {
+    static RC_DEC_DEPTH: RefCell<usize> = const { RefCell::new(0) };
+}
 
 /// Atomically increment the strong reference count of a heap-allocated object.
 /// # Safety
@@ -183,6 +190,30 @@ pub unsafe extern "C" fn rc_dec(p: *mut c_void) {
                     if new_rc == 0 {
                         std::sync::atomic::fence(Ordering::Acquire);
 
+                        // Check recursion depth to prevent stack overflow from destructor chains
+                        let depth = RC_DEC_DEPTH.with(|d| {
+                            let mut depth = d.borrow_mut();
+                            *depth += 1;
+                            *depth
+                        });
+
+                        // If we exceed the recursion limit, defer the destructor call
+                        // to prevent stack overflow. The object will be cleaned up
+                        // by the cycle collector. We still need to decrement weak refs
+                        // and add to collector candidates for deferred cleanup.
+                        if depth > MAX_RECURSION_DEPTH {
+                            // Decrement depth counter before returning
+                            RC_DEC_DEPTH.with(|d| {
+                                *d.borrow_mut() -= 1;
+                            });
+                            // Still decrement weak references (this is safe even at depth limit)
+                            crate::rc_weak_dec(obj_ptr);
+                            // Add to cycle collector candidates for deferred cleanup
+                            // This ensures the destructor will be called later when depth is lower
+                            crate::add_root_candidate(obj_ptr);
+                            break;
+                        }
+
                         let type_tag = (old_header >> HEADER_TYPE_TAG_SHIFT) as u32;
                         if type_tag == 1 {
                             let dtor_ptr_ptr = (obj_ptr as *mut u8).add(std::mem::size_of::<u64>())
@@ -196,6 +227,11 @@ pub unsafe extern "C" fn rc_dec(p: *mut c_void) {
                         }
 
                         crate::rc_weak_dec(obj_ptr);
+
+                        // Decrement depth counter after destructor call
+                        RC_DEC_DEPTH.with(|d| {
+                            *d.borrow_mut() -= 1;
+                        });
                     } else {
                         // Check if this object can form cycles - if not, skip GC
                         if (old_header & HEADER_CYCLE_BIT) == 0 {

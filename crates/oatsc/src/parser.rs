@@ -78,6 +78,22 @@ pub struct DeclaredFn {
 
 /// Recursively collect mutable variable declarations from the AST
 fn collect_mut_var_decls(stmt: &Stmt, source: &str, out: &mut std::collections::HashSet<usize>) {
+    collect_mut_var_decls_with_depth(stmt, source, out, 0)
+}
+
+/// Internal helper with recursion depth tracking to prevent stack overflow.
+fn collect_mut_var_decls_with_depth(
+    stmt: &Stmt,
+    source: &str,
+    out: &mut std::collections::HashSet<usize>,
+    depth: usize,
+) {
+    // Prevent stack overflow from deeply nested AST structures
+    const MAX_AST_COLLECTION_DEPTH: usize = 1000;
+    if depth > MAX_AST_COLLECTION_DEPTH {
+        return;
+    }
+
     match stmt {
         Stmt::VarDecl(vd) => {
             // Check if this is a mutable declaration by scanning the source
@@ -103,13 +119,13 @@ fn collect_mut_var_decls(stmt: &Stmt, source: &str, out: &mut std::collections::
         }
         Stmt::Block(block) => {
             for s in &block.stmts {
-                collect_mut_var_decls(s, source, out);
+                collect_mut_var_decls_with_depth(s, source, out, depth + 1);
             }
         }
         Stmt::If(if_stmt) => {
-            collect_mut_var_decls(&if_stmt.cons, source, out);
+            collect_mut_var_decls_with_depth(&if_stmt.cons, source, out, depth + 1);
             if let Some(alt) = &if_stmt.alt {
-                collect_mut_var_decls(alt, source, out);
+                collect_mut_var_decls_with_depth(alt, source, out, depth + 1);
             }
         }
         Stmt::For(for_stmt) => {
@@ -126,7 +142,7 @@ fn collect_mut_var_decls(stmt: &Stmt, source: &str, out: &mut std::collections::
                     }
                 }
             }
-            collect_mut_var_decls(&for_stmt.body, source, out);
+            collect_mut_var_decls_with_depth(&for_stmt.body, source, out, depth + 1);
         }
         Stmt::ForIn(for_in) => {
             if let ForHead::VarDecl(vd) = &for_in.left {
@@ -142,7 +158,7 @@ fn collect_mut_var_decls(stmt: &Stmt, source: &str, out: &mut std::collections::
                     }
                 }
             }
-            collect_mut_var_decls(&for_in.body, source, out);
+            collect_mut_var_decls_with_depth(&for_in.body, source, out, depth + 1);
         }
         Stmt::ForOf(for_of) => {
             if let ForHead::VarDecl(vd) = &for_of.left {
@@ -158,40 +174,40 @@ fn collect_mut_var_decls(stmt: &Stmt, source: &str, out: &mut std::collections::
                     }
                 }
             }
-            collect_mut_var_decls(&for_of.body, source, out);
+            collect_mut_var_decls_with_depth(&for_of.body, source, out, depth + 1);
         }
         Stmt::While(while_stmt) => {
-            collect_mut_var_decls(&while_stmt.body, source, out);
+            collect_mut_var_decls_with_depth(&while_stmt.body, source, out, depth + 1);
         }
         Stmt::DoWhile(do_while) => {
-            collect_mut_var_decls(&do_while.body, source, out);
+            collect_mut_var_decls_with_depth(&do_while.body, source, out, depth + 1);
         }
         Stmt::Switch(switch) => {
             for case in &switch.cases {
                 for s in &case.cons {
-                    collect_mut_var_decls(s, source, out);
+                    collect_mut_var_decls_with_depth(s, source, out, depth + 1);
                 }
             }
         }
         Stmt::Try(try_stmt) => {
             for s in &try_stmt.block.stmts {
-                collect_mut_var_decls(s, source, out);
+                collect_mut_var_decls_with_depth(s, source, out, depth + 1);
             }
             if let Some(handler) = &try_stmt.handler {
                 for s in &handler.body.stmts {
-                    collect_mut_var_decls(s, source, out);
+                    collect_mut_var_decls_with_depth(s, source, out, depth + 1);
                 }
             }
             if let Some(finalizer) = &try_stmt.finalizer {
                 for s in &finalizer.stmts {
-                    collect_mut_var_decls(s, source, out);
+                    collect_mut_var_decls_with_depth(s, source, out, depth + 1);
                 }
             }
         }
         Stmt::FnDecl(fn_decl) => {
             if let Some(body) = &fn_decl.body {
                 for s in &body.stmts {
-                    collect_mut_var_decls(s, source, out);
+                    collect_mut_var_decls_with_depth(s, source, out, depth + 1);
                 }
             }
         }
@@ -281,7 +297,7 @@ pub fn parse_oats_module_with_options(
     // Collect mutable variable declarations
     let mut mut_var_decls = std::collections::HashSet::new();
     for stmt in &module.body {
-        collect_mut_var_decls(stmt, source_code, &mut mut_var_decls);
+        collect_mut_var_decls_with_depth(stmt, source_code, &mut mut_var_decls, 0);
     }
 
     // Collect declare function statements

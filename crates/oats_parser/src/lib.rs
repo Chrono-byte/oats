@@ -7,6 +7,12 @@
 //! - Related parsing logic is grouped together in modules
 //! - Common utilities are reused across modules
 //! - Each module focuses on a specific aspect of the language
+//!
+//! Modern chumsky best practices (0.11.2):
+//! - Use `extra` for context and error handling
+//! - Avoid unnecessary cloning with better recursion patterns
+//! - Leverage combinators for cleaner code
+//! - Use `labelled()` for better error messages
 
 mod class;
 mod common;
@@ -21,20 +27,39 @@ use chumsky::prelude::*;
 use oats_ast::*;
 
 /// Parse a string into an Oats AST Module.
-pub fn parse_module(input: &str) -> Result<Module, Vec<Simple<char>>> {
-    let parser = module_parser();
-    parser.parse(input)
+///
+/// Returns a Module on success or a vector of parse errors on failure.
+pub fn parse_module(input: &str) -> Result<Module, String> {
+    module_parser()
+        .parse(input)
+        .into_result()
+        .map_err(|_errors| "Parse error".to_string())
 }
 
 /// Parser for the top-level module.
 ///
-/// A module consists of zero or more statements.
-fn module_parser() -> impl Parser<char, Module, Error = Simple<char>> {
-    recursive(stmt::stmt_parser)
-        .repeated()
-        .collect::<Vec<_>>()
-        .then_ignore(end())
-        .map_with_span(|body, span| Module { body, span })
+/// A module consists of zero or more statements followed by EOF.
+/// This is the entry point for parsing Oats programs.
+fn module_parser<'a>() -> impl Parser<'a, &'a str, Module> + 'a {
+    // Use recursive to create mutually recursive expr/stmt parsers
+    // Both expr and stmt parsers are boxed to allow cloning within the recursive functions
+    recursive(|stmt_param| {
+        let expr_parser = recursive(|expr_param| {
+            let stmt_inner = stmt::stmt_parser_inner(expr_param.clone(), stmt_param.clone()).boxed();
+            expr::expr_parser_inner(expr_param, stmt_inner).boxed()
+        })
+        .boxed();
+        stmt::stmt_parser_inner(expr_parser, stmt_param).boxed()
+    })
+    .padded()
+    .repeated()
+    .collect::<Vec<_>>()
+    .then_ignore(end())
+    .map_with(|body, extra| Module {
+        body,
+        span: extra.span().into(),
+    })
+    .labelled("module")
 }
 
 #[cfg(test)]
@@ -45,10 +70,8 @@ mod tests {
     fn test_parse_simple_function() {
         let input = "function main(): void {}";
         let result = parse_module(input);
-        if let Err(errors) = &result {
-            for e in errors {
-                println!("Parse error: {:?}", e);
-            }
+        if let Err(e) = &result {
+            println!("Parse error: {:?}", e);
         }
         assert!(result.is_ok());
         let module = result.unwrap();
@@ -69,10 +92,8 @@ mod tests {
     fn test_function_with_body() {
         let input = "function add(a: number, b: number): number { return a + b; }";
         let result = parse_module(input);
-        if let Err(errors) = &result {
-            for e in errors {
-                println!("Parse error: {:?}", e);
-            }
+        if let Err(e) = &result {
+            println!("Parse error: {:?}", e);
         }
         assert!(result.is_ok());
         let module = result.unwrap();
@@ -90,10 +111,8 @@ mod tests {
     fn test_var_decl() {
         let input = "let x: number = 5;";
         let result = parse_module(input);
-        if let Err(errors) = &result {
-            for e in errors {
-                println!("Parse error: {:?}", e);
-            }
+        if let Err(e) = &result {
+            println!("Parse error: {:?}", e);
         }
         assert!(result.is_ok());
         let module = result.unwrap();
@@ -110,10 +129,8 @@ mod tests {
     fn test_let_mut() {
         let input = "let mut x: number = 5;";
         let result = parse_module(input);
-        if let Err(errors) = &result {
-            for e in errors {
-                println!("Parse error: {:?}", e);
-            }
+        if let Err(e) = &result {
+            println!("Parse error: {:?}", e);
         }
         assert!(result.is_ok());
     }
@@ -122,10 +139,8 @@ mod tests {
     fn test_binary_expr() {
         let input = "let x: number = 3 + 5;";
         let result = parse_module(input);
-        if let Err(errors) = &result {
-            for e in errors {
-                println!("Parse error: {:?}", e);
-            }
+        if let Err(e) = &result {
+            println!("Parse error: {:?}", e);
         }
         assert!(result.is_ok());
     }
@@ -134,10 +149,8 @@ mod tests {
     fn test_if_stmt() {
         let input = "if (x > 0) { return x; }";
         let result = parse_module(input);
-        if let Err(errors) = &result {
-            for e in errors {
-                println!("Parse error: {:?}", e);
-            }
+        if let Err(e) = &result {
+            println!("Parse error: {:?}", e);
         }
         assert!(result.is_ok());
     }
@@ -146,10 +159,8 @@ mod tests {
     fn test_for_loop() {
         let input = "for (let mut i: number = 0; i < 10; i = i + 1) { console.log(i); }";
         let result = parse_module(input);
-        if let Err(errors) = &result {
-            for e in errors {
-                println!("Parse error: {:?}", e);
-            }
+        if let Err(e) = &result {
+            println!("Parse error: {:?}", e);
         }
         assert!(result.is_ok());
     }

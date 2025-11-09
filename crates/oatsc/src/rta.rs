@@ -509,62 +509,82 @@ fn find_method_calls(func: &Function) -> Vec<(String, String)> {
     let mut calls = Vec::new();
     if let Some(body) = &func.body {
         for stmt in &body.stmts {
-            find_method_calls_in_stmt(stmt, &mut calls);
+            find_method_calls_in_stmt_with_depth(stmt, &mut calls, 0);
         }
     }
     calls
 }
 
 fn find_method_calls_in_stmt(stmt: &Stmt, calls: &mut Vec<(String, String)>) {
+    find_method_calls_in_stmt_with_depth(stmt, calls, 0)
+}
+
+// Keep the old function signature for backward compatibility, but it's now just a wrapper
+
+fn find_method_calls_in_stmt_with_depth(
+    stmt: &Stmt,
+    calls: &mut Vec<(String, String)>,
+    depth: usize,
+) {
+    // Prevent stack overflow from deeply nested AST structures
+    const MAX_AST_TRAVERSAL_DEPTH: usize = 1000;
+    if depth > MAX_AST_TRAVERSAL_DEPTH {
+        return;
+    }
+
     match stmt {
-        Stmt::ExprStmt(expr_stmt) => find_method_calls_in_expr(&expr_stmt.expr, calls),
+        Stmt::ExprStmt(expr_stmt) => {
+            find_method_calls_in_expr_with_depth(&expr_stmt.expr, calls, depth + 1)
+        }
         Stmt::VarDecl(var_decl) => {
             for decl in &var_decl.decls {
                 if let Some(init) = &decl.init {
-                    find_method_calls_in_expr(init, calls);
+                    find_method_calls_in_expr_with_depth(init, calls, depth + 1);
                 }
             }
         }
         Stmt::Return(ret) => {
             if let Some(arg) = &ret.arg {
-                find_method_calls_in_expr(arg, calls);
+                find_method_calls_in_expr_with_depth(arg, calls, depth + 1);
             }
         }
         Stmt::If(if_stmt) => {
-            find_method_calls_in_expr(&if_stmt.test, calls);
-            find_method_calls_in_stmt(&if_stmt.cons, calls);
+            find_method_calls_in_expr_with_depth(&if_stmt.test, calls, depth + 1);
+            find_method_calls_in_stmt_with_depth(&if_stmt.cons, calls, depth + 1);
             if let Some(alt) = &if_stmt.alt {
-                find_method_calls_in_stmt(alt, calls);
+                find_method_calls_in_stmt_with_depth(alt, calls, depth + 1);
             }
         }
         Stmt::While(while_stmt) => {
-            find_method_calls_in_expr(&while_stmt.test, calls);
-            find_method_calls_in_stmt(&while_stmt.body, calls);
+            find_method_calls_in_expr_with_depth(&while_stmt.test, calls, depth + 1);
+            find_method_calls_in_stmt_with_depth(&while_stmt.body, calls, depth + 1);
         }
         Stmt::For(for_stmt) => {
             if let Some(init) = &for_stmt.init {
                 match init {
-                    ForInit::Expr(expr) => find_method_calls_in_expr(expr, calls),
+                    ForInit::Expr(expr) => {
+                        find_method_calls_in_expr_with_depth(expr, calls, depth + 1)
+                    }
                     ForInit::VarDecl(var_decl) => {
                         for decl in &var_decl.decls {
                             if let Some(init_expr) = &decl.init {
-                                find_method_calls_in_expr(init_expr, calls);
+                                find_method_calls_in_expr_with_depth(init_expr, calls, depth + 1);
                             }
                         }
                     }
                 }
             }
             if let Some(test) = &for_stmt.test {
-                find_method_calls_in_expr(test, calls);
+                find_method_calls_in_expr_with_depth(test, calls, depth + 1);
             }
             if let Some(update) = &for_stmt.update {
-                find_method_calls_in_expr(update, calls);
+                find_method_calls_in_expr_with_depth(update, calls, depth + 1);
             }
-            find_method_calls_in_stmt(&for_stmt.body, calls);
+            find_method_calls_in_stmt_with_depth(&for_stmt.body, calls, depth + 1);
         }
         Stmt::Block(block) => {
             for stmt in &block.stmts {
-                find_method_calls_in_stmt(stmt, calls);
+                find_method_calls_in_stmt_with_depth(stmt, calls, depth + 1);
             }
         }
         _ => {}
@@ -572,6 +592,20 @@ fn find_method_calls_in_stmt(stmt: &Stmt, calls: &mut Vec<(String, String)>) {
 }
 
 fn find_method_calls_in_expr(expr: &Expr, calls: &mut Vec<(String, String)>) {
+    find_method_calls_in_expr_with_depth(expr, calls, 0)
+}
+
+fn find_method_calls_in_expr_with_depth(
+    expr: &Expr,
+    calls: &mut Vec<(String, String)>,
+    depth: usize,
+) {
+    // Prevent stack overflow from deeply nested AST structures
+    const MAX_AST_TRAVERSAL_DEPTH: usize = 1000;
+    if depth > MAX_AST_TRAVERSAL_DEPTH {
+        return;
+    }
+
     match expr {
         Expr::Call(call_expr) => {
             // Handle method calls: obj.method()
@@ -599,29 +633,29 @@ fn find_method_calls_in_expr(expr: &Expr, calls: &mut Vec<(String, String)>) {
             }
             // Recursively visit arguments
             for arg in &call_expr.args {
-                find_method_calls_in_expr(arg, calls);
+                find_method_calls_in_expr_with_depth(arg, calls, depth + 1);
             }
         }
         Expr::Bin(bin) => {
-            find_method_calls_in_expr(&bin.left, calls);
-            find_method_calls_in_expr(&bin.right, calls);
+            find_method_calls_in_expr_with_depth(&bin.left, calls, depth + 1);
+            find_method_calls_in_expr_with_depth(&bin.right, calls, depth + 1);
         }
         Expr::Unary(unary) => {
-            find_method_calls_in_expr(&unary.arg, calls);
+            find_method_calls_in_expr_with_depth(&unary.arg, calls, depth + 1);
         }
         Expr::Member(member) => {
-            find_method_calls_in_expr(&member.obj, calls);
+            find_method_calls_in_expr_with_depth(&member.obj, calls, depth + 1);
             if let MemberProp::Computed(comp) = &member.prop {
-                find_method_calls_in_expr(comp, calls);
+                find_method_calls_in_expr_with_depth(comp, calls, depth + 1);
             }
         }
         Expr::Assign(assign) => {
-            find_method_calls_in_expr(&assign.right, calls);
+            find_method_calls_in_expr_with_depth(&assign.right, calls, depth + 1);
         }
         Expr::New(new_expr) => {
-            find_method_calls_in_expr(&new_expr.callee, calls);
+            find_method_calls_in_expr_with_depth(&new_expr.callee, calls, depth + 1);
             for arg in &new_expr.args {
-                find_method_calls_in_expr(arg, calls);
+                find_method_calls_in_expr_with_depth(arg, calls, depth + 1);
             }
         }
         _ => {}

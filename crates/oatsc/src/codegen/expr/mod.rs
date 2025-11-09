@@ -160,7 +160,25 @@ impl<'a> crate::codegen::CodeGen<'a> {
         param_map: &HashMap<String, u32>,
         locals: &mut LocalsStackLocal<'a>,
     ) -> Option<String> {
+        self.resolve_member_type_with_depth(member, function, param_map, locals, 0)
+    }
+
+    /// Internal helper with recursion depth tracking to prevent stack overflow.
+    fn resolve_member_type_with_depth(
+        &self,
+        member: &oats_ast::MemberExpr,
+        function: FunctionValue<'a>,
+        param_map: &HashMap<String, u32>,
+        locals: &mut LocalsStackLocal<'a>,
+        depth: usize,
+    ) -> Option<String> {
         use oats_ast::*;
+
+        // Prevent stack overflow from deeply nested member access chains
+        const MAX_MEMBER_DEPTH: usize = 128;
+        if depth > MAX_MEMBER_DEPTH {
+            return None;
+        }
 
         // First, determine the nominal type of member.obj
         let obj_nominal = if let Expr::Ident(ident) = &*member.obj {
@@ -207,8 +225,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 None
             }
         } else if let Expr::Member(inner_member) = &*member.obj {
-            // Recursively resolve nested member expressions
-            self.resolve_member_type(inner_member, function, param_map, locals)
+            // Recursively resolve nested member expressions with depth tracking
+            self.resolve_member_type_with_depth(inner_member, function, param_map, locals, depth + 1)
         } else {
             None
         };

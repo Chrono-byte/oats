@@ -48,8 +48,6 @@ pub fn parse_oats_module_with_options_for_test(
     parsed_opt.ok_or_else(|| anyhow::anyhow!("Failed to parse source"))
 }
 
-pub mod deno_adapter;
-
 /// Generates LLVM IR from Oats source code for testing purposes.
 ///
 /// This function provides a convenient way to compile Oats source code to

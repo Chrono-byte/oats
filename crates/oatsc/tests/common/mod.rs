@@ -379,6 +379,9 @@ pub fn create_codegen<'a>(
         external_std_fns: RefCell::new(std::collections::HashMap::new()),
         nested_generic_fns: RefCell::new(HashMap::new()),
         monomorphized_map: RefCell::new(HashMap::new()),
+        class_parents: RefCell::new(HashMap::new()),
+        enum_variants: RefCell::new(HashMap::new()),
+        type_aliases: RefCell::new(HashMap::new()),
         rta_results: None,
         uses_async: Cell::new(false),
     })

@@ -110,6 +110,9 @@ fn gen_add_function_ir_contains_fadd() -> Result<()> {
         external_std_fns: std::cell::RefCell::new(std::collections::HashMap::new()),
         nested_generic_fns: std::cell::RefCell::new(std::collections::HashMap::new()),
         monomorphized_map: std::cell::RefCell::new(std::collections::HashMap::new()),
+        class_parents: std::cell::RefCell::new(std::collections::HashMap::new()),
+        enum_variants: std::cell::RefCell::new(std::collections::HashMap::new()),
+        type_aliases: std::cell::RefCell::new(std::collections::HashMap::new()),
         rta_results: None,
         uses_async: std::cell::Cell::new(false),
     };

@@ -37,6 +37,8 @@ pub fn expr_parser() -> impl Parser<char, Expr, Error = Simple<char>> {
             literal,
             ident,
             this,
+            super_expr_parser(),
+            yield_expr_parser(expr.clone()),
             new_expr_parser(expr.clone()),
             await_expr_parser(expr.clone()),
             template_literal_parser(expr.clone()),
@@ -51,6 +53,28 @@ pub fn expr_parser() -> impl Parser<char, Expr, Error = Simple<char>> {
         let postfix = primary
             .then(
                 choice((
+                    // Optional member access: ?.ident or ?.[expr]
+                    choice((
+                        just("?.")
+                            .padded()
+                            .ignore_then(common::ident_parser())
+                            .map(MemberProp::Ident),
+                        just("?[")
+                            .padded()
+                            .ignore_then(expr.clone())
+                            .then_ignore(just(']').padded())
+                            .map(|e| MemberProp::Computed(Box::new(e))),
+                    ))
+                    .map_with_span(|prop, span| {
+                        Expr::OptionalMember(OptionalMemberExpr {
+                            obj: Box::new(Expr::Ident(Ident {
+                                sym: String::new(),
+                                span: 0..0,
+                            })), // Will be replaced in foldl
+                            prop,
+                            span,
+                        })
+                    }),
                     // Member access: .ident or [expr]
                     choice((
                         just('.')
@@ -73,6 +97,8 @@ pub fn expr_parser() -> impl Parser<char, Expr, Error = Simple<char>> {
                             span,
                         })
                     }),
+                    // Optional call: ?.(args...) - handled as optional member access to a call
+                    // This will be handled by combining ?. with a call expression
                     // Function call: (args...)
                     expr.clone()
                         .separated_by(just(',').padded())
@@ -93,16 +119,39 @@ pub fn expr_parser() -> impl Parser<char, Expr, Error = Simple<char>> {
             )
             .foldl(|lhs, op| {
                 match op {
+                    Expr::OptionalMember(mut member) => {
+                        let lhs_span = match &lhs {
+                            Expr::Ident(i) => i.span.clone(),
+                            Expr::Member(m) => m.span.clone(),
+                            Expr::OptionalMember(m) => m.span.clone(),
+                            Expr::Call(c) => c.span.clone(),
+                            Expr::Super(s) => s.span.clone(),
+                            _ => 0..0,
+                        };
+                        let member_span = member.span.clone();
+                        member.obj = Box::new(lhs);
+                        member.span = lhs_span.start..member_span.end;
+                        Expr::OptionalMember(member)
+                    }
                     Expr::Member(mut member) => {
                         // Update span to include the member access
                         let lhs_span = match &lhs {
                             Expr::Ident(i) => i.span.clone(),
                             Expr::Member(m) => m.span.clone(),
+                            Expr::OptionalMember(m) => m.span.clone(),
                             Expr::Call(c) => c.span.clone(),
+                            Expr::Super(s) => s.span.clone(),
                             _ => 0..0,
                         };
                         let member_span = member.span.clone();
-                        member.obj = Box::new(lhs);
+                        // Handle super.prop and super[expr]
+                        if let Expr::Super(super_expr) = lhs {
+                            // For super member access, we keep it as a regular member
+                            // The codegen will handle super member access specially
+                            member.obj = Box::new(Expr::Super(super_expr));
+                        } else {
+                            member.obj = Box::new(lhs);
+                        }
                         member.span = lhs_span.start..member_span.end;
                         Expr::Member(member)
                     }
@@ -111,11 +160,20 @@ pub fn expr_parser() -> impl Parser<char, Expr, Error = Simple<char>> {
                         let lhs_span = match &lhs {
                             Expr::Ident(i) => i.span.clone(),
                             Expr::Member(m) => m.span.clone(),
+                            Expr::OptionalMember(m) => m.span.clone(),
                             Expr::Call(c) => c.span.clone(),
+                            Expr::Super(s) => s.span.clone(),
                             _ => 0..0,
                         };
                         let call_span = call.span.clone();
-                        call.callee = Callee::Expr(Box::new(lhs));
+                        // Handle super(...) calls
+                        if let Expr::Super(super_expr) = lhs {
+                            call.callee = Callee::Super(Super {
+                                span: super_expr.span,
+                            });
+                        } else {
+                            call.callee = Callee::Expr(Box::new(lhs));
+                        }
                         call.span = lhs_span.start..call_span.end;
                         Expr::Call(call)
                     }
@@ -575,6 +633,7 @@ fn get_expr_span(expr: &Expr) -> std::ops::Range<usize> {
         Expr::Cond(c) => c.span.clone(),
         Expr::Call(c) => c.span.clone(),
         Expr::Member(m) => m.span.clone(),
+        Expr::OptionalMember(m) => m.span.clone(),
         Expr::Array(a) => a.span.clone(),
         Expr::Object(o) => o.span.clone(),
         Expr::Fn(f) => f.span.clone(),
@@ -585,6 +644,8 @@ fn get_expr_span(expr: &Expr) -> std::ops::Range<usize> {
         Expr::New(n) => n.span.clone(),
         Expr::Update(u) => u.span.clone(),
         Expr::Await(a) => a.span.clone(),
+        Expr::Yield(y) => y.span.clone(),
+        Expr::Super(s) => s.span.clone(),
         Expr::Tpl(t) => t.span.clone(),
     }
 }
@@ -641,7 +702,7 @@ fn prop_or_spread_parser(
         just("...")
             .padded()
             .ignore_then(expr.clone())
-            .map_with_span(|expr, span| PropOrSpread::Spread(SpreadElement { expr, span })),
+            .map_with_span(|expr, span| PropOrSpread::Spread(Box::new(SpreadElement { expr, span }))),
         // Property
         prop_parser(expr).map(PropOrSpread::Prop),
     ))
@@ -659,11 +720,11 @@ fn prop_parser(
             .then(just(':').padded().ignore_then(expr.clone()).or_not())
             .map_with_span(|(ident, opt_value), span| {
                 if let Some(value) = opt_value {
-                    Prop::KeyValue(KeyValueProp {
+                    Prop::KeyValue(Box::new(KeyValueProp {
                         key: PropName::Ident(ident.clone()),
                         value,
                         span,
-                    })
+                    }))
                 } else {
                     Prop::Shorthand(ident)
                 }
@@ -677,7 +738,7 @@ fn prop_parser(
             common::ident_parser().map(PropName::Ident),
         ))
         .then(just(':').padded().ignore_then(expr))
-        .map_with_span(|(key, value), span| Prop::KeyValue(KeyValueProp { key, value, span })),
+        .map_with_span(|(key, value), span| Prop::KeyValue(Box::new(KeyValueProp { key, value, span }))),
     ))
 }
 
@@ -720,6 +781,48 @@ fn await_expr_parser(
                 arg: Box::new(arg),
                 span,
             })
+        })
+}
+
+/// Parser for super expressions.
+///
+/// Pattern: `super` (member access and calls are handled in postfix)
+fn super_expr_parser() -> impl Parser<char, Expr, Error = Simple<char>> {
+    text::keyword("super")
+        .padded()
+        .map_with_span(|_, span: std::ops::Range<usize>| Expr::Super(SuperExpr { span }))
+}
+
+/// Parser for yield expressions.
+///
+/// Pattern: `yield expr?` or `yield* expr`
+fn yield_expr_parser(
+    expr: impl Parser<char, Expr, Error = Simple<char>> + Clone,
+) -> impl Parser<char, Expr, Error = Simple<char>> {
+    text::keyword("yield")
+        .padded()
+        .then(
+            just('*')
+                .padded()
+                .to(true)
+                .then(expr.clone())
+                .or(expr.map(|e| (false, e)))
+                .or_not(),
+        )
+        .map_with_span(|(_, opt_arg), span| {
+            if let Some((delegate, arg)) = opt_arg {
+                Expr::Yield(YieldExpr {
+                    arg: Some(Box::new(arg)),
+                    delegate,
+                    span,
+                })
+            } else {
+                Expr::Yield(YieldExpr {
+                    arg: None,
+                    delegate: false,
+                    span,
+                })
+            }
         })
 }
 

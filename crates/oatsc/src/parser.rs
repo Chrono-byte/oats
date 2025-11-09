@@ -60,6 +60,9 @@ pub struct ParsedModule {
     // Top-level `declare function` declarations found in the source.
     // Each entry contains the declared name and its function signature.
     pub declared_fns: Vec<DeclaredFn>,
+    // Token stream for the parsed source code
+    // This is exposed for testing and tooling purposes
+    pub tokens: Vec<oats_parser::tokenizer::Token>,
 }
 
 /// Lightweight representation of a top-level `declare function` signature
@@ -321,11 +324,15 @@ pub fn parse_oats_module_with_options(
         }
     }
 
+    // Tokenize the source code for exposure in ParsedModule
+    let tokens = oats_parser::tokenizer::tokenize(source_code);
+
     let parsed_module = ParsedModule {
         parsed: module,
         source: source_code.to_string(),
         mut_var_decls,
         declared_fns,
+        tokens,
     };
 
     Ok((Some(parsed_module), diags))

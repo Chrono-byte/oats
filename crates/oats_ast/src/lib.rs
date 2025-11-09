@@ -23,7 +23,7 @@ pub enum Stmt {
     VarDecl(VarDecl),
     ExprStmt(ExprStmt),
     If(IfStmt),
-    For(ForStmt),
+    For(Box<ForStmt>),
     ForIn(ForInStmt),
     ForOf(ForOfStmt),
     While(WhileStmt),
@@ -39,6 +39,10 @@ pub enum Stmt {
     Labeled(LabeledStmt),
     DeclareFn(DeclareFn),
     Import(ImportStmt),
+    TypeAlias(TypeAlias),
+    InterfaceDecl(InterfaceDecl),
+    EnumDecl(EnumDecl),
+    NamespaceDecl(NamespaceDecl),
 }
 
 /// Function declaration.
@@ -49,6 +53,7 @@ pub struct FnDecl {
     pub body: Option<BlockStmt>,
     pub return_type: Option<TsType>,
     pub is_async: bool,
+    pub is_generator: bool,
     pub span: Span,
 }
 
@@ -269,6 +274,99 @@ pub enum ImportSpecifier {
     },
 }
 
+/// Type alias declaration.
+#[derive(Debug, Clone)]
+pub struct TypeAlias {
+    pub ident: Ident,
+    pub type_params: Option<Vec<TsTypeParam>>,
+    pub ty: TsType,
+    pub span: Span,
+}
+
+/// Type parameter.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TsTypeParam {
+    pub ident: Ident,
+    pub constraint: Option<TsType>,
+    pub default: Option<TsType>,
+    pub span: Span,
+}
+
+/// Interface declaration.
+#[derive(Debug, Clone)]
+pub struct InterfaceDecl {
+    pub ident: Ident,
+    pub type_params: Option<Vec<TsTypeParam>>,
+    pub extends: Vec<TsTypeRef>,
+    pub body: Vec<InterfaceMember>,
+    pub span: Span,
+}
+
+/// Interface member.
+#[derive(Debug, Clone)]
+pub enum InterfaceMember {
+    Property(InterfaceProperty),
+    Method(InterfaceMethod),
+    IndexSignature(IndexSignature),
+}
+
+/// Interface property.
+#[derive(Debug, Clone)]
+pub struct InterfaceProperty {
+    pub ident: Ident,
+    pub ty: TsType,
+    pub optional: bool,
+    pub readonly: bool,
+    pub span: Span,
+}
+
+/// Interface method.
+#[derive(Debug, Clone)]
+pub struct InterfaceMethod {
+    pub ident: Ident,
+    pub params: Vec<Param>,
+    pub return_type: TsType,
+    pub optional: bool,
+    pub span: Span,
+}
+
+/// Index signature.
+#[derive(Debug, Clone, PartialEq)]
+pub struct IndexSignature {
+    pub key_name: Ident,
+    pub key_type: TsType,
+    pub value_type: TsType,
+    pub readonly: bool,
+    pub span: Span,
+}
+
+/// Enum declaration.
+#[derive(Debug, Clone)]
+pub struct EnumDecl {
+    pub ident: Ident,
+    pub members: Vec<EnumMember>,
+    pub span: Span,
+}
+
+/// Enum member (variant).
+#[derive(Debug, Clone)]
+pub struct EnumMember {
+    pub ident: Ident,
+    /// Optional fields for this variant. If None, variant has no data.
+    /// If Some, contains the field types (tuple-like variant).
+    /// For struct-like variants, this would be a tuple of types in order.
+    pub fields: Option<Vec<TsType>>,
+    pub span: Span,
+}
+
+/// Namespace declaration.
+#[derive(Debug, Clone)]
+pub struct NamespaceDecl {
+    pub ident: Ident,
+    pub body: Vec<Stmt>,
+    pub span: Span,
+}
+
 /// Class member.
 #[derive(Debug, Clone)]
 pub enum ClassMember {
@@ -311,6 +409,7 @@ pub struct Function {
     pub return_type: Option<TsType>,
     pub span: Span,
     pub is_async: bool,
+    pub is_generator: bool,
 }
 
 /// Function parameter.
@@ -399,6 +498,7 @@ pub enum Expr {
     Cond(CondExpr),
     Call(CallExpr),
     Member(MemberExpr),
+    OptionalMember(OptionalMemberExpr),
     Array(ArrayLit),
     Object(ObjectLit),
     Fn(FnExpr),
@@ -409,6 +509,8 @@ pub enum Expr {
     New(NewExpr),
     Update(UpdateExpr),
     Await(AwaitExpr),
+    Yield(YieldExpr),
+    Super(SuperExpr),
     Tpl(TplExpr),
     // Add more as needed
 }
@@ -534,6 +636,28 @@ pub struct MemberExpr {
     pub span: Span,
 }
 
+/// Optional member expression (optional chaining).
+#[derive(Debug, Clone)]
+pub struct OptionalMemberExpr {
+    pub obj: Box<Expr>,
+    pub prop: MemberProp,
+    pub span: Span,
+}
+
+/// Super expression.
+#[derive(Debug, Clone)]
+pub struct SuperExpr {
+    pub span: Span,
+}
+
+/// Yield expression.
+#[derive(Debug, Clone)]
+pub struct YieldExpr {
+    pub arg: Option<Box<Expr>>,
+    pub delegate: bool, // yield* vs yield
+    pub span: Span,
+}
+
 /// Member property.
 #[derive(Debug, Clone)]
 pub enum MemberProp {
@@ -560,14 +684,14 @@ pub struct ObjectLit {
 #[derive(Debug, Clone)]
 pub enum PropOrSpread {
     Prop(Prop),
-    Spread(SpreadElement),
+    Spread(Box<SpreadElement>),
 }
 
 /// Property.
 #[derive(Debug, Clone)]
 pub enum Prop {
     Shorthand(Ident),
-    KeyValue(KeyValueProp),
+    KeyValue(Box<KeyValueProp>),
     // Add more
 }
 
@@ -715,7 +839,43 @@ pub enum TsType {
     TsIntersectionType(TsIntersectionType),
     TsFunctionType(TsFunctionType),
     TsTupleType(TsTupleType),
+    TsTypeLit(TsTypeLit),
     // Add more as needed
+}
+
+/// Type literal (object type).
+#[derive(Debug, Clone, PartialEq)]
+pub struct TsTypeLit {
+    pub members: Vec<TsTypeElement>,
+    pub span: Span,
+}
+
+/// Type element in a type literal.
+#[derive(Debug, Clone, PartialEq)]
+pub enum TsTypeElement {
+    Property(TsPropertySignature),
+    Method(TsMethodSignature),
+    IndexSignature(IndexSignature),
+}
+
+/// Property signature in a type literal.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TsPropertySignature {
+    pub ident: Ident,
+    pub ty: TsType,
+    pub optional: bool,
+    pub readonly: bool,
+    pub span: Span,
+}
+
+/// Method signature in a type literal.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TsMethodSignature {
+    pub ident: Ident,
+    pub params: Vec<Param>,
+    pub return_type: TsType,
+    pub optional: bool,
+    pub span: Span,
 }
 
 /// Oats keyword type.

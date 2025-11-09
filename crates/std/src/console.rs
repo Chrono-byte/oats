@@ -1,6 +1,11 @@
 //! Console output functions
 
 /// Log a message to the console
+///
+/// # Safety
+///
+/// `msg` must be a valid pointer to a null-terminated C string, or null.
+/// If non-null, the string must remain valid for the duration of this call.
 /// #[oats_export]
 #[no_mangle]
 pub unsafe extern "C" fn oats_std_console_log(msg: *mut libc::c_char) {

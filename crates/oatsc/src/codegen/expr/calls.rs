@@ -110,6 +110,16 @@ impl<'a> CodeGen<'a> {
         } else if let Callee::Expr(boxed_expr) = &call.callee {
             match &**boxed_expr {
                 Expr::Member(member) => {
+                    // Handle super.method() calls - call parent class method
+                    if let Expr::Super(_) = &*member.obj {
+                        return self.lower_super_method_call(
+                            member,
+                            call,
+                            function,
+                            param_map,
+                            locals,
+                        );
+                    }
                     // Handle member calls like console.log() or Temporal.now()
                     if let Expr::Ident(obj_ident) = &*member.obj {
                         let obj_name = obj_ident.sym.to_string();
@@ -1001,6 +1011,165 @@ impl<'a> CodeGen<'a> {
             Err(Diagnostic::simple_with_span_boxed(
                 Severity::Error,
                 "unsupported call expression: callee form not supported",
+                call.span.start,
+            ))
+        }
+    }
+
+    /// Lower super method calls (super.method()).
+    ///
+    /// This calls the parent class's method function instead of the current class's.
+    fn lower_super_method_call(
+        &self,
+        member: &MemberExpr,
+        call: &CallExpr,
+        function: inkwell::values::FunctionValue<'a>,
+        param_map: &HashMap<String, u32>,
+        locals: &mut Vec<HashMap<String, LocalEntry<'a>>>,
+    ) -> crate::diagnostics::DiagnosticResult<inkwell::values::BasicValueEnum<'a>> {
+        // Determine which class this method belongs to
+        // Method functions are named as {Class}_{method}
+        // Constructor functions might be named as {Class}_ctor, {Class}_ctor_impl, or {Class}_init
+        let function_name = function.get_name().to_str().unwrap_or("");
+        let current_class = if let Some(underscore_pos) = function_name.rfind('_') {
+            let prefix = &function_name[..underscore_pos];
+            let suffix = &function_name[underscore_pos + 1..];
+            // Handle constructor function names: Foo_ctor, Foo_ctor_impl, Foo_init
+            if suffix == "ctor" || suffix == "init" || (suffix == "impl" && prefix.ends_with("_ctor")) {
+                // For Foo_ctor or Foo_init, the class name is the prefix
+                // For Foo_ctor_impl, we need to extract Foo from Foo_ctor
+                if suffix == "impl" {
+                    if let Some(ctor_pos) = prefix.rfind('_') {
+                        prefix[..ctor_pos].to_string()
+                    } else {
+                        prefix.to_string()
+                    }
+                } else {
+                    prefix.to_string()
+                }
+            } else {
+                // Regular method: {Class}_{method}
+                prefix.to_string()
+            }
+        } else {
+            // Fallback: try current_class_parent (for constructors)
+            if let Some(parent) = self.current_class_parent.borrow().as_ref() {
+                // If we're in a constructor, we need to find the class that has this parent
+                let class_parents = self.class_parents.borrow();
+                for (_class_name, class_parent) in class_parents.iter() {
+                    if class_parent.as_ref() == Some(parent) {
+                        // Found a class with this parent, use the parent directly
+                        return self.call_parent_method(parent, member, call, function, param_map, locals);
+                    }
+                }
+            }
+            return Err(Diagnostic::simple_with_span_boxed(
+                Severity::Error,
+                format!("cannot determine class from function name '{}'", function_name),
+                call.span.start,
+            ));
+        };
+
+        // Get parent class from class hierarchy
+        let class_parents = self.class_parents.borrow();
+        let parent = if let Some(parent_opt) = class_parents.get(&current_class) {
+            if let Some(p) = parent_opt {
+                p.clone()
+            } else {
+                return Err(Diagnostic::simple_with_span_boxed(
+                    Severity::Error,
+                    format!("class '{}' has no parent class", current_class),
+                    call.span.start,
+                ));
+            }
+        } else {
+            return Err(Diagnostic::simple_with_span_boxed(
+                Severity::Error,
+                format!("class '{}' not found in class hierarchy", current_class),
+                call.span.start,
+            ));
+        };
+        drop(class_parents); // Release borrow before calling method
+
+        self.call_parent_method(&parent, member, call, function, param_map, locals)
+    }
+
+    /// Helper to call a parent class method
+    fn call_parent_method(
+        &self,
+        parent: &str,
+        member: &MemberExpr,
+        call: &CallExpr,
+        function: inkwell::values::FunctionValue<'a>,
+        param_map: &HashMap<String, u32>,
+        locals: &mut Vec<HashMap<String, LocalEntry<'a>>>,
+    ) -> crate::diagnostics::DiagnosticResult<inkwell::values::BasicValueEnum<'a>> {
+
+        // Get method name
+        let method_name = if let MemberProp::Ident(prop_ident) = &member.prop {
+            prop_ident.sym.clone()
+        } else {
+            return Err(Diagnostic::simple_with_span_boxed(
+                Severity::Error,
+                "super method call requires identifier property",
+                call.span.start,
+            ));
+        };
+
+        // Get `this` pointer
+        let this_ptr = if let Some(pv) = function.get_nth_param(0) {
+            if let BasicValueEnum::PointerValue(ptr) = pv {
+                ptr
+            } else {
+                return Err(Diagnostic::simple_with_span_boxed(
+                    Severity::Error,
+                    "super used but 'this' parameter is not a pointer",
+                    call.span.start,
+                ));
+            }
+        } else {
+            return Err(Diagnostic::simple_with_span_boxed(
+                Severity::Error,
+                "super used in function with no 'this' parameter",
+                call.span.start,
+            ));
+        };
+
+        // Build call arguments: this + call.args
+        let mut call_args: Vec<inkwell::values::BasicMetadataValueEnum> = Vec::new();
+        call_args.push(this_ptr.into());
+        for a in &call.args {
+            let val = match self.lower_expr(a, function, param_map, locals) {
+                Ok(v) => v,
+                Err(d) => return Err(d)?,
+            };
+            call_args.push(val.into());
+        }
+
+        // Call parent class method: {Parent}_{method_name}
+        let method_fn_name = format!("{}_{}", parent, method_name);
+        if let Some(method_fn) = self.module.get_function(&method_fn_name) {
+            let cs = match self.builder.build_call(method_fn, &call_args, "super_method_call") {
+                Ok(cs) => cs,
+                Err(_) => {
+                    return Err(Diagnostic::simple_with_span_boxed(
+                        Severity::Error,
+                        format!("super method call '{}' failed", method_fn_name),
+                        call.span.start,
+                    ));
+                }
+            };
+            let either = cs.try_as_basic_value();
+            if let inkwell::Either::Left(bv) = either {
+                Ok(bv)
+            } else {
+                let zero = self.f64_t.const_float(0.0);
+                Ok(zero.as_basic_value_enum())
+            }
+        } else {
+            Err(Diagnostic::simple_with_span_boxed(
+                Severity::Error,
+                format!("super method '{}' not found in parent class '{}'", method_name, parent),
                 call.span.start,
             ))
         }

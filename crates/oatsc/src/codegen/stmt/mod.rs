@@ -18,6 +18,8 @@ pub mod expr_stmt;
 pub mod for_of;
 pub mod labeled;
 pub mod return_stmt;
+pub mod switch;
+pub mod try_catch;
 
 use crate::diagnostics::Severity;
 use inkwell::values::FunctionValue;
@@ -96,6 +98,15 @@ impl<'a> crate::codegen::CodeGen<'a> {
             }
             Stmt::DoWhile(dowhile_stmt) => {
                 self.lower_do_while_stmt(dowhile_stmt, function, param_map, locals_stack)
+            }
+            Stmt::Switch(switch_stmt) => {
+                self.lower_switch_stmt(switch_stmt, function, param_map, locals_stack)
+            }
+            Stmt::Try(try_stmt) => {
+                self.lower_try_stmt(try_stmt, function, param_map, locals_stack)
+            }
+            Stmt::Throw(throw_stmt) => {
+                self.lower_throw_stmt(throw_stmt, function, param_map, locals_stack)
             }
             Stmt::FnDecl(_) | Stmt::ClassDecl(_) => {
                 // Function and class declarations are handled at module level

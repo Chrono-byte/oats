@@ -5,6 +5,11 @@ use std::ffi::{CStr, CString};
 use std::path::Path;
 
 /// Join two paths (caller must free result)
+///
+/// # Safety
+///
+/// `base` and `component` must be valid pointers to null-terminated C strings, or null.
+/// If non-null, the strings must remain valid for the duration of this call.
 /// #[oats_export]
 #[no_mangle]
 pub unsafe extern "C" fn oats_std_path_join(
@@ -35,6 +40,11 @@ pub unsafe extern "C" fn oats_std_path_join(
 }
 
 /// Get file name from path (caller must free result)
+///
+/// # Safety
+///
+/// `path` must be a valid pointer to a null-terminated C string, or null.
+/// If non-null, the string must remain valid for the duration of this call.
 /// #[oats_export]
 #[no_mangle]
 pub unsafe extern "C" fn oats_std_path_file_name(path: *const c_char) -> *mut c_char {
@@ -60,6 +70,11 @@ pub unsafe extern "C" fn oats_std_path_file_name(path: *const c_char) -> *mut c_
 }
 
 /// Check if path is absolute
+///
+/// # Safety
+///
+/// `path` must be a valid pointer to a null-terminated C string, or null.
+/// If non-null, the string must remain valid for the duration of this call.
 /// #[oats_export]
 #[no_mangle]
 pub unsafe extern "C" fn oats_std_path_is_absolute(path: *const c_char) -> libc::c_int {

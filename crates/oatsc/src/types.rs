@@ -249,10 +249,22 @@ fn ts_type_span(ty: &TsType) -> oats_ast::Span {
         TsType::TsIntersectionType(it) => it.span.clone(),
         TsType::TsFunctionType(ft) => ft.span.clone(),
         TsType::TsTupleType(tt) => tt.span.clone(),
+        TsType::TsTypeLit(tl) => tl.span.clone(),
     }
 }
 
 pub fn map_ts_type(ty: &TsType) -> Option<OatsType> {
+    map_ts_type_with_aliases(ty, None)
+}
+
+/// Maps an Oats AST type annotation to OatsType, with optional type alias resolution.
+///
+/// If `type_aliases` is provided, type references will be resolved through the alias map.
+/// For generic type aliases, type arguments are substituted into the aliased type.
+pub fn map_ts_type_with_aliases(
+    ty: &TsType,
+    type_aliases: Option<&std::collections::HashMap<String, (Option<Vec<String>>, oats_ast::TsType)>>,
+) -> Option<OatsType> {
     match ty {
         TsType::TsKeywordType(keyword) => match keyword {
             TsKeywordType::TsNumberKeyword => Some(OatsType::Number),
@@ -280,12 +292,49 @@ pub fn map_ts_type(ty: &TsType) -> Option<OatsType> {
                     "char" => return Some(OatsType::Char),
                     _ => {}
                 }
+
+                // Check for type aliases before falling back to built-in types
+                if let Some(aliases) = type_aliases {
+                    if let Some((alias_type_params, aliased_type)) = aliases.get(&ident.sym) {
+                        // This is a type alias reference
+                        if let Some(type_params) = &type_ref.type_params {
+                            // Generic type alias instantiation: type Alias<T> = ...; used as Alias<Concrete>
+                            if let Some(alias_params) = alias_type_params {
+                                // Build substitution map: alias param -> concrete type arg
+                                let mut subst = std::collections::HashMap::new();
+                                for (i, alias_param) in alias_params.iter().enumerate() {
+                                    if let Some(concrete_arg) = type_params.params.get(i) {
+                                        if let Some(mapped_arg) = map_ts_type_with_aliases(concrete_arg, type_aliases) {
+                                            subst.insert(alias_param.clone(), mapped_arg);
+                                        }
+                                    }
+                                }
+                                // Apply substitution to aliased type, then resolve any nested aliases
+                                if let Some(substituted) = crate::types::map_ts_type_with_subst(aliased_type, &subst) {
+                                    // The substituted type might still contain other type aliases,
+                                    // so we need to resolve them. However, we can't easily do that
+                                    // from here since we're working with OatsType, not TsType.
+                                    // For now, return the substituted type. Nested aliases will be
+                                    // resolved when the type is used in contexts that call
+                                    // map_ts_type_with_aliases.
+                                    return Some(substituted);
+                                }
+                                // If substitution failed, try resolving the aliased type directly
+                                // (for non-parameterized parts)
+                                return map_ts_type_with_aliases(aliased_type, type_aliases);
+                            }
+                        } else {
+                            // Non-generic type alias: just resolve to the aliased type
+                            return map_ts_type_with_aliases(aliased_type, type_aliases);
+                        }
+                    }
+                }
                 // Check for generic classes or functions
                 if ident.sym.as_str() == "Generic"
                     && let Some(type_params) = &type_ref.type_params
                 {
                     let mapped_params: Vec<_> =
-                        type_params.params.iter().filter_map(map_ts_type).collect();
+                        type_params.params.iter().filter_map(|p| map_ts_type_with_aliases(p, type_aliases)).collect();
                     return Some(OatsType::Generic(mapped_params));
                 }
                 // Check if this is a Promise<T> type
@@ -294,7 +343,7 @@ pub fn map_ts_type(ty: &TsType) -> Option<OatsType> {
                     if let Some(type_params) = &type_ref.type_params
                         && let Some(first_param) = type_params.params.first()
                     {
-                        return map_ts_type(first_param)
+                        return map_ts_type_with_aliases(first_param, type_aliases)
                             .map(|inner| OatsType::Promise(Box::new(inner)));
                     }
                     // Promise without type parameter defaults to Promise<void>
@@ -312,7 +361,7 @@ pub fn map_ts_type(ty: &TsType) -> Option<OatsType> {
                     if let Some(type_params) = &type_ref.type_params
                         && let Some(first_param) = type_params.params.first()
                     {
-                        return map_ts_type(first_param)
+                        return map_ts_type_with_aliases(first_param, type_aliases)
                             .map(|inner| OatsType::Array(Box::new(inner)));
                     }
                     // No type param -> default to Array<number>
@@ -323,7 +372,7 @@ pub fn map_ts_type(ty: &TsType) -> Option<OatsType> {
                     if let Some(type_params) = &type_ref.type_params
                         && let Some(first_param) = type_params.params.first()
                     {
-                        return map_ts_type(first_param)
+                        return map_ts_type_with_aliases(first_param, type_aliases)
                             .map(|inner| OatsType::Weak(Box::new(inner)));
                     }
                     return None;
@@ -332,7 +381,7 @@ pub fn map_ts_type(ty: &TsType) -> Option<OatsType> {
                     if let Some(type_params) = &type_ref.type_params
                         && let Some(first_param) = type_params.params.first()
                     {
-                        return map_ts_type(first_param)
+                        return map_ts_type_with_aliases(first_param, type_aliases)
                             .map(|inner| OatsType::Unowned(Box::new(inner)));
                     }
                     return None;
@@ -341,7 +390,7 @@ pub fn map_ts_type(ty: &TsType) -> Option<OatsType> {
                     if let Some(type_params) = &type_ref.type_params
                         && let Some(first_param) = type_params.params.first()
                     {
-                        return map_ts_type(first_param)
+                        return map_ts_type_with_aliases(first_param, type_aliases)
                             .map(|inner| OatsType::Option(Box::new(inner)));
                     }
                     return None;
@@ -374,7 +423,7 @@ pub fn map_ts_type(ty: &TsType) -> Option<OatsType> {
                 }
                 if seen_nullish
                     && let Some(o) = other
-                    && let Some(mapped) = map_ts_type(o)
+                    && let Some(mapped) = map_ts_type_with_aliases(o, type_aliases)
                 {
                     return Some(OatsType::Option(Box::new(mapped)));
                 }
@@ -382,7 +431,7 @@ pub fn map_ts_type(ty: &TsType) -> Option<OatsType> {
 
             let mut parts = Vec::new();
             for t in &ut.types {
-                if let Some(mapped) = map_ts_type(t) {
+                if let Some(mapped) = map_ts_type_with_aliases(t, type_aliases) {
                     parts.push(mapped);
                 } else {
                     return None;
@@ -392,7 +441,7 @@ pub fn map_ts_type(ty: &TsType) -> Option<OatsType> {
         }
         TsType::TsArrayType(arr) => {
             // element type
-            map_ts_type(&arr.elem_type).map(|elem| OatsType::Array(Box::new(elem)))
+            map_ts_type_with_aliases(&arr.elem_type, type_aliases).map(|elem| OatsType::Array(Box::new(elem)))
         }
         // Map tuple types like `[A, B]` to an array-of-union of the element types.
         // This is a pragmatic compatibility choice: tuples are lowered to runtime
@@ -402,7 +451,7 @@ pub fn map_ts_type(ty: &TsType) -> Option<OatsType> {
             // Collect element types into a Tuple variant
             let mut elems: Vec<OatsType> = Vec::new();
             for elem in &tuple.elem_types {
-                if let Some(mapped) = map_ts_type(elem) {
+                if let Some(mapped) = map_ts_type_with_aliases(elem, type_aliases) {
                     elems.push(mapped);
                 } else {
                     return None;
@@ -413,16 +462,32 @@ pub fn map_ts_type(ty: &TsType) -> Option<OatsType> {
             }
             Some(OatsType::Tuple(elems))
         }
-        // Object literal types (TsTypeLit) are not yet supported in oats_ast.
-        // When TsTypeLit is added to oats_ast, implement mapping here:
-        // TsType::TsTypeLit(typelit) => {
-        //     // Object literal type: collect property signatures
-        //     // Map to StructLiteral variant with field names and types
-        //     // Example: { x: number, y: string } -> StructLiteral(vec![("x".to_string(), OatsType::Number), ("y".to_string(), OatsType::String)])
-        //     None
-        // }
-        // Note: Object literal types can be inferred from expressions (Expr::Object)
-        // and are already supported via StructLiteral in that context.
+        // Object literal types (TsTypeLit)
+        TsType::TsTypeLit(typelit) => {
+            // Object literal type: collect property signatures
+            // Map to StructLiteral variant with field names and types
+            // Example: { x: number, y: string } -> StructLiteral(vec![("x".to_string(), OatsType::Number), ("y".to_string(), OatsType::String)])
+            let mut fields = Vec::new();
+            for member in &typelit.members {
+                match member {
+                    TsTypeElement::Property(prop) => {
+                        if let Some(mapped_ty) = map_ts_type_with_aliases(&prop.ty, type_aliases) {
+                            fields.push((prop.ident.sym.clone(), mapped_ty));
+                        } else {
+                            return None;
+                        }
+                    }
+                    _ => {
+                        // Methods and index signatures not yet supported in StructLiteral
+                        return None;
+                    }
+                }
+            }
+            if fields.is_empty() {
+                return None;
+            }
+            Some(OatsType::StructLiteral(fields))
+        }
         _ => None,
     }
 }
@@ -552,8 +617,29 @@ pub fn map_ts_type_with_subst(
             }
             Some(OatsType::Tuple(elems))
         }
-        // Note: TsTypeLit doesn't exist in oats_ast, use TsTypeRef instead
-        // TsTypeRef is already handled above, so this pattern is unreachable
+        TsType::TsTypeLit(typelit) => {
+            // Object literal type with substitution
+            let mut fields = Vec::new();
+            for member in &typelit.members {
+                match member {
+                    TsTypeElement::Property(prop) => {
+                        if let Some(mapped_ty) = map_ts_type_with_subst(&prop.ty, subst) {
+                            fields.push((prop.ident.sym.clone(), mapped_ty));
+                        } else {
+                            return None;
+                        }
+                    }
+                    _ => {
+                        // Methods and index signatures not yet supported
+                        return None;
+                    }
+                }
+            }
+            if fields.is_empty() {
+                return None;
+            }
+            Some(OatsType::StructLiteral(fields))
+        }
         _ => {
             // Placeholder for other types
             None

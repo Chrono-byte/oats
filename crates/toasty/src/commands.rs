@@ -33,9 +33,8 @@ fn get_verbosity_and_color(cli: &Cli, color: Option<String>) -> bool {
     verbose
 }
 
-/// Helper function to set common CompileOptions fields from CLI parameters
-fn set_compile_options_from_cli(
-    mut options: CompileOptions,
+/// CLI build options grouped together
+struct CliBuildOptions {
     out_dir: Option<String>,
     out_name: Option<String>,
     linker: Option<String>,
@@ -47,77 +46,85 @@ fn set_compile_options_from_cli(
     release: bool,
     emit_object_only: bool,
     link_runtime: bool,
+}
+
+/// Helper function to set common CompileOptions fields from CLI parameters
+fn set_compile_options_from_cli(
+    mut options: CompileOptions,
+    cli_opts: CliBuildOptions,
 ) -> CompileOptions {
-    options.out_dir = out_dir;
-    options.out_name = out_name;
-    options.linker = linker;
-    options.opt_level = opt_level;
-    options.lto = lto;
-    options.target_triple = target_triple;
-    options.target_cpu = target_cpu;
-    options.target_features = target_features;
-    options.build_profile = if release {
+    options.out_dir = cli_opts.out_dir;
+    options.out_name = cli_opts.out_name;
+    options.linker = cli_opts.linker;
+    options.opt_level = cli_opts.opt_level;
+    options.lto = cli_opts.lto;
+    options.target_triple = cli_opts.target_triple;
+    options.target_cpu = cli_opts.target_cpu;
+    options.target_features = cli_opts.target_features;
+    options.build_profile = if cli_opts.release {
         Some("release".to_string())
     } else {
         None
     };
-    options.emit_object_only = emit_object_only;
-    options.link_runtime = link_runtime;
+    options.emit_object_only = cli_opts.emit_object_only;
+    options.link_runtime = cli_opts.link_runtime;
     options
 }
 
-/// Handle the build command
-pub fn handle_build(
-    cli: &Cli,
-    src: Option<String>,
-    out_dir: Option<String>,
-    out_name: Option<String>,
-    linker: Option<String>,
-    emit_object_only: bool,
-    no_link_runtime: bool,
-    opt_level: Option<String>,
-    lto: Option<String>,
-    target_triple: Option<String>,
-    target_cpu: Option<String>,
-    target_features: Option<String>,
-    release: bool,
-    quiet: bool,
-    color: Option<String>,
-) -> Result<()> {
-    let verbose = get_verbosity_and_color(cli, color);
+/// Build command options grouped together
+pub struct BuildCommandOptions {
+    pub src: Option<String>,
+    pub out_dir: Option<String>,
+    pub out_name: Option<String>,
+    pub linker: Option<String>,
+    pub emit_object_only: bool,
+    pub no_link_runtime: bool,
+    pub opt_level: Option<String>,
+    pub lto: Option<String>,
+    pub target_triple: Option<String>,
+    pub target_cpu: Option<String>,
+    pub target_features: Option<String>,
+    pub release: bool,
+    pub quiet: bool,
+    pub color: Option<String>,
+}
 
-    if release {
-        if !quiet && (verbose || cfg!(debug_assertions)) {
+/// Handle the build command
+pub fn handle_build(cli: &Cli, opts: BuildCommandOptions) -> Result<()> {
+    let verbose = get_verbosity_and_color(cli, opts.color.clone());
+
+    if opts.release {
+        if !opts.quiet && (verbose || cfg!(debug_assertions)) {
             eprintln!("{}", "Building in release mode...".green());
         }
-    } else if !quiet && (verbose || cfg!(debug_assertions)) {
+    } else if !opts.quiet && (verbose || cfg!(debug_assertions)) {
         eprintln!("{}", "Building in debug mode...".yellow());
     }
 
     // Determine source file
-    let src_file = determine_source_file(src.clone(), quiet, verbose)?;
+    let src_file = determine_source_file(opts.src.clone(), opts.quiet, verbose)?;
 
     // Check if this is a package-based build
     if let Some(manifest_path_str) = src_file.strip_prefix("package:") {
         let manifest_path = std::path::PathBuf::from(manifest_path_str);
         let build_config = crate::build::BuildConfig {
             verbose,
-            quiet,
-            release,
-            out_dir,
-            out_name,
-            linker,
-            opt_level,
-            lto,
-            target_triple,
-            target_cpu,
-            target_features,
-            no_link_runtime,
+            quiet: opts.quiet,
+            release: opts.release,
+            out_dir: opts.out_dir.clone(),
+            out_name: opts.out_name.clone(),
+            linker: opts.linker.clone(),
+            opt_level: opts.opt_level.clone(),
+            lto: opts.lto.clone(),
+            target_triple: opts.target_triple.clone(),
+            target_cpu: opts.target_cpu.clone(),
+            target_features: opts.target_features.clone(),
+            no_link_runtime: opts.no_link_runtime,
         };
 
         let exe_path = build::build_package_project(&manifest_path, build_config)?;
 
-        if !quiet && (verbose || cfg!(debug_assertions)) {
+        if !opts.quiet && (verbose || cfg!(debug_assertions)) {
             eprintln!(
                 "{}",
                 format!("Build complete: {}", exe_path.display()).green()
@@ -128,12 +135,12 @@ pub fn handle_build(
     }
 
     // Read out_dir from environment variable if not provided
-    let out_dir = out_dir.or_else(|| std::env::var("OATS_OUT_DIR").ok());
+    let out_dir = opts.out_dir.clone().or_else(|| std::env::var("OATS_OUT_DIR").ok());
 
     // Special case: if emit_object_only is requested and this is a single file with no dependencies,
     // compile it directly without the multi-module system
-    if emit_object_only {
-        if !quiet && (verbose || cfg!(debug_assertions)) {
+    if opts.emit_object_only {
+        if !opts.quiet && (verbose || cfg!(debug_assertions)) {
             eprintln!(
                 "{}",
                 "Compiling single file with emit-object-only...".blue()
@@ -142,22 +149,24 @@ pub fn handle_build(
 
         let options = set_compile_options_from_cli(
             CompileOptions::new(src_file.clone()),
-            out_dir.clone(),
-            out_name.clone(),
-            linker.clone(),
-            opt_level.clone(),
-            lto.clone(),
-            target_triple.clone(),
-            target_cpu.clone(),
-            target_features.clone(),
-            release,
-            true,             // emit_object_only
-            !no_link_runtime, // link_runtime
+            CliBuildOptions {
+                out_dir: out_dir.clone(),
+                out_name: opts.out_name.clone(),
+                linker: opts.linker.clone(),
+                opt_level: opts.opt_level.clone(),
+                lto: opts.lto.clone(),
+                target_triple: opts.target_triple.clone(),
+                target_cpu: opts.target_cpu.clone(),
+                target_features: opts.target_features.clone(),
+                release: opts.release,
+                emit_object_only: true,
+                link_runtime: !opts.no_link_runtime,
+            },
         );
 
         let build_out = compiler::invoke_oatsc(&options)?;
         if let Some(out_path) = build_out
-            && !quiet
+            && !opts.quiet
             && (verbose || cfg!(debug_assertions))
         {
             eprintln!(
@@ -169,13 +178,13 @@ pub fn handle_build(
     }
 
     // Build dependency graph starting from entry point
-    if !quiet && (verbose || cfg!(debug_assertions)) {
+    if !opts.quiet && (verbose || cfg!(debug_assertions)) {
         eprintln!("{}", "Building dependency graph...".blue());
     }
     let (dep_graph, node_indices, _entry_node) =
         project::build_dependency_graph(&src_file, verbose)?;
 
-    if !quiet && (verbose || cfg!(debug_assertions)) {
+    if !opts.quiet && (verbose || cfg!(debug_assertions)) {
         eprintln!(
             "{}",
             format!("Found {} module(s) to compile", node_indices.len()).green()
@@ -183,7 +192,7 @@ pub fn handle_build(
     }
 
     // Perform topological sort to get compilation order
-    if !quiet && (verbose || cfg!(debug_assertions)) {
+    if !opts.quiet && (verbose || cfg!(debug_assertions)) {
         eprintln!("{}", "Computing compilation order...".blue());
     }
     let compilation_order = project::topological_sort(&dep_graph, &node_indices)?;
@@ -195,7 +204,7 @@ pub fn handle_build(
         }
     }
 
-    if !quiet && (verbose || cfg!(debug_assertions)) {
+    if !opts.quiet && (verbose || cfg!(debug_assertions)) {
         eprintln!("{}", "Orchestrating compilation...".blue());
     }
 
@@ -204,7 +213,7 @@ pub fn handle_build(
     let mut compiled_modules = std::collections::HashMap::new();
 
     for (i, module_path) in compilation_order.iter().enumerate() {
-        if !quiet && (verbose || cfg!(debug_assertions)) {
+        if !opts.quiet && (verbose || cfg!(debug_assertions)) {
             eprintln!(
                 "{}",
                 format!(
@@ -219,17 +228,19 @@ pub fn handle_build(
 
         let mut options = set_compile_options_from_cli(
             CompileOptions::new(module_path.clone()),
-            out_dir.clone(),
-            Some(format!("{}_module", i)),
-            linker.clone(),
-            opt_level.clone(),
-            lto.clone(),
-            target_triple.clone(),
-            target_cpu.clone(),
-            target_features.clone(),
-            release,
-            true,             // emit_object_only
-            !no_link_runtime, // link_runtime
+            CliBuildOptions {
+                out_dir: out_dir.clone(),
+                out_name: Some(format!("{}_module", i)),
+                linker: opts.linker.clone(),
+                opt_level: opts.opt_level.clone(),
+                lto: opts.lto.clone(),
+                target_triple: opts.target_triple.clone(),
+                target_cpu: opts.target_cpu.clone(),
+                target_features: opts.target_features.clone(),
+                release: opts.release,
+                emit_object_only: true,
+                link_runtime: !opts.no_link_runtime,
+            },
         );
 
         // For Phase 1: if this is not the first module, add extern_oats for previous modules
@@ -255,12 +266,12 @@ pub fn handle_build(
 
     // Phase 1: Link all compiled modules together
     // In Phase 2, this will be done by toasty after all packages are compiled
-    if emit_object_only {
-        if !quiet && (verbose || cfg!(debug_assertions)) {
+    if opts.emit_object_only {
+        if !opts.quiet && (verbose || cfg!(debug_assertions)) {
             eprintln!("{}", "Skipping linking due to emit-object-only...".blue());
         }
         // For multi-module builds with emit_object_only, just report the object files
-        if !quiet && (verbose || cfg!(debug_assertions)) {
+        if !opts.quiet && (verbose || cfg!(debug_assertions)) {
             eprintln!("{}", "Compiled object files:".green());
             for (module_path, obj_file) in &compiled_modules {
                 eprintln!("  {} -> {}", module_path, obj_file.display());
@@ -269,12 +280,12 @@ pub fn handle_build(
         return Ok(());
     }
 
-    if !quiet && (verbose || cfg!(debug_assertions)) {
+    if !opts.quiet && (verbose || cfg!(debug_assertions)) {
         eprintln!("{}", "Linking final executable...".blue());
     }
 
     // Link all object files together
-    let exe_name = out_name.unwrap_or_else(|| {
+    let exe_name = opts.out_name.clone().unwrap_or_else(|| {
         std::path::Path::new(&src_file)
             .file_stem()
             .and_then(|s| s.to_str())
@@ -287,9 +298,9 @@ pub fn handle_build(
         .unwrap_or_else(|| std::path::Path::new(&exe_name).to_path_buf());
 
     // Link the executable
-    linker::link_executable(&compiled_modules, &exe_path, linker, verbose)?;
+    linker::link_executable(&compiled_modules, &exe_path, opts.linker.clone(), verbose)?;
 
-    if !quiet && (verbose || cfg!(debug_assertions)) {
+    if !opts.quiet && (verbose || cfg!(debug_assertions)) {
         eprintln!(
             "{}",
             format!("Build finished: {}", exe_path.display()).green()

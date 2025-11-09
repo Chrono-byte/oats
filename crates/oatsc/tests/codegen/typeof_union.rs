@@ -37,7 +37,8 @@ export function main(x: number | string): string {
                     body: fn_decl.body.clone(),
                     return_type: fn_decl.return_type.clone(),
                     span: fn_decl.span.clone(),
-                    is_async: false,
+                    is_async: fn_decl.is_async,
+                    is_generator: fn_decl.is_generator,
                 },
             ));
             break;

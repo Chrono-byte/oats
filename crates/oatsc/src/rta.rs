@@ -227,7 +227,8 @@ fn collect_function_asts(modules: &HashMap<String, ParsedModule>) -> HashMap<Str
                     body: fn_decl.body.clone(),
                     return_type: fn_decl.return_type.clone(),
                     span: fn_decl.span.clone(),
-                    is_async: false,
+                    is_async: fn_decl.is_async,
+                    is_generator: fn_decl.is_generator,
                 };
                 functions.insert(name, func);
             }
@@ -248,6 +249,7 @@ fn collect_function_asts(modules: &HashMap<String, ParsedModule>) -> HashMap<Str
                             return_type: method.return_type.clone(),
                             span: method.span.clone(),
                             is_async: false,
+                            is_generator: false,
                         };
                         functions.insert(method_name, func);
                     }

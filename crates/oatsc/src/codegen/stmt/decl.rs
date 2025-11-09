@@ -34,6 +34,17 @@ struct DeclTypeInfo {
     effective_type: crate::types::OatsType,
 }
 
+/// Context information for variable declaration processing
+struct VarDeclContext<'b> {
+    name: String,
+    var_decl: &'b oats_ast::VarDecl,
+    is_mut_decl: bool,
+    declared_is_weak: bool,
+    declared_union: Option<crate::types::OatsType>,
+    declared_nominal: Option<String>,
+}
+
+
 impl<'a> crate::codegen::CodeGen<'a> {
     /// Resolve type information from a variable declaration.
     ///
@@ -50,7 +61,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
         // Determine if the identifier has an explicit type annotation
         if let Some(ty) = &decl.ty
-            && let Some(mapped) = crate::types::map_ts_type(ty)
+            && let Some(mapped) = crate::types::map_ts_type_with_aliases(ty, Some(&*self.type_aliases.borrow()))
         {
             declared_mapped = Some(mapped.clone());
             if let crate::types::OatsType::Union(_) = &mapped {
@@ -264,17 +275,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
     /// If the declared type is a Tuple and the initializer is an array literal,
     /// allocate a native tuple object and register its field types.
     /// Returns `Ok(true)` if tuple initialization was handled, `Ok(false)` otherwise.
-    #[allow(unused_variables)]
-    fn handle_tuple_init(
+    fn handle_tuple_init<'b>(
         &self,
         init: &oats_ast::Expr,
         declared_mapped: &Option<crate::types::OatsType>,
-        name: &str,
-        var_decl: &oats_ast::VarDecl,
-        is_mut_decl: bool,
-        declared_is_weak: bool,
-        declared_union: &Option<crate::types::OatsType>,
-        declared_nominal: &Option<String>,
+        var_ctx: &VarDeclContext<'b>,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals_stack: &mut LocalsStackLocal<'a>,
@@ -290,7 +295,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         let elem_count = arr_lit.elems.len();
         // Generate a nominal name for this tuple shape
         let fname = function.get_name().to_str().unwrap_or("<fn>");
-        let gen_name = format!("tuple_{}_{}", fname, name);
+        let gen_name = format!("tuple_{}_{}", fname, var_ctx.name);
         // Register field list under class_fields as ("0", type0), ...
         let mut fields: Vec<(String, crate::types::OatsType)> = Vec::new();
         for (i, et) in elem_types.iter().enumerate() {
@@ -382,7 +387,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
         // Create an alloca for the local and store the tuple pointer
         let allocated_ty = self.i8ptr_t.as_basic_type_enum();
-        let alloca = match self.builder.build_alloca(allocated_ty, name) {
+        let alloca = match self.builder.build_alloca(allocated_ty, &var_ctx.name) {
             Ok(a) => a,
             Err(_) => {
                 crate::diagnostics::emit_diagnostic(
@@ -396,7 +401,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             }
         };
         // increment rc for stored pointer (unless elided)
-        if !self.should_elide_rc_for_local(name) {
+        if !self.should_elide_rc_for_local(&var_ctx.name) {
             let rc_inc = self.get_rc_inc();
             let _ = self
                 .builder
@@ -409,15 +414,15 @@ impl<'a> crate::codegen::CodeGen<'a> {
         self.insert_local_current_scope(
             locals_stack,
             crate::codegen::helpers::LocalVarInfo {
-                name: name.to_string(),
+                name: var_ctx.name.clone(),
                 ptr: alloca,
                 ty: allocated_ty,
                 initialized: true,
                 // If this was a `let` without `mut`, treat as const/immutable
-                is_const: matches!(var_decl.kind, oats_ast::VarDeclKind::Const) || !is_mut_decl,
-                is_weak: declared_is_weak,
+                is_const: matches!(var_ctx.var_decl.kind, oats_ast::VarDeclKind::Const) || !var_ctx.is_mut_decl,
+                is_weak: var_ctx.declared_is_weak,
                 nominal: Some(gen_name),
-                oats_type: declared_union.clone(),
+                oats_type: var_ctx.declared_union.clone(),
             },
         );
         Ok(true)
@@ -757,7 +762,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         let _is_mut_decl = matches!(var_decl.kind, VarDeclKind::Let { mutable: true });
 
         // Extract each property
-        if let Some(prop) = obj_pat.props.iter().next() {
+        if let Some(prop) = obj_pat.props.first() {
             match prop {
                 ObjectPatProp::KeyValue {
                     key, value: _value, ..
@@ -938,19 +943,15 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     }
 
                     // Handle tuple initialization
-                    if self.handle_tuple_init(
-                        init,
-                        &declared_mapped,
-                        &name,
+                    let var_ctx = VarDeclContext {
+                        name: name.clone(),
                         var_decl,
                         is_mut_decl,
                         declared_is_weak,
-                        &declared_union,
-                        &declared_nominal,
-                        function,
-                        param_map,
-                        locals_stack,
-                    )? {
+                        declared_union: declared_union.clone(),
+                        declared_nominal: declared_nominal.clone(),
+                    };
+                    if self.handle_tuple_init(init, &declared_mapped, &var_ctx, function, param_map, locals_stack)? {
                         continue;
                     }
 
@@ -1029,27 +1030,27 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         }
                     } else {
                         // Lowering failed, handle uninitialized variable
-                        self.handle_uninitialized_var(
-                            &name,
+                        let var_ctx = VarDeclContext {
+                            name: name.clone(),
                             var_decl,
                             is_mut_decl,
                             declared_is_weak,
-                            &declared_union,
-                            &declared_nominal,
-                            locals_stack,
-                        )?;
+                            declared_union: declared_union.clone(),
+                            declared_nominal: declared_nominal.clone(),
+                        };
+                        self.handle_uninitialized_var(&var_ctx, locals_stack)?;
                     }
                 } else {
                     // No initializer: create an uninitialized slot
-                    self.handle_uninitialized_var(
-                        &name,
+                    let var_ctx = VarDeclContext {
+                        name: name.clone(),
                         var_decl,
                         is_mut_decl,
                         declared_is_weak,
-                        &declared_union,
-                        &declared_nominal,
-                        locals_stack,
-                    )?;
+                        declared_union: declared_union.clone(),
+                        declared_nominal: declared_nominal.clone(),
+                    };
+                    self.handle_uninitialized_var(&var_ctx, locals_stack)?;
                 }
             }
         }
@@ -1062,23 +1063,18 @@ impl<'a> crate::codegen::CodeGen<'a> {
     /// Creates an uninitialized slot using `i64` as a conservative ABI choice
     /// (or `i8ptr` for unions). The slot will be marked uninitialized so further
     /// lowering can detect reads of uninitialized locals and emit diagnostics.
-    fn handle_uninitialized_var(
+    fn handle_uninitialized_var<'b>(
         &self,
-        name: &str,
-        var_decl: &oats_ast::VarDecl,
-        is_mut_decl: bool,
-        declared_is_weak: bool,
-        declared_union: &Option<crate::types::OatsType>,
-        declared_nominal: &Option<String>,
+        var_ctx: &VarDeclContext<'b>,
         locals_stack: &mut LocalsStackLocal<'a>,
     ) -> crate::diagnostics::DiagnosticResult<()> {
         // For union types, use i8ptr since unions are boxed.
-        let ty = if declared_union.is_some() {
+        let ty = if var_ctx.declared_union.is_some() {
             self.i8ptr_t.as_basic_type_enum()
         } else {
             self.i64_t.as_basic_type_enum()
         };
-        let alloca = match self.builder.build_alloca(ty, name) {
+        let alloca = match self.builder.build_alloca(ty, &var_ctx.name) {
             Ok(a) => a,
             Err(_) => {
                 crate::diagnostics::emit_diagnostic(
@@ -1094,14 +1090,14 @@ impl<'a> crate::codegen::CodeGen<'a> {
         self.insert_local_current_scope(
             locals_stack,
             crate::codegen::helpers::LocalVarInfo {
-                name: name.to_string(),
+                name: var_ctx.name.clone(),
                 ptr: alloca,
                 ty,
                 initialized: false,
-                is_const: matches!(var_decl.kind, oats_ast::VarDeclKind::Const) || !is_mut_decl,
-                is_weak: declared_is_weak,
-                nominal: declared_nominal.clone(),
-                oats_type: declared_union.clone(),
+                is_const: matches!(var_ctx.var_decl.kind, oats_ast::VarDeclKind::Const) || !var_ctx.is_mut_decl,
+                is_weak: var_ctx.declared_is_weak,
+                nominal: var_ctx.declared_nominal.clone(),
+                oats_type: var_ctx.declared_union.clone(),
             },
         );
         Ok(())

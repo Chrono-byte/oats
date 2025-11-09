@@ -3,6 +3,11 @@
 use libc::c_char;
 
 /// Get environment variable (caller must free result)
+///
+/// # Safety
+///
+/// `name` must be a valid pointer to a null-terminated C string, or null.
+/// If non-null, the string must remain valid for the duration of this call.
 /// #[oats_export]
 #[no_mangle]
 pub unsafe extern "C" fn oats_std_env_get_var(name: *const c_char) -> *mut c_char {

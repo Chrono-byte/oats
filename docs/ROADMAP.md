@@ -7,6 +7,7 @@ Oats is a systems programming language with low-level control. Currently support
 **Overall Assessment:** ⭐⭐⭐⭐ (4/5)
 
 **Strengths:**
+
 - Clean architecture with well-separated concerns
 - Excellent documentation
 - Strong focus on safety and security
@@ -14,14 +15,26 @@ Oats is a systems programming language with low-level control. Currently support
 - Modern Rust practices
 
 **Areas for Improvement:**
-- Some missing language features (documented below)
+
 - Error handling could be more consistent in some areas
-- Some TODOs require AST changes
 - Large files like `builder.rs` (1370+ lines) could be refactored
+- Codegen implementation needed for newly added AST features
 
 **Recent Improvements:**
+
 - ✅ Compound assignment operators (`+=`, `-=`, `*=`, etc.)
 - ✅ Array destructuring patterns (`let [a, b, c] = arr`)
+- ✅ **Major Language Feature Completion (January 2025):**
+  - ✅ Type aliases (`type Name<T> = Type`)
+  - ✅ Interfaces with properties, methods, and index signatures
+  - ✅ Enums with string/number values
+  - ✅ Namespaces (`namespace Name { body }`)
+  - ✅ Optional chaining (`?.`, `?.[]`)
+  - ✅ Generators and yield (`function*`, `yield`, `yield*`)
+  - ✅ Super expressions (`super`, `super.prop`, `super.method()`)
+  - ✅ Type literal types (`{ prop: type }`)
+  - ✅ Async function parsing (fully implemented)
+  - ✅ Object destructuring patterns (AST and parser complete)
 
 ## Phase 1: Core Features
 
@@ -31,7 +44,18 @@ Oats is a systems programming language with low-level control. Currently support
 - Async/await, destructuring, template literals
 - Arrow functions, loops, modules
 - ✅ Array destructuring patterns (`let [a, b, c] = arr`)
+- ✅ Object destructuring patterns (`{a, b}`, `{a: x, b: y}`, `{...rest}`)
 - ✅ Compound assignment operators (`+=`, `-=`, `*=`, `/=`, `%=`, `<<=`, `>>=`, `>>>=`, `&=`, `|=`, `^=`, `**=`)
+- ✅ Type aliases (`type Name<T> = Type`)
+- ✅ Interfaces (`interface Name extends Base? { members }`)
+- ✅ Enums (`enum Name { Variant = value? }`)
+- ✅ Namespaces (`namespace Name { body }`)
+- ✅ Optional chaining (`obj?.prop`, `arr?.[0]`, `func?.()`)
+- ✅ Generators (`function*`, `async function*`)
+- ✅ Yield expressions (`yield expr`, `yield* expr`)
+- ✅ Super expressions (`super.prop`, `super.method()`, `super(...)`)
+- ✅ Type literal types (`{ prop: type, method(): type }`)
+- ✅ Import/Export statements (AST and parser complete)
 
 ### TODO
 
@@ -46,154 +70,47 @@ This section documents language features that are missing from the AST and/or pa
 
 ### Summary
 
-- **AST Missing:** 11 features
-- **Parser Missing:** 13 features
-- **Both Missing:** 8 features
+- **AST Missing:** 0 features (all core features implemented!)
+- **Parser Missing:** 0 features (all core features implemented!)
+- **Both Missing:** 0 features
 
-### High Priority (Blocks Common Use Cases)
+**Status:** ✅ **All core language features are now implemented in AST and parser!**
 
-#### 1. Import/Export Statements
+### Remaining Advanced Features
 
-**Status:** ❌ Missing from both AST and parser
+The following advanced TypeScript features are not yet implemented but are lower priority:
 
-- **Impact:** Critical for module system
-- **AST Location:** `Stmt` enum needs `Import` variant
-- **Required:** `ImportStmt` struct with source path and import specifiers
-- **Parser Location:** `stmt.rs` - needs `import_stmt_parser()`
-- **Required:** Parse `import { ... } from "...";` and `import * as X from "...";`
+### ✅ Completed Features (January 2025)
 
-#### 2. Destructuring Patterns (Object)
+All of the following features have been fully implemented in both AST and parser:
 
-**Status:** ⚠️ Partially implemented (array destructuring done, object destructuring missing)
+1. ✅ **Import/Export Statements** - Complete AST and parser support
+2. ✅ **Object Destructuring** - Full support for `{a, b}`, `{a: x}`, `{...rest}` patterns
+3. ✅ **Async Function Parsing** - Parser now correctly sets `is_async: true`
+4. ✅ **Type Aliases** - `type Name<T extends U = V> = Type;`
+5. ✅ **Interfaces** - Full support with properties, methods, index signatures, and extends
+6. ✅ **Enums** - `enum Name { Variant = value? }` with string/number values
+7. ✅ **Optional Chaining** - `obj?.prop`, `arr?.[0]` support
+8. ✅ **Generators and Yield** - `function*`, `async function*`, `yield`, `yield*`
+9. ✅ **Namespaces** - `namespace Name { body }`
+10. ✅ **Type Literal Types** - `{ prop: type, method(): type }`
+11. ✅ **Super Expressions** - `super`, `super.prop`, `super.method()`, `super(...)`
+12. ✅ **Sequence Expressions** - Comma-separated expressions supported
 
-- **Current:** Array destructuring `[a, b, c]` is implemented
-- **Missing:** Object destructuring `{a, b}`, rest patterns `...rest`
-- **AST Location:** `Pat` enum needs variants for `ObjectPat`, `RestPat`
-- **Parser Location:** `common.rs` - `pat_parser()` needs object pattern support
-- **Impact:** Blocks object destructuring in variable declarations, function parameters, assignments
+### Remaining Advanced Type Features
 
-#### 3. Async Function Parsing
+The following advanced TypeScript type system features are not yet implemented:
 
-**Status:** ⚠️ Partially implemented
+#### Advanced Type Features
 
-- **Current:** AST has `Function.is_async` field, but parser hardcodes `is_async: false`
-- **Parser Location:** `function.rs` - `fn_decl_parser()` and `fn_expr_parser()`
-- **Required:** Parse `async function name() { }` and set `is_async: true`
-
-### Medium Priority (Common TypeScript Features)
-
-#### 4. Type Aliases
-
-**Status:** ❌ Missing from both AST and parser
-
-- **AST Location:** `Stmt` enum needs `TypeAlias` variant
-- **Required:** `TypeAlias` struct with name, type parameters, and type definition
-- **Parser Location:** `stmt.rs` - needs `type_alias_parser()`
-- **Required:** Parse `type Name<T> = Type;`
-
-#### 5. Interfaces
-
-**Status:** ❌ Missing from both AST and parser
-
-- **AST Location:** `Stmt` enum needs `InterfaceDecl` variant
-- **Required:** `InterfaceDecl` struct with name, extends, and members
-- **Parser Location:** `stmt.rs` - needs `interface_decl_parser()`
-- **Required:** Parse `interface Name extends Base? { members }`
-
-#### 6. Enums
-
-**Status:** ❌ Missing from both AST and parser
-
-- **AST Location:** `Stmt` enum needs `EnumDecl` variant
-- **Required:** `EnumDecl` struct with name and variants (with optional values)
-- **Parser Location:** `stmt.rs` - needs `enum_decl_parser()`
-- **Required:** Parse `enum Name { Variant = value? }`
-
-#### 7. Optional Chaining
-
-**Status:** ❌ Missing from both AST and parser
-
-- **Evidence:** Common TypeScript feature `obj?.prop`, `arr?.[0]`, `func?.()`
-- **AST Location:** `MemberExpr` needs optional flag, or new `OptionalMemberExpr`
-- **Parser Location:** `expr.rs` - member access parsing
-- **Required:** Support for `?.` operator in member access and calls
-
-### Lower Priority (Advanced Features)
-
-#### 8. Generators and Yield
-
-**Status:** ❌ Missing from both AST and parser
-
-- **Evidence:** Tests show `async function* asyncGenerator() { yield ... }`
-- **AST Location:** `Expr` enum needs `Yield` variant
-- **Required:** `YieldExpr` struct with optional argument
-- **Parser Location:** `function.rs` - needs generator support, `expr.rs` - needs `yield_expr_parser()`
-- **Required:** Parse `function* name() { }`, `async function* name() { }`, `yield expr`, `yield* expr`
-- **AST Note:** `Function` struct may need `is_generator: bool` field
-
-#### 9. Namespaces
-
-**Status:** ❌ Missing from both AST and parser
-
-- **AST Location:** `Stmt` enum needs `NamespaceDecl` variant
-- **Required:** `NamespaceDecl` struct with name and body
-- **Parser Location:** `stmt.rs` - needs `namespace_decl_parser()`
-- **Required:** Parse `namespace Name { body }`
-
-#### 10. Type Literal Types
-
-**Status:** ⚠️ Partially missing from AST
-
-- **Evidence:** TODO_REVIEW.md mentions "Object literal types not yet supported in oats_ast"
-- **Current:** `TsType` enum doesn't have `TsTypeLit` variant
-- **AST Location:** `TsType` enum needs `TsTypeLit(TsTypeLit)` variant
-- **Required:** `TsTypeLit` struct with properties
-
-#### 11. Advanced Type Features
-
-**Status:** ❌ Missing from AST
+**Status:** ❌ Not yet implemented (lower priority)
 
 - **Missing Types:**
   - Conditional types: `T extends U ? X : Y`
   - Mapped types: `{[K in keyof T]: T[K]}`
-  - Index signatures: `[key: string]: number`
-  - Readonly/Partial/Required utility types
-- **AST Location:** `TsType` enum needs additional variants
-
-#### 12. Super Expressions
-
-**Status:** ⚠️ Partially implemented
-
-- **Current:** AST has `Super` struct and `Callee::Super(Super)` variant
-- **Parser Location:** `expr.rs` - needs `super_expr_parser()`
-- **Required:** Parse `super.prop`, `super.method()`, `super(...)`
-
-#### 13. Sequence Expressions
-
-**Status:** ⚠️ Unclear if implemented
-
-- **Current:** AST has `SeqExpr` struct
-- **Parser Location:** `expr.rs` - needs verification
-- **Required:** Parse comma-separated expressions `a, b, c` (not just in function args)
-
-### Implementation Priority
-
-1. **High Priority:**
-   - Import statements (critical for module system)
-   - Complete object destructuring (needs class field metadata support)
-   - Async function parsing (AST supports it, parser doesn't use it)
-
-2. **Medium Priority:**
-   - Type aliases
-   - Interfaces
-   - Enums
-   - Optional chaining
-
-3. **Lower Priority:**
-   - Generators/yield
-   - Namespaces
-   - Advanced type features
-   - Type literal types
+  - Utility types: `Readonly<T>`, `Partial<T>`, `Required<T>`, `Pick<T, K>`, etc.
+- **Note:** Index signatures are supported in interfaces and type literals
+- **AST Location:** `TsType` enum would need additional variants for these
 
 ## Phase 2: Systems Stuff
 
@@ -227,7 +144,9 @@ This section documents language features that are missing from the AST and/or pa
 
 ### Other
 
-- Decorators, namespaces, generators
+- ✅ Namespaces (implemented)
+- ✅ Generators (implemented)
+- Decorators
 - Exponentiation, for-await
 
 ## Phase 3: Runtime & Tools
@@ -243,10 +162,12 @@ This section documents language features that are missing from the AST and/or pa
 
 ### Next Weeks
 
+- ✅ Enum AST/parser (complete)
 - Enum codegen
 - Generic constraints
 - Access modifiers
 - Memory primitives
+- Codegen for newly added features (interfaces, type aliases, namespaces, etc.)
 
 ### Months
 

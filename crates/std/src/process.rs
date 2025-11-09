@@ -5,6 +5,12 @@ use std::ffi::{CStr, CString};
 use std::process::Command;
 
 /// Execute a command and return its output as a string (caller must free)
+///
+/// # Safety
+///
+/// `program` must be a valid pointer to a null-terminated C string, or null.
+/// `args` must be a valid pointer to an array of `args_len` pointers to null-terminated C strings, or null.
+/// If non-null, all strings must remain valid for the duration of this call.
 /// #[oats_export]
 #[no_mangle]
 pub unsafe extern "C" fn oats_std_process_exec(
@@ -51,6 +57,12 @@ pub unsafe extern "C" fn oats_std_process_exec(
 }
 
 /// Execute a command and return exit code
+///
+/// # Safety
+///
+/// `program` must be a valid pointer to a null-terminated C string, or null.
+/// `args` must be a valid pointer to an array of `args_len` pointers to null-terminated C strings, or null.
+/// If non-null, all strings must remain valid for the duration of this call.
 /// #[oats_export]
 #[no_mangle]
 pub unsafe extern "C" fn oats_std_process_exec_status(

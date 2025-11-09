@@ -13,6 +13,7 @@ mod common;
 mod expr;
 mod function;
 mod stmt;
+pub mod tokenizer;
 mod types;
 
 use chumsky::prelude::*;

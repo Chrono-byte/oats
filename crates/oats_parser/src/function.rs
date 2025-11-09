@@ -30,7 +30,7 @@ pub fn declare_fn_parser() -> impl Parser<char, DeclareFn, Error = Simple<char>>
 
 /// Parser for function declarations.
 ///
-/// Pattern: `async? function name(params): returnType? { body }`
+/// Pattern: `async? function*? name(params): returnType? { body }`
 pub fn fn_decl_parser(
     stmt: impl Parser<char, Stmt, Error = Simple<char>> + Clone,
 ) -> impl Parser<char, FnDecl, Error = Simple<char>> {
@@ -38,25 +38,29 @@ pub fn fn_decl_parser(
         .padded()
         .or_not()
         .then(text::keyword("function").padded())
+        .then(just('*').padded().or_not())
         .then(common::ident_parser())
         .then(common::param_list_parser())
         .then(common::optional_type_annotation())
         .then(common::optional_block_parser(stmt))
         .map_with_span(
-            |(((((is_async, _), ident), params), return_type), body), span| FnDecl {
-                ident,
-                params,
-                body,
-                return_type,
-                is_async: is_async.is_some(),
-                span,
+            |((((((is_async, _), is_generator), ident), params), return_type), body), span| {
+                FnDecl {
+                    ident,
+                    params,
+                    body,
+                    return_type,
+                    is_async: is_async.is_some(),
+                    is_generator: is_generator.is_some(),
+                    span,
+                }
             },
         )
 }
 
 /// Parser for function expressions.
 ///
-/// Pattern: `async? function name?(params): returnType? { body }`
+/// Pattern: `async? function*? name?(params): returnType? { body }`
 pub fn fn_expr_parser(
     stmt: impl Parser<char, Stmt, Error = Simple<char>> + Clone,
 ) -> impl Parser<char, Expr, Error = Simple<char>> {
@@ -64,17 +68,19 @@ pub fn fn_expr_parser(
         .padded()
         .or_not()
         .then(text::keyword("function").padded())
+        .then(just('*').padded().or_not())
         .then(common::ident_parser().or_not())
         .then(common::param_list_parser())
         .then(common::optional_type_annotation())
         .then(common::optional_block_parser(stmt))
         .map_with_span(
-            |(((((is_async, _), ident), params), return_type), body), span| {
+            |((((((is_async, _), is_generator), ident), params), return_type), body), span| {
                 let span_range: std::ops::Range<usize> = span;
                 Expr::Fn(FnExpr {
                     ident,
                     function: Function {
                         is_async: is_async.is_some(),
+                        is_generator: is_generator.is_some(),
                         params,
                         body,
                         return_type,

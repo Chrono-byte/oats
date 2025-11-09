@@ -373,10 +373,19 @@ impl<'a> CodeGen<'a> {
                     ident.sym.clone()
                 } else if let Expr::This(_) = &*member.obj {
                     "this".to_string()
+                } else if let Expr::Super(_) = &*member.obj {
+                    // Handle super.prop - access parent class field/method
+                    return self.lower_super_member_access(
+                        member,
+                        &field_name,
+                        function,
+                        param_map,
+                        locals,
+                    );
                 } else {
                     return Err(Diagnostic::simple_with_span_boxed(
                         Severity::Error,
-                        "member access requires identifier or 'this' object",
+                        "member access requires identifier, 'this', or 'super' object",
                         member.span.start,
                     ));
                 };
@@ -921,6 +930,216 @@ impl<'a> CodeGen<'a> {
                 msg,
                 member.span.start,
             ))
+        }
+    }
+
+    /// Lower super property/method access (super.prop, super.method()).
+    ///
+    /// This handles accessing parent class members from a subclass.
+    /// For properties, it accesses the parent class's field.
+    /// For methods, it calls the parent class's method function.
+    fn lower_super_member_access(
+        &self,
+        member: &MemberExpr,
+        field_name: &str,
+        function: FunctionValue<'a>,
+        _param_map: &HashMap<String, u32>,
+        _locals: &mut LocalsStackLocal<'a>,
+    ) -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
+        // Determine which class this method belongs to
+        // Method functions are named as {Class}_{method}
+        // Constructor functions might be named as {Class}_ctor, {Class}_ctor_impl, or {Class}_init
+        let function_name = function.get_name().to_str().unwrap_or("");
+        let current_class = if let Some(underscore_pos) = function_name.rfind('_') {
+            let prefix = &function_name[..underscore_pos];
+            let suffix = &function_name[underscore_pos + 1..];
+            // Handle constructor function names: Foo_ctor, Foo_ctor_impl, Foo_init
+            if suffix == "ctor" || suffix == "init" || (suffix == "impl" && prefix.ends_with("_ctor")) {
+                // For Foo_ctor or Foo_init, the class name is the prefix
+                // For Foo_ctor_impl, we need to extract Foo from Foo_ctor
+                if suffix == "impl" {
+                    if let Some(ctor_pos) = prefix.rfind('_') {
+                        prefix[..ctor_pos].to_string()
+                    } else {
+                        prefix.to_string()
+                    }
+                } else {
+                    prefix.to_string()
+                }
+            } else {
+                // Regular method: {Class}_{method}
+                prefix.to_string()
+            }
+        } else {
+            // Fallback: try current_class_parent (for constructors)
+            // For constructors, function name might be like "Foo_ctor" or "Foo_init"
+            // Try to find class by searching for classes with the known parent
+            if let Some(parent) = self.current_class_parent.borrow().as_ref() {
+                // If we're in a constructor, we need to find the class that has this parent
+                let class_parents = self.class_parents.borrow();
+                for (_class_name, class_parent) in class_parents.iter() {
+                    if class_parent.as_ref() == Some(parent) {
+                        // Found the class, now get its parent and access the field
+                        let this_ptr = if let Some(pv) = function.get_nth_param(0) {
+                            if let BasicValueEnum::PointerValue(ptr) = pv {
+                                ptr
+                            } else {
+                                return Err(Diagnostic::simple_with_span_boxed(
+                                    Severity::Error,
+                                    "super used but 'this' parameter is not a pointer",
+                                    member.span.start,
+                                ));
+                            }
+                        } else {
+                            return Err(Diagnostic::simple_with_span_boxed(
+                                Severity::Error,
+                                "super used in function with no 'this' parameter",
+                                member.span.start,
+                            ));
+                        };
+                        return self.access_parent_field(parent, field_name, this_ptr, member);
+                    }
+                }
+            }
+            return Err(Diagnostic::simple_with_span_boxed(
+                Severity::Error,
+                format!("cannot determine class from function name '{}'", function_name),
+                member.span.start,
+            ));
+        };
+
+        // Get parent class from class hierarchy
+        let parent = self.get_parent_for_class(&current_class, member, field_name, function)?;
+
+        // Get `this` pointer (same as ThisExpr)
+        let this_ptr = if let Some(pv) = function.get_nth_param(0) {
+            if let BasicValueEnum::PointerValue(ptr) = pv {
+                ptr
+            } else {
+                return Err(Diagnostic::simple_with_span_boxed(
+                    Severity::Error,
+                    "super used but 'this' parameter is not a pointer",
+                    member.span.start,
+                ));
+            }
+        } else {
+            return Err(Diagnostic::simple_with_span_boxed(
+                Severity::Error,
+                "super used in function with no 'this' parameter",
+                member.span.start,
+            ));
+        };
+
+        // Get parent class and access field
+        self.access_parent_field(&parent, field_name, this_ptr, member)
+    }
+
+    /// Helper to get parent class name for a given class
+    fn get_parent_for_class(
+        &self,
+        class_name: &str,
+        member: &MemberExpr,
+        _field_name: &str,
+        _function: FunctionValue<'a>,
+    ) -> crate::diagnostics::DiagnosticResult<String> {
+        let class_parents = self.class_parents.borrow();
+        if let Some(parent_opt) = class_parents.get(class_name) {
+            if let Some(parent) = parent_opt {
+                Ok(parent.clone())
+            } else {
+                Err(Diagnostic::simple_with_span_boxed(
+                    Severity::Error,
+                    format!("class '{}' has no parent class", class_name),
+                    member.span.start,
+                ))
+            }
+        } else {
+            Err(Diagnostic::simple_with_span_boxed(
+                Severity::Error,
+                format!("class '{}' not found in class hierarchy", class_name),
+                member.span.start,
+            ))
+        }
+    }
+
+    /// Helper to access a field from the parent class
+    fn access_parent_field(
+        &self,
+        parent: &str,
+        field_name: &str,
+        this_ptr: PointerValue<'a>,
+        member: &MemberExpr,
+    ) -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
+        // Get parent class fields
+        if let Some(fields) = self.class_fields.borrow().get(parent) {
+            // Find the field in parent class
+            if let Some((field_idx, (_fname, _field_ty))) = fields
+                .iter()
+                .enumerate()
+                .find(|(_, (n, _))| n == field_name)
+            {
+                // Compute field offset: header (8) + meta (8) + field_idx * 8
+                let header_size = 8u64;
+                let meta_size = 8u64;
+                let field_offset = header_size + meta_size + (field_idx as u64 * 8);
+
+                // Get field pointer
+                let offset_const = self.i64_t.const_int(field_offset, false);
+                let field_i8ptr = unsafe {
+                    self.builder.build_gep(
+                        self.i8_t,
+                        this_ptr,
+                        &[offset_const],
+                        "super_field_i8ptr",
+                    )
+                }
+                .map_err(|_| {
+                    Diagnostic::simple_with_span_boxed(
+                        Severity::Error,
+                        "failed to compute super field pointer",
+                        member.span.start,
+                    )
+                })?;
+
+                // Load field value (fields are stored as i8* pointers)
+                let field_ptr = self
+                    .builder
+                    .build_pointer_cast(field_i8ptr, self.i8ptr_t, "super_field_ptr")
+                    .map_err(|_| {
+                        Diagnostic::simple_with_span_boxed(
+                            Severity::Error,
+                            "failed to cast super field pointer",
+                            member.span.start,
+                        )
+                    })?;
+
+                let loaded = self
+                    .builder
+                    .build_load(self.i8ptr_t, field_ptr, "super_field_load")
+                    .map_err(|_| {
+                        Diagnostic::simple_with_span_boxed(
+                            Severity::Error,
+                            "failed to load super field",
+                            member.span.start,
+                        )
+                    })?;
+
+                return Ok(loaded.as_basic_value_enum());
+            } else {
+                // Field not found in parent class, check if it's a method
+                // Method calls are handled separately when used as callee
+                return Err(Diagnostic::simple_with_span_boxed(
+                    Severity::Error,
+                    format!("super field '{}' not found in parent class '{}'", field_name, parent),
+                    member.span.start,
+                ));
+            }
+        } else {
+            return Err(Diagnostic::simple_with_span_boxed(
+                Severity::Error,
+                format!("parent class '{}' fields not found", parent),
+                member.span.start,
+            ));
         }
     }
 }

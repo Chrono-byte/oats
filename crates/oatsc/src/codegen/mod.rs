@@ -100,6 +100,13 @@ pub struct CodeGen<'a> {
     pub fn_rc_weak_dec: RefCell<Option<FunctionValue<'a>>>,
     pub fn_rc_weak_upgrade: RefCell<Option<FunctionValue<'a>>>,
     pub class_fields: RefCell<HashMap<String, Vec<(String, crate::types::OatsType)>>>,
+    // Enum metadata: enum name -> (variant names, variant field types)
+    pub enum_variants: RefCell<HashMap<String, Vec<(String, Vec<crate::types::OatsType>)>>>,
+    // Class hierarchy: class name -> parent class name (None if no parent)
+    pub class_parents: RefCell<HashMap<String, Option<String>>>,
+    // Type aliases: alias name -> (type parameters, aliased type)
+    // For non-generic aliases, type_params is None
+    pub type_aliases: RefCell<HashMap<String, (Option<Vec<String>>, oats_ast::TsType)>>,
     pub fn_param_types: RefCell<HashMap<String, Vec<crate::types::OatsType>>>,
     pub loop_context_stack: RefCell<Vec<LoopContext<'a>>>,
     pub current_label: RefCell<Option<String>>,

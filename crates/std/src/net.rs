@@ -3,6 +3,11 @@
 use libc::c_char;
 
 /// HTTP GET request (returns response body as string, caller must free)
+///
+/// # Safety
+///
+/// `url` must be a valid pointer to a null-terminated C string, or null.
+/// If non-null, the string must remain valid for the duration of this call.
 /// #[oats_export]
 #[no_mangle]
 pub unsafe extern "C" fn oats_std_net_http_get(url: *const c_char) -> *mut c_char {
@@ -25,6 +30,11 @@ pub unsafe extern "C" fn oats_std_net_http_get(url: *const c_char) -> *mut c_cha
 }
 
 /// Check if URL is reachable
+///
+/// # Safety
+///
+/// `url` must be a valid pointer to a null-terminated C string, or null.
+/// If non-null, the string must remain valid for the duration of this call.
 /// #[oats_export]
 #[no_mangle]
 pub unsafe extern "C" fn oats_std_net_url_reachable(url: *const c_char) -> libc::c_int {

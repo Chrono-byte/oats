@@ -90,7 +90,8 @@ pub fn gen_ir_for_source(src: &str) -> Result<String> {
                     body: fn_decl.body.clone(),
                     return_type: fn_decl.return_type.clone(),
                     span: fn_decl.span.clone(),
-                    is_async: false,
+                    is_async: fn_decl.is_async,
+                    is_generator: fn_decl.is_generator,
                 });
                 break;
             }
@@ -197,6 +198,7 @@ pub fn gen_ir_for_source(src: &str) -> Result<String> {
                             return_type: m.return_type.clone(),
                             span: m.span.clone(),
                             is_async: false,
+                            is_generator: false,
                         };
                         if let Ok((Some(sig), _diags)) = oatsc::types::check_function_strictness(
                             &func,

@@ -193,7 +193,8 @@ pub fn run_from_args(
                     body: fn_decl.body.clone(),
                     return_type: fn_decl.return_type.clone(),
                     span: fn_decl.span.clone(),
-                    is_async: false, // FnDecl doesn't have async info, assume false for now
+                    is_async: fn_decl.is_async,
+                    is_generator: fn_decl.is_generator,
                 });
                 break;
             }
@@ -468,6 +469,9 @@ pub fn run_from_args(
         fn_rc_weak_upgrade: std::cell::RefCell::new(None),
         fn_union_get_discriminant: std::cell::RefCell::new(None),
         class_fields: RefCell::new(HashMap::new()),
+        enum_variants: RefCell::new(HashMap::new()),
+        class_parents: RefCell::new(HashMap::new()),
+        type_aliases: RefCell::new(HashMap::new()),
         fn_param_types: RefCell::new(HashMap::new()),
         loop_context_stack: RefCell::new(Vec::new()),
         current_class_parent: RefCell::new(None),
@@ -519,6 +523,9 @@ pub fn run_from_args(
             } else {
                 None
             };
+            // Store class hierarchy for persistent access
+            codegen.class_parents.borrow_mut().insert(class_name.clone(), parent_name_opt.clone());
+            // Also set current_class_parent for constructor codegen
             *codegen.current_class_parent.borrow_mut() = parent_name_opt.clone();
 
             // Emit members for this class
@@ -534,6 +541,7 @@ pub fn run_from_args(
                             return_type: m.return_type.clone(),
                             span: m.span.clone(),
                             is_async: false,
+                            is_generator: false,
                         };
                         // Try to type-check the method function
                         let mut method_symbols = SymbolTable::new();
@@ -606,7 +614,7 @@ pub fn run_from_args(
                                     // If the class property has an Oats type annotation, map it
                                     // to an OatsType; otherwise default to Number.
                                     let ftype = if let Some(type_ann) = &field.ty {
-                                        if let Some(mt) = crate::types::map_ts_type(type_ann) {
+                                        if let Some(mt) = crate::types::map_ts_type_with_aliases(type_ann, Some(&*codegen.type_aliases.borrow())) {
                                             mt
                                         } else {
                                             crate::types::OatsType::Number
@@ -640,6 +648,26 @@ pub fn run_from_args(
             }
             // Done emitting this class; clear current parent
             codegen.current_class_parent.borrow_mut().take();
+        }
+
+        // Handle enum declarations: `enum Name { Variant1, Variant2(Type1, Type2), ... }`
+        if let Stmt::EnumDecl(e) = stmt {
+            let enum_name = e.ident.sym.clone();
+            if let Err(d) = codegen.gen_enum_ir(&enum_name, e) {
+                diagnostics::emit_diagnostic(&d, Some(&parsed_mod.source));
+                return Err(anyhow::anyhow!(d.message));
+            }
+        }
+
+        // Handle type alias declarations: `type Name<T?> = Type;`
+        if let Stmt::TypeAlias(ta) = stmt {
+            let alias_name = ta.ident.sym.clone();
+            // Extract type parameter names if present
+            let type_params = ta.type_params.as_ref().map(|params| {
+                params.iter().map(|p| p.ident.sym.clone()).collect::<Vec<String>>()
+            });
+            // Store the alias: name -> (type_params, aliased_type)
+            codegen.type_aliases.borrow_mut().insert(alias_name, (type_params, ta.ty.clone()));
         }
     }
 
@@ -851,7 +879,8 @@ pub fn run_from_args(
                 body: fn_decl.body.clone(),
                 return_type: fn_decl.return_type.clone(),
                 span: fn_decl.span.clone(),
-                is_async: false,
+                is_async: fn_decl.is_async,
+                is_generator: fn_decl.is_generator,
             };
             let mut inner_symbols = SymbolTable::new();
             let (sig_opt, type_diags) = check_function_strictness(&inner_func, &mut inner_symbols)?;
@@ -929,6 +958,7 @@ pub fn run_from_args(
             return_type: arrow.return_type.clone(),
             span: arrow.span.clone(),
             is_async: false,
+            is_generator: false,
         };
 
         let mut inner_symbols = SymbolTable::new();

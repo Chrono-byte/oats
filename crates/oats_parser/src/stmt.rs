@@ -16,9 +16,14 @@ use oats_ast::*;
 pub fn stmt_parser(
     stmt: impl Parser<char, Stmt, Error = Simple<char>> + Clone,
 ) -> impl Parser<char, Stmt, Error = Simple<char>> {
-    choice((
+    // Split into two choices to avoid chumsky's 26-variant limit
+    let first_choice = choice((
         import_stmt_parser().map(Stmt::Import),
         export_stmt_parser(stmt.clone()),
+        type_alias_parser().map(Stmt::TypeAlias),
+        interface_decl_parser(stmt.clone()).map(Stmt::InterfaceDecl),
+        enum_decl_parser().map(Stmt::EnumDecl),
+        namespace_decl_parser(stmt.clone()).map(Stmt::NamespaceDecl),
         function::declare_fn_parser().map(Stmt::DeclareFn),
         class::class_decl_parser(stmt.clone()).map(Stmt::ClassDecl),
         function::fn_decl_parser(stmt.clone()).map(Stmt::FnDecl),
@@ -26,8 +31,11 @@ pub fn stmt_parser(
         return_stmt_parser().map(Stmt::Return),
         break_stmt_parser().map(Stmt::Break),
         continue_stmt_parser().map(Stmt::Continue),
+    ));
+
+    let second_choice = choice((
         if_stmt_parser(stmt.clone()).map(Stmt::If),
-        for_stmt_parser(stmt.clone()).map(Stmt::For),
+        for_stmt_parser(stmt.clone()).map(|for_stmt| Stmt::For(Box::new(for_stmt))),
         for_in_stmt_parser(stmt.clone()).map(Stmt::ForIn),
         for_of_stmt_parser(stmt.clone()).map(Stmt::ForOf),
         while_stmt_parser(stmt.clone()).map(Stmt::While),
@@ -39,7 +47,9 @@ pub fn stmt_parser(
         labeled_stmt_parser(stmt.clone()).map(Stmt::Labeled),
         common::block_parser(stmt.clone()).map(Stmt::Block),
         expr_stmt_parser().map(Stmt::ExprStmt),
-    ))
+    ));
+
+    choice((first_choice, second_choice))
 }
 
 /// Parser for import statements.
@@ -480,4 +490,279 @@ pub fn expr_stmt_parser() -> impl Parser<char, ExprStmt, Error = Simple<char>> {
     expr::expr_parser()
         .then_ignore(just(';').padded())
         .map_with_span(|expr, span| ExprStmt { expr, span })
+}
+
+/// Parser for type alias declarations.
+///
+/// Pattern: `type Name<T?> = Type;`
+pub fn type_alias_parser() -> impl Parser<char, TypeAlias, Error = Simple<char>> {
+    text::keyword("type")
+        .padded()
+        .ignore_then(common::ident_parser())
+        .then(
+            // Type parameters: <T, U extends V = Default>
+            just('<')
+                .padded()
+                .ignore_then(
+                    common::ident_parser()
+                        .then(
+                            text::keyword("extends")
+                                .padded()
+                                .ignore_then(super::types::ts_type_parser())
+                                .or_not(),
+                        )
+                        .then(
+                            just('=')
+                                .padded()
+                                .ignore_then(super::types::ts_type_parser())
+                                .or_not(),
+                        )
+                        .map_with_span(|((ident, constraint), default), span| TsTypeParam {
+                            ident,
+                            constraint,
+                            default,
+                            span,
+                        })
+                        .separated_by(just(',').padded())
+                        .collect::<Vec<_>>(),
+                )
+                .then_ignore(just('>').padded())
+                .or_not(),
+        )
+        .then(
+            just('=')
+                .padded()
+                .ignore_then(super::types::ts_type_parser()),
+        )
+        .then_ignore(just(';').padded())
+        .map_with_span(|((ident, type_params), ty), span| TypeAlias {
+            ident,
+            type_params,
+            ty,
+            span,
+        })
+}
+
+/// Parser for interface declarations.
+///
+/// Pattern: `interface Name<T?> extends Base? { members }`
+pub fn interface_decl_parser(
+    stmt: impl Parser<char, Stmt, Error = Simple<char>> + Clone,
+) -> impl Parser<char, InterfaceDecl, Error = Simple<char>> {
+    text::keyword("interface")
+        .padded()
+        .ignore_then(common::ident_parser())
+        .then(
+            // Type parameters
+            just('<')
+                .padded()
+                .ignore_then(
+                    common::ident_parser()
+                        .then(
+                            text::keyword("extends")
+                                .padded()
+                                .ignore_then(super::types::ts_type_parser())
+                                .or_not(),
+                        )
+                        .then(
+                            just('=')
+                                .padded()
+                                .ignore_then(super::types::ts_type_parser())
+                                .or_not(),
+                        )
+                        .map_with_span(|((ident, constraint), default), span| TsTypeParam {
+                            ident,
+                            constraint,
+                            default,
+                            span,
+                        })
+                        .separated_by(just(',').padded())
+                        .collect::<Vec<_>>(),
+                )
+                .then_ignore(just('>').padded())
+                .or_not(),
+        )
+        .then(
+            text::keyword("extends")
+                .padded()
+                .ignore_then(
+                    super::types::ts_type_parser()
+                        .separated_by(just(',').padded())
+                        .collect::<Vec<_>>(),
+                )
+                .or_not(),
+        )
+        .then(interface_body_parser(stmt))
+        .map_with_span(|(((ident, type_params), extends), body), span| {
+            // Convert extends types to TsTypeRef (simplified - assumes they're type refs)
+            let extends_refs = extends
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|ty| {
+                    if let TsType::TsTypeRef(tr) = ty {
+                        Some(tr)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            InterfaceDecl {
+                ident,
+                type_params,
+                extends: extends_refs,
+                body,
+                span,
+            }
+        })
+}
+
+/// Parser for interface body.
+fn interface_body_parser(
+    stmt: impl Parser<char, Stmt, Error = Simple<char>> + Clone,
+) -> impl Parser<char, Vec<InterfaceMember>, Error = Simple<char>> {
+    interface_member_parser(stmt)
+        .repeated()
+        .collect::<Vec<_>>()
+        .delimited_by(just('{').padded(), just('}').padded())
+}
+
+/// Parser for interface members.
+fn interface_member_parser(
+    _stmt: impl Parser<char, Stmt, Error = Simple<char>> + Clone,
+) -> impl Parser<char, InterfaceMember, Error = Simple<char>> {
+    choice((
+        // Index signature: [key: string]: type
+        just('[')
+            .padded()
+            .ignore_then(common::ident_parser())
+            .then(
+                just(':')
+                    .padded()
+                    .ignore_then(super::types::ts_type_parser()),
+            )
+            .then_ignore(just(']').padded())
+            .then(
+                just(':')
+                    .padded()
+                    .ignore_then(super::types::ts_type_parser()),
+            )
+            .then(
+                text::keyword("readonly")
+                    .padded()
+                    .to(true)
+                    .or_not()
+                    .map(|opt| opt.unwrap_or(false)),
+            )
+            .then_ignore(just(';').padded())
+            .map_with_span(|(((key_name, key_type), value_type), readonly), span| {
+                InterfaceMember::IndexSignature(IndexSignature {
+                    key_name,
+                    key_type,
+                    value_type,
+                    readonly,
+                    span,
+                })
+            }),
+        // Method: name(params): returnType
+        common::ident_parser()
+            .then(just('?').padded().or_not())
+            .then(common::param_list_parser())
+            .then(
+                just(':')
+                    .padded()
+                    .ignore_then(super::types::ts_type_parser()),
+            )
+            .then_ignore(just(';').padded())
+            .map_with_span(|(((ident, optional), params), return_type), span| {
+                InterfaceMember::Method(InterfaceMethod {
+                    ident,
+                    params,
+                    return_type,
+                    optional: optional.is_some(),
+                    span,
+                })
+            }),
+        // Property: readonly? name?: type
+        text::keyword("readonly")
+            .padded()
+            .or_not()
+            .then(common::ident_parser())
+            .then(just('?').padded().or_not())
+            .then(
+                just(':')
+                    .padded()
+                    .ignore_then(super::types::ts_type_parser()),
+            )
+            .then_ignore(just(';').padded())
+            .map_with_span(|(((readonly, ident), optional), ty), span| {
+                InterfaceMember::Property(InterfaceProperty {
+                    ident,
+                    ty,
+                    optional: optional.is_some(),
+                    readonly: readonly.is_some(),
+                    span,
+                })
+            }),
+    ))
+}
+
+/// Parser for enum declarations.
+///
+/// Pattern: `enum Name { Member = value?, ... }`
+pub fn enum_decl_parser() -> impl Parser<char, EnumDecl, Error = Simple<char>> {
+    text::keyword("enum")
+        .padded()
+        .ignore_then(common::ident_parser())
+        .then(
+            enum_member_parser()
+                .separated_by(just(',').padded())
+                .collect::<Vec<_>>()
+                .delimited_by(just('{').padded(), just('}').padded()),
+        )
+        .map_with_span(|(ident, members), span| EnumDecl {
+            ident,
+            members,
+            span,
+        })
+}
+
+/// Parser for enum members (Rust-like variants).
+///
+/// Supports:
+/// - `VariantName` - unit variant with no data
+/// - `VariantName(Type1, Type2, ...)` - tuple-like variant with associated data
+fn enum_member_parser() -> impl Parser<char, EnumMember, Error = Simple<char>> {
+    use super::types;
+
+    common::ident_parser()
+        .then(
+            // Optional tuple of types: (Type1, Type2, ...)
+            types::ts_type_parser()
+                .separated_by(just(',').padded())
+                .collect::<Vec<_>>()
+                .delimited_by(just('(').padded(), just(')').padded())
+                .or_not(),
+        )
+        .map_with_span(|(ident, fields), span| EnumMember {
+            ident,
+            fields,
+            span
+        })
+}
+
+/// Parser for namespace declarations.
+///
+/// Pattern: `namespace Name { body }`
+pub fn namespace_decl_parser(
+    stmt: impl Parser<char, Stmt, Error = Simple<char>> + Clone,
+) -> impl Parser<char, NamespaceDecl, Error = Simple<char>> {
+    text::keyword("namespace")
+        .padded()
+        .ignore_then(common::ident_parser())
+        .then(common::block_parser(stmt))
+        .map_with_span(|(ident, body), span| NamespaceDecl {
+            ident,
+            body: body.stmts,
+            span,
+        })
 }

@@ -5,6 +5,11 @@ use std::ffi::{CStr, CString};
 use std::fs;
 
 /// Read entire file into a string
+///
+/// # Safety
+///
+/// `path` must be a valid pointer to a null-terminated C string, or null.
+/// If non-null, the string must remain valid for the duration of this call.
 /// #[oats_export]
 #[no_mangle]
 pub unsafe extern "C" fn oats_std_fs_read_file(path: *const c_char) -> *mut c_char {
@@ -27,6 +32,11 @@ pub unsafe extern "C" fn oats_std_fs_read_file(path: *const c_char) -> *mut c_ch
 }
 
 /// Write string to file
+///
+/// # Safety
+///
+/// `path` and `content` must be valid pointers to null-terminated C strings, or null.
+/// If non-null, the strings must remain valid for the duration of this call.
 /// #[oats_export]
 #[no_mangle]
 pub unsafe extern "C" fn oats_std_fs_write_file(
@@ -55,6 +65,11 @@ pub unsafe extern "C" fn oats_std_fs_write_file(
 }
 
 /// Check if file exists
+///
+/// # Safety
+///
+/// `path` must be a valid pointer to a null-terminated C string, or null.
+/// If non-null, the string must remain valid for the duration of this call.
 /// #[oats_export]
 #[no_mangle]
 pub unsafe extern "C" fn oats_std_fs_file_exists(path: *const c_char) -> libc::c_int {
@@ -75,6 +90,11 @@ pub unsafe extern "C" fn oats_std_fs_file_exists(path: *const c_char) -> libc::c
 }
 
 /// Create directory recursively
+///
+/// # Safety
+///
+/// `path` must be a valid pointer to a null-terminated C string, or null.
+/// If non-null, the string must remain valid for the duration of this call.
 /// #[oats_export]
 #[no_mangle]
 pub unsafe extern "C" fn oats_std_fs_create_dir_all(path: *const c_char) -> libc::c_int {
@@ -98,6 +118,11 @@ pub unsafe extern "C" fn oats_std_fs_create_dir_all(path: *const c_char) -> libc
 }
 
 /// Remove file
+///
+/// # Safety
+///
+/// `path` must be a valid pointer to a null-terminated C string, or null.
+/// If non-null, the string must remain valid for the duration of this call.
 /// #[oats_export]
 #[no_mangle]
 pub unsafe extern "C" fn oats_std_fs_remove_file(path: *const c_char) -> libc::c_int {

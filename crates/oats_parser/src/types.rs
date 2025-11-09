@@ -22,6 +22,7 @@ pub fn ts_type_parser() -> impl Parser<char, TsType, Error = Simple<char>> {
             ts_type_ref_parser(ty.clone()),
             ts_tuple_type_parser(ty.clone()),
             ts_function_type_parser(ty.clone()),
+            ts_type_lit_parser(ty.clone()),
             just('(')
                 .padded()
                 .ignore_then(ty.clone())
@@ -145,4 +146,81 @@ fn ts_function_type_parser(
                 span,
             })
         })
+}
+
+/// Parser for type literals (object types).
+///
+/// Pattern: `{ prop: type, method(): type, [key: string]: type }`
+fn ts_type_lit_parser(
+    ty: impl Parser<char, TsType, Error = Simple<char>> + Clone,
+) -> impl Parser<char, TsType, Error = Simple<char>> {
+    ts_type_element_parser(ty.clone())
+        .separated_by(just(',').padded())
+        .collect::<Vec<_>>()
+        .delimited_by(just('{').padded(), just('}').padded())
+        .map_with_span(|members, span| TsType::TsTypeLit(TsTypeLit { members, span }))
+}
+
+/// Parser for type elements in a type literal.
+fn ts_type_element_parser(
+    ty: impl Parser<char, TsType, Error = Simple<char>> + Clone,
+) -> impl Parser<char, TsTypeElement, Error = Simple<char>> {
+    choice((
+        // Index signature: [key: string]: type
+        just('[')
+            .padded()
+            .ignore_then(super::common::ident_parser())
+            .then(just(':').padded().ignore_then(ty.clone()))
+            .then_ignore(just(']').padded())
+            .then(just(':').padded().ignore_then(ty.clone()))
+            .then(
+                text::keyword("readonly")
+                    .padded()
+                    .to(true)
+                    .or_not()
+                    .map(|opt| opt.unwrap_or(false)),
+            )
+            .then_ignore(just(';').padded().or_not())
+            .map_with_span(|(((key_name, key_type), value_type), readonly), span| {
+                TsTypeElement::IndexSignature(IndexSignature {
+                    key_name,
+                    key_type,
+                    value_type,
+                    readonly,
+                    span,
+                })
+            }),
+        // Method signature: name(params): returnType
+        super::common::ident_parser()
+            .then(just('?').padded().or_not())
+            .then(super::common::param_list_parser())
+            .then(just(':').padded().ignore_then(ty.clone()))
+            .then_ignore(just(';').padded().or_not())
+            .map_with_span(|(((ident, optional), params), return_type), span| {
+                TsTypeElement::Method(TsMethodSignature {
+                    ident,
+                    params,
+                    return_type,
+                    optional: optional.is_some(),
+                    span,
+                })
+            }),
+        // Property signature: readonly? name?: type
+        text::keyword("readonly")
+            .padded()
+            .or_not()
+            .then(super::common::ident_parser())
+            .then(just('?').padded().or_not())
+            .then(just(':').padded().ignore_then(ty.clone()))
+            .then_ignore(just(';').padded().or_not())
+            .map_with_span(|(((readonly, ident), optional), ty), span| {
+                TsTypeElement::Property(TsPropertySignature {
+                    ident,
+                    ty,
+                    optional: optional.is_some(),
+                    readonly: readonly.is_some(),
+                    span,
+                })
+            }),
+    ))
 }

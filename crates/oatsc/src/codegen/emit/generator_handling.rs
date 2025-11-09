@@ -455,8 +455,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             cases.push((case_val, *resume_bb));
         }
 
-        let _switch = self
-            .builder
+        self.builder
             .build_switch(state_val, done_bb, cases.as_slice())
             .map_err(|_| {
                 crate::diagnostics::Diagnostic::simple_boxed(

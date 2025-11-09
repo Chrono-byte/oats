@@ -54,15 +54,13 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
             // Lower RHS (object to iterate over)
             let obj_val = self.lower_expr(&for_in.right, function, param_map, locals_stack)?;
-            let _obj_ptr = if let BasicValueEnum::PointerValue(pv) = obj_val {
-                pv
-            } else {
+            if !matches!(obj_val, BasicValueEnum::PointerValue(_)) {
                 return Err(Diagnostic::simple_with_span_boxed(
                     Severity::Error,
                     "for-in loop requires an object (pointer type)",
                     for_in.span.start,
                 ));
-            };
+            }
 
             // Try to infer the class name from the RHS expression
             // All types must be known at compile time - if we can't infer the type, it's an error

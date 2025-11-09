@@ -1715,12 +1715,6 @@ impl WorkStealingQueue {
         }
     }
 
-    fn push(&self, pid: ProcessId) {
-        if let Ok(mut q) = self.queue.lock() {
-            q.push_back(pid);
-        }
-    }
-
     fn pop(&self) -> Option<ProcessId> {
         if let Ok(mut q) = self.queue.lock() {
             q.pop_front()
@@ -1734,14 +1728,6 @@ impl WorkStealingQueue {
             q.pop_back() // Steal from the back
         } else {
             None
-        }
-    }
-
-    fn len(&self) -> usize {
-        if let Ok(q) = self.queue.lock() {
-            q.len()
-        } else {
-            0
         }
     }
 }

@@ -260,11 +260,6 @@ impl EscapeAnalyzer {
         }
     }
 
-    /// Analyzes a variable declaration list.
-    fn analyze_var_decl(&mut self, var_decl: &VarDecl) {
-        self.analyze_var_decl_with_depth(var_decl, 0)
-    }
-
     fn analyze_var_decl_with_depth(&mut self, var_decl: &VarDecl, depth: usize) {
         for declarator in &var_decl.decls {
             self.collect_param_names(&declarator.name);
@@ -274,20 +269,10 @@ impl EscapeAnalyzer {
         }
     }
 
-    /// Analyzes a block statement.
-    fn analyze_block_stmt(&mut self, block: &BlockStmt) {
-        self.analyze_block_stmt_with_depth(block, 0)
-    }
-
     fn analyze_block_stmt_with_depth(&mut self, block: &BlockStmt, depth: usize) {
         for stmt in &block.stmts {
             self.analyze_stmt_with_depth(stmt, depth + 1);
         }
-    }
-
-    /// Analyzes an expression for variable uses and escape patterns.
-    fn analyze_expr(&mut self, expr: &Expr) {
-        self.analyze_expr_with_depth(expr, 0)
     }
 
     /// Internal helper with recursion depth tracking to prevent stack overflow.
@@ -411,11 +396,6 @@ impl EscapeAnalyzer {
             }
             _ => {}
         }
-    }
-
-    /// Analyzes an expression where all contained variables are considered escaping.
-    fn analyze_expr_as_escaping(&mut self, expr: &Expr) {
-        self.analyze_expr_as_escaping_with_depth(expr, 0)
     }
 
     fn analyze_expr_as_escaping_with_depth(&mut self, expr: &Expr, depth: usize) {

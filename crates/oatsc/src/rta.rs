@@ -516,12 +516,6 @@ fn find_method_calls(func: &Function) -> Vec<(String, String)> {
     calls
 }
 
-fn find_method_calls_in_stmt(stmt: &Stmt, calls: &mut Vec<(String, String)>) {
-    find_method_calls_in_stmt_with_depth(stmt, calls, 0)
-}
-
-// Keep the old function signature for backward compatibility, but it's now just a wrapper
-
 fn find_method_calls_in_stmt_with_depth(
     stmt: &Stmt,
     calls: &mut Vec<(String, String)>,
@@ -590,10 +584,6 @@ fn find_method_calls_in_stmt_with_depth(
         }
         _ => {}
     }
-}
-
-fn find_method_calls_in_expr(expr: &Expr, calls: &mut Vec<(String, String)>) {
-    find_method_calls_in_expr_with_depth(expr, calls, 0)
 }
 
 fn find_method_calls_in_expr_with_depth(

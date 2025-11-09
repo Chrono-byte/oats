@@ -22,7 +22,6 @@ pub mod return_stmt;
 pub mod switch;
 pub mod try_catch;
 
-use crate::diagnostics::Severity;
 use inkwell::values::FunctionValue;
 use std::collections::HashMap;
 
@@ -128,10 +127,6 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 // These are handled at module level, not in statement lowering
                 Ok(false)
             }
-            _ => Err(crate::diagnostics::Diagnostic::simple_boxed(
-                Severity::Error,
-                "statement not supported",
-            )),
         }
     }
 }

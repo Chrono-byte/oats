@@ -1208,7 +1208,6 @@ impl<'a> crate::codegen::CodeGen<'a> {
         // Track which properties have been destructured (for rest pattern)
         let mut destructured_fields: std::collections::HashSet<String> =
             std::collections::HashSet::new();
-        let mut _rest_pattern: Option<&ObjectPatProp> = None;
 
         // First pass: identify rest pattern and track destructured fields
         for prop in &obj_pat.props {
@@ -1222,7 +1221,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     destructured_fields.insert(prop_name);
                 }
                 ObjectPatProp::Rest { .. } => {
-                    _rest_pattern = Some(prop);
+                    // Rest pattern detected but not currently used
                 }
             }
         }

@@ -104,7 +104,7 @@ impl Collector {
                         );
                     }
                     // Use the more efficient Bacon's algorithm
-                    Self::process_roots_bacon(&roots);
+                    Self::process_roots(&roots);
                 }
             }
             if crate::RUNTIME_LOG.load(Ordering::Relaxed) {
@@ -695,6 +695,7 @@ impl Collector {
     /// 2. Concurrent marking phase with color coding (white/gray/black)
     /// 3. Identify unreachable cyclic structures
     /// 4. Safe reclamation with atomic operations
+    #[allow(dead_code)]
     pub(crate) fn process_roots_bacon(roots: &[usize]) {
         unsafe {
             // SAFETY: Bacon's algorithm implementation for concurrent cycle collection.
@@ -772,6 +773,7 @@ impl Collector {
     }
 
     /// Process object references for Bacon's algorithm
+    #[allow(dead_code)]
     unsafe fn process_object_refs_bacon(
         obj: usize,
         colors: &mut HashMap<usize, u8>,
@@ -895,6 +897,7 @@ impl Collector {
     }
 
     /// Safe garbage reclamation for Bacon's algorithm
+    #[allow(dead_code)]
     unsafe fn reclaim_garbage_bacon(garbage: &[usize]) {
         // SAFETY: Final reclamation phase of Bacon's algorithm.
         // Only objects identified as garbage (unreachable) are processed.

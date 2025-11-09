@@ -675,9 +675,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
         for (idx, opt_elem_pat) in arr_pat.elems.iter().enumerate() {
             // Skip elements after rest pattern
             if let Some(rest_pos) = rest_pos
-                && idx > rest_pos {
-                    break;
-                }
+                && idx > rest_pos
+            {
+                break;
+            }
 
             if let Some(elem_pat) = opt_elem_pat {
                 // Get array element at index

@@ -11,25 +11,26 @@ const MAX_TYPE_CHAIN_LENGTH: usize = 1024;
 /// Uses a single clone of the recursive parser to avoid stack overflow and compilation hangs.
 pub fn ts_type_parser<'a>() -> impl Parser<'a, &'a str, TsType> + 'a {
     recursive(|ty| {
-        // Clone ty ONCE and reuse - this is the key to avoiding both stack overflow
-        // and compilation hangs. Cloning the recursive parser is cheap (it's just a reference),
-        // but we should only do it once to avoid excessive type inference.
-        let ty_clone = ty.clone();
+        // Clone ty ONCE and box it immediately to reduce type complexity.
+        // This prevents exponential type growth during compilation that causes memory leaks.
+        // By boxing early, we ensure all uses share the same boxed type rather than
+        // creating multiple distinct cloned types.
+        let ty_boxed = ty.clone().boxed();
 
         let base_type = choice((
             keyword_type_parser().boxed(),
-            type_ref_parser(ty_clone.clone()).boxed(),
-            tuple_type_parser(ty_clone.clone()).boxed(),
-            type_literal_parser(ty_clone.clone()).boxed(),
-            function_type_parser(ty_clone.clone()).boxed(),
-            ty_clone
+            type_ref_parser(ty_boxed.clone()).boxed(),
+            tuple_type_parser(ty_boxed.clone()).boxed(),
+            type_literal_parser(ty_boxed.clone()).boxed(),
+            function_type_parser(ty_boxed.clone()).boxed(),
+            ty_boxed
                 .clone()
                 .delimited_by(just("(").padded(), just(")").padded())
                 .boxed(),
         ));
 
-    // Primary type: base + array suffixes
-    let primary = base_type
+        // Primary type: base + array suffixes
+        let primary = base_type
             .then(
                 just("[")
                     .padded()
@@ -49,17 +50,17 @@ pub fn ts_type_parser<'a>() -> impl Parser<'a, &'a str, TsType> + 'a {
             })
             .boxed();
 
-    // Intersection: primary & primary & ...
-    let intersection = primary
-        .clone()
-        .then(
-            just("&")
-                .padded()
-                .then(primary.clone())
-                .repeated()
-                .at_most(MAX_TYPE_CHAIN_LENGTH)
-                .collect::<Vec<_>>(),
-        )
+        // Intersection: primary & primary & ...
+        let intersection = primary
+            .clone()
+            .then(
+                just("&")
+                    .padded()
+                    .then(primary.clone())
+                    .repeated()
+                    .at_most(MAX_TYPE_CHAIN_LENGTH)
+                    .collect::<Vec<_>>(),
+            )
             .map_with(|(first, rest), extra| {
                 if rest.is_empty() {
                     first
@@ -247,4 +248,208 @@ fn function_type_parser<'a>(
             })
         })
         .labelled("function type")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_keyword_types() {
+        // Test using Parser::parse as shown in the chumsky guide
+        let parser = ts_type_parser();
+
+        // number keyword
+        let result = parser.parse("number").into_result();
+        assert!(result.is_ok(), "number should parse successfully");
+        if let Ok(TsType::TsKeywordType(TsKeywordType::TsNumberKeyword)) = result {
+            // Correct type
+        } else {
+            panic!("Expected TsNumberKeyword, got {:?}", result);
+        }
+
+        // string keyword
+        let result = parser.parse("string").into_result();
+        assert!(result.is_ok(), "string should parse successfully");
+
+        // boolean keyword
+        let result = parser.parse("boolean").into_result();
+        assert!(result.is_ok(), "boolean should parse successfully");
+
+        // void keyword
+        let result = parser.parse("void").into_result();
+        assert!(result.is_ok(), "void should parse successfully");
+    }
+
+    #[test]
+    fn test_type_references() {
+        let parser = ts_type_parser();
+
+        // Simple type reference
+        let result = parser.parse("MyType").into_result();
+        assert!(result.is_ok(), "MyType should parse successfully");
+
+        // Type reference with type parameters
+        let result = parser.parse("Array<string>").into_result();
+        assert!(result.is_ok(), "Array<string> should parse successfully");
+
+        // Multiple type parameters
+        let result = parser.parse("Map<string, number>").into_result();
+        assert!(
+            result.is_ok(),
+            "Map<string, number> should parse successfully"
+        );
+    }
+
+    #[test]
+    fn test_array_types() {
+        let parser = ts_type_parser();
+
+        // Single array
+        let result = parser.parse("number[]").into_result();
+        assert!(result.is_ok(), "number[] should parse successfully");
+
+        // Nested arrays
+        let result = parser.parse("number[][]").into_result();
+        assert!(result.is_ok(), "number[][] should parse successfully");
+    }
+
+    #[test]
+    fn test_union_types() {
+        let parser = ts_type_parser();
+
+        // Union type
+        let result = parser.parse("string | number").into_result();
+        assert!(result.is_ok(), "string | number should parse successfully");
+
+        // Multiple unions
+        let result = parser.parse("string | number | boolean").into_result();
+        assert!(
+            result.is_ok(),
+            "string | number | boolean should parse successfully"
+        );
+    }
+
+    #[test]
+    fn test_intersection_types() {
+        let parser = ts_type_parser();
+
+        // Intersection type
+        let result = parser.parse("A & B").into_result();
+        assert!(result.is_ok(), "A & B should parse successfully");
+    }
+
+    #[test]
+    fn test_tuple_types() {
+        let parser = ts_type_parser();
+
+        // Tuple type
+        let result = parser.parse("[string, number]").into_result();
+        assert!(result.is_ok(), "[string, number] should parse successfully");
+
+        // Tuple with trailing comma
+        let result = parser.parse("[string, number,]").into_result();
+        assert!(
+            result.is_ok(),
+            "[string, number,] should parse successfully"
+        );
+    }
+
+    #[test]
+    fn test_type_literals() {
+        let parser = ts_type_parser();
+
+        // Simple type literal
+        let result = parser.parse("{ name: string }").into_result();
+        assert!(
+            result.is_ok(),
+            "{{ name: string }} should parse successfully"
+        );
+
+        // Type literal with optional property
+        let result = parser.parse("{ name?: string }").into_result();
+        assert!(
+            result.is_ok(),
+            "{{ name?: string }} should parse successfully"
+        );
+
+        // Type literal with readonly property
+        let result = parser.parse("{ readonly name: string }").into_result();
+        assert!(
+            result.is_ok(),
+            "{{ readonly name: string }} should parse successfully"
+        );
+    }
+
+    #[test]
+    fn test_function_types() {
+        let parser = ts_type_parser();
+
+        // Function type
+        let result = parser.parse("() => number").into_result();
+        assert!(result.is_ok(), "() => number should parse successfully");
+
+        // Function type with parameters
+        let result = parser.parse("(x: number) => string").into_result();
+        assert!(
+            result.is_ok(),
+            "(x: number) => string should parse successfully"
+        );
+    }
+
+    #[test]
+    fn test_using_check_method() {
+        let parser = ts_type_parser();
+
+        // Using Parser::check to validate input without getting the output
+        let result = parser.check("number");
+        assert!(!result.has_errors(), "number should be valid");
+
+        let result = parser.check("invalid type syntax!!!");
+        assert!(result.has_errors(), "invalid syntax should produce errors");
+    }
+
+    #[test]
+    fn test_complex_types() {
+        let parser = ts_type_parser();
+
+        // Complex nested type
+        let result = parser
+            .parse("Array<{ name: string, age: number }>")
+            .into_result();
+        assert!(
+            result.is_ok(),
+            "Complex nested type should parse successfully"
+        );
+
+        // Union of arrays
+        let result = parser.parse("string[] | number[]").into_result();
+        assert!(result.is_ok(), "Union of arrays should parse successfully");
+
+        // Function returning union
+        let result = parser.parse("() => string | number").into_result();
+        assert!(
+            result.is_ok(),
+            "Function returning union should parse successfully"
+        );
+    }
+
+    #[test]
+    fn test_parenthesized_types() {
+        let parser = ts_type_parser();
+
+        // Parenthesized type
+        let result = parser.parse("(string | number)").into_result();
+        assert!(
+            result.is_ok(),
+            "(string | number) should parse successfully"
+        );
+
+        // Parenthesized type in union
+        let result = parser.parse("(string | number) | boolean").into_result();
+        assert!(
+            result.is_ok(),
+            "(string | number) | boolean should parse successfully"
+        );
+    }
 }

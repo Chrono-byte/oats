@@ -11,12 +11,12 @@ const MAX_OPERATOR_CHAIN_LENGTH: usize = 1024;
 /// Expression parser with proper precedence handling.
 ///
 /// Uses recursive descent with precedence levels.
+/// Following chumsky best practices: accepts Recursive types directly which implement Clone.
 pub fn expr_parser<'a>(
-    expr: impl Parser<'a, &'a str, Expr> + Clone + 'a, // <-- Add this `expr` placeholder
+    expr: impl Parser<'a, &'a str, Expr> + Clone + 'a,
     stmt: impl Parser<'a, &'a str, Stmt> + Clone + 'a,
 ) -> impl Parser<'a, &'a str, Expr> + 'a {
-    // The body is now just the implementation, NOT the recursive call
-    assignment_expr_parser(expr.clone(), stmt.clone()).boxed()
+    assignment_expr_parser(expr, stmt)
 }
 
 /// Assignment expressions: `left = right`, `left += right`, etc.
@@ -635,7 +635,7 @@ fn primary_expr_parser<'a>(
         // Template literals
         template_literal_parser(expr.clone()).boxed(),
         // New expressions
-        new_expr_parser(expr.clone()).boxed(),
+        new_expr_parser(expr.clone()),
         // Await expressions
         await_expr_parser(expr.clone()).boxed(),
         // Yield expressions

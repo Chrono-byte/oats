@@ -23,9 +23,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 Expr::Unary(u) => contains_yield_expr(&u.arg),
                 Expr::Call(c) => {
                     if let Callee::Expr(e) = &c.callee
-                        && contains_yield_expr(e) {
-                            return true;
-                        }
+                        && contains_yield_expr(e)
+                    {
+                        return true;
+                    }
                     c.args.iter().any(contains_yield_expr)
                 }
                 Expr::Member(m) => {
@@ -59,10 +60,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 Stmt::If(if_stmt) => {
                     contains_yield_expr(&if_stmt.test)
                         || contains_yield_stmt(&if_stmt.cons)
-                        || if_stmt
-                            .alt
-                            .as_ref()
-                            .is_some_and(|a| contains_yield_stmt(a))
+                        || if_stmt.alt.as_ref().is_some_and(|a| contains_yield_stmt(a))
                 }
                 Stmt::While(w) => contains_yield_expr(&w.test) || contains_yield_stmt(&w.body),
                 Stmt::For(f) => {
@@ -686,132 +684,132 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
             // Restore live locals from state
             if let Some(live_sets) = self.generator_yield_live_sets.borrow().as_ref()
-                && resume_idx < live_sets.len() {
-                    let live_set = &live_sets[resume_idx];
-                    if let Some(local_name_to_slot) =
-                        self.generator_local_name_to_slot.borrow().as_ref()
-                    {
-                        for live_name in live_set {
-                            if let Some(slot_idx) = local_name_to_slot.get(live_name) {
-                                // Find the local in the locals stack
-                                if let Some((
-                                    local_ptr,
-                                    local_ty,
-                                    _init,
-                                    _is_const,
-                                    _is_weak,
-                                    _nominal,
-                                    _oats_type,
-                                )) = self.find_local(&locals_stack, live_name)
-                                {
-                                    // Compute slot offset in state
-                                    let slot_offset = 16 + (*slot_idx * 8) as u64;
-                                    let offset_const = self.i64_t.const_int(slot_offset, false);
-                                    let slot_i8ptr = unsafe {
-                                        self.builder.build_gep(
-                                            self.i8_t,
-                                            state_ptr,
-                                            &[offset_const],
-                                            &format!("restore_{}_i8ptr", live_name),
-                                        )
-                                    }
+                && resume_idx < live_sets.len()
+            {
+                let live_set = &live_sets[resume_idx];
+                if let Some(local_name_to_slot) =
+                    self.generator_local_name_to_slot.borrow().as_ref()
+                {
+                    for live_name in live_set {
+                        if let Some(slot_idx) = local_name_to_slot.get(live_name) {
+                            // Find the local in the locals stack
+                            if let Some((
+                                local_ptr,
+                                local_ty,
+                                _init,
+                                _is_const,
+                                _is_weak,
+                                _nominal,
+                                _oats_type,
+                            )) = self.find_local(&locals_stack, live_name)
+                            {
+                                // Compute slot offset in state
+                                let slot_offset = 16 + (*slot_idx * 8) as u64;
+                                let offset_const = self.i64_t.const_int(slot_offset, false);
+                                let slot_i8ptr = unsafe {
+                                    self.builder.build_gep(
+                                        self.i8_t,
+                                        state_ptr,
+                                        &[offset_const],
+                                        &format!("restore_{}_i8ptr", live_name),
+                                    )
+                                }
+                                .map_err(|_| {
+                                    crate::diagnostics::Diagnostic::simple_boxed(
+                                        Severity::Error,
+                                        "gep failed for restore",
+                                    )
+                                })?;
+
+                                // Load from state slot
+                                let slot_ptr_ty =
+                                    self.context.ptr_type(inkwell::AddressSpace::default());
+                                let slot_ptr = self
+                                    .builder
+                                    .build_pointer_cast(slot_i8ptr, slot_ptr_ty, "slot_ptr")
                                     .map_err(|_| {
                                         crate::diagnostics::Diagnostic::simple_boxed(
                                             Severity::Error,
-                                            "gep failed for restore",
+                                            "pointer cast failed",
                                         )
                                     })?;
 
-                                    // Load from state slot
-                                    let slot_ptr_ty =
-                                        self.context.ptr_type(inkwell::AddressSpace::default());
-                                    let slot_ptr = self
-                                        .builder
-                                        .build_pointer_cast(slot_i8ptr, slot_ptr_ty, "slot_ptr")
-                                        .map_err(|_| {
-                                            crate::diagnostics::Diagnostic::simple_boxed(
-                                                Severity::Error,
-                                                "pointer cast failed",
+                                let restored_val = match local_ty {
+                                    inkwell::types::BasicTypeEnum::FloatType(ft) => {
+                                        // Cast slot_ptr to generic pointer type for loading
+                                        let f64_ptr = self
+                                            .builder
+                                            .build_pointer_cast(
+                                                slot_ptr,
+                                                self.context
+                                                    .ptr_type(inkwell::AddressSpace::default()),
+                                                "f64_ptr",
                                             )
-                                        })?;
-
-                                    let restored_val = match local_ty {
-                                        inkwell::types::BasicTypeEnum::FloatType(ft) => {
-                                            // Cast slot_ptr to generic pointer type for loading
-                                            let f64_ptr = self
-                                                .builder
-                                                .build_pointer_cast(
-                                                    slot_ptr,
-                                                    self.context
-                                                        .ptr_type(inkwell::AddressSpace::default()),
-                                                    "f64_ptr",
+                                            .map_err(|_| {
+                                                crate::diagnostics::Diagnostic::simple_boxed(
+                                                    Severity::Error,
+                                                    "f64 ptr cast failed",
                                                 )
-                                                .map_err(|_| {
-                                                    crate::diagnostics::Diagnostic::simple_boxed(
-                                                        Severity::Error,
-                                                        "f64 ptr cast failed",
-                                                    )
-                                                })?;
-                                            // Load the float value - ft is used here to specify the load type
-                                            self.builder
-                                                .build_load(
-                                                    ft,
-                                                    f64_ptr,
-                                                    &format!("restore_{}", live_name),
-                                                )
-                                                .map_err(|_| {
-                                                    crate::diagnostics::Diagnostic::simple_boxed(
-                                                        Severity::Error,
-                                                        "load failed",
-                                                    )
-                                                })?
-                                        }
-                                        _ => {
-                                            // Pointer types
-                                            let ptr_ptr = self
-                                                .builder
-                                                .build_pointer_cast(
-                                                    slot_ptr,
-                                                    self.context
-                                                        .ptr_type(inkwell::AddressSpace::default()),
-                                                    "ptr_ptr",
-                                                )
-                                                .map_err(|_| {
-                                                    crate::diagnostics::Diagnostic::simple_boxed(
-                                                        Severity::Error,
-                                                        "ptr cast failed",
-                                                    )
-                                                })?;
-                                            self.builder
-                                                .build_load(
-                                                    self.i8ptr_t,
-                                                    ptr_ptr,
-                                                    &format!("restore_{}", live_name),
-                                                )
-                                                .map_err(|_| {
-                                                    crate::diagnostics::Diagnostic::simple_boxed(
-                                                        Severity::Error,
-                                                        "load failed",
-                                                    )
-                                                })?
-                                        }
-                                    };
-
-                                    // Store to local alloca
-                                    let _ = self
-                                        .builder
-                                        .build_store(local_ptr, restored_val)
-                                        .map_err(|_| {
-                                            crate::diagnostics::Diagnostic::simple_boxed(
-                                                Severity::Error,
-                                                "store failed",
+                                            })?;
+                                        // Load the float value - ft is used here to specify the load type
+                                        self.builder
+                                            .build_load(
+                                                ft,
+                                                f64_ptr,
+                                                &format!("restore_{}", live_name),
                                             )
-                                        })?;
-                                }
+                                            .map_err(|_| {
+                                                crate::diagnostics::Diagnostic::simple_boxed(
+                                                    Severity::Error,
+                                                    "load failed",
+                                                )
+                                            })?
+                                    }
+                                    _ => {
+                                        // Pointer types
+                                        let ptr_ptr = self
+                                            .builder
+                                            .build_pointer_cast(
+                                                slot_ptr,
+                                                self.context
+                                                    .ptr_type(inkwell::AddressSpace::default()),
+                                                "ptr_ptr",
+                                            )
+                                            .map_err(|_| {
+                                                crate::diagnostics::Diagnostic::simple_boxed(
+                                                    Severity::Error,
+                                                    "ptr cast failed",
+                                                )
+                                            })?;
+                                        self.builder
+                                            .build_load(
+                                                self.i8ptr_t,
+                                                ptr_ptr,
+                                                &format!("restore_{}", live_name),
+                                            )
+                                            .map_err(|_| {
+                                                crate::diagnostics::Diagnostic::simple_boxed(
+                                                    Severity::Error,
+                                                    "load failed",
+                                                )
+                                            })?
+                                    }
+                                };
+
+                                // Store to local alloca
+                                let _ = self.builder.build_store(local_ptr, restored_val).map_err(
+                                    |_| {
+                                        crate::diagnostics::Diagnostic::simple_boxed(
+                                            Severity::Error,
+                                            "store failed",
+                                        )
+                                    },
+                                )?;
                             }
                         }
                     }
                 }
+            }
 
             // Branch to continuation block
             let cont_bb = cont_blocks[resume_idx];

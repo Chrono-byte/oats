@@ -284,6 +284,18 @@ fn format_chumsky_error<E: std::fmt::Display + std::fmt::Debug>(err: &E, input: 
 }
 
 /// Parse a string into an Oats AST Module.
+///
+/// This function uses [`Parser::parse`] to parse the input and returns a `Result`.
+/// Following the chumsky guide pattern, it converts the `ParseResult` to a regular `Result`
+/// using [`ParseResult::into_result`].
+///
+/// # Example
+/// ```no_run
+/// use oats_parser::parse_module;
+///
+/// let result = parse_module("function main(): void {}");
+/// assert!(result.is_ok());
+/// ```
 pub fn parse_module(input: &str) -> Result<Module, String> {
     module_parser()
         .parse(input)
@@ -306,6 +318,28 @@ pub fn parse_module(input: &str) -> Result<Module, String> {
                 msg
             }
         })
+}
+
+/// Check if a string is valid Oats code without producing an AST.
+///
+/// This function uses [`Parser::check`] to validate the input without generating
+/// the parsed output. This is useful when you only need to know if code is valid,
+/// not the actual AST structure.
+///
+/// Returns `true` if the input is valid, `false` otherwise.
+///
+/// # Example
+/// ```no_run
+/// use oats_parser::check_module;
+///
+/// // Valid code returns true
+/// assert!(check_module("function main(): void {}"));
+///
+/// // Invalid code returns false
+/// assert!(!check_module("function main(): void {"));
+/// ```
+pub fn check_module(input: &str) -> bool {
+    !module_parser().check(input).has_errors()
 }
 
 /// Top-level module parser.
@@ -350,9 +384,11 @@ fn module_parser<'a>() -> impl Parser<'a, &'a str, Module> + 'a {
 mod tests {
     use super::*;
 
+    /// Test demonstrating the chumsky guide pattern: using Parser::parse with into_result
     #[test]
     fn test_export_function() {
         let input = "export function main(): void { return; }";
+        // Following chumsky guide: parser().parse(input).into_result()
         let result = parse_module(input);
         assert!(
             result.is_ok(),
@@ -366,6 +402,44 @@ mod tests {
         } else {
             panic!("Expected FnDecl, got {:?}", module.body[0]);
         }
+    }
+
+    /// Test demonstrating the chumsky guide pattern: using Parser::check to validate input
+    #[test]
+    fn test_check_module_valid() {
+        let input = "function main(): void {}";
+        // Following chumsky guide: using check() to validate without getting output
+        assert!(check_module(input), "Valid code should pass check");
+    }
+
+    /// Test demonstrating the chumsky guide pattern: using Parser::check with has_errors
+    #[test]
+    fn test_check_module_invalid() {
+        let invalid_input = "function main(): void {";
+        // Following chumsky guide: check() returns ParseResult, use has_errors()
+        assert!(
+            !check_module(invalid_input),
+            "Invalid code should fail check"
+        );
+    }
+
+    /// Test demonstrating direct use of parse() and has_errors() from chumsky guide
+    #[test]
+    fn test_parse_result_with_errors() {
+        let parser = module_parser();
+        let valid_input = "function main(): void {}";
+
+        // Following chumsky guide: parse() returns ParseResult
+        let result = parser.parse(valid_input);
+        assert!(!result.has_errors(), "Valid input should not have errors");
+        assert!(
+            result.into_result().is_ok(),
+            "Valid input should parse successfully"
+        );
+
+        let invalid_input = "function main(): void {";
+        let result = parser.parse(invalid_input);
+        assert!(result.has_errors(), "Invalid input should have errors");
     }
 
     #[test]

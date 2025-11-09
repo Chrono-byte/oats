@@ -8,16 +8,14 @@ use oats_ast::*;
 /// Statement parser.
 ///
 /// Handles all statement types in the Oats language.
+/// Following chumsky best practices: accepts Recursive types directly which implement Clone.
 pub fn stmt_parser<'a>(
     stmt: impl Parser<'a, &'a str, Stmt> + Clone + 'a,
-    expr: impl Parser<'a, &'a str, Expr> + Clone + 'a, // <-- Add this `expr` argument
+    expr: impl Parser<'a, &'a str, Expr> + Clone + 'a,
 ) -> impl Parser<'a, &'a str, Stmt> + 'a {
-    // `expr` is now passed in, not created
-    let stmt_inner = stmt;
-
     choice((
         // Export statements (must come first to match "export function")
-        export_stmt_parser(stmt_inner.clone(), expr.clone()).boxed(),
+        export_stmt_parser(stmt.clone(), expr.clone()).boxed(),
         // Import statements
         import_stmt_parser().map(Stmt::Import).boxed(),
         // Declare function statements
@@ -25,55 +23,55 @@ pub fn stmt_parser<'a>(
         // Type alias declarations
         type_alias_parser().map(Stmt::TypeAlias).boxed(),
         // Interface declarations
-        interface_decl_parser(stmt_inner.clone())
+        interface_decl_parser(stmt.clone())
             .map(Stmt::InterfaceDecl)
             .boxed(),
         // Enum declarations
         enum_decl_parser().map(Stmt::EnumDecl).boxed(),
         // Namespace declarations
-        namespace_decl_parser(stmt_inner.clone())
+        namespace_decl_parser(stmt.clone())
             .map(Stmt::NamespaceDecl)
             .boxed(),
         // Class declarations
-        class_decl_parser(stmt_inner.clone(), expr.clone())
+        class_decl_parser(stmt.clone(), expr.clone())
             .map(Stmt::ClassDecl)
             .boxed(),
         // Function declarations
-        function::fn_decl_parser(stmt_inner.clone())
+        function::fn_decl_parser(stmt.clone())
             .map(Stmt::FnDecl)
             .boxed(),
         // Variable declarations
         var_decl_parser(expr.clone()).map(Stmt::VarDecl).boxed(),
         // If statements
-        if_stmt_parser(stmt_inner.clone(), expr.clone())
+        if_stmt_parser(stmt.clone(), expr.clone())
             .map(Stmt::If)
             .boxed(),
         // For statements
-        for_stmt_parser(stmt_inner.clone(), expr.clone())
+        for_stmt_parser(stmt.clone(), expr.clone())
             .map(|s| Stmt::For(Box::new(s)))
             .boxed(),
         // For-in statements
-        for_in_stmt_parser(stmt_inner.clone(), expr.clone())
+        for_in_stmt_parser(stmt.clone(), expr.clone())
             .map(Stmt::ForIn)
             .boxed(),
         // For-of statements
-        for_of_stmt_parser(stmt_inner.clone(), expr.clone())
+        for_of_stmt_parser(stmt.clone(), expr.clone())
             .map(Stmt::ForOf)
             .boxed(),
         // While statements
-        while_stmt_parser(stmt_inner.clone(), expr.clone())
+        while_stmt_parser(stmt.clone(), expr.clone())
             .map(Stmt::While)
             .boxed(),
         // Do-while statements
-        do_while_stmt_parser(stmt_inner.clone(), expr.clone())
+        do_while_stmt_parser(stmt.clone(), expr.clone())
             .map(Stmt::DoWhile)
             .boxed(),
         // Switch statements
-        switch_stmt_parser(stmt_inner.clone(), expr.clone())
+        switch_stmt_parser(stmt.clone(), expr.clone())
             .map(Stmt::Switch)
             .boxed(),
         // Try statements
-        try_stmt_parser(stmt_inner.clone(), expr.clone())
+        try_stmt_parser(stmt.clone(), expr.clone())
             .map(Stmt::Try)
             .boxed(),
         // Throw statements
@@ -87,13 +85,9 @@ pub fn stmt_parser<'a>(
         // Debugger statements
         debugger_stmt_parser().map(Stmt::Debugger).boxed(),
         // Labeled statements
-        labeled_stmt_parser(stmt_inner.clone())
-            .map(Stmt::Labeled)
-            .boxed(),
+        labeled_stmt_parser(stmt.clone()).map(Stmt::Labeled).boxed(),
         // Block statements
-        common::block_parser(stmt_inner.clone())
-            .map(Stmt::Block)
-            .boxed(),
+        common::block_parser(stmt.clone()).map(Stmt::Block).boxed(),
         // Expression statements
         expr_stmt_parser(expr.clone()).map(Stmt::ExprStmt).boxed(),
     ))
@@ -538,12 +532,13 @@ fn class_member_parser<'a>(
     stmt: impl Parser<'a, &'a str, Stmt> + Clone + 'a,
     _expr: impl Parser<'a, &'a str, Expr> + Clone + 'a,
 ) -> impl Parser<'a, &'a str, ClassMember> + 'a {
+    let stmt_clone = stmt.clone();
     choice((
         // Constructor: constructor(params) { body }
         text::keyword("constructor")
             .padded()
             .ignore_then(common::param_list_parser())
-            .then(common::optional_block_parser(stmt.clone()))
+            .then(common::optional_block_parser(stmt_clone.clone()))
             .map_with(|(params, body), extra| {
                 ClassMember::Constructor(ConstructorDecl {
                     params,
@@ -562,7 +557,7 @@ fn class_member_parser<'a>(
         .ignore_then(common::ident_parser())
         .then(common::param_list_parser())
         .then(common::optional_type_annotation())
-        .then(common::optional_block_parser(stmt.clone()))
+        .then(common::optional_block_parser(stmt_clone))
         .map_with(|(((ident, params), return_type), body), extra| {
             ClassMember::Method(MethodDecl {
                 ident,
@@ -869,6 +864,8 @@ fn try_stmt_parser<'a>(
     stmt: impl Parser<'a, &'a str, Stmt> + Clone + 'a,
     _expr: impl Parser<'a, &'a str, Expr> + Clone + 'a,
 ) -> impl Parser<'a, &'a str, TryStmt> + 'a {
+    let stmt_clone = stmt.clone();
+    let stmt_clone2 = stmt.clone();
     text::keyword("try")
         .padded()
         .ignore_then(common::block_parser(stmt.clone()))
@@ -881,7 +878,7 @@ fn try_stmt_parser<'a>(
                         .ignore_then(common::pat_parser().or_not())
                         .then_ignore(just(")").padded()),
                 )
-                .then(common::block_parser(stmt.clone()))
+                .then(common::block_parser(stmt_clone.clone()))
                 .map(|(param, body)| CatchClause {
                     param,
                     body,
@@ -892,7 +889,7 @@ fn try_stmt_parser<'a>(
         .then(
             text::keyword("finally")
                 .padded()
-                .ignore_then(common::block_parser(stmt.clone()))
+                .ignore_then(common::block_parser(stmt_clone2.clone()))
                 .or_not(),
         )
         .map_with(|((block, handler), finalizer), extra| TryStmt {

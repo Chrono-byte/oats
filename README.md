@@ -1,4 +1,4 @@
-# Oats 🌾
+# Oats
 
 [![License](https://img.shields.io/badge/license-zlib-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/built%20with-Rust-000000.svg?logo=rust)](https://www.rust-lang.org/)
@@ -24,7 +24,7 @@ management.
 
 ---
 
-## ✨ Features
+## Features
 
 - **Rich Language Features**: Supports numbers, booleans, strings, arrays,
   classes, and unions.
@@ -41,7 +41,7 @@ management.
 
 ---
 
-## 🚀 Getting Started
+## Getting Started
 
 ### Prerequisites
 
@@ -118,7 +118,7 @@ If you want to develop Oats or work with the full repository:
 
 ---
 
-## 📁 Project Structure
+## Project Structure
 
 - **`crates/oatsc`**: Core compiler for parsing, type checking, and LLVM IR
   generation.
@@ -143,7 +143,7 @@ See `docs/README.md` for a guided tour of the documentation set.
 
 ---
 
-## 🤝 Contributing
+## Contributing
 
 Contributions are welcome\! Start by exploring the `docs/` directory:
 
@@ -166,7 +166,7 @@ Contributions are welcome\! Start by exploring the `docs/` directory:
 
 ---
 
-## 📜 License
+## License
 
 Licensed under the **zlib/libpng License with Acknowledgement**. See the
 [LICENSE](LICENSE) file for details.

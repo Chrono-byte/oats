@@ -30,7 +30,7 @@ management.
   resolution, allowing complex applications to be built from modular components.
 - **Generics & Unions**: Supports generics via call-site monomorphization and
   handles complex union types with runtime boxing.
-- **Async (preview)**: `async` functions are lowered into efficient poll-state
+- **Async (kinda?)**: `async` functions are lowered into efficient poll-state
   machines with resume blocks, enabling asynchronous operations.
 - **Memory Management**: Implements deterministic Automatic Reference Counting
   (ARC) with support for weak references and a background cycle collector.

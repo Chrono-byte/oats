@@ -261,7 +261,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     _ => {
                                         return Err(Diagnostic::simple_with_span_boxed(
                                             Severity::Error,
-                                            "compound assignment not supported for field type".to_string(),
+                                            format!(
+                                                "compound assignment not supported for field type"
+                                            ),
                                             assign.span.start,
                                         ));
                                     }
@@ -389,7 +391,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     _ => {
                                         return Err(Diagnostic::simple_with_span_boxed(
                                             Severity::Error,
-                                            "compound assignment not supported for field type".to_string(),
+                                            format!(
+                                                "compound assignment not supported for field type"
+                                            ),
                                             assign.span.start,
                                         ));
                                     }

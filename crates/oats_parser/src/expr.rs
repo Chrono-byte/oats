@@ -16,7 +16,7 @@ pub fn expr_parser<'a>(
     stmt: impl Parser<'a, &'a str, Stmt> + Clone + 'a,
 ) -> impl Parser<'a, &'a str, Expr> + 'a {
     // The body is now just the implementation, NOT the recursive call
-    assignment_expr_parser(expr.clone(), stmt.clone()).boxed()
+    assignment_expr_parser(expr, stmt)
 }
 
 /// Assignment expressions: `left = right`, `left += right`, etc.

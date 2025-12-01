@@ -41,7 +41,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 Expr::Paren(p) => contains_yield_expr(&p.expr),
                 Expr::Array(arr) => arr.elems.iter().flatten().any(contains_yield_expr),
                 Expr::New(n) => {
-                    contains_yield_expr(&n.callee) || n.args.iter().any(contains_yield_expr)
+                    contains_yield_expr(&n.callee) || n.args.iter().any(|a| contains_yield_expr(a))
                 }
                 Expr::Seq(s) => s.exprs.iter().any(contains_yield_expr),
                 _ => false,
@@ -51,18 +51,18 @@ impl<'a> crate::codegen::CodeGen<'a> {
         fn contains_yield_stmt(stmt: &Stmt) -> bool {
             match stmt {
                 Stmt::ExprStmt(es) => contains_yield_expr(&es.expr),
-                Stmt::Return(r) => r.arg.as_ref().is_some_and(contains_yield_expr),
+                Stmt::Return(r) => r.arg.as_ref().map_or(false, |e| contains_yield_expr(e)),
                 Stmt::VarDecl(vd) => vd
                     .decls
                     .iter()
-                    .any(|d| d.init.as_ref().is_some_and(contains_yield_expr)),
+                    .any(|d| d.init.as_ref().map_or(false, |e| contains_yield_expr(e))),
                 Stmt::If(if_stmt) => {
                     contains_yield_expr(&if_stmt.test)
                         || contains_yield_stmt(&if_stmt.cons)
                         || if_stmt
                             .alt
                             .as_ref()
-                            .is_some_and(|a| contains_yield_stmt(a))
+                            .map_or(false, |a| contains_yield_stmt(a))
                 }
                 Stmt::While(w) => contains_yield_expr(&w.test) || contains_yield_stmt(&w.body),
                 Stmt::For(f) => {
@@ -71,9 +71,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         ForInit::VarDecl(vd) => vd
                             .decls
                             .iter()
-                            .any(|d| d.init.as_ref().is_some_and(contains_yield_expr)),
-                    })) || f.test.as_ref().is_some_and(contains_yield_expr)
-                        || f.update.as_ref().is_some_and(contains_yield_expr)
+                            .any(|d| d.init.as_ref().map_or(false, |e| contains_yield_expr(e))),
+                    })) || f.test.as_ref().map_or(false, |e| contains_yield_expr(e))
+                        || f.update.as_ref().map_or(false, |e| contains_yield_expr(e))
                         || contains_yield_stmt(&f.body)
                 }
                 Stmt::Block(b) => b.stmts.iter().any(contains_yield_stmt),
@@ -673,6 +673,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 // The yield expression will save state and return
                 let _ =
                     self.lower_stmt(&body.stmts[stmt_idx], next_f, &param_map, &mut locals_stack);
+                yield_idx += 1;
+                stmt_idx += 1;
             }
         }
 

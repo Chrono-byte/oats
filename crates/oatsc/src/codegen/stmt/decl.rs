@@ -756,6 +756,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             "alloca failed for nested array element at index {}",
                                             idx
                                         ),
+                                        format!(
+                                            "alloca failed for nested array element at index {}",
+                                            idx
+                                        ),
                                     )
                                 })?;
 
@@ -807,6 +811,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     "Nested array destructuring requires array type for element at index {}",
                                     idx
                                 ),
+                                format!(
+                                    "Nested array destructuring requires array type for element at index {}",
+                                    idx
+                                ),
                             ));
                         }
                     }
@@ -822,6 +830,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 .map_err(|_| {
                                     Diagnostic::simple_boxed(
                                         Severity::Error,
+                                        format!(
+                                            "alloca failed for nested object element at index {}",
+                                            idx
+                                        ),
                                         format!(
                                             "alloca failed for nested object element at index {}",
                                             idx
@@ -877,6 +889,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     "Nested object destructuring requires object type for element at index {}",
                                     idx
                                 ),
+                                format!(
+                                    "Nested object destructuring requires object type for element at index {}",
+                                    idx
+                                ),
                             ));
                         }
                     }
@@ -892,9 +908,15 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             .map_err(|_| {
                                 Diagnostic::simple_boxed(Severity::Error, "int cast failed")
                             })?;
+                            .map_err(|_| {
+                                Diagnostic::simple_boxed(Severity::Error, "int cast failed")
+                            })?;
                         let rest_len = self
                             .builder
                             .build_int_sub(length_i64, idx_i64, "rest_len")
+                            .map_err(|_| {
+                                Diagnostic::simple_boxed(Severity::Error, "int sub failed")
+                            })?;
                             .map_err(|_| {
                                 Diagnostic::simple_boxed(Severity::Error, "int sub failed")
                             })?;
@@ -916,7 +938,19 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             .map_err(|_| {
                                 Diagnostic::simple_boxed(Severity::Error, "array alloc failed")
                             })?;
+                            .map_err(|_| {
+                                Diagnostic::simple_boxed(Severity::Error, "array alloc failed")
+                            })?;
 
+                        let rest_arr_ptr =
+                            if let inkwell::Either::Left(bv) = rest_arr_call.try_as_basic_value() {
+                                bv.into_pointer_value()
+                            } else {
+                                return Err(Diagnostic::simple_boxed(
+                                    Severity::Error,
+                                    "rest array allocation failed",
+                                ));
+                            };
                         let rest_arr_ptr =
                             if let inkwell::Either::Left(bv) = rest_arr_call.try_as_basic_value() {
                                 bv.into_pointer_value()
@@ -939,8 +973,20 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             self.context.append_basic_block(function, "rest_loop_body");
                         let loop_end_bb =
                             self.context.append_basic_block(function, "rest_loop_end");
+                        let loop_start_bb =
+                            self.context.append_basic_block(function, "rest_loop_start");
+                        let loop_body_bb =
+                            self.context.append_basic_block(function, "rest_loop_body");
+                        let loop_end_bb =
+                            self.context.append_basic_block(function, "rest_loop_end");
 
                         // Initialize loop counter (i = idx)
+                        let i_alloca =
+                            self.builder
+                                .build_alloca(self.i64_t, "rest_i")
+                                .map_err(|_| {
+                                    Diagnostic::simple_boxed(Severity::Error, "alloca failed")
+                                })?;
                         let i_alloca =
                             self.builder
                                 .build_alloca(self.i64_t, "rest_i")
@@ -956,12 +1002,18 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             .map_err(|_| {
                                 Diagnostic::simple_boxed(Severity::Error, "branch failed")
                             })?;
+                            .map_err(|_| {
+                                Diagnostic::simple_boxed(Severity::Error, "branch failed")
+                            })?;
 
                         // Loop start: check if i < length
                         self.builder.position_at_end(loop_start_bb);
                         let i_val = self
                             .builder
                             .build_load(self.i64_t, i_alloca, "load_i")
+                            .map_err(|_| {
+                                Diagnostic::simple_boxed(Severity::Error, "load failed")
+                            })?;
                             .map_err(|_| {
                                 Diagnostic::simple_boxed(Severity::Error, "load failed")
                             })?;
@@ -984,9 +1036,15 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             .map_err(|_| {
                                 Diagnostic::simple_boxed(Severity::Error, "compare failed")
                             })?;
+                            .map_err(|_| {
+                                Diagnostic::simple_boxed(Severity::Error, "compare failed")
+                            })?;
                         let _ = self
                             .builder
                             .build_conditional_branch(cond, loop_body_bb, loop_end_bb)
+                            .map_err(|_| {
+                                Diagnostic::simple_boxed(Severity::Error, "branch failed")
+                            })?;
                             .map_err(|_| {
                                 Diagnostic::simple_boxed(Severity::Error, "branch failed")
                             })?;
@@ -1014,11 +1072,26 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     "get element failed",
                                 ));
                             };
+                            .map_err(|_| {
+                                Diagnostic::simple_boxed(Severity::Error, "get elem failed")
+                            })?;
+                        let src_elem =
+                            if let inkwell::Either::Left(bv) = src_elem_call.try_as_basic_value() {
+                                bv
+                            } else {
+                                return Err(Diagnostic::simple_boxed(
+                                    Severity::Error,
+                                    "get element failed",
+                                ));
+                            };
 
                         // Calculate rest index: i - idx
                         let rest_idx = self
                             .builder
                             .build_int_sub(i_val_int, idx_i64, "rest_idx")
+                            .map_err(|_| {
+                            Diagnostic::simple_boxed(Severity::Error, "int sub failed")
+                        })?;
                             .map_err(|_| {
                             Diagnostic::simple_boxed(Severity::Error, "int sub failed")
                         })?;
@@ -1028,6 +1101,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         let rest_arr_ptr_alloca = self
                             .builder
                             .build_alloca(self.i8ptr_t, "rest_arr_ptr_alloca")
+                            .map_err(|_| {
+                                Diagnostic::simple_boxed(Severity::Error, "alloca failed")
+                            })?;
                             .map_err(|_| {
                                 Diagnostic::simple_boxed(Severity::Error, "alloca failed")
                             })?;
@@ -1043,6 +1119,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             .map_err(|_| {
                                 Diagnostic::simple_boxed(Severity::Error, "set elem failed")
                             })?;
+                            .map_err(|_| {
+                                Diagnostic::simple_boxed(Severity::Error, "set elem failed")
+                            })?;
 
                         // Increment i
                         let one = self.i64_t.const_int(1, false);
@@ -1052,12 +1131,18 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             .map_err(|_| {
                                 Diagnostic::simple_boxed(Severity::Error, "int add failed")
                             })?;
+                            .map_err(|_| {
+                                Diagnostic::simple_boxed(Severity::Error, "int add failed")
+                            })?;
                         let _ = self.builder.build_store(i_alloca, i_next);
 
                         // Branch back to loop start
                         let _ = self
                             .builder
                             .build_unconditional_branch(loop_start_bb)
+                            .map_err(|_| {
+                                Diagnostic::simple_boxed(Severity::Error, "branch failed")
+                            })?;
                             .map_err(|_| {
                                 Diagnostic::simple_boxed(Severity::Error, "branch failed")
                             })?;
@@ -1083,11 +1168,17 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             .map_err(|_| {
                                 Diagnostic::simple_boxed(Severity::Error, "alloca failed")
                             })?;
+                            .map_err(|_| {
+                                Diagnostic::simple_boxed(Severity::Error, "alloca failed")
+                            })?;
 
                         // Load the final rest array pointer (in case reallocation happened)
                         let final_rest_arr_ptr = self
                             .builder
                             .build_load(self.i8ptr_t, rest_arr_ptr_alloca, "final_rest_arr")
+                            .map_err(|_| {
+                                Diagnostic::simple_boxed(Severity::Error, "load failed")
+                            })?;
                             .map_err(|_| {
                                 Diagnostic::simple_boxed(Severity::Error, "load failed")
                             })?;
@@ -1098,6 +1189,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             let _ = self
                                 .builder
                                 .build_call(rc_inc, &[rest_pv.into()], "rc_inc_rest")
+                                .map_err(|_| {
+                                    Diagnostic::simple_boxed(Severity::Error, "rc_inc failed")
+                                })?;
                                 .map_err(|_| {
                                     Diagnostic::simple_boxed(Severity::Error, "rc_inc failed")
                                 })?;
@@ -1114,6 +1208,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 ptr: rest_alloca,
                                 ty: self.i8ptr_t.as_basic_type_enum(),
                                 initialized: true,
+                                is_const: matches!(var_decl.kind, VarDeclKind::Const)
+                                    || !is_mut_decl,
                                 is_const: matches!(var_decl.kind, VarDeclKind::Const)
                                     || !is_mut_decl,
                                 is_weak: false,
@@ -1362,6 +1458,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                 "alloca failed for nested object '{}'",
                                                 prop_name
                                             ),
+                                            format!(
+                                                "alloca failed for nested object '{}'",
+                                                prop_name
+                                            ),
                                         )
                                     })?;
 
@@ -1414,6 +1514,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         "Nested object destructuring requires object type for field '{}'",
                                         prop_name
                                     ),
+                                    format!(
+                                        "Nested object destructuring requires object type for field '{}'",
+                                        prop_name
+                                    ),
                                 ));
                             }
                         }
@@ -1429,6 +1533,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     .map_err(|_| {
                                         Diagnostic::simple_boxed(
                                             Severity::Error,
+                                            format!(
+                                                "alloca failed for nested array '{}'",
+                                                prop_name
+                                            ),
                                             format!(
                                                 "alloca failed for nested array '{}'",
                                                 prop_name
@@ -1485,6 +1593,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         "Nested array destructuring requires array type for field '{}'",
                                         prop_name
                                     ),
+                                    format!(
+                                        "Nested array destructuring requires array type for field '{}'",
+                                        prop_name
+                                    ),
                                 ));
                             }
                         }
@@ -1511,6 +1623,13 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             .filter(|(_, (name, _))| !destructured_fields.contains(name))
                             .map(|(idx, (name, ty))| (idx, (name.clone(), ty.clone())))
                             .collect();
+                    let remaining_fields: Vec<(usize, (String, crate::types::OatsType))> =
+                        field_list
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, (name, _))| !destructured_fields.contains(name))
+                            .map(|(idx, (name, ty))| (idx, (name.clone(), ty.clone())))
+                            .collect();
 
                     let rest_field_count = remaining_fields.len();
 
@@ -1518,6 +1637,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     let header_size = 8u64;
                     let meta_size = 8u64;
                     let field_size = 8u64;
+                    let total_size =
+                        header_size + meta_size + (rest_field_count as u64 * field_size);
                     let total_size =
                         header_size + meta_size + (rest_field_count as u64 * field_size);
 
@@ -1528,6 +1649,15 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         .build_call(malloc_fn, &[size_const.into()], "rest_obj_malloc")
                         .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "malloc failed"))?;
 
+                    let rest_obj_ptr =
+                        if let inkwell::Either::Left(bv) = malloc_call.try_as_basic_value() {
+                            bv.into_pointer_value()
+                        } else {
+                            return Err(Diagnostic::simple_boxed(
+                                Severity::Error,
+                                "malloc returned no value",
+                            ));
+                        };
                     let rest_obj_ptr =
                         if let inkwell::Either::Left(bv) = malloc_call.try_as_basic_value() {
                             bv.into_pointer_value()
@@ -1573,6 +1703,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         // Get source field value
                         let src_field_offset =
                             header_size + meta_size + (*field_idx as u64 * field_size);
+                        let src_field_offset =
+                            header_size + meta_size + (*field_idx as u64 * field_size);
                         let src_offset_const = self.i64_t.const_int(src_field_offset, false);
                         let src_field_i8ptr = unsafe {
                             self.builder.build_gep(
@@ -1594,9 +1726,25 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             .map_err(|_| {
                                 Diagnostic::simple_boxed(Severity::Error, "cast failed")
                             })?;
+                            .build_pointer_cast(
+                                src_field_i8ptr,
+                                self.i8ptr_t,
+                                &format!("src_field_{}_ptr", field_name),
+                            )
+                            .map_err(|_| {
+                                Diagnostic::simple_boxed(Severity::Error, "cast failed")
+                            })?;
 
                         let src_field_val = self
                             .builder
+                            .build_load(
+                                self.i8ptr_t,
+                                src_field_ptr,
+                                &format!("src_field_{}_load", field_name),
+                            )
+                            .map_err(|_| {
+                                Diagnostic::simple_boxed(Severity::Error, "load failed")
+                            })?;
                             .build_load(
                                 self.i8ptr_t,
                                 src_field_ptr,
@@ -1619,9 +1767,19 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 .map_err(|_| {
                                     Diagnostic::simple_boxed(Severity::Error, "rc_inc failed")
                                 })?;
+                                .build_call(
+                                    rc_inc,
+                                    &[src_pv.into()],
+                                    &format!("rc_inc_rest_{}", field_name),
+                                )
+                                .map_err(|_| {
+                                    Diagnostic::simple_boxed(Severity::Error, "rc_inc failed")
+                                })?;
                         }
 
                         // Store in rest object
+                        let rest_field_offset =
+                            header_size + meta_size + (rest_idx as u64 * field_size);
                         let rest_field_offset =
                             header_size + meta_size + (rest_idx as u64 * field_size);
                         let rest_offset_const = self.i64_t.const_int(rest_field_offset, false);
@@ -1637,6 +1795,14 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
                         let rest_field_ptr = self
                             .builder
+                            .build_pointer_cast(
+                                rest_field_i8ptr,
+                                self.i8ptr_t,
+                                &format!("rest_field_{}_ptr", field_name),
+                            )
+                            .map_err(|_| {
+                                Diagnostic::simple_boxed(Severity::Error, "cast failed")
+                            })?;
                             .build_pointer_cast(
                                 rest_field_i8ptr,
                                 self.i8ptr_t,
@@ -1663,6 +1829,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "rc_inc failed"))?;
 
                     // Store rest object
+                    let _ = self
+                        .builder
+                        .build_store(rest_alloca, rest_obj_ptr.as_basic_value_enum());
                     let _ = self
                         .builder
                         .build_store(rest_alloca, rest_obj_ptr.as_basic_value_enum());

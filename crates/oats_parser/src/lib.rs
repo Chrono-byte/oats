@@ -2,6 +2,8 @@
 //!
 //! A clean, expressive parser for the Oats language using chumsky.
 
+#![type_length_limit = "2097152"]
+
 mod common;
 mod expr;
 mod function;
@@ -335,7 +337,7 @@ fn module_parser<'a>() -> impl Parser<'a, &'a str, Module> + 'a {
     stmt.define(stmt_impl);
     expr.define(expr_impl);
 
-    // 4. The module parser is now just the `stmt` parser, repeated.
+    // 5. The module parser is now just the `stmt` parser, repeated.
     stmt.repeated()
         .collect::<Vec<_>>()
         .then_ignore(end())

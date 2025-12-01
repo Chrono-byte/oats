@@ -2,6 +2,7 @@
 
 use libc::c_char;
 use runtime::heap::{runtime_free, runtime_malloc};
+use runtime::heap::{runtime_free, runtime_malloc};
 use std::ffi::{CStr, CString};
 use std::fs;
 

@@ -204,16 +204,14 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
             // Initialize metadata pointer (null for now) at offset 8
             let meta_offset = self.i64_t.const_int(8, false);
-            let meta_i8ptr = unsafe {
-                self.builder
-                    .build_gep(self.i8_t, enum_i8ptr, &[meta_offset], "meta_i8ptr")
-            }
-            .map_err(|_| {
-                crate::diagnostics::Diagnostic::simple_boxed(
-                    Severity::Error,
-                    "failed to get meta pointer offset",
-                )
-            })?;
+            let meta_i8ptr = self
+                .safe_gep(self.i8_t, enum_i8ptr, &[meta_offset], "meta_i8ptr")
+                .map_err(|_| {
+                    crate::diagnostics::Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "failed to get meta pointer offset",
+                    )
+                })?;
             let meta_ptr = self
                 .builder
                 .build_pointer_cast(meta_i8ptr, self.i8ptr_t, "meta_ptr")
@@ -228,16 +226,14 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
             // Set discriminant (variant tag) at offset 16
             let disc_offset = self.i64_t.const_int(16, false);
-            let disc_i8ptr = unsafe {
-                self.builder
-                    .build_gep(self.i8_t, enum_i8ptr, &[disc_offset], "disc_i8ptr")
-            }
-            .map_err(|_| {
-                crate::diagnostics::Diagnostic::simple_boxed(
-                    Severity::Error,
-                    "failed to get discriminant pointer offset",
-                )
-            })?;
+            let disc_i8ptr = self
+                .safe_gep(self.i8_t, enum_i8ptr, &[disc_offset], "disc_i8ptr")
+                .map_err(|_| {
+                    crate::diagnostics::Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "failed to get discriminant pointer offset",
+                    )
+                })?;
             let disc_ptr = self
                 .builder
                 .build_pointer_cast(
@@ -257,16 +253,14 @@ impl<'a> crate::codegen::CodeGen<'a> {
             // Store variant data if any (starting at offset 20, after 4-byte discriminant with padding)
             if !field_types.is_empty() {
                 let data_offset = self.i64_t.const_int(24, false); // header(8) + meta(8) + disc(4) + padding(4) = 24
-                let data_i8ptr = unsafe {
-                    self.builder
-                        .build_gep(self.i8_t, enum_i8ptr, &[data_offset], "data_i8ptr")
-                }
-                .map_err(|_| {
-                    crate::diagnostics::Diagnostic::simple_boxed(
-                        Severity::Error,
-                        "failed to get data pointer offset",
-                    )
-                })?;
+                let data_i8ptr = self
+                    .safe_gep(self.i8_t, enum_i8ptr, &[data_offset], "data_i8ptr")
+                    .map_err(|_| {
+                        crate::diagnostics::Diagnostic::simple_boxed(
+                            Severity::Error,
+                            "failed to get data pointer offset",
+                        )
+                    })?;
 
                 // Store each field parameter into the data union
                 let mut current_offset = 0u64;
@@ -277,20 +271,14 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
                         // Calculate field offset within data union
                         let field_offset_val = self.i64_t.const_int(current_offset, false);
-                        let field_i8ptr = unsafe {
-                            self.builder.build_gep(
-                                self.i8_t,
-                                data_i8ptr,
-                                &[field_offset_val],
-                                "field_i8ptr",
-                            )
-                        }
-                        .map_err(|_| {
-                            crate::diagnostics::Diagnostic::simple_boxed(
-                                Severity::Error,
-                                "failed to get field pointer",
-                            )
-                        })?;
+                        let field_i8ptr = self
+                            .safe_gep(self.i8_t, data_i8ptr, &[field_offset_val], "field_i8ptr")
+                            .map_err(|_| {
+                                crate::diagnostics::Diagnostic::simple_boxed(
+                                    Severity::Error,
+                                    "failed to get field pointer",
+                                )
+                            })?;
 
                         // Cast to appropriate type and store
                         let field_ptr_type =

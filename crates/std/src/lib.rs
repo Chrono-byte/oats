@@ -11,10 +11,12 @@ pub mod sys;
 
 // Public API modules
 pub mod actor;
+pub mod actor_safe;
 pub mod console;
 pub mod env;
 pub mod format;
 pub mod fs;
+pub mod fs_safe;
 pub mod hash;
 pub mod io;
 pub mod math;

@@ -19,6 +19,86 @@ use crate::{promise_poll_into, rc_dec, rc_inc, runtime_free, runtime_malloc};
 /// Process identifier - opaque u64 value
 pub type ProcessId = u64;
 
+/// Safe wrapper for process state pointers.
+///
+/// This type validates state pointers before use, providing a safer
+/// interface than raw pointers. The state pointer is managed by the
+/// generated code and represents the process's execution state.
+///
+/// # Safety
+///
+/// The `ProcessStatePtr` does not own the state - it's just a validated
+/// reference. The caller must ensure the state pointer remains valid.
+#[derive(Debug, Clone, Copy)]
+pub struct ProcessStatePtr {
+    ptr: *mut c_void,
+}
+
+impl ProcessStatePtr {
+    /// Create a new `ProcessStatePtr` from a raw pointer, validating it first.
+    ///
+    /// Returns `None` if the pointer is null or fails validation.
+    pub fn new(ptr: *mut c_void) -> Option<Self> {
+        if ptr.is_null() {
+            return None;
+        }
+
+        let p_addr = ptr as usize;
+        if !crate::is_plausible_addr(p_addr) {
+            return None;
+        }
+
+        Some(ProcessStatePtr { ptr })
+    }
+
+    /// Create from a usize address (as stored in Process struct).
+    pub fn from_addr(addr: usize) -> Option<Self> {
+        if addr == 0 {
+            return None;
+        }
+
+        let ptr = addr as *mut c_void;
+        Self::new(ptr)
+    }
+
+    /// Get the raw pointer value.
+    ///
+    /// # Safety
+    ///
+    /// The returned pointer is only valid as long as the underlying
+    /// state remains allocated. The caller must ensure proper
+    /// reference counting.
+    pub fn as_ptr(&self) -> *mut c_void {
+        self.ptr
+    }
+
+    /// Get the address as usize (for storage in Process struct).
+    pub fn as_addr(&self) -> usize {
+        self.ptr as usize
+    }
+
+    /// Increment the reference count of the state object.
+    pub fn inc_rc(&self) -> Result<(), crate::RcError> {
+        if let Some(rc_ptr) = crate::RcPtr::new(self.ptr) {
+            rc_ptr.inc()
+        } else {
+            Err(crate::RcError::InvalidPointer)
+        }
+    }
+
+    /// Decrement the reference count of the state object.
+    pub fn dec_rc(self) -> Result<(), crate::RcError> {
+        if let Some(rc_ptr) = crate::RcPtr::new(self.ptr) {
+            rc_ptr.dec()
+        } else {
+            Err(crate::RcError::InvalidPointer)
+        }
+    }
+}
+
+// Note: Cannot implement From<*mut c_void> due to orphan rules.
+// Use ProcessStatePtr::new() or ProcessStatePtr::from_addr() instead.
+
 /// Process status enumeration
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProcessStatus {
@@ -313,8 +393,17 @@ impl ProcessScheduler {
 
         // Increment ARC on state if provided
         if let Some(state_ptr) = state {
-            unsafe {
-                rc_inc(state_ptr);
+            // Use safe RcPtr wrapper for reference counting
+            if let Some(rc_ptr) = crate::RcPtr::new(state_ptr)
+                && let Err(e) = rc_ptr.inc()
+            {
+                // Log error but continue - this is defensive programming
+                if crate::RUNTIME_LOG.load(std::sync::atomic::Ordering::Relaxed) {
+                    eprintln!(
+                        "[oats runtime] Failed to increment RC for process state: {}",
+                        e
+                    );
+                }
             }
             process.state = Some(state_ptr as usize);
         }
@@ -332,7 +421,11 @@ impl ProcessScheduler {
     }
 
     /// Send a message to a process
-    pub fn send(
+    ///
+    /// # Safety
+    /// This function dereferences the `payload` raw pointer. The caller must ensure
+    /// the pointer is valid and points to a valid ARC-managed object.
+    pub unsafe fn send(
         &mut self,
         to: ProcessId,
         from: ProcessId,
@@ -385,7 +478,11 @@ impl ProcessScheduler {
     }
 
     /// Send a message to a named process
-    pub fn send_to_name(
+    ///
+    /// # Safety
+    /// This function dereferences the `payload` raw pointer. The caller must ensure
+    /// the pointer is valid and points to a valid ARC-managed object.
+    pub unsafe fn send_to_name(
         &mut self,
         name: &str,
         from: ProcessId,
@@ -393,7 +490,7 @@ impl ProcessScheduler {
         type_id: u64,
     ) -> bool {
         if let Some(&pid) = self.registry.get(name) {
-            self.send(pid, from, payload, type_id)
+            unsafe { self.send(pid, from, payload, type_id) }
         } else {
             // Process not found, decrement payload ARC
             unsafe {
@@ -599,7 +696,7 @@ impl ProcessScheduler {
             }
             // Send exit notification message
             // Type ID 0xDEADBEEF for exit notifications (temporary - codegen will use proper types)
-            if self.send(exited_pid, linked_pid, exit_msg, 0xDEADBEEF) {
+            if unsafe { self.send(exited_pid, linked_pid, exit_msg, 0xDEADBEEF) } {
                 successful_sends += 1;
             }
         }
@@ -614,7 +711,7 @@ impl ProcessScheduler {
 
             // Create message with monitor ref (similar structure but with ref field)
             // For now, send the same message - codegen will handle proper structure
-            if self.send(exited_pid, monitor_pid, exit_msg, 0xDEADBEEF) {
+            if unsafe { self.send(exited_pid, monitor_pid, exit_msg, 0xDEADBEEF) } {
                 successful_sends += 1;
             }
         }
@@ -1056,8 +1153,15 @@ pub extern "C" fn process_spawn(priority: i32) -> *mut c_void {
 /// name_ptr: pointer to null-terminated C string (caller retains ownership)
 /// priority: 0=Normal, 1=High
 /// Returns ProcessId (u64) as a pointer to a heap-allocated u64, or null if limit exceeded
+///
+/// # Safety
+/// This function dereferences the `name_ptr` raw pointer. The caller must ensure
+/// the pointer is valid and points to a null-terminated C string.
 #[unsafe(no_mangle)]
-pub extern "C" fn process_spawn_named(name_ptr: *const libc::c_char, priority: i32) -> *mut c_void {
+pub unsafe extern "C" fn process_spawn_named(
+    name_ptr: *const libc::c_char,
+    priority: i32,
+) -> *mut c_void {
     if name_ptr.is_null() {
         return process_spawn(priority);
     }
@@ -1099,8 +1203,12 @@ pub extern "C" fn process_spawn_named(name_ptr: *const libc::c_char, priority: i
 /// from_pid_ptr: pointer to u64 containing sender ProcessId
 /// payload: pointer to ARC-managed heap object (will be incremented)
 /// type_id: type identifier for runtime type checking
+///
+/// # Safety
+/// This function dereferences the raw pointer parameters. The caller must ensure
+/// all pointers are valid.
 #[unsafe(no_mangle)]
-pub extern "C" fn process_send(
+pub unsafe extern "C" fn process_send(
     to_pid_ptr: *const u64,
     from_pid_ptr: *const u64,
     payload: *mut c_void,
@@ -1121,7 +1229,7 @@ pub extern "C" fn process_send(
         return 0;
     };
 
-    if sched.send(to_pid, from_pid, payload, type_id) {
+    if unsafe { sched.send(to_pid, from_pid, payload, type_id) } {
         1
     } else {
         0
@@ -1133,8 +1241,12 @@ pub extern "C" fn process_send(
 /// from_pid_ptr: pointer to u64 containing sender ProcessId
 /// payload: pointer to ARC-managed heap object
 /// type_id: type identifier
+///
+/// # Safety
+/// This function dereferences the raw pointer parameters. The caller must ensure
+/// all pointers are valid.
 #[unsafe(no_mangle)]
-pub extern "C" fn process_send_to_name(
+pub unsafe extern "C" fn process_send_to_name(
     name_ptr: *const libc::c_char,
     from_pid_ptr: *const u64,
     payload: *mut c_void,
@@ -1164,7 +1276,7 @@ pub extern "C" fn process_send_to_name(
         return 0;
     };
 
-    if sched.send_to_name(name, from_pid, payload, type_id) {
+    if unsafe { sched.send_to_name(name, from_pid, payload, type_id) } {
         1
     } else {
         0
@@ -1176,8 +1288,12 @@ pub extern "C" fn process_send_to_name(
 /// type_id: optional type identifier (0 means any type)
 /// Returns pointer to Message structure, or null if no message
 /// Message structure layout: [from: u64][payload: *mut c_void][type_id: u64][timestamp: u64]
+///
+/// # Safety
+/// This function dereferences the `pid_ptr` raw pointer. The caller must ensure
+/// the pointer is valid.
 #[unsafe(no_mangle)]
-pub extern "C" fn process_receive(pid_ptr: *const u64, type_id: u64) -> *mut c_void {
+pub unsafe extern "C" fn process_receive(pid_ptr: *const u64, type_id: u64) -> *mut c_void {
     if pid_ptr.is_null() {
         return std::ptr::null_mut();
     }
@@ -1248,8 +1364,13 @@ pub extern "C" fn process_self() -> *mut c_void {
 /// pid_ptr: pointer to u64 containing ProcessId
 /// reason_type: 0=normal, 1=error, 2=kill, 3=shutdown
 /// reason_str: pointer to null-terminated C string (for error/kill/shutdown reasons)
+/// Exit a process
+///
+/// # Safety
+/// This function dereferences the raw pointer parameters. The caller must ensure
+/// all pointers are valid.
 #[unsafe(no_mangle)]
-pub extern "C" fn process_exit(
+pub unsafe extern "C" fn process_exit(
     pid_ptr: *const u64,
     reason_type: i32,
     reason_str: *const libc::c_char,
@@ -1309,8 +1430,12 @@ pub extern "C" fn process_exit(
 /// Look up a process by name (whereis)
 /// name_ptr: pointer to null-terminated C string
 /// Returns pointer to u64 containing ProcessId, or null if not found
+///
+/// # Safety
+/// This function dereferences the `name_ptr` raw pointer. The caller must ensure
+/// the pointer is valid and points to a null-terminated C string.
 #[unsafe(no_mangle)]
-pub extern "C" fn process_whereis(name_ptr: *const libc::c_char) -> *mut c_void {
+pub unsafe extern "C" fn process_whereis(name_ptr: *const libc::c_char) -> *mut c_void {
     if name_ptr.is_null() {
         return std::ptr::null_mut();
     }
@@ -1346,8 +1471,15 @@ pub extern "C" fn process_whereis(name_ptr: *const libc::c_char) -> *mut c_void 
 /// pid_ptr: pointer to u64 containing ProcessId
 /// name_ptr: pointer to null-terminated C string
 /// Returns 1 on success, 0 on failure
+///
+/// # Safety
+/// This function dereferences the raw pointer parameters. The caller must ensure
+/// all pointers are valid.
 #[unsafe(no_mangle)]
-pub extern "C" fn process_register(pid_ptr: *const u64, name_ptr: *const libc::c_char) -> i32 {
+pub unsafe extern "C" fn process_register(
+    pid_ptr: *const u64,
+    name_ptr: *const libc::c_char,
+) -> i32 {
     if pid_ptr.is_null() || name_ptr.is_null() {
         return 0;
     }
@@ -1370,8 +1502,12 @@ pub extern "C" fn process_register(pid_ptr: *const u64, name_ptr: *const libc::c
 
 /// Unregister a process name
 /// name_ptr: pointer to null-terminated C string
+///
+/// # Safety
+/// This function dereferences the `name_ptr` raw pointer. The caller must ensure
+/// the pointer is valid and points to a null-terminated C string.
 #[unsafe(no_mangle)]
-pub extern "C" fn process_unregister(name_ptr: *const libc::c_char) {
+pub unsafe extern "C" fn process_unregister(name_ptr: *const libc::c_char) {
     if name_ptr.is_null() {
         return;
     }
@@ -1412,8 +1548,12 @@ pub extern "C" fn process_check_timeouts() {
 /// Mark a process as waiting for a promise
 /// pid_ptr: pointer to u64 containing ProcessId
 /// promise: pointer to promise object
+///
+/// # Safety
+/// This function dereferences the `pid_ptr` raw pointer. The caller must ensure
+/// the pointer is valid.
 #[unsafe(no_mangle)]
-pub extern "C" fn process_wait_for_promise(pid_ptr: *const u64, promise: *mut c_void) {
+pub unsafe extern "C" fn process_wait_for_promise(pid_ptr: *const u64, promise: *mut c_void) {
     if pid_ptr.is_null() || promise.is_null() {
         return;
     }
@@ -1428,8 +1568,12 @@ pub extern "C" fn process_wait_for_promise(pid_ptr: *const u64, promise: *mut c_
 /// Mark a process as waiting for a timeout
 /// pid_ptr: pointer to u64 containing ProcessId
 /// timeout_ms: timeout in milliseconds
+///
+/// # Safety
+/// This function dereferences the `pid_ptr` raw pointer. The caller must ensure
+/// the pointer is valid.
 #[unsafe(no_mangle)]
-pub extern "C" fn process_wait_for_timeout(pid_ptr: *const u64, timeout_ms: u64) {
+pub unsafe extern "C" fn process_wait_for_timeout(pid_ptr: *const u64, timeout_ms: u64) {
     if pid_ptr.is_null() {
         return;
     }
@@ -1445,8 +1589,12 @@ pub extern "C" fn process_wait_for_timeout(pid_ptr: *const u64, timeout_ms: u64)
 /// pid1_ptr: pointer to u64 containing first ProcessId
 /// pid2_ptr: pointer to u64 containing second ProcessId
 /// Returns 1 on success, 0 on failure
+///
+/// # Safety
+/// This function dereferences the raw pointer parameters. The caller must ensure
+/// all pointers are valid.
 #[unsafe(no_mangle)]
-pub extern "C" fn process_link(pid1_ptr: *const u64, pid2_ptr: *const u64) -> i32 {
+pub unsafe extern "C" fn process_link(pid1_ptr: *const u64, pid2_ptr: *const u64) -> i32 {
     if pid1_ptr.is_null() || pid2_ptr.is_null() {
         return 0;
     }
@@ -1464,8 +1612,12 @@ pub extern "C" fn process_link(pid1_ptr: *const u64, pid2_ptr: *const u64) -> i3
 /// Unlink two processes
 /// pid1_ptr: pointer to u64 containing first ProcessId
 /// pid2_ptr: pointer to u64 containing second ProcessId
+///
+/// # Safety
+/// This function dereferences the raw pointer parameters. The caller must ensure
+/// all pointers are valid.
 #[unsafe(no_mangle)]
-pub extern "C" fn process_unlink(pid1_ptr: *const u64, pid2_ptr: *const u64) {
+pub unsafe extern "C" fn process_unlink(pid1_ptr: *const u64, pid2_ptr: *const u64) {
     if pid1_ptr.is_null() || pid2_ptr.is_null() {
         return;
     }
@@ -1482,8 +1634,12 @@ pub extern "C" fn process_unlink(pid1_ptr: *const u64, pid2_ptr: *const u64) {
 /// monitor_pid_ptr: pointer to u64 containing monitor ProcessId
 /// target_pid_ptr: pointer to u64 containing target ProcessId
 /// Returns pointer to u64 containing MonitorRef, or null on failure
+///
+/// # Safety
+/// This function dereferences the raw pointer parameters. The caller must ensure
+/// all pointers are valid.
 #[unsafe(no_mangle)]
-pub extern "C" fn process_monitor(
+pub unsafe extern "C" fn process_monitor(
     monitor_pid_ptr: *const u64,
     target_pid_ptr: *const u64,
 ) -> *mut c_void {
@@ -1517,8 +1673,12 @@ pub extern "C" fn process_monitor(
 /// monitor_pid_ptr: pointer to u64 containing monitor ProcessId
 /// monitor_ref_ptr: pointer to u64 containing MonitorRef
 /// Returns 1 on success, 0 on failure
+///
+/// # Safety
+/// This function dereferences the raw pointer parameters. The caller must ensure
+/// all pointers are valid.
 #[unsafe(no_mangle)]
-pub extern "C" fn process_demonitor(
+pub unsafe extern "C" fn process_demonitor(
     monitor_pid_ptr: *const u64,
     monitor_ref_ptr: *const u64,
 ) -> i32 {
@@ -1583,8 +1743,12 @@ pub extern "C" fn process_scheduler_run() -> i32 {
 /// max_restarts: maximum number of restarts in time window
 /// max_seconds: time window in seconds
 /// Returns 1 on success, 0 on failure
+///
+/// # Safety
+/// This function dereferences the `supervisor_pid_ptr` raw pointer. The caller must ensure
+/// the pointer is valid.
 #[unsafe(no_mangle)]
-pub extern "C" fn process_register_supervisor(
+pub unsafe extern "C" fn process_register_supervisor(
     supervisor_pid_ptr: *const u64,
     strategy: i32,
     max_restarts: u32,
@@ -1628,8 +1792,12 @@ pub extern "C" fn process_register_supervisor(
 /// restart: 0=Permanent, 1=Transient, 2=Temporary
 /// shutdown_timeout: shutdown timeout in milliseconds
 /// Returns 1 on success, 0 on failure
+///
+/// # Safety
+/// This function dereferences the raw pointer parameters. The caller must ensure
+/// all pointers are valid.
 #[unsafe(no_mangle)]
-pub extern "C" fn process_add_supervisor_child(
+pub unsafe extern "C" fn process_add_supervisor_child(
     supervisor_pid_ptr: *const u64,
     child_pid_ptr: *const u64,
     child_id: *const libc::c_char,

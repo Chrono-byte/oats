@@ -22,7 +22,7 @@ use std::io::{self, Read, Write};
 /// }
 /// ```
 /// #[oats_export]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn oats_std_io_read_line() -> *mut c_char {
     let mut buffer = String::new();
     match io::stdin().read_line(&mut buffer) {
@@ -44,7 +44,7 @@ pub extern "C" fn oats_std_io_read_line() -> *mut c_char {
 ///
 /// `buffer` must be a valid pointer to at least `len` bytes of writable memory.
 /// #[oats_export]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oats_std_io_read_bytes(buffer: *mut u8, len: usize) -> i64 {
     if buffer.is_null() || len == 0 {
         return -1;
@@ -63,7 +63,7 @@ pub unsafe extern "C" fn oats_std_io_read_bytes(buffer: *mut u8, len: usize) -> 
 ///
 /// `buffer` must be a valid pointer to at least `len` bytes of readable memory.
 /// #[oats_export]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oats_std_io_write_bytes(buffer: *const u8, len: usize) -> i64 {
     if buffer.is_null() || len == 0 {
         return -1;
@@ -78,7 +78,7 @@ pub unsafe extern "C" fn oats_std_io_write_bytes(buffer: *const u8, len: usize) 
 
 /// Flush stdout
 /// #[oats_export]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn oats_std_io_flush() -> libc::c_int {
     match io::stdout().flush() {
         Ok(_) => 0,
@@ -93,7 +93,7 @@ pub extern "C" fn oats_std_io_flush() -> libc::c_int {
 /// `path` must be a valid pointer to a null-terminated C string.
 /// `buffer` must be a valid pointer to at least `len` bytes of writable memory.
 /// #[oats_export]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oats_std_io_read_file_bytes(
     path: *const c_char,
     buffer: *mut u8,
@@ -125,7 +125,7 @@ pub unsafe extern "C" fn oats_std_io_read_file_bytes(
 /// `path` must be a valid pointer to a null-terminated C string.
 /// `buffer` must be a valid pointer to at least `len` bytes of readable memory.
 /// #[oats_export]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oats_std_io_write_file_bytes(
     path: *const c_char,
     buffer: *const u8,

@@ -52,6 +52,30 @@ pub extern "C" fn print_f64(v: f64) {
     let _ = io::stdout().write_all(format!("{}\n", v).as_bytes());
 }
 
+/// Safe wrapper for printing a string.
+///
+/// This function accepts a Rust `&str` and safely converts it to a C string
+/// for printing. This is safer than the raw `print_str` function which requires
+/// a raw C string pointer.
+///
+/// # Example
+/// ```rust
+/// use oats_primitives::print_str_safe;
+///
+/// print_str_safe("Hello, world!");
+/// ```
+pub fn print_str_safe(s: &str) {
+    use std::ffi::CString;
+
+    // Convert Rust string to C string
+    if let Ok(c_str) = CString::new(s) {
+        unsafe {
+            print_str(c_str.as_ptr());
+        }
+    }
+    // If conversion fails (contains null byte), silently skip printing
+}
+
 /// Print an i32 followed by a newline
 #[unsafe(no_mangle)]
 pub extern "C" fn print_i32(v: i32) {

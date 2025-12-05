@@ -10,11 +10,11 @@
 //! decisions in one place so they can be updated consistently as the ABI
 //! evolves.
 
-use crate::diagnostics::Severity;
+use crate::diagnostics::{Diagnostic, DiagnosticResult, Severity};
 use crate::types::OatsType;
 use inkwell::types::BasicType;
 use inkwell::types::BasicTypeEnum;
-use inkwell::values::{BasicValue, BasicValueEnum};
+use inkwell::values::{BasicValue, BasicValueEnum, IntValue, PointerValue};
 use std::collections::HashMap;
 
 type LocalEntry<'a> = (
@@ -598,6 +598,59 @@ impl<'a> super::CodeGen<'a> {
         }
     }
     // declare_libc is implemented in runtime_decls.rs for better organization
+
+    /// Safe wrapper for `build_gep` that validates inputs and provides better error handling.
+    ///
+    /// This function wraps the unsafe `build_gep` call from inkwell with validation
+    /// and proper error conversion. While we can't fully validate all GEP operations
+    /// at compile time (since they operate on LLVM IR), this wrapper ensures:
+    /// - Proper error handling with DiagnosticResult
+    /// - Consistent error messages
+    /// - Input validation where possible
+    ///
+    /// # Arguments
+    /// * `base_type` - The base type for the GEP operation
+    /// * `base_ptr` - The base pointer value
+    /// * `indices` - Slice of index values (must be non-empty for valid GEP)
+    /// * `name` - Name for the resulting pointer value
+    ///
+    /// # Returns
+    /// A `DiagnosticResult` containing the computed pointer value or an error.
+    pub(crate) fn safe_gep<T: Into<BasicTypeEnum<'a>>>(
+        &self,
+        base_type: T,
+        base_ptr: PointerValue<'a>,
+        indices: &[IntValue<'a>],
+        name: &str,
+    ) -> DiagnosticResult<PointerValue<'a>> {
+        // Validate that we have at least one index (GEP requires at least one index)
+        if indices.is_empty() {
+            return Err(Diagnostic::simple_boxed(
+                Severity::Error,
+                format!("GEP operation '{}' requires at least one index", name),
+            ));
+        }
+
+        // Validate that base_ptr is not null (though LLVM may allow this in some cases)
+        // We'll let LLVM handle null pointer validation, but we can add a check here
+        // if needed for additional safety.
+
+        // Convert to BasicTypeEnum
+        let base_type_enum: BasicTypeEnum<'a> = base_type.into();
+
+        // Call the unsafe build_gep - the unsafe is required by inkwell's API
+        // but we've validated our inputs as much as possible
+        unsafe {
+            self.builder
+                .build_gep(base_type_enum, base_ptr, indices, name)
+                .map_err(|e| {
+                    Diagnostic::simple_boxed(
+                        Severity::Error,
+                        format!("GEP operation '{}' failed: {}", name, e),
+                    )
+                })
+        }
+    }
 
     // Emit rc_dec calls for any initialized pointer locals in the provided
     // locals stack. This is used at function exit or before early returns to

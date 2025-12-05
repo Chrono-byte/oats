@@ -28,8 +28,8 @@ pub fn ts_type_parser<'a>() -> impl Parser<'a, &'a str, TsType> + 'a {
                 .boxed(),
         ));
 
-    // Primary type: base + array suffixes
-    let primary = base_type
+        // Primary type: base + array suffixes
+        let primary = base_type
             .then(
                 just("[")
                     .padded()
@@ -49,17 +49,17 @@ pub fn ts_type_parser<'a>() -> impl Parser<'a, &'a str, TsType> + 'a {
             })
             .boxed();
 
-    // Intersection: primary & primary & ...
-    let intersection = primary
-        .clone()
-        .then(
-            just("&")
-                .padded()
-                .then(primary.clone())
-                .repeated()
-                .at_most(MAX_TYPE_CHAIN_LENGTH)
-                .collect::<Vec<_>>(),
-        )
+        // Intersection: primary & primary & ...
+        let intersection = primary
+            .clone()
+            .then(
+                just("&")
+                    .padded()
+                    .then(primary.clone())
+                    .repeated()
+                    .at_most(MAX_TYPE_CHAIN_LENGTH)
+                    .collect::<Vec<_>>(),
+            )
             .map_with(|(first, rest), extra| {
                 if rest.is_empty() {
                     first

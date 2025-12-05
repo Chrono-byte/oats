@@ -139,10 +139,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     let zero = self.i32_t.const_int(0, false);
                     let two = self.i32_t.const_int(2, false);
                     let indices = &[zero, two, zero];
-                    let gep = unsafe {
-                        self.builder
-                            .build_gep(struct_ty, gv.as_pointer_value(), indices, "strptr")
-                    };
+                    let gep = self.safe_gep(struct_ty, gv.as_pointer_value(), indices, "strptr");
                     if let Ok(ptr) = gep {
                         self.string_literals.borrow_mut().insert(s.clone(), ptr);
                         return Ok(ptr.as_basic_value_enum());

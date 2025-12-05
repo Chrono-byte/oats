@@ -25,7 +25,7 @@ use libc::c_char;
 /// }
 /// ```
 /// #[oats_export]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oats_std_net_http_get(url: *const c_char) -> *mut c_char {
     if url.is_null() {
         return std::ptr::null_mut();
@@ -56,7 +56,7 @@ pub unsafe extern "C" fn oats_std_net_http_get(url: *const c_char) -> *mut c_cha
 /// `url` must be a valid pointer to a null-terminated C string, or null.
 /// If non-null, the string must remain valid for the duration of this call.
 /// #[oats_export]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oats_std_net_url_reachable(url: *const c_char) -> libc::c_int {
     if url.is_null() {
         return 0;
@@ -112,7 +112,7 @@ pub unsafe extern "C" fn oats_std_net_url_reachable(url: *const c_char) -> libc:
 /// }
 /// ```
 /// #[oats_export]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oats_std_net_http_post(
     url: *const c_char,
     body: *const c_char,
@@ -172,7 +172,7 @@ pub unsafe extern "C" fn oats_std_net_http_post(
 /// }
 /// ```
 /// #[oats_export]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oats_std_net_http_post_json(
     url: *const c_char,
     json_body: *const c_char,

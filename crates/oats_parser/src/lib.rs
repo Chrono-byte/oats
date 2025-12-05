@@ -16,7 +16,7 @@ use chumsky::prelude::*;
 use chumsky::recursive::Recursive;
 use oats_ast::*;
 
-pub use parsed::{parse_module_with_metadata, ParsedModule};
+pub use parsed::{ParsedModule, parse_module_with_metadata};
 
 /// Information about a delimiter mismatch error
 struct DelimiterError {
@@ -266,11 +266,11 @@ fn format_chumsky_error<E: std::fmt::Display + std::fmt::Debug>(err: &E, input: 
         msg.push_str(&format!(" at line {}, column {}", line_no, col + 1));
 
         // Get the last line for context
-        if let Some(last_line) = input.lines().last() {
-            if !last_line.trim().is_empty() {
-                msg.push_str(&format!("\n  {} | {}", line_no, last_line));
-                msg.push_str(&format!("\n     | {}^", " ".repeat(col)));
-            }
+        if let Some(last_line) = input.lines().last()
+            && !last_line.trim().is_empty()
+        {
+            msg.push_str(&format!("\n  {} | {}", line_no, last_line));
+            msg.push_str(&format!("\n     | {}^", " ".repeat(col)));
         }
 
         // If the debug output has more information, append it

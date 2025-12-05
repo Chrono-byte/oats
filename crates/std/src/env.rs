@@ -9,8 +9,8 @@ use libc::c_char;
 /// `name` must be a valid pointer to a null-terminated C string, or null.
 /// If non-null, the string must remain valid for the duration of this call.
 /// #[oats_export]
-#[no_mangle]
-pub unsafe extern "C" fn oats_std_env_get_var(name: *const c_char) -> *mut c_char {
+#[unsafe(no_mangle)]
+pub extern "C" fn oats_std_env_get_var(name: *const c_char) -> *mut c_char {
     if name.is_null() {
         return std::ptr::null_mut();
     }
@@ -31,7 +31,7 @@ pub unsafe extern "C" fn oats_std_env_get_var(name: *const c_char) -> *mut c_cha
 
 /// Get current executable path (caller must free)
 /// #[oats_export]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn oats_std_env_current_exe() -> *mut c_char {
     match std::env::current_exe() {
         Ok(path) => {
@@ -51,11 +51,8 @@ pub extern "C" fn oats_std_env_current_exe() -> *mut c_char {
 ///
 /// `name` and `value` must be valid pointers to null-terminated C strings, or null.
 /// #[oats_export]
-#[no_mangle]
-pub unsafe extern "C" fn oats_std_env_set_var(
-    name: *const c_char,
-    value: *const c_char,
-) -> libc::c_int {
+#[unsafe(no_mangle)]
+pub extern "C" fn oats_std_env_set_var(name: *const c_char, value: *const c_char) -> libc::c_int {
     if name.is_null() {
         return -1;
     }
@@ -74,7 +71,7 @@ pub unsafe extern "C" fn oats_std_env_set_var(
         }
     };
 
-    std::env::set_var(name_str, value_str);
+    unsafe { std::env::set_var(name_str, value_str) };
     0
 }
 
@@ -84,8 +81,7 @@ pub unsafe extern "C" fn oats_std_env_set_var(
 ///
 /// `name` must be a valid pointer to a null-terminated C string, or null.
 /// #[oats_export]
-#[no_mangle]
-pub unsafe extern "C" fn oats_std_env_remove_var(name: *const c_char) -> libc::c_int {
+pub extern "C" fn oats_std_env_remove_var(name: *const c_char) -> libc::c_int {
     if name.is_null() {
         return -1;
     }
@@ -95,13 +91,12 @@ pub unsafe extern "C" fn oats_std_env_remove_var(name: *const c_char) -> libc::c
         Err(_) => return -1,
     };
 
-    std::env::remove_var(name_str);
+    unsafe { std::env::remove_var(name_str) };
     0
 }
 
 /// Get all environment variables (returns array of "KEY=VALUE" strings, caller must free each)
 /// #[oats_export]
-#[no_mangle]
 pub extern "C" fn oats_std_env_vars() -> *mut *mut c_char {
     let vars: Vec<String> = std::env::vars()
         .map(|(k, v)| format!("{}={}", k, v))
@@ -148,8 +143,8 @@ pub extern "C" fn oats_std_env_vars() -> *mut *mut c_char {
 /// # Safety
 ///
 /// `vars_result` must be a valid pointer returned from `oats_std_env_vars`.
-#[no_mangle]
-pub unsafe extern "C" fn oats_std_env_vars_count(vars_result: *mut *mut c_char) -> usize {
+#[unsafe(no_mangle)]
+pub extern "C" fn oats_std_env_vars_count(vars_result: *mut *mut c_char) -> usize {
     if vars_result.is_null() {
         return 0;
     }
@@ -161,7 +156,7 @@ pub unsafe extern "C" fn oats_std_env_vars_count(vars_result: *mut *mut c_char) 
 /// # Safety
 ///
 /// `vars_result` must be a valid pointer returned from `oats_std_env_vars`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oats_std_env_vars_get(
     vars_result: *mut *mut c_char,
     index: usize,
@@ -183,20 +178,18 @@ pub unsafe extern "C" fn oats_std_env_vars_get(
 /// # Safety
 ///
 /// `vars_result` must be a valid pointer returned from `oats_std_env_vars`.
-#[no_mangle]
-pub unsafe extern "C" fn oats_std_env_vars_free(vars_result: *mut *mut c_char) {
+#[unsafe(no_mangle)]
+pub extern "C" fn oats_std_env_vars_free(vars_result: *mut *mut c_char) {
     if vars_result.is_null() {
         return;
     }
 
     let count = unsafe { *vars_result as usize };
-    unsafe {
-        for i in 0..count {
-            let ptr = *vars_result.add(i + 1);
-            if !ptr.is_null() {
-                libc::free(ptr as *mut libc::c_void);
-            }
+    for i in 0..count {
+        let ptr = unsafe { *vars_result.add(i + 1) as *mut c_char };
+        if !ptr.is_null() {
+            unsafe { libc::free(ptr as *mut libc::c_void) };
         }
-        libc::free(vars_result as *mut libc::c_void);
     }
+    unsafe { libc::free(vars_result as *mut libc::c_void) };
 }

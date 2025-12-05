@@ -9,6 +9,174 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use crate::MAX_RECURSION_DEPTH;
 use crate::header::*;
 
+/// Error type for reference counting operations
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RcError {
+    /// Invalid pointer (null or not plausible)
+    InvalidPointer,
+    /// Pointer validation failed
+    ValidationFailed,
+}
+
+impl std::fmt::Display for RcError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RcError::InvalidPointer => write!(f, "Invalid pointer: null or not plausible"),
+            RcError::ValidationFailed => write!(f, "Pointer validation failed"),
+        }
+    }
+}
+
+impl std::error::Error for RcError {}
+
+/// Safe wrapper around a raw pointer for reference counting operations.
+///
+/// This type encapsulates pointer validation and provides safe methods
+/// for incrementing and decrementing reference counts. The pointer is
+/// validated at construction time to ensure it's a valid runtime pointer.
+///
+/// # Safety
+///
+/// The `RcPtr` type does not own the pointer - it's just a validated
+/// reference. The caller must ensure the pointer remains valid for the
+/// lifetime of the `RcPtr`.
+#[derive(Debug, Clone, Copy)]
+pub struct RcPtr {
+    ptr: *mut c_void,
+}
+
+impl RcPtr {
+    /// Create a new `RcPtr` from a raw pointer, validating it first.
+    ///
+    /// Returns `None` if the pointer is null or fails validation.
+    pub fn new(ptr: *mut c_void) -> Option<Self> {
+        if ptr.is_null() {
+            return None;
+        }
+
+        let p_addr = ptr as usize;
+        if !crate::is_plausible_addr(p_addr) {
+            return None;
+        }
+
+        // Validate that we can resolve the object base
+        let obj_ptr = unsafe { get_object_base(ptr) };
+        if obj_ptr.is_null() {
+            return None;
+        }
+
+        Some(RcPtr { ptr })
+    }
+
+    /// Get the raw pointer value.
+    ///
+    /// # Safety
+    ///
+    /// The returned pointer is only valid as long as the underlying
+    /// object remains allocated. The caller must ensure proper
+    /// reference counting.
+    pub fn as_ptr(&self) -> *mut c_void {
+        self.ptr
+    }
+
+    /// Increment the reference count of the object.
+    ///
+    /// Returns an error if the operation fails (e.g., pointer is invalid).
+    pub fn inc(&self) -> Result<(), RcError> {
+        if self.ptr.is_null() {
+            return Err(RcError::InvalidPointer);
+        }
+
+        unsafe {
+            rc_inc(self.ptr);
+        }
+        Ok(())
+    }
+
+    /// Decrement the reference count of the object.
+    ///
+    /// Returns an error if the operation fails. This may free the object
+    /// if the reference count reaches zero.
+    pub fn dec(self) -> Result<(), RcError> {
+        if self.ptr.is_null() {
+            return Err(RcError::InvalidPointer);
+        }
+
+        unsafe {
+            rc_dec(self.ptr);
+        }
+        Ok(())
+    }
+
+    /// Increment the weak reference count of the object.
+    ///
+    /// Returns an error if the operation fails.
+    pub fn weak_inc(&self) -> Result<(), RcError> {
+        if self.ptr.is_null() {
+            return Err(RcError::InvalidPointer);
+        }
+
+        unsafe {
+            rc_weak_inc(self.ptr);
+        }
+        Ok(())
+    }
+
+    /// Decrement the weak reference count of the object.
+    ///
+    /// Returns an error if the operation fails.
+    pub fn weak_dec(self) -> Result<(), RcError> {
+        if self.ptr.is_null() {
+            return Err(RcError::InvalidPointer);
+        }
+
+        unsafe {
+            rc_weak_dec(self.ptr);
+        }
+        Ok(())
+    }
+
+    /// Attempt to upgrade a weak pointer to a strong one.
+    ///
+    /// Returns `None` if the object has been deallocated, or `Some(RcPtr)`
+    /// if the upgrade was successful.
+    pub fn weak_upgrade(&self) -> Option<Self> {
+        if self.ptr.is_null() {
+            return None;
+        }
+
+        unsafe {
+            let upgraded = rc_weak_upgrade(self.ptr);
+            if upgraded.is_null() {
+                None
+            } else {
+                // Create a new RcPtr from the upgraded pointer
+                // We skip validation here since rc_weak_upgrade already validated it
+                Some(RcPtr { ptr: upgraded })
+            }
+        }
+    }
+
+    /// Get the base object pointer (resolves string data pointers, etc.)
+    pub fn get_base(&self) -> Option<Self> {
+        if self.ptr.is_null() {
+            return None;
+        }
+
+        unsafe {
+            let base = get_object_base(self.ptr);
+            if base.is_null() {
+                None
+            } else {
+                Some(RcPtr { ptr: base })
+            }
+        }
+    }
+}
+
+// Note: Cannot implement From<*mut c_void> due to orphan rules.
+// Use RcPtr::new() instead.
+
 // Thread-local recursion depth counter for rc_dec destructor calls
 thread_local! {
     static RC_DEC_DEPTH: RefCell<usize> = const { RefCell::new(0) };

@@ -10,8 +10,8 @@ use std::ffi::{CStr, CString};
 /// `format` must be a valid pointer to a null-terminated C string.
 /// `args` must be a valid pointer to an array of `args_len` pointers to null-terminated C strings.
 /// #[oats_export]
-#[no_mangle]
-pub unsafe extern "C" fn oats_std_format_string(
+#[unsafe(no_mangle)]
+pub extern "C" fn oats_std_format_string(
     format: *const c_char,
     args: *const *const c_char,
     args_len: usize,
@@ -35,11 +35,10 @@ pub unsafe extern "C" fn oats_std_format_string(
             chars.next(); // consume '}'
             if !args.is_null() && arg_index < args_len {
                 let arg_ptr = unsafe { *args.add(arg_index) };
-                if !arg_ptr.is_null() {
-                    if let Ok(arg_str) = unsafe { CStr::from_ptr(arg_ptr).to_str() } {
+                if !arg_ptr.is_null()
+                    && let Ok(arg_str) = unsafe { CStr::from_ptr(arg_ptr).to_str() } {
                         result.push_str(arg_str);
                     }
-                }
                 arg_index += 1;
             } else {
                 result.push_str("{}");
@@ -61,8 +60,8 @@ pub unsafe extern "C" fn oats_std_format_string(
 ///
 /// `format` must be a valid pointer to a null-terminated C string.
 /// #[oats_export]
-#[no_mangle]
-pub unsafe extern "C" fn oats_std_format_number(format: *const c_char, value: f64) -> *mut c_char {
+#[unsafe(no_mangle)]
+pub extern "C" fn oats_std_format_number(format: *const c_char, value: f64) -> *mut c_char {
     if format.is_null() {
         return std::ptr::null_mut();
     }
@@ -86,8 +85,8 @@ pub unsafe extern "C" fn oats_std_format_number(format: *const c_char, value: f6
 ///
 /// `format` must be a valid pointer to a null-terminated C string.
 /// #[oats_export]
-#[no_mangle]
-pub unsafe extern "C" fn oats_std_format_int(format: *const c_char, value: i64) -> *mut c_char {
+#[unsafe(no_mangle)]
+pub extern "C" fn oats_std_format_int(format: *const c_char, value: i64) -> *mut c_char {
     if format.is_null() {
         return std::ptr::null_mut();
     }

@@ -41,6 +41,10 @@ use inkwell::values::PointerValue;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
+// Type aliases for complex types to reduce complexity warnings
+type EnumVariantInfo = Vec<(String, Vec<crate::types::OatsType>)>;
+type TypeAliasInfo = (Option<Vec<String>>, oats_ast::TsType);
+
 pub mod const_eval;
 pub mod const_globals;
 pub mod emit;
@@ -153,11 +157,11 @@ pub struct CodeGen<'a> {
     /// Class name -> (field name, field type) pairs
     pub class_fields: RefCell<HashMap<String, Vec<(String, crate::types::OatsType)>>>,
     /// Enum name -> (variant name, variant field types) pairs
-    pub enum_variants: RefCell<HashMap<String, Vec<(String, Vec<crate::types::OatsType>)>>>,
+    pub enum_variants: RefCell<HashMap<String, EnumVariantInfo>>,
     /// Class name -> parent class name (None if no parent)
     pub class_parents: RefCell<HashMap<String, Option<String>>>,
     /// Type alias name -> (type parameters, aliased type). None type_params for non-generic aliases
-    pub type_aliases: RefCell<HashMap<String, (Option<Vec<String>>, oats_ast::TsType)>>,
+    pub type_aliases: RefCell<HashMap<String, TypeAliasInfo>>,
     /// Function name -> parameter types
     pub fn_param_types: RefCell<HashMap<String, Vec<crate::types::OatsType>>>,
     /// Stack of active loop contexts for break/continue
@@ -625,10 +629,7 @@ impl<'a> CodeGen<'a> {
         let zero = self.i32_t.const_int(0, false);
         let two = self.i32_t.const_int(2, false);
         let indices = &[zero, two];
-        let gep = unsafe {
-            self.builder
-                .build_gep(struct_ty, gv.as_pointer_value(), indices, "strptr")
-        };
+        let gep = self.safe_gep(struct_ty, gv.as_pointer_value(), indices, "strptr");
         if let Ok(ptr) = gep {
             self.string_literals.borrow_mut().insert(s.to_string(), ptr);
             return ptr;

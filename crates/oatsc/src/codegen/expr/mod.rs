@@ -169,10 +169,6 @@ impl<'a> crate::codegen::CodeGen<'a> {
             Expr::Yield(yield_expr) => {
                 self.lower_yield_expr(yield_expr, function, param_map, locals)
             }
-            _ => Err(Diagnostic::simple_boxed(
-                Severity::Error,
-                "operation not supported",
-            )),
         }
     }
 

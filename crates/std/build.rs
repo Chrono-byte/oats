@@ -41,14 +41,14 @@ fn generate_type_definitions() -> String {
     ];
 
     for (module_name, file_path) in modules {
-        if Path::new(file_path).exists() {
-            if let Ok(content) = fs::read_to_string(file_path) {
-                let module_defs = parse_module(&content, module_name);
-                if !module_defs.is_empty() {
-                    output.push_str(&format!("declare namespace {} {{\n", module_name));
-                    output.push_str(&module_defs);
-                    output.push_str("}\n\n");
-                }
+        if Path::new(file_path).exists()
+            && let Ok(content) = fs::read_to_string(file_path)
+        {
+            let module_defs = parse_module(&content, module_name);
+            if !module_defs.is_empty() {
+                output.push_str(&format!("declare namespace {} {{\n", module_name));
+                output.push_str(&module_defs);
+                output.push_str("}\n\n");
             }
         }
     }

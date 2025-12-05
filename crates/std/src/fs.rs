@@ -1,8 +1,7 @@
 //! File system operations
 
 use libc::c_char;
-use runtime::heap::{runtime_free, runtime_malloc};
-use runtime::heap::{runtime_free, runtime_malloc};
+use runtime::{runtime_free, runtime_malloc};
 use std::ffi::{CStr, CString};
 use std::fs;
 
@@ -29,8 +28,8 @@ use std::fs;
 /// }
 /// ```
 /// #[oats_export]
-#[no_mangle]
-pub unsafe extern "C" fn oats_std_fs_read_file(path: *const c_char) -> *mut c_char {
+#[unsafe(no_mangle)]
+pub extern "C" fn oats_std_fs_read_file(path: *const c_char) -> *mut c_char {
     if path.is_null() {
         return std::ptr::null_mut();
     }
@@ -56,8 +55,8 @@ pub unsafe extern "C" fn oats_std_fs_read_file(path: *const c_char) -> *mut c_ch
 /// `path` and `content` must be valid pointers to null-terminated C strings, or null.
 /// If non-null, the strings must remain valid for the duration of this call.
 /// #[oats_export]
-#[no_mangle]
-pub unsafe extern "C" fn oats_std_fs_write_file(
+#[unsafe(no_mangle)]
+pub extern "C" fn oats_std_fs_write_file(
     path: *const c_char,
     content: *const c_char,
 ) -> libc::c_int {
@@ -89,8 +88,8 @@ pub unsafe extern "C" fn oats_std_fs_write_file(
 /// `path` must be a valid pointer to a null-terminated C string, or null.
 /// If non-null, the string must remain valid for the duration of this call.
 /// #[oats_export]
-#[no_mangle]
-pub unsafe extern "C" fn oats_std_fs_file_exists(path: *const c_char) -> libc::c_int {
+#[unsafe(no_mangle)]
+pub extern "C" fn oats_std_fs_file_exists(path: *const c_char) -> libc::c_int {
     if path.is_null() {
         return 0;
     }
@@ -114,8 +113,8 @@ pub unsafe extern "C" fn oats_std_fs_file_exists(path: *const c_char) -> libc::c
 /// `path` must be a valid pointer to a null-terminated C string, or null.
 /// If non-null, the string must remain valid for the duration of this call.
 /// #[oats_export]
-#[no_mangle]
-pub unsafe extern "C" fn oats_std_fs_create_dir_all(path: *const c_char) -> libc::c_int {
+#[unsafe(no_mangle)]
+pub extern "C" fn oats_std_fs_create_dir_all(path: *const c_char) -> libc::c_int {
     if path.is_null() {
         return -1;
     }
@@ -142,8 +141,8 @@ pub unsafe extern "C" fn oats_std_fs_create_dir_all(path: *const c_char) -> libc
 /// `path` must be a valid pointer to a null-terminated C string, or null.
 /// If non-null, the string must remain valid for the duration of this call.
 /// #[oats_export]
-#[no_mangle]
-pub unsafe extern "C" fn oats_std_fs_remove_file(path: *const c_char) -> libc::c_int {
+#[unsafe(no_mangle)]
+pub extern "C" fn oats_std_fs_remove_file(path: *const c_char) -> libc::c_int {
     if path.is_null() {
         return -1;
     }
@@ -170,8 +169,8 @@ pub unsafe extern "C" fn oats_std_fs_remove_file(path: *const c_char) -> libc::c
 /// `path` must be a valid pointer to a null-terminated C string, or null.
 /// If non-null, the string must remain valid for the duration of this call.
 /// #[oats_export]
-#[no_mangle]
-pub unsafe extern "C" fn oats_std_fs_remove_dir(path: *const c_char) -> libc::c_int {
+#[unsafe(no_mangle)]
+pub extern "C" fn oats_std_fs_remove_dir(path: *const c_char) -> libc::c_int {
     if path.is_null() {
         return -1;
     }
@@ -198,8 +197,8 @@ pub unsafe extern "C" fn oats_std_fs_remove_dir(path: *const c_char) -> libc::c_
 /// `path` must be a valid pointer to a null-terminated C string, or null.
 /// If non-null, the string must remain valid for the duration of this call.
 /// #[oats_export]
-#[no_mangle]
-pub unsafe extern "C" fn oats_std_fs_remove_dir_all(path: *const c_char) -> libc::c_int {
+#[unsafe(no_mangle)]
+pub extern "C" fn oats_std_fs_remove_dir_all(path: *const c_char) -> libc::c_int {
     if path.is_null() {
         return -1;
     }
@@ -225,8 +224,8 @@ pub unsafe extern "C" fn oats_std_fs_remove_dir_all(path: *const c_char) -> libc
 ///
 /// `path` must be a valid pointer to a null-terminated C string, or null.
 /// #[oats_export]
-#[no_mangle]
-pub unsafe extern "C" fn oats_std_fs_is_dir(path: *const c_char) -> libc::c_int {
+#[unsafe(no_mangle)]
+pub extern "C" fn oats_std_fs_is_dir(path: *const c_char) -> libc::c_int {
     if path.is_null() {
         return 0;
     }
@@ -249,8 +248,8 @@ pub unsafe extern "C" fn oats_std_fs_is_dir(path: *const c_char) -> libc::c_int 
 ///
 /// `path` must be a valid pointer to a null-terminated C string, or null.
 /// #[oats_export]
-#[no_mangle]
-pub unsafe extern "C" fn oats_std_fs_is_file(path: *const c_char) -> libc::c_int {
+#[unsafe(no_mangle)]
+pub extern "C" fn oats_std_fs_is_file(path: *const c_char) -> libc::c_int {
     if path.is_null() {
         return 0;
     }
@@ -273,8 +272,8 @@ pub unsafe extern "C" fn oats_std_fs_is_file(path: *const c_char) -> libc::c_int
 ///
 /// `path` must be a valid pointer to a null-terminated C string, or null.
 /// #[oats_export]
-#[no_mangle]
-pub unsafe extern "C" fn oats_std_fs_file_size(path: *const c_char) -> i64 {
+#[unsafe(no_mangle)]
+pub extern "C" fn oats_std_fs_file_size(path: *const c_char) -> i64 {
     if path.is_null() {
         return -1;
     }
@@ -296,8 +295,8 @@ pub unsafe extern "C" fn oats_std_fs_file_size(path: *const c_char) -> i64 {
 ///
 /// `path` must be a valid pointer to a null-terminated C string, or null.
 /// #[oats_export]
-#[no_mangle]
-pub unsafe extern "C" fn oats_std_fs_read_dir(path: *const c_char) -> *mut *mut c_char {
+#[unsafe(no_mangle)]
+pub extern "C" fn oats_std_fs_read_dir(path: *const c_char) -> *mut *mut c_char {
     if path.is_null() {
         return std::ptr::null_mut();
     }
@@ -369,8 +368,8 @@ pub unsafe extern "C" fn oats_std_fs_read_dir(path: *const c_char) -> *mut *mut 
 /// # Safety
 ///
 /// `dir_result` must be a valid pointer returned from `oats_std_fs_read_dir`.
-#[no_mangle]
-pub unsafe extern "C" fn oats_std_fs_read_dir_count(dir_result: *mut *mut c_char) -> usize {
+#[unsafe(no_mangle)]
+pub extern "C" fn oats_std_fs_read_dir_count(dir_result: *mut *mut c_char) -> usize {
     if dir_result.is_null() {
         return 0;
     }
@@ -382,8 +381,8 @@ pub unsafe extern "C" fn oats_std_fs_read_dir_count(dir_result: *mut *mut c_char
 /// # Safety
 ///
 /// `dir_result` must be a valid pointer returned from `oats_std_fs_read_dir`.
-#[no_mangle]
-pub unsafe extern "C" fn oats_std_fs_read_dir_get(
+#[unsafe(no_mangle)]
+pub extern "C" fn oats_std_fs_read_dir_get(
     dir_result: *mut *mut c_char,
     index: usize,
 ) -> *mut c_char {
@@ -404,8 +403,8 @@ pub unsafe extern "C" fn oats_std_fs_read_dir_get(
 /// # Safety
 ///
 /// `dir_result` must be a valid pointer returned from `oats_std_fs_read_dir`.
-#[no_mangle]
-pub unsafe extern "C" fn oats_std_fs_read_dir_free(dir_result: *mut *mut c_char) {
+#[unsafe(no_mangle)]
+pub extern "C" fn oats_std_fs_read_dir_free(dir_result: *mut *mut c_char) {
     if dir_result.is_null() {
         return;
     }

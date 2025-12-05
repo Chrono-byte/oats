@@ -301,6 +301,8 @@ pub use crate::rc::rc_inc;
 pub use crate::rc::rc_weak_dec;
 pub use crate::rc::rc_weak_inc;
 pub use crate::rc::rc_weak_upgrade;
+// Re-export safe wrapper types
+pub use crate::rc::{RcError, RcPtr};
 
 // Re-export utils functions
 

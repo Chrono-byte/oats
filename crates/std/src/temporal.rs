@@ -60,7 +60,7 @@ impl Drop for TemporalInstant {
 
 /// Get the current instant (Temporal.now.instant())
 /// #[oats_export]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn oats_std_temporal_now_instant() -> *mut c_void {
     let now = std::time::SystemTime::now();
     let timestamp_ns = now
@@ -81,7 +81,7 @@ pub extern "C" fn oats_std_temporal_now_instant() -> *mut c_void {
 
 /// Get epoch nanoseconds from a Temporal.Instant
 /// #[oats_export]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn oats_std_temporal_instant_epoch_nanoseconds(instant: *mut c_void) -> c_longlong {
     if instant.is_null() {
         return 0;
@@ -96,7 +96,7 @@ pub extern "C" fn oats_std_temporal_instant_epoch_nanoseconds(instant: *mut c_vo
 
 /// Create a Temporal.Instant from nanoseconds
 /// #[oats_export]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn oats_std_temporal_instant_from_epoch_nanoseconds(ns: c_longlong) -> *mut c_void {
     match TemporalInstant::new(ns) {
         Some(instant) => {
@@ -110,7 +110,7 @@ pub extern "C" fn oats_std_temporal_instant_from_epoch_nanoseconds(ns: c_longlon
 
 /// Add duration to instant (basic implementation)
 /// #[oats_export]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn oats_std_temporal_instant_add(
     instant: *mut c_void,
     nanoseconds: c_longlong,
@@ -138,7 +138,7 @@ pub extern "C" fn oats_std_temporal_instant_add(
 
 /// Get the current instant (Temporal.now() - simplified)
 /// #[oats_export]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn oats_std_temporal_now() -> *mut c_void {
     oats_std_temporal_now_instant()
 }

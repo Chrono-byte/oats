@@ -9,7 +9,7 @@ use libc::c_char;
 // extern declarations here so other parts of `crates/std` that reference
 // the symbols continue to link while we migrate code to the new layer.
 
-extern "C" {
+unsafe extern "C" {
     /// # Safety
     /// Pointer must be a valid nul-terminated C string or null.
     #[link_name = "print_str"]

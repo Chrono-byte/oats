@@ -14,6 +14,9 @@ use std::collections::HashMap;
 // Type alias for the locals stack used in codegen
 pub type LocalsStack = Vec<HashMap<String, OatsType>>;
 
+// Type alias for type alias information to reduce complexity warnings
+type TypeAliasMap = HashMap<String, (Option<Vec<String>>, oats_ast::TsType)>;
+
 /// Oats type system (used by the compiler)
 ///
 /// Key variants and their meaning:
@@ -266,9 +269,7 @@ pub fn map_ts_type(ty: &TsType) -> Option<OatsType> {
 /// For generic type aliases, type arguments are substituted into the aliased type.
 pub fn map_ts_type_with_aliases(
     ty: &TsType,
-    type_aliases: Option<
-        &std::collections::HashMap<String, (Option<Vec<String>>, oats_ast::TsType)>,
-    >,
+    type_aliases: Option<&TypeAliasMap>,
 ) -> Option<OatsType> {
     match ty {
         TsType::TsKeywordType(keyword) => match keyword {

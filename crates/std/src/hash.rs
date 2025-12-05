@@ -11,8 +11,8 @@ use std::hash::{Hash, Hasher};
 ///
 /// `str` must be a valid pointer to a null-terminated C string, or null.
 /// #[oats_export]
-#[no_mangle]
-pub unsafe extern "C" fn oats_std_hash_string(str: *const c_char) -> u64 {
+#[unsafe(no_mangle)]
+pub extern "C" fn oats_std_hash_string(str: *const c_char) -> u64 {
     if str.is_null() {
         return 0;
     }
@@ -33,8 +33,8 @@ pub unsafe extern "C" fn oats_std_hash_string(str: *const c_char) -> u64 {
 ///
 /// `bytes` must be a valid pointer to at least `len` bytes of readable memory.
 /// #[oats_export]
-#[no_mangle]
-pub unsafe extern "C" fn oats_std_hash_bytes(bytes: *const u8, len: usize) -> u64 {
+#[unsafe(no_mangle)]
+pub extern "C" fn oats_std_hash_bytes(bytes: *const u8, len: usize) -> u64 {
     if bytes.is_null() || len == 0 {
         return 0;
     }
@@ -47,7 +47,7 @@ pub unsafe extern "C" fn oats_std_hash_bytes(bytes: *const u8, len: usize) -> u6
 
 /// Compute hash of a number (returns hash as u64)
 /// #[oats_export]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn oats_std_hash_f64(value: f64) -> u64 {
     let mut hasher = DefaultHasher::new();
     value.to_bits().hash(&mut hasher);
@@ -56,7 +56,7 @@ pub extern "C" fn oats_std_hash_f64(value: f64) -> u64 {
 
 /// Compute hash of an integer (returns hash as u64)
 /// #[oats_export]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn oats_std_hash_i64(value: i64) -> u64 {
     let mut hasher = DefaultHasher::new();
     value.hash(&mut hasher);
@@ -69,8 +69,8 @@ pub extern "C" fn oats_std_hash_i64(value: i64) -> u64 {
 ///
 /// `str` must be a valid pointer to a null-terminated C string, or null.
 /// #[oats_export]
-#[no_mangle]
-pub unsafe extern "C" fn oats_std_hash_sha256_string(str: *const c_char) -> *mut c_char {
+#[unsafe(no_mangle)]
+pub extern "C" fn oats_std_hash_sha256_string(str: *const c_char) -> *mut c_char {
     if str.is_null() {
         return std::ptr::null_mut();
     }
@@ -98,8 +98,8 @@ pub unsafe extern "C" fn oats_std_hash_sha256_string(str: *const c_char) -> *mut
 ///
 /// `bytes` must be a valid pointer to at least `len` bytes of readable memory.
 /// #[oats_export]
-#[no_mangle]
-pub unsafe extern "C" fn oats_std_hash_sha256_bytes(bytes: *const u8, len: usize) -> *mut c_char {
+#[unsafe(no_mangle)]
+pub extern "C" fn oats_std_hash_sha256_bytes(bytes: *const u8, len: usize) -> *mut c_char {
     if bytes.is_null() || len == 0 {
         return std::ptr::null_mut();
     }

@@ -252,18 +252,16 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                 "slot_ptr_cast",
                                             )
                                             .map_err(|_| Diagnostic::error("operation failed"))?;
-                                        
-                                        self
-                                            .builder
+
+                                        self.builder
                                             .build_load(self.i8ptr_t, slot_ptr, "field_load")
                                             .map_err(|_| Diagnostic::error("operation failed"))?
                                     }
                                     _ => {
                                         return Err(Diagnostic::simple_with_span_boxed(
                                             Severity::Error,
-                                            format!(
-                                                "compound assignment not supported for field type"
-                                            ),
+                                            "compound assignment not supported for field type"
+                                                .to_string(),
                                             assign.span.start,
                                         ));
                                     }
@@ -391,9 +389,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     _ => {
                                         return Err(Diagnostic::simple_with_span_boxed(
                                             Severity::Error,
-                                            format!(
-                                                "compound assignment not supported for field type"
-                                            ),
+                                            "compound assignment not supported for field type"
+                                                .to_string(),
                                             assign.span.start,
                                         ));
                                     }
@@ -607,9 +604,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 .builder
                                 .build_pointer_cast(field_i8ptr, slot_ptr_ty, "slot_ptr_cast")
                                 .map_err(|_| Diagnostic::error("operation failed"))?;
-                            
-                            self
-                                .builder
+
+                            self.builder
                                 .build_load(self.i8ptr_t, slot_ptr, "field_load")
                                 .map_err(|_| Diagnostic::error("operation failed"))?
                         }

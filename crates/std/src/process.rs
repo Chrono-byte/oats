@@ -12,7 +12,7 @@ use std::process::Command;
 /// `args` must be a valid pointer to an array of `args_len` pointers to null-terminated C strings, or null.
 /// If non-null, all strings must remain valid for the duration of this call.
 /// #[oats_export]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oats_std_process_exec(
     program: *const c_char,
     args: *const *const c_char,
@@ -33,11 +33,10 @@ pub unsafe extern "C" fn oats_std_process_exec(
     if !args.is_null() && args_len > 0 {
         for i in 0..args_len {
             let arg_ptr = unsafe { *args.add(i) };
-            if !arg_ptr.is_null() {
-                if let Ok(arg_str) = unsafe { CStr::from_ptr(arg_ptr).to_str() } {
+            if !arg_ptr.is_null()
+                && let Ok(arg_str) = unsafe { CStr::from_ptr(arg_ptr).to_str() } {
                     cmd.arg(arg_str);
                 }
-            }
         }
     }
 
@@ -64,7 +63,7 @@ pub unsafe extern "C" fn oats_std_process_exec(
 /// `args` must be a valid pointer to an array of `args_len` pointers to null-terminated C strings, or null.
 /// If non-null, all strings must remain valid for the duration of this call.
 /// #[oats_export]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oats_std_process_exec_status(
     program: *const c_char,
     args: *const *const c_char,
@@ -85,11 +84,10 @@ pub unsafe extern "C" fn oats_std_process_exec_status(
     if !args.is_null() && args_len > 0 {
         for i in 0..args_len {
             let arg_ptr = unsafe { *args.add(i) };
-            if !arg_ptr.is_null() {
-                if let Ok(arg_str) = unsafe { CStr::from_ptr(arg_ptr).to_str() } {
+            if !arg_ptr.is_null()
+                && let Ok(arg_str) = unsafe { CStr::from_ptr(arg_ptr).to_str() } {
                     cmd.arg(arg_str);
                 }
-            }
         }
     }
 
@@ -106,7 +104,7 @@ pub unsafe extern "C" fn oats_std_process_exec_status(
 ///
 /// `cmd` must be a valid pointer to a null-terminated C string, or null.
 /// If non-null, the string must remain valid for the duration of this call.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oats_std_process_command_exists(cmd: *const c_char) -> c_int {
     if cmd.is_null() {
         return 0;
@@ -131,7 +129,7 @@ pub unsafe extern "C" fn oats_std_process_command_exists(cmd: *const c_char) -> 
 
 /// Get current working directory (caller must free)
 /// #[oats_export]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn oats_std_process_get_current_dir() -> *mut c_char {
     match std::env::current_dir() {
         Ok(path) => {

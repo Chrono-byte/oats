@@ -1087,21 +1087,15 @@ impl<'a> CodeGen<'a> {
 
                 // Get field pointer
                 let offset_const = self.i64_t.const_int(field_offset, false);
-                let field_i8ptr = unsafe {
-                    self.builder.build_gep(
-                        self.i8_t,
-                        this_ptr,
-                        &[offset_const],
-                        "super_field_i8ptr",
-                    )
-                }
-                .map_err(|_| {
-                    Diagnostic::simple_with_span_boxed(
-                        Severity::Error,
-                        "failed to compute super field pointer",
-                        member.span.start,
-                    )
-                })?;
+                let field_i8ptr = self
+                    .safe_gep(self.i8_t, this_ptr, &[offset_const], "super_field_i8ptr")
+                    .map_err(|_| {
+                        Diagnostic::simple_with_span_boxed(
+                            Severity::Error,
+                            "failed to compute super field pointer",
+                            member.span.start,
+                        )
+                    })?;
 
                 // Load field value (fields are stored as i8* pointers)
                 let field_ptr = self

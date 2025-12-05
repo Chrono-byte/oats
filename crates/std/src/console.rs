@@ -7,32 +7,32 @@
 /// `msg` must be a valid pointer to a null-terminated C string, or null.
 /// If non-null, the string must remain valid for the duration of this call.
 /// #[oats_export]
-#[no_mangle]
-pub unsafe extern "C" fn oats_std_console_log(msg: *mut libc::c_char) {
+#[unsafe(no_mangle)]
+pub extern "C" fn oats_std_console_log(msg: *mut libc::c_char) {
     if !msg.is_null() {
-        unsafe {
-            crate::sys::println(std::ffi::CStr::from_ptr(msg).to_string_lossy().as_ref());
-        }
+        // Use a let binding to extend the lifetime of the value
+        let s = unsafe { std::ffi::CStr::from_ptr(msg).to_string_lossy() };
+        crate::sys::println(s);
     }
 }
 
 /// Log a number to the console
 /// #[oats_export]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn oats_std_console_log_number(num: f64) {
     crate::sys::println(num);
 }
 
 /// Log an integer to the console
 /// #[oats_export]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn oats_std_console_log_int(num: i32) {
     crate::sys::println(num);
 }
 
 /// Print a newline
 /// #[oats_export]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn oats_std_console_log_newline() {
     crate::sys::println("");
 }

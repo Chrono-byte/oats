@@ -10,7 +10,7 @@ use std::ffi::{CStr, CString};
 /// `str` and `delimiter` must be valid pointers to null-terminated C strings, or null.
 /// If non-null, the strings must remain valid for the duration of this call.
 /// #[oats_export]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oats_std_string_split(
     str: *const c_char,
     delimiter: *const c_char,
@@ -76,7 +76,7 @@ pub unsafe extern "C" fn oats_std_string_split(
 /// # Safety
 ///
 /// `split_result` must be a valid pointer returned from `oats_std_string_split`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oats_std_string_split_count(split_result: *mut *mut c_char) -> usize {
     if split_result.is_null() {
         return 0;
@@ -89,7 +89,7 @@ pub unsafe extern "C" fn oats_std_string_split_count(split_result: *mut *mut c_c
 /// # Safety
 ///
 /// `split_result` must be a valid pointer returned from `oats_std_string_split`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oats_std_string_split_get(
     split_result: *mut *mut c_char,
     index: usize,
@@ -111,7 +111,7 @@ pub unsafe extern "C" fn oats_std_string_split_get(
 /// # Safety
 ///
 /// `split_result` must be a valid pointer returned from `oats_std_string_split`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oats_std_string_split_free(split_result: *mut *mut c_char) {
     if split_result.is_null() {
         return;
@@ -136,7 +136,7 @@ pub unsafe extern "C" fn oats_std_string_split_free(split_result: *mut *mut c_ch
 /// `str`, `from`, and `to` must be valid pointers to null-terminated C strings, or null.
 /// If non-null, the strings must remain valid for the duration of this call.
 /// #[oats_export]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oats_std_string_replace(
     str: *const c_char,
     from: *const c_char,
@@ -176,7 +176,7 @@ pub unsafe extern "C" fn oats_std_string_replace(
 /// `str` must be a valid pointer to a null-terminated C string, or null.
 /// If non-null, the string must remain valid for the duration of this call.
 /// #[oats_export]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oats_std_string_trim(str: *const c_char) -> *mut c_char {
     if str.is_null() {
         return std::ptr::null_mut();
@@ -201,7 +201,7 @@ pub unsafe extern "C" fn oats_std_string_trim(str: *const c_char) -> *mut c_char
 ///
 /// `str` must be a valid pointer to a null-terminated C string, or null.
 /// #[oats_export]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oats_std_string_len(str: *const c_char) -> usize {
     if str.is_null() {
         return 0;
@@ -219,7 +219,7 @@ pub unsafe extern "C" fn oats_std_string_len(str: *const c_char) -> usize {
 ///
 /// `str` and `substring` must be valid pointers to null-terminated C strings, or null.
 /// #[oats_export]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oats_std_string_contains(
     str: *const c_char,
     substring: *const c_char,
@@ -238,11 +238,7 @@ pub unsafe extern "C" fn oats_std_string_contains(
         Err(_) => return 0,
     };
 
-    if str_val.contains(sub) {
-        1
-    } else {
-        0
-    }
+    if str_val.contains(sub) { 1 } else { 0 }
 }
 
 /// Convert string to uppercase (caller must free result)
@@ -251,7 +247,7 @@ pub unsafe extern "C" fn oats_std_string_contains(
 ///
 /// `str` must be a valid pointer to a null-terminated C string, or null.
 /// #[oats_export]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oats_std_string_to_uppercase(str: *const c_char) -> *mut c_char {
     if str.is_null() {
         return std::ptr::null_mut();
@@ -276,7 +272,7 @@ pub unsafe extern "C" fn oats_std_string_to_uppercase(str: *const c_char) -> *mu
 ///
 /// `str` must be a valid pointer to a null-terminated C string, or null.
 /// #[oats_export]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oats_std_string_to_lowercase(str: *const c_char) -> *mut c_char {
     if str.is_null() {
         return std::ptr::null_mut();
@@ -301,7 +297,7 @@ pub unsafe extern "C" fn oats_std_string_to_lowercase(str: *const c_char) -> *mu
 ///
 /// `str` and `prefix` must be valid pointers to null-terminated C strings, or null.
 /// #[oats_export]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oats_std_string_starts_with(
     str: *const c_char,
     prefix: *const c_char,
@@ -333,7 +329,7 @@ pub unsafe extern "C" fn oats_std_string_starts_with(
 ///
 /// `str` and `suffix` must be valid pointers to null-terminated C strings, or null.
 /// #[oats_export]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oats_std_string_ends_with(
     str: *const c_char,
     suffix: *const c_char,
@@ -352,11 +348,7 @@ pub unsafe extern "C" fn oats_std_string_ends_with(
         Err(_) => return 0,
     };
 
-    if str_val.ends_with(suffix_str) {
-        1
-    } else {
-        0
-    }
+    if str_val.ends_with(suffix_str) { 1 } else { 0 }
 }
 
 /// Find index of substring (returns -1 if not found)
@@ -365,7 +357,7 @@ pub unsafe extern "C" fn oats_std_string_ends_with(
 ///
 /// `str` and `substring` must be valid pointers to null-terminated C strings, or null.
 /// #[oats_export]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oats_std_string_find(str: *const c_char, substring: *const c_char) -> i64 {
     if str.is_null() || substring.is_null() {
         return -1;
@@ -393,7 +385,7 @@ pub unsafe extern "C" fn oats_std_string_find(str: *const c_char, substring: *co
 ///
 /// `str` must be a valid pointer to a null-terminated C string, or null.
 /// #[oats_export]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oats_std_string_substring(
     str: *const c_char,
     start: usize,
@@ -426,7 +418,7 @@ pub unsafe extern "C" fn oats_std_string_substring(
 ///
 /// `str` must be a valid pointer to a null-terminated C string, or null.
 /// #[oats_export]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn oats_std_string_repeat(str: *const c_char, count: usize) -> *mut c_char {
     if str.is_null() || count == 0 {
         return std::ptr::null_mut();

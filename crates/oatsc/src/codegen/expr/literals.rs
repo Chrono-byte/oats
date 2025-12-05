@@ -125,11 +125,7 @@ pub fn lower_lit<'a>(
             let zero = utils::constants::zero_i32(codegen);
             let two = utils::constants::i32_const(codegen, 2);
             let indices = &[zero, two, zero];
-            let gep = unsafe {
-                codegen
-                    .builder
-                    .build_gep(struct_ty, gv.as_pointer_value(), indices, "strptr")
-            };
+            let gep = codegen.safe_gep(struct_ty, gv.as_pointer_value(), indices, "strptr");
             if let Ok(ptr) = gep {
                 // store pointer in cache for future reuse
                 codegen.string_literals.borrow_mut().insert(key, ptr);
@@ -237,14 +233,12 @@ pub fn lower_array<'a>(
 
     // Compute a pointer to the array data region (i8*) located after the header+length
     let offset_const = codegen.i32_t.const_int(header_bytes, false);
-    let data_ptr_i8_res = unsafe {
-        codegen.builder.build_gep(
-            codegen.context.i8_type(),
-            arr_ptr,
-            &[offset_const],
-            "arr_data_i8",
-        )
-    };
+    let data_ptr_i8_res = codegen.safe_gep(
+        codegen.context.i8_type(),
+        arr_ptr,
+        &[offset_const],
+        "arr_data_i8",
+    );
     let data_ptr_i8 = if let Ok(p) = data_ptr_i8_res {
         p
     } else {
@@ -273,14 +267,12 @@ pub fn lower_array<'a>(
             if let BasicValueEnum::FloatValue(fv) = v {
                 let byte_off = (i as u64) * 8u64;
                 let off_const = codegen.i32_t.const_int(byte_off, false);
-                let elem_i8_res = unsafe {
-                    codegen.builder.build_gep(
-                        codegen.context.i8_type(),
-                        data_ptr_i8,
-                        &[off_const],
-                        "elem_i8",
-                    )
-                };
+                let elem_i8_res = codegen.safe_gep(
+                    codegen.context.i8_type(),
+                    data_ptr_i8,
+                    &[off_const],
+                    "elem_i8",
+                );
                 let elem_i8 = if let Ok(p) = elem_i8_res {
                     p
                 } else {
@@ -334,14 +326,12 @@ pub fn lower_array<'a>(
 
             // Compute data start from current array pointer
             let offset_const = codegen.i32_t.const_int(header_bytes, false);
-            let data_i8_res = unsafe {
-                codegen.builder.build_gep(
-                    codegen.context.i8_type(),
-                    cur_arr,
-                    &[offset_const],
-                    "arr_data_i8_loop",
-                )
-            };
+            let data_i8_res = codegen.safe_gep(
+                codegen.context.i8_type(),
+                cur_arr,
+                &[offset_const],
+                "arr_data_i8_loop",
+            );
             let data_ptr_i8 = if let Ok(p) = data_i8_res {
                 p
             } else {
@@ -354,14 +344,12 @@ pub fn lower_array<'a>(
 
             let byte_off = (i as u64) * ptr_size;
             let off_const = codegen.i32_t.const_int(byte_off, false);
-            let elem_i8_res = unsafe {
-                codegen.builder.build_gep(
-                    codegen.context.i8_type(),
-                    data_ptr_i8,
-                    &[off_const],
-                    "elem_i8",
-                )
-            };
+            let elem_i8_res = codegen.safe_gep(
+                codegen.context.i8_type(),
+                data_ptr_i8,
+                &[off_const],
+                "elem_i8",
+            );
             let elem_i8 = if let Ok(p) = elem_i8_res {
                 p
             } else {
@@ -891,11 +879,7 @@ pub fn lower_template<'a>(
             let zero = utils::constants::zero_i32(codegen);
             let two = utils::constants::i32_const(codegen, 2);
             let indices = &[zero, two, zero];
-            let gep = unsafe {
-                codegen
-                    .builder
-                    .build_gep(struct_ty, gv.as_pointer_value(), indices, "strptr")
-            };
+            let gep = codegen.safe_gep(struct_ty, gv.as_pointer_value(), indices, "strptr");
 
             if let Ok(ptr) = gep {
                 codegen.string_literals.borrow_mut().insert(key, ptr);

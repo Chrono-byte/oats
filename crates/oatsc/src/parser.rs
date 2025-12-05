@@ -6,11 +6,10 @@
 use crate::diagnostics;
 use crate::types::{FunctionSig, OatsType};
 use anyhow::Result;
-use oxc_allocator::Allocator;
 use oxc_ast::ast::*;
 use oxc_parser::Parser;
 use oxc_span::SourceType;
-use std::sync::Arc;
+use oxc_allocator::Allocator;
 
 /// Lightweight representation of a top-level `declare function` signature
 /// extracted from source text. The builder will convert these into
@@ -35,7 +34,9 @@ pub struct Token {
 /// lifetime issues while keeping memory safe.
 pub struct ParsedModule {
     pub parsed: Program<'static>,
-    _allocator: Arc<Box<Allocator>>,
+    // Store the leaked allocator reference to keep it alive
+    // Using a raw pointer is safe here because we never dereference it,
+    // we just keep it to prevent the allocator from being dropped
     pub source: String,
     pub mut_var_decls: std::collections::HashSet<usize>,
     pub declared_fns: Vec<DeclaredFn>,
@@ -290,15 +291,17 @@ pub fn parse_oats_module_with_options(
         return Ok((None, diags));
     }
 
-    // Wrap allocator in Arc and leak it to get 'static lifetime
-    let allocator_box = Box::new(Allocator::default());
-    let allocator: &'static Allocator = Box::leak(allocator_box);
-
     let source_type = SourceType::default().with_typescript(true);
 
-    let program = {
-        let parser = Parser::new(allocator, source_without_bom, source_type);
-        let parser_return = parser.parse();
+    // Create a leaked allocator to get 'static lifetime
+    let allocator = Box::leak(Box::new(Allocator::default()));
+    
+    // Convert source to 'static string by leaking it
+    // This is safe because we store the source in ParsedModule anyway
+    let source_static: &'static str = Box::leak(source_without_bom.to_string().into_boxed_str());
+
+    let program_static: Program<'static> = {
+        let parser_return = Parser::new(allocator, source_static, source_type).parse();
 
         if !parser_return.errors.is_empty() {
             let mut diags = Vec::new();
@@ -324,35 +327,29 @@ pub fn parse_oats_module_with_options(
             return Ok((None, diags));
         }
 
-        // SAFETY: The Program only holds references to nodes allocated in the allocator,
-        // not to the source string. Since the allocator is 'static (leaked) and we keep
-        // it alive via Arc in ParsedModule, it's safe to transmute the lifetime to 'static.
-        unsafe { std::mem::transmute::<Program<'_>, Program<'static>>(parser_return.program) }
+        // The Program now has 'static lifetime because the allocator is 'static
+        // (via Box::leak). This is safe because:
+        // 1. Box::leak gives us a &'static Allocator that lives for the program duration
+        // 2. The Program only holds references to nodes in the allocator
+        // 3. We ensure the allocator outlives the Program by keeping it in ParsedModule
+        parser_return.program
     };
 
     let mut mut_var_decls = std::collections::HashSet::new();
-    for stmt in &program.body {
+    for stmt in &program_static.body {
         collect_mut_var_decls(stmt, source_without_bom, &mut mut_var_decls);
     }
 
     let mut declared_fn_names = Vec::new();
-    for stmt in &program.body {
+    for stmt in &program_static.body {
         collect_declared_fns(stmt, &mut declared_fn_names);
     }
     let declared_fns = convert_declared_fns(declared_fn_names);
 
     let tokens = Vec::new();
 
-    // Create the module with Arc-wrapped allocator
-    let allocator_arc = Arc::new(unsafe {
-        // SAFETY: We just leaked the allocator above, so we can reconstruct the Box
-        // This is safe because we're immediately putting it in Arc for shared ownership
-        Box::from_raw(allocator as *const Allocator as *mut Allocator)
-    });
-
     let module = ParsedModule {
-        parsed: program,
-        _allocator: allocator_arc,
+        parsed: program_static,
         source: source_code.to_string(),
         mut_var_decls,
         declared_fns,

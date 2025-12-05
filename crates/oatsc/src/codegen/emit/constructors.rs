@@ -416,7 +416,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 "union_box_f64_ctor",
                             );
                             if let Ok(cs) = cs
-                                && let Some(bv) = extract_basic_value_from_valuekind(cs.try_as_basic_value())
+                                && let Some(bv) =
+                                    extract_basic_value_from_valuekind(cs.try_as_basic_value())
                             {
                                 let boxed_ptr = bv.into_pointer_value();
                                 let boxed_bv =
@@ -443,7 +444,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 "union_box_ptr_ctor",
                             );
                             if let Ok(cs) = cs
-                                && let Some(bv) = extract_basic_value_from_valuekind(cs.try_as_basic_value())
+                                && let Some(bv) =
+                                    extract_basic_value_from_valuekind(cs.try_as_basic_value())
                             {
                                 let boxed_ptr = bv.into_pointer_value();
                                 let boxed_bv =
@@ -647,7 +649,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
             .map_err(|_| {
                 crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "build_call failed")
             })?;
-        let malloc_ret2 = match extract_basic_value_from_valuekind(call_site2.try_as_basic_value()) {
+        let malloc_ret2 = match extract_basic_value_from_valuekind(call_site2.try_as_basic_value())
+        {
             Some(bv) => bv.into_pointer_value(),
             None => {
                 return Err(crate::diagnostics::Diagnostic::simple_boxed(

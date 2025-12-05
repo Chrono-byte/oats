@@ -6,9 +6,7 @@ use std::env;
 /// Test RC elision for non-escaping local variables
 #[test]
 fn test_non_escaping_local_rc_elision() -> Result<()> {
-    unsafe {
-        env::set_var("OATS_ELIDE_ARC", "1");
-    }
+    env::set_var("OATS_ELIDE_ARC", "1");
 
     let source = r#"
 export function main(): number {
@@ -25,18 +23,14 @@ export function main(): number {
         "RC increment should be elided for non-escaping local"
     );
 
-    unsafe {
-        env::remove_var("OATS_ELIDE_ARC");
-    }
+    env::remove_var("OATS_ELIDE_ARC");
     Ok(())
 }
 
 /// Test that escaping variables still get RC operations
 #[test]
 fn test_escaping_local_keeps_rc_ops() -> Result<()> {
-    unsafe {
-        env::set_var("OATS_ELIDE_ARC", "1");
-    }
+    env::set_var("OATS_ELIDE_ARC", "1");
 
     let source = r#"
 export function main(): number {
@@ -49,18 +43,14 @@ export function main(): number {
 
     println!("IR for escaping local test:\n{}", ir);
 
-    unsafe {
-        env::remove_var("OATS_ELIDE_ARC");
-    }
+    env::remove_var("OATS_ELIDE_ARC");
     Ok(())
 }
 
 /// Test RC elision is disabled by default
 #[test]
 fn test_rc_elision_disabled_by_default() -> Result<()> {
-    unsafe {
-        env::remove_var("OATS_ELIDE_ARC");
-    }
+    env::remove_var("OATS_ELIDE_ARC");
 
     let source = r#"
 export function main(): number {
@@ -79,9 +69,7 @@ export function main(): number {
 /// Test function call argument escaping
 #[test]
 fn test_function_call_argument_escaping() -> Result<()> {
-    unsafe {
-        env::set_var("OATS_ELIDE_ARC", "1");
-    }
+    env::set_var("OATS_ELIDE_ARC", "1");
 
     let source = r#"
 function helper(arg: number): number {
@@ -100,18 +88,14 @@ export function main(): number {
     // Variables passed as function arguments should be marked as escaping
     println!("IR for function argument escaping:\n{}", ir);
 
-    unsafe {
-        env::remove_var("OATS_ELIDE_ARC");
-    }
+    env::remove_var("OATS_ELIDE_ARC");
     Ok(())
 }
 
 /// Test member assignment escaping
 #[test]
 fn test_member_assignment_escaping() -> Result<()> {
-    unsafe {
-        env::set_var("OATS_ELIDE_ARC", "1");
-    }
+    env::set_var("OATS_ELIDE_ARC", "1");
 
     let source = r#"
 class TestClass {
@@ -139,18 +123,14 @@ export function main(): number {
     // Variables assigned to object members should be marked as escaping
     println!("IR for member assignment escaping:\n{}", ir);
 
-    unsafe {
-        env::remove_var("OATS_ELIDE_ARC");
-    }
+    env::remove_var("OATS_ELIDE_ARC");
     Ok(())
 }
 
 /// Test async function await-live analysis
 #[test]
 fn test_async_await_live_analysis() -> Result<()> {
-    unsafe {
-        env::set_var("OATS_ELIDE_ARC", "1");
-    }
+    env::set_var("OATS_ELIDE_ARC", "1");
 
     let source = r#"
 export async function main(): Promise<number> {
@@ -165,18 +145,14 @@ export async function main(): Promise<number> {
     // Variables live across await points should be marked as escaping
     println!("IR for async await-live analysis:\n{}", ir);
 
-    unsafe {
-        env::remove_var("OATS_ELIDE_ARC");
-    }
+    env::remove_var("OATS_ELIDE_ARC");
     Ok(())
 }
 
 /// Test control flow with loops
 #[test]
 fn test_control_flow_loops() -> Result<()> {
-    unsafe {
-        env::set_var("OATS_ELIDE_ARC", "1");
-    }
+    env::set_var("OATS_ELIDE_ARC", "1");
 
     let source = r#"
 export function main(): number {
@@ -193,18 +169,14 @@ export function main(): number {
     // Test that loop variables and accumulator are handled correctly
     println!("IR for control flow with loops:\n{}", ir);
 
-    unsafe {
-        env::remove_var("OATS_ELIDE_ARC");
-    }
+    env::remove_var("OATS_ELIDE_ARC");
     Ok(())
 }
 
 /// Test conditional statements
 #[test]
 fn test_control_flow_conditionals() -> Result<()> {
-    unsafe {
-        env::set_var("OATS_ELIDE_ARC", "1");
-    }
+    env::set_var("OATS_ELIDE_ARC", "1");
 
     let source = r#"
 export function main(): number {
@@ -227,8 +199,6 @@ export function main(): number {
     // Test that variables used in conditional branches are analyzed correctly
     println!("IR for control flow with conditionals:\n{}", ir);
 
-    unsafe {
-        env::remove_var("OATS_ELIDE_ARC");
-    }
+    env::remove_var("OATS_ELIDE_ARC");
     Ok(())
 }

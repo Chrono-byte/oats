@@ -2,8 +2,8 @@ use crate::diagnostics::{Diagnostic, Severity};
 use inkwell::AddressSpace;
 use inkwell::types::BasicType;
 use inkwell::values::{BasicValue, BasicValueEnum, FunctionValue};
-use std::collections::HashMap;
 use oxc_ast::ast::*;
+use std::collections::HashMap;
 
 type LocalEntry<'a> = (
     inkwell::values::PointerValue<'a>,
@@ -761,11 +761,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             // Create a synthetic identifier expression for the temporary
                             use oxc_ast::ast::{Expression, IdentifierReference};
                             use oxc_syntax::reference::ReferenceId;
-                            let temp_ident = Expression::Identifier(Box::new(IdentifierReference {
-                                span: nested_arr_pat.span.clone(),
-                                name: oxc_span::Atom::from(temp_name.clone()),
-                                reference_id: ReferenceId::from_u32(0),
-                            }));
+                            let temp_ident =
+                                Expression::Identifier(Box::new(IdentifierReference {
+                                    span: nested_arr_pat.span.clone(),
+                                    name: oxc_span::Atom::from(temp_name.clone()),
+                                    reference_id: ReferenceId::from_u32(0),
+                                }));
 
                             // Recursively destructure the nested array
                             self.lower_array_destructuring(
@@ -834,11 +835,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             // Create a synthetic identifier expression for the temporary
                             use oxc_ast::ast::{Expression, IdentifierReference};
                             use oxc_syntax::reference::ReferenceId;
-                            let temp_ident = Expression::Identifier(Box::new(IdentifierReference {
-                                span: nested_obj_pat.span,
-                                name: oxc_span::Atom::from(temp_name.clone()),
-                                reference_id: ReferenceId::from_u32(0),
-                            }));
+                            let temp_ident =
+                                Expression::Identifier(Box::new(IdentifierReference {
+                                    span: nested_obj_pat.span,
+                                    name: oxc_span::Atom::from(temp_name.clone()),
+                                    reference_id: ReferenceId::from_u32(0),
+                                }));
 
                             // Recursively destructure the nested object
                             self.lower_object_destructuring(
@@ -1231,22 +1233,15 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     let meta_size = 8u64;
                     let field_offset = header_size + meta_size + (field_idx as u64 * 8);
 
-                    // Get field pointer using GEP
-                    let offset_const = self.i64_t.const_int(field_offset, false);
-                    let field_i8ptr = unsafe {
-                        self.builder.build_gep(
-                            self.i8_t,
-                            obj_ptr,
-                            &[offset_const],
-                            &format!("field_{}_i8ptr", prop_name),
-                        )
-                    }
-                    .map_err(|_| {
-                        Diagnostic::simple_boxed(
-                            Severity::Error,
-                            format!("failed to compute field pointer for '{}'", prop_name),
-                        )
-                    })?;
+                    // Get field pointer using byte offset
+                    let field_i8ptr = self
+                        .offset_i8_ptr(obj_ptr, field_offset, &format!("field_{}_i8ptr", prop_name))
+                        .map_err(|_| {
+                            Diagnostic::simple_boxed(
+                                Severity::Error,
+                                format!("failed to compute field pointer for '{}'", prop_name),
+                            )
+                        })?;
 
                     // Cast to i8ptr and load field value
                     let field_ptr = self
@@ -1372,11 +1367,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 // Use the nested pattern's span
                                 use oxc_ast::ast::{Expression, IdentifierReference};
                                 use oxc_syntax::reference::ReferenceId;
-                                let temp_ident = Expression::Identifier(Box::new(IdentifierReference {
-                                    span: nested_obj_pat.span,
-                                    name: oxc_span::Atom::from(temp_name.clone()),
-                                    reference_id: ReferenceId::from_u32(0),
-                                }));
+                                let temp_ident =
+                                    Expression::Identifier(Box::new(IdentifierReference {
+                                        span: nested_obj_pat.span,
+                                        name: oxc_span::Atom::from(temp_name.clone()),
+                                        reference_id: ReferenceId::from_u32(0),
+                                    }));
 
                                 // Recursively destructure the nested object
                                 self.lower_object_destructuring(
@@ -1446,11 +1442,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 // Use the nested pattern's span
                                 use oxc_ast::ast::{Expression, IdentifierReference};
                                 use oxc_syntax::reference::ReferenceId;
-                                let temp_ident = Expression::Identifier(Box::new(IdentifierReference {
-                                    span: nested_arr_pat.span,
-                                    name: oxc_span::Atom::from(temp_name.clone()),
-                                    reference_id: ReferenceId::from_u32(0),
-                                }));
+                                let temp_ident =
+                                    Expression::Identifier(Box::new(IdentifierReference {
+                                        span: nested_arr_pat.span,
+                                        name: oxc_span::Atom::from(temp_name.clone()),
+                                        reference_id: ReferenceId::from_u32(0),
+                                    }));
 
                                 // Recursively destructure the nested array
                                 self.lower_array_destructuring(
@@ -1522,30 +1519,32 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         };
 
                     // Initialize header (static bit set)
-                    let header_offset = self.i64_t.const_int(0, false);
-                    let header_ptr = unsafe {
-                        self.builder.build_gep(
-                            self.i64_t,
-                            rest_obj_ptr,
-                            &[header_offset],
+                    let header_i8ptr = self
+                        .offset_i8_ptr(rest_obj_ptr, 0, "rest_header_i8ptr")
+                        .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "gep failed"))?;
+                    let header_ptr = self
+                        .builder
+                        .build_pointer_cast(
+                            header_i8ptr,
+                            self.i64_t.ptr_type(inkwell::AddressSpace::default()),
                             "rest_header_ptr",
                         )
-                    }
-                    .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "gep failed"))?;
+                        .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "cast failed"))?;
                     let static_header = self.i64_t.const_int(1u64 << 32, false);
                     let _ = self.builder.build_store(header_ptr, static_header);
 
                     // Initialize meta slot (field count)
-                    let meta_offset = self.i64_t.const_int(1, false);
-                    let meta_ptr = unsafe {
-                        self.builder.build_gep(
-                            self.i64_t,
-                            rest_obj_ptr,
-                            &[meta_offset],
+                    let meta_i8ptr = self
+                        .offset_i8_ptr(rest_obj_ptr, 8, "rest_meta_i8ptr")
+                        .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "gep failed"))?;
+                    let meta_ptr = self
+                        .builder
+                        .build_pointer_cast(
+                            meta_i8ptr,
+                            self.i64_t.ptr_type(inkwell::AddressSpace::default()),
                             "rest_meta_ptr",
                         )
-                    }
-                    .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "gep failed"))?;
+                        .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "cast failed"))?;
                     let field_count_val = self.i64_t.const_int(rest_field_count as u64, false);
                     let _ = self.builder.build_store(meta_ptr, field_count_val);
 
@@ -1556,16 +1555,13 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         // Get source field value
                         let src_field_offset =
                             header_size + meta_size + (*field_idx as u64 * field_size);
-                        let src_offset_const = self.i64_t.const_int(src_field_offset, false);
-                        let src_field_i8ptr = unsafe {
-                            self.builder.build_gep(
-                                self.i8_t,
+                        let src_field_i8ptr = self
+                            .offset_i8_ptr(
                                 obj_ptr,
-                                &[src_offset_const],
+                                src_field_offset,
                                 &format!("src_field_{}_i8ptr", field_name),
                             )
-                        }
-                        .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "gep failed"))?;
+                            .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "gep failed"))?;
 
                         let src_field_ptr = self
                             .builder
@@ -1607,16 +1603,13 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         // Store in rest object
                         let rest_field_offset =
                             header_size + meta_size + (rest_idx as u64 * field_size);
-                        let rest_offset_const = self.i64_t.const_int(rest_field_offset, false);
-                        let rest_field_i8ptr = unsafe {
-                            self.builder.build_gep(
-                                self.i8_t,
+                        let rest_field_i8ptr = self
+                            .offset_i8_ptr(
                                 rest_obj_ptr,
-                                &[rest_offset_const],
+                                rest_field_offset,
                                 &format!("rest_field_{}_i8ptr", field_name),
                             )
-                        }
-                        .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "gep failed"))?;
+                            .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "gep failed"))?;
 
                         let rest_field_ptr = self
                             .builder
@@ -1773,8 +1766,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             {
                 // Language Spec v2: `let` is immutable by default. Support
                 // `let mut` by checking the mutable flag in VarDeclKind::Let.
-                let is_mut_decl =
-                    matches!(var_decl.kind, VariableDeclarationKind::Let);
+                let is_mut_decl = matches!(var_decl.kind, VariableDeclarationKind::Let);
 
                 // Resolve type information
                 let type_info = self.resolve_decl_type(decl)?;
@@ -1899,8 +1891,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     ty: allocated_ty,
                                     initialized: true,
                                     // If this was a `let` without `mut`, treat as const/immutable
-                                    is_const: matches!(var_decl.kind, VariableDeclarationKind::Const)
-                                        || !is_mut_decl,
+                                    is_const: matches!(
+                                        var_decl.kind,
+                                        VariableDeclarationKind::Const
+                                    ) || !is_mut_decl,
                                     is_weak: declared_is_weak,
                                     nominal: declared_nominal.clone(),
                                     oats_type: declared_mapped

@@ -7,7 +7,6 @@
 use crate::codegen::CodeGen;
 use crate::diagnostics::{Diagnostic, Severity};
 use inkwell::values::{BasicValue, BasicValueEnum, FunctionValue};
-use oxc_ast::ast::*;
 use std::collections::HashMap;
 
 type LocalEntry<'a> = (
@@ -29,7 +28,7 @@ impl<'a> CodeGen<'a> {
     #[allow(clippy::result_large_err)]
     pub(super) fn lower_optional_member_expr(
         &self,
-        optional: &oxc_ast::ast::OptionalMemberExpression<'_>,
+        optional: &oxc_ast::ast::OptionalChainExpression<'_>,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals: &mut LocalsStackLocal<'a>,

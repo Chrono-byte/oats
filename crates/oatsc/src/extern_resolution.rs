@@ -67,10 +67,7 @@ pub fn resolve_external_dependencies<'ctx>(
 
         for symbol in symbols {
             // Get function signature or use default
-            let (param_types, ret_type) = match external_function_signatures
-                .get(&symbol)
-                .cloned()
-            {
+            let (param_types, ret_type) = match external_function_signatures.get(&symbol).cloned() {
                 Some(types) => types,
                 None => (vec![], OatsType::Number),
             };

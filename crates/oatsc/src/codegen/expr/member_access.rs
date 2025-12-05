@@ -3,7 +3,7 @@ use crate::diagnostics::{Diagnostic, Severity};
 use crate::types::OatsType;
 use inkwell::AddressSpace;
 use inkwell::types::BasicTypeEnum;
-use inkwell::values::{BasicValue, BasicValueEnum, FunctionValue, PointerValue};
+use inkwell::values::{BasicValue, BasicValueEnum, FunctionValue, PointerValue, ValueKind};
 use oxc_ast::ast::*;
 use std::collections::HashMap;
 
@@ -68,10 +68,7 @@ impl<'a> CodeGen<'a> {
                             && let Some(param_types) = self
                                 .fn_param_types
                                 .borrow()
-                                .get(match function.get_name().to_str() {
-                                    Some(name) => name,
-                                    None => "",
-                                })
+                                .get(function.get_name().to_str().unwrap_or(""))
                         {
                             let idx = *param_idx as usize;
                             if idx < param_types.len()
@@ -81,10 +78,7 @@ impl<'a> CodeGen<'a> {
                             }
                         }
                     } else if matches!(&computed.object, Expression::ThisExpression(_)) {
-                        let fname = match function.get_name().to_str() {
-                            Some(name) => name,
-                            None => "",
-                        };
+                        let fname = function.get_name().to_str().unwrap_or("");
                         if let Some(param_types) = self.fn_param_types.borrow().get(fname)
                             && !param_types.is_empty()
                             && let crate::types::OatsType::NominalStruct(n) = &param_types[0]
@@ -210,7 +204,7 @@ impl<'a> CodeGen<'a> {
                                                     Diagnostic::error("operation failed")
                                                 })?;
                                             match cs.try_as_basic_value() {
-                                                either::Either::Left(bv) => return Ok(bv),
+                                                ValueKind::Basic(bv) => return Ok(bv),
                                                 _ => {
                                                     return Err(Diagnostic::error(
                                                         "operation failed",
@@ -232,7 +226,7 @@ impl<'a> CodeGen<'a> {
                                                     Diagnostic::error("operation failed")
                                                 })?;
                                             match cs2.try_as_basic_value() {
-                                                either::Either::Left(bv2) => return Ok(bv2),
+                                                ValueKind::Basic(bv2) => return Ok(bv2),
                                                 _ => {
                                                     return Err(Diagnostic::error(
                                                         "operation failed",
@@ -312,10 +306,7 @@ impl<'a> CodeGen<'a> {
                             }
                             // Check function params if not found in locals
                             if !prefer_f64 && let Some(idx_p) = param_map.get(&arr_name) {
-                                let fname = match function.get_name().to_str() {
-                            Some(name) => name,
-                            None => "",
-                        };
+                                let fname = function.get_name().to_str().unwrap_or("");
                                 if let Some(param_types) = self.fn_param_types.borrow().get(fname) {
                                     let pidx = *idx_p as usize;
                                     if pidx < param_types.len()
@@ -345,7 +336,7 @@ impl<'a> CodeGen<'a> {
                                     )
                                 })?;
                             match cs.try_as_basic_value() {
-                                either::Either::Left(bv) => return Ok(bv),
+                                ValueKind::Basic(bv) => return Ok(bv),
                                 _ => {
                                     return Err(Diagnostic::simple_with_span_boxed(
                                         Severity::Error,
@@ -374,7 +365,7 @@ impl<'a> CodeGen<'a> {
                             )
                         })?;
                     match cs.try_as_basic_value() {
-                        either::Either::Left(bv) => return Ok(bv),
+                        ValueKind::Basic(bv) => return Ok(bv),
                         _ => {
                             return Err(Diagnostic::simple_with_span_boxed(
                                 Severity::Error,
@@ -497,10 +488,7 @@ impl<'a> CodeGen<'a> {
                             if let Some(param_types) = self
                                 .fn_param_types
                                 .borrow()
-                                .get(match function.get_name().to_str() {
-                                    Some(name) => name,
-                                    None => "",
-                                })
+                                .get(function.get_name().to_str().unwrap_or(""))
                                 && !param_types.is_empty()
                                 && let crate::types::OatsType::NominalStruct(n) = &param_types[0]
                             {
@@ -511,10 +499,7 @@ impl<'a> CodeGen<'a> {
                             if let Some(param_types) = self
                                 .fn_param_types
                                 .borrow()
-                                .get(match function.get_name().to_str() {
-                                    Some(name) => name,
-                                    None => "",
-                                })
+                                .get(function.get_name().to_str().unwrap_or(""))
                             {
                                 let idx = *param_idx as usize;
                                 if idx < param_types.len()
@@ -543,10 +528,7 @@ impl<'a> CodeGen<'a> {
                         && let Some(param_types) = self
                             .fn_param_types
                             .borrow()
-                            .get(match function.get_name().to_str() {
-                                Some(name) => name,
-                                None => "",
-                            })
+                            .get(function.get_name().to_str().unwrap_or(""))
                         && !param_types.is_empty()
                         && let crate::types::OatsType::NominalStruct(n) = &param_types[0]
                     {
@@ -721,7 +703,7 @@ impl<'a> CodeGen<'a> {
                                                     )
                                                 })?;
                                             match cs.try_as_basic_value() {
-                                                either::Either::Left(bv) => return Ok(bv),
+                                                ValueKind::Basic(bv) => return Ok(bv),
                                                 _ => {
                                                     return Err(Diagnostic::error(
                                                         "operation failed",
@@ -745,7 +727,7 @@ impl<'a> CodeGen<'a> {
                                                     )
                                                 })?;
                                             match cs2.try_as_basic_value() {
-                                                either::Either::Left(bv2) => return Ok(bv2),
+                                                ValueKind::Basic(bv2) => return Ok(bv2),
                                                 _ => {
                                                     return Err(Diagnostic::error(
                                                         "operation failed",
@@ -960,10 +942,7 @@ impl<'a> CodeGen<'a> {
                         && let Some(param_types) = self
                             .fn_param_types
                             .borrow()
-                            .get(match function.get_name().to_str() {
-                                Some(name) => name,
-                                None => "",
-                            })
+                            .get(function.get_name().to_str().unwrap_or(""))
                     {
                         let idx = *param_idx as usize;
                         if idx < param_types.len()
@@ -973,10 +952,7 @@ impl<'a> CodeGen<'a> {
                         }
                     }
                 } else if matches!(&static_member.object, Expression::ThisExpression(_)) {
-                    let fname = match function.get_name().to_str() {
-                        Some(name) => name,
-                        None => "",
-                    };
+                    let fname = function.get_name().to_str().unwrap_or("");
                     if let Some(param_types) = self.fn_param_types.borrow().get(fname)
                         && !param_types.is_empty()
                         && let crate::types::OatsType::NominalStruct(n) = &param_types[0]

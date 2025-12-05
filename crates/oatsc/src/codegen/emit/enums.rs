@@ -36,17 +36,18 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 oxc_ast::ast::TSEnumMemberName::ComputedTemplateString(tpl) => {
                     // Use the first quasi of the template literal as the string value, as a fallback
                     if let Some(first_quasi) = tpl.quasis.first() {
-                        first_quasi.value.cooked.as_ref().map_or_else(
-                            || "<invalid template>".to_string(),
-                            |v| v.to_string(),
-                        )
+                        first_quasi
+                            .value
+                            .cooked
+                            .as_ref()
+                            .map_or_else(|| "<invalid template>".to_string(), |v| v.to_string())
                     } else {
                         return Err(crate::diagnostics::Diagnostic::simple_boxed(
                             Severity::Error,
                             "invalid computed template string for enum member",
                         ));
                     }
-                },
+                }
                 oxc_ast::ast::TSEnumMemberName::String(s) => s.value.to_string(),
             };
             // TSEnumMember doesn't have fields - enums in TypeScript don't have variant data
@@ -173,15 +174,16 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     )
                 })?;
 
-            let enum_ptr = match extract_basic_value_from_valuekind(malloc_call.try_as_basic_value()) {
-                Some(bv) => bv.into_pointer_value(),
-                None => {
-                    return Err(crate::diagnostics::Diagnostic::simple_boxed(
-                        Severity::Error,
-                        "malloc returned unexpected type",
-                    ));
-                }
-            };
+            let enum_ptr =
+                match extract_basic_value_from_valuekind(malloc_call.try_as_basic_value()) {
+                    Some(bv) => bv.into_pointer_value(),
+                    None => {
+                        return Err(crate::diagnostics::Diagnostic::simple_boxed(
+                            Severity::Error,
+                            "malloc returned unexpected type",
+                        ));
+                    }
+                };
 
             // Cast enum pointer to i8* for byte-level access
             let enum_i8ptr = self
@@ -213,17 +215,14 @@ impl<'a> crate::codegen::CodeGen<'a> {
             let _ = self.builder.build_store(header_ptr, header_val);
 
             // Initialize metadata pointer (null for now) at offset 8
-            let meta_offset = self.i64_t.const_int(8, false);
-            let meta_i8ptr = unsafe {
-                self.builder
-                    .build_gep(self.i8_t, enum_i8ptr, &[meta_offset], "meta_i8ptr")
-            }
-            .map_err(|_| {
-                crate::diagnostics::Diagnostic::simple_boxed(
-                    Severity::Error,
-                    "failed to get meta pointer offset",
-                )
-            })?;
+            let meta_i8ptr = self
+                .offset_i8_ptr(enum_i8ptr, 8, "meta_i8ptr")
+                .map_err(|_| {
+                    crate::diagnostics::Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "failed to get meta pointer offset",
+                    )
+                })?;
             let meta_ptr = self
                 .builder
                 .build_pointer_cast(meta_i8ptr, self.i8ptr_t, "meta_ptr")
@@ -237,17 +236,14 @@ impl<'a> crate::codegen::CodeGen<'a> {
             let _ = self.builder.build_store(meta_ptr, null_meta);
 
             // Set discriminant (variant tag) at offset 16
-            let disc_offset = self.i64_t.const_int(16, false);
-            let disc_i8ptr = unsafe {
-                self.builder
-                    .build_gep(self.i8_t, enum_i8ptr, &[disc_offset], "disc_i8ptr")
-            }
-            .map_err(|_| {
-                crate::diagnostics::Diagnostic::simple_boxed(
-                    Severity::Error,
-                    "failed to get discriminant pointer offset",
-                )
-            })?;
+            let disc_i8ptr = self
+                .offset_i8_ptr(enum_i8ptr, 16, "disc_i8ptr")
+                .map_err(|_| {
+                    crate::diagnostics::Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "failed to get discriminant pointer offset",
+                    )
+                })?;
             let disc_ptr = self
                 .builder
                 .build_pointer_cast(
@@ -266,17 +262,14 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
             // Store variant data if any (starting at offset 20, after 4-byte discriminant with padding)
             if !field_types.is_empty() {
-                let data_offset = self.i64_t.const_int(24, false); // header(8) + meta(8) + disc(4) + padding(4) = 24
-                let data_i8ptr = unsafe {
-                    self.builder
-                        .build_gep(self.i8_t, enum_i8ptr, &[data_offset], "data_i8ptr")
-                }
-                .map_err(|_| {
-                    crate::diagnostics::Diagnostic::simple_boxed(
-                        Severity::Error,
-                        "failed to get data pointer offset",
-                    )
-                })?;
+                let data_i8ptr =
+                    self.offset_i8_ptr(enum_i8ptr, 24, "data_i8ptr")
+                        .map_err(|_| {
+                            crate::diagnostics::Diagnostic::simple_boxed(
+                                Severity::Error,
+                                "failed to get data pointer offset",
+                            )
+                        })?;
 
                 // Store each field parameter into the data union
                 let mut current_offset = 0u64;
@@ -286,21 +279,14 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         let llvm_field_type = self.map_type_to_llvm(field_type);
 
                         // Calculate field offset within data union
-                        let field_offset_val = self.i64_t.const_int(current_offset, false);
-                        let field_i8ptr = unsafe {
-                            self.builder.build_gep(
-                                self.i8_t,
-                                data_i8ptr,
-                                &[field_offset_val],
-                                "field_i8ptr",
-                            )
-                        }
-                        .map_err(|_| {
-                            crate::diagnostics::Diagnostic::simple_boxed(
-                                Severity::Error,
-                                "failed to get field pointer",
-                            )
-                        })?;
+                        let field_i8ptr = self
+                            .offset_i8_ptr(data_i8ptr, current_offset, "field_i8ptr")
+                            .map_err(|_| {
+                                crate::diagnostics::Diagnostic::simple_boxed(
+                                    Severity::Error,
+                                    "failed to get field pointer",
+                                )
+                            })?;
 
                         // Cast to appropriate type and store
                         let field_ptr_type =

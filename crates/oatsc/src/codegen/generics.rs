@@ -104,16 +104,16 @@ impl<'a> CodeGen<'a> {
 
         // Lookup the generic function AST and its signature
         // Note: Function doesn't implement Clone, so we store references
-        let (func_ast, fsig) = self
-            .nested_generic_fns
-            .borrow()
-            .get(func_name)
-            .ok_or_else(|| {
-                Diagnostic::simple_boxed(
-                    Severity::Error,
-                    format!("Generic function '{}' not found", func_name),
-                )
-            })?;
+        let (func_ast, fsig) =
+            self.nested_generic_fns
+                .borrow()
+                .get(func_name)
+                .ok_or_else(|| {
+                    Diagnostic::simple_boxed(
+                        Severity::Error,
+                        format!("Generic function '{}' not found", func_name),
+                    )
+                })?;
 
         // Obtain type parameter names: prefer fsig.type_params
         let tp_names = fsig.type_params.clone();
@@ -143,12 +143,16 @@ impl<'a> CodeGen<'a> {
         let mut concrete_params = Vec::with_capacity(func_ast.params.items.len());
         for param in &func_ast.params.items {
             // Only handle simple identifier parameters for now
-            if !matches!(&param.pattern.kind, BindingPatternKind::BindingIdentifier(_)) {
+            if !matches!(
+                &param.pattern.kind,
+                BindingPatternKind::BindingIdentifier(_)
+            ) {
                 continue; // Skip destructuring parameters
             }
             let type_ann_opt = param.pattern.type_annotation.as_ref();
             if let Some(type_ann) = type_ann_opt
-                && let Some(mapped) = crate::types::map_ts_type_with_subst(&type_ann.type_annotation, &subst)
+                && let Some(mapped) =
+                    crate::types::map_ts_type_with_subst(&type_ann.type_annotation, &subst)
             {
                 concrete_params.push(mapped);
                 continue;
@@ -225,13 +229,15 @@ impl<'a> CodeGen<'a> {
                 } else {
                     Err(Diagnostic::simple_boxed(
                         Severity::Error,
-                        "Arrow function with expression body must have expression statement".to_string(),
+                        "Arrow function with expression body must have expression statement"
+                            .to_string(),
                     ))
                 }
             } else {
                 Err(Diagnostic::simple_boxed(
                     Severity::Error,
-                    "Arrow function with expression body must have at least one statement".to_string(),
+                    "Arrow function with expression body must have at least one statement"
+                        .to_string(),
                 ))
             }
         } else {
@@ -246,7 +252,6 @@ impl<'a> CodeGen<'a> {
                 // No returns, infer as void
                 Ok(crate::types::OatsType::Void)
             } else {
-
                 // Deduplicate types by comparing with existing types
                 // Note: OatsType doesn't implement Hash, so we use manual comparison
                 let mut unique_types = Vec::with_capacity(return_types.len());
@@ -272,14 +277,22 @@ impl<'a> CodeGen<'a> {
     }
 
     /// Collects all return expressions from statements into `out`.
-    fn collect_return_types(&self, stmts: &[Statement<'_>], out: &mut Vec<crate::types::OatsType>) -> crate::diagnostics::DiagnosticResult<()> {
+    fn collect_return_types(
+        &self,
+        stmts: &[Statement<'_>],
+        out: &mut Vec<crate::types::OatsType>,
+    ) -> crate::diagnostics::DiagnosticResult<()> {
         for stmt in stmts {
             self.collect_return_types_from_stmt(stmt, out)?;
         }
         Ok(())
     }
 
-    fn collect_return_types_from_stmt(&self, stmt: &Statement<'_>, out: &mut Vec<crate::types::OatsType>) -> crate::diagnostics::DiagnosticResult<()> {
+    fn collect_return_types_from_stmt(
+        &self,
+        stmt: &Statement<'_>,
+        out: &mut Vec<crate::types::OatsType>,
+    ) -> crate::diagnostics::DiagnosticResult<()> {
         match stmt {
             Statement::ReturnStatement(ret) => {
                 if let Some(expr) = &ret.argument {

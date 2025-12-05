@@ -69,17 +69,12 @@ pub fn lower_lit<'a>(
             );
             gv.set_initializer(&initializer);
 
-            // Return pointer to the data section (offset +16, field index 2)
-            // We need [0, 2, 0] to get: struct base -> field 2 (array) -> element 0
-            let zero = utils::constants::zero_i32(codegen);
-            let two = utils::constants::i32_const(codegen, 2);
-            let indices = &[zero, two, zero];
-            let gep = unsafe {
-                codegen
-                    .builder
-                    .build_gep(struct_ty, gv.as_pointer_value(), indices, "strptr")
-            };
-            if let Ok(ptr) = gep {
+            // Return pointer to the data section (offset +16 bytes)
+            let gv_i8 = codegen
+                .builder
+                .build_pointer_cast(gv.as_pointer_value(), codegen.i8ptr_t, "str_data_base")
+                .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "pointer cast failed"))?;
+            if let Ok(ptr) = codegen.offset_i8_ptr(gv_i8, 16, "strptr") {
                 // store pointer in cache for future reuse
                 codegen.string_literals.borrow_mut().insert(key, ptr);
                 return Ok(ptr.as_basic_value_enum());
@@ -207,24 +202,15 @@ pub fn lower_array<'a>(
     let header_bytes = (std::mem::size_of::<u64>() + std::mem::size_of::<u64>()) as u64;
 
     // Compute a pointer to the array data region (i8*) located after the header+length
-    let offset_const = codegen.i32_t.const_int(header_bytes, false);
-    let data_ptr_i8_res = unsafe {
-        codegen.builder.build_gep(
-            codegen.context.i8_type(),
-            arr_ptr,
-            &[offset_const],
-            "arr_data_i8",
-        )
-    };
-    let data_ptr_i8 = if let Ok(p) = data_ptr_i8_res {
-        p
-    } else {
-        return Err(Diagnostic::simple_with_span_boxed(
-            Severity::Error,
-            "expression lowering failed",
-            arr.span.start as usize,
-        ));
-    };
+    let data_ptr_i8 = codegen
+        .offset_i8_ptr(arr_ptr, header_bytes, "arr_data_i8")
+        .map_err(|_| {
+            Diagnostic::simple_with_span_boxed(
+                Severity::Error,
+                "expression lowering failed",
+                arr.span.start as usize,
+            )
+        })?;
 
     // Create a temporary alloca holding the array pointer. We must
     // pass a pointer-to-pointer (i8**) to `array_set_ptr` so the
@@ -243,24 +229,15 @@ pub fn lower_array<'a>(
         for (i, v) in lowered_elems.into_iter().enumerate() {
             if let BasicValueEnum::FloatValue(fv) = v {
                 let byte_off = (i as u64) * 8u64;
-                let off_const = codegen.i32_t.const_int(byte_off, false);
-                let elem_i8_res = unsafe {
-                    codegen.builder.build_gep(
-                        codegen.context.i8_type(),
-                        data_ptr_i8,
-                        &[off_const],
-                        "elem_i8",
-                    )
-                };
-                let elem_i8 = if let Ok(p) = elem_i8_res {
-                    p
-                } else {
-                    return Err(Diagnostic::simple_with_span_boxed(
-                        Severity::Error,
-                        "expression lowering failed",
-                        arr.span.start as usize,
-                    ));
-                };
+                let elem_i8 = codegen
+                    .offset_i8_ptr(data_ptr_i8, byte_off, "elem_i8")
+                    .map_err(|_| {
+                        Diagnostic::simple_with_span_boxed(
+                            Severity::Error,
+                            "expression lowering failed",
+                            arr.span.start as usize,
+                        )
+                    })?;
                 // bitcast to f64* (unwrap Result returned by pointer cast)
                 let elem_ptr = match codegen.builder.build_pointer_cast(
                     elem_i8,
@@ -304,44 +281,26 @@ pub fn lower_array<'a>(
             };
 
             // Compute data start from current array pointer
-            let offset_const = codegen.i32_t.const_int(header_bytes, false);
-            let data_i8_res = unsafe {
-                codegen.builder.build_gep(
-                    codegen.context.i8_type(),
-                    cur_arr,
-                    &[offset_const],
-                    "arr_data_i8_loop",
-                )
-            };
-            let data_ptr_i8 = if let Ok(p) = data_i8_res {
-                p
-            } else {
-                return Err(Diagnostic::simple_with_span_boxed(
-                    Severity::Error,
-                    "expression lowering failed",
-                    arr.span.start as usize,
-                ));
-            };
+            let data_ptr_i8 = codegen
+                .offset_i8_ptr(cur_arr, header_bytes, "arr_data_i8_loop")
+                .map_err(|_| {
+                    Diagnostic::simple_with_span_boxed(
+                        Severity::Error,
+                        "expression lowering failed",
+                        arr.span.start as usize,
+                    )
+                })?;
 
             let byte_off = (i as u64) * ptr_size;
-            let off_const = codegen.i32_t.const_int(byte_off, false);
-            let elem_i8_res = unsafe {
-                codegen.builder.build_gep(
-                    codegen.context.i8_type(),
-                    data_ptr_i8,
-                    &[off_const],
-                    "elem_i8",
-                )
-            };
-            let elem_i8 = if let Ok(p) = elem_i8_res {
-                p
-            } else {
-                return Err(Diagnostic::simple_with_span_boxed(
-                    Severity::Error,
-                    "expression lowering failed",
-                    arr.span.start as usize,
-                ));
-            };
+            let elem_i8 = codegen
+                .offset_i8_ptr(data_ptr_i8, byte_off, "elem_i8")
+                .map_err(|_| {
+                    Diagnostic::simple_with_span_boxed(
+                        Severity::Error,
+                        "expression lowering failed",
+                        arr.span.start as usize,
+                    )
+                })?;
             // bitcast to i8** (pointer-to-pointer)
             let elem_ptr = match codegen.builder.build_pointer_cast(
                 elem_i8,
@@ -539,13 +498,12 @@ pub fn lower_object<'a>(
                     {
                         class_name_opt = Some(nom);
                     } else if let Some(param_idx) = param_map.get(&ident_name)
-                        && let Some(param_types) = codegen
-                            .fn_param_types
-                            .borrow()
-                            .get(match function.get_name().to_str() {
+                        && let Some(param_types) = codegen.fn_param_types.borrow().get(
+                            match function.get_name().to_str() {
                                 Some(name) => name,
                                 None => "",
-                            })
+                            },
+                        )
                     {
                         let idx = *param_idx as usize;
                         if idx < param_types.len()
@@ -864,25 +822,20 @@ pub fn lower_template<'a>(
             );
             gv.set_initializer(&initializer);
 
-            // Return pointer to data section (offset +16, field index 2)
-            // We need [0, 2, 0] to get: struct base -> field 2 (array) -> element 0
-            let zero = utils::constants::zero_i32(codegen);
-            let two = utils::constants::i32_const(codegen, 2);
-            let indices = &[zero, two, zero];
-            let gep = unsafe {
-                codegen
-                    .builder
-                    .build_gep(struct_ty, gv.as_pointer_value(), indices, "strptr")
-            };
-
-            if let Ok(ptr) = gep {
-                codegen.string_literals.borrow_mut().insert(key, ptr);
-                Ok(ptr)
-            } else {
-                Err(Diagnostic::simple_boxed(
+            // Return pointer to data section (offset +16 bytes)
+            let gv_i8 = codegen
+                .builder
+                .build_pointer_cast(gv.as_pointer_value(), codegen.i8ptr_t, "str_data_base")
+                .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "pointer cast failed"))?;
+            match codegen.offset_i8_ptr(gv_i8, 16, "strptr") {
+                Ok(ptr) => {
+                    codegen.string_literals.borrow_mut().insert(key, ptr);
+                    Ok(ptr)
+                }
+                Err(_) => Err(Diagnostic::simple_boxed(
                     Severity::Error,
                     "failed to create string literal",
-                ))
+                )),
             }
         };
 

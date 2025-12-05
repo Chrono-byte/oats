@@ -10,9 +10,9 @@ use crate::codegen::helpers::extract_basic_value_from_valuekind;
 use crate::diagnostics::{Diagnostic, Severity};
 use crate::runtime_functions;
 use inkwell::values::{BasicValue, BasicValueEnum, FunctionValue, PointerValue};
-use std::collections::HashMap;
 use oxc_ast::ast::Expression;
 use oxc_span::Span;
+use std::collections::HashMap;
 
 // Temporary type definitions for process expressions until proper AST support is added
 // These are custom Oats language features not present in standard JavaScript/TypeScript
@@ -122,11 +122,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         "priority_cast",
                     )
                     .map_err(|_| {
-                    Diagnostic::simple_with_span_boxed(
-                        Severity::Error,
-                        "failed to cast spawn priority",
-                        spawn_expr.span.start as usize,
-                    )
+                        Diagnostic::simple_with_span_boxed(
+                            Severity::Error,
+                            "failed to cast spawn priority",
+                            spawn_expr.span.start as usize,
+                        )
                     })?
             }
         } else {
@@ -243,16 +243,17 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         send_expr.span.start as usize,
                     )
                 })?;
-        let self_pid_ptr_val = match extract_basic_value_from_valuekind(self_pid_ptr_call.try_as_basic_value()) {
-            Some(bv) => bv,
-            _ => {
-                return Err(Diagnostic::simple_with_span_boxed(
-                    Severity::Error,
-                    "process_self did not return a value",
-                    send_expr.span.start as usize,
-                ));
-            }
-        };
+        let self_pid_ptr_val =
+            match extract_basic_value_from_valuekind(self_pid_ptr_call.try_as_basic_value()) {
+                Some(bv) => bv,
+                _ => {
+                    return Err(Diagnostic::simple_with_span_boxed(
+                        Severity::Error,
+                        "process_self did not return a value",
+                        send_expr.span.start as usize,
+                    ));
+                }
+            };
 
         let self_pid_ptr = if let BasicValueEnum::PointerValue(pv) = self_pid_ptr_val {
             pv
@@ -392,16 +393,17 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     receive_expr.span.start as usize,
                 )
             })?;
-        let self_pid_ptr_val = match extract_basic_value_from_valuekind(self_pid_ptr_val.try_as_basic_value()) {
-            Some(bv) => bv,
-            _ => {
-                return Err(Diagnostic::simple_with_span_boxed(
-                    Severity::Error,
-                    "process_self did not return a value",
-                    receive_expr.span.start as usize,
-                ));
-            }
-        };
+        let self_pid_ptr_val =
+            match extract_basic_value_from_valuekind(self_pid_ptr_val.try_as_basic_value()) {
+                Some(bv) => bv,
+                _ => {
+                    return Err(Diagnostic::simple_with_span_boxed(
+                        Severity::Error,
+                        "process_self did not return a value",
+                        receive_expr.span.start as usize,
+                    ));
+                }
+            };
 
         let self_pid_ptr = if let BasicValueEnum::PointerValue(pv) = self_pid_ptr_val {
             pv
@@ -571,16 +573,17 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         exit_expr.span.start as usize,
                     )
                 })?;
-            let self_val_bv = match extract_basic_value_from_valuekind(self_val.try_as_basic_value()) {
-                Some(bv) => bv,
-                _ => {
-                    return Err(Diagnostic::simple_with_span_boxed(
-                        Severity::Error,
-                        "process_self did not return a value",
-                        exit_expr.span.start as usize,
-                    ));
-                }
-            };
+            let self_val_bv =
+                match extract_basic_value_from_valuekind(self_val.try_as_basic_value()) {
+                    Some(bv) => bv,
+                    _ => {
+                        return Err(Diagnostic::simple_with_span_boxed(
+                            Severity::Error,
+                            "process_self did not return a value",
+                            exit_expr.span.start as usize,
+                        ));
+                    }
+                };
             if let BasicValueEnum::PointerValue(pv) = self_val_bv {
                 pv
             } else {
@@ -890,16 +893,17 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     monitor_expr.span.start as usize,
                 )
             })?;
-        let self_pid_ptr_val_bv = match extract_basic_value_from_valuekind(self_pid_ptr_val.try_as_basic_value()) {
-            Some(bv) => bv,
-            _ => {
-                return Err(Diagnostic::simple_with_span_boxed(
-                    Severity::Error,
-                    "process_self did not return a value",
-                    monitor_expr.span.start as usize,
-                ));
-            }
-        };
+        let self_pid_ptr_val_bv =
+            match extract_basic_value_from_valuekind(self_pid_ptr_val.try_as_basic_value()) {
+                Some(bv) => bv,
+                _ => {
+                    return Err(Diagnostic::simple_with_span_boxed(
+                        Severity::Error,
+                        "process_self did not return a value",
+                        monitor_expr.span.start as usize,
+                    ));
+                }
+            };
         let self_pid_ptr = if let BasicValueEnum::PointerValue(pv) = self_pid_ptr_val_bv {
             pv
         } else {
@@ -1020,16 +1024,17 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     demonitor_expr.span.start as usize,
                 )
             })?;
-        let self_pid_ptr_val_bv = match extract_basic_value_from_valuekind(self_pid_ptr_val.try_as_basic_value()) {
-            Some(bv) => bv,
-            _ => {
-                return Err(Diagnostic::simple_with_span_boxed(
-                    Severity::Error,
-                    "process_self did not return a value",
-                    demonitor_expr.span.start as usize,
-                ));
-            }
-        };
+        let self_pid_ptr_val_bv =
+            match extract_basic_value_from_valuekind(self_pid_ptr_val.try_as_basic_value()) {
+                Some(bv) => bv,
+                _ => {
+                    return Err(Diagnostic::simple_with_span_boxed(
+                        Severity::Error,
+                        "process_self did not return a value",
+                        demonitor_expr.span.start as usize,
+                    ));
+                }
+            };
         let self_pid_ptr = if let BasicValueEnum::PointerValue(pv) = self_pid_ptr_val_bv {
             pv
         } else {

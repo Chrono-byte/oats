@@ -72,13 +72,13 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 {
                     class_name_opt = Some(nom);
                 } else if let Some(param_idx) = param_map.get(&ident_name)
-                    && let Some(param_types) = self
-                        .fn_param_types
-                        .borrow()
-                        .get(match function.get_name().to_str() {
-                            Some(name) => name,
-                            None => "",
-                        })
+                    && let Some(param_types) =
+                        self.fn_param_types
+                            .borrow()
+                            .get(match function.get_name().to_str() {
+                                Some(name) => name,
+                                None => "",
+                            })
                 {
                     let idx = *param_idx as usize;
                     if idx < param_types.len()

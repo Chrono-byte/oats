@@ -359,13 +359,13 @@ impl<'a> CodeGen<'a> {
                 {
                     // Determine whether this parameter was declared Weak<T>
                     let mut is_weak = false;
-                    if let Some(param_types) = self
-                        .fn_param_types
-                        .borrow()
-                        .get(match function.get_name().to_str() {
-                            Ok(name) => name,
-                            Err(_) => "",
-                        })
+                    if let Some(param_types) =
+                        self.fn_param_types
+                            .borrow()
+                            .get(match function.get_name().to_str() {
+                                Ok(name) => name,
+                                Err(_) => "",
+                            })
                     {
                         let idx_usize = *idx as usize;
                         if idx_usize < param_types.len()

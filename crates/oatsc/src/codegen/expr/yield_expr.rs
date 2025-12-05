@@ -6,7 +6,6 @@
 use crate::codegen::CodeGen;
 use crate::diagnostics::Diagnostic;
 use inkwell::values::{BasicValue, BasicValueEnum, FunctionValue};
-use oxc_ast::ast::*;
 use std::collections::HashMap;
 
 type LocalEntry<'a> = (
@@ -49,7 +48,7 @@ impl<'a> CodeGen<'a> {
             return Err(Diagnostic::simple_with_span_boxed(
                 Severity::Error,
                 "`yield` used outside of generator function",
-                yield_expr.span.start,
+                yield_expr.span.start as usize,
             ));
         };
 
@@ -59,7 +58,7 @@ impl<'a> CodeGen<'a> {
         }
 
         // Lower the yielded expression
-        let yielded_val = if let Some(arg) = &yield_expr.arg {
+        let yielded_val = if let Some(arg) = &yield_expr.argument {
             self.lower_expr(arg, function, param_map, locals)?
         } else {
             // yield without argument yields undefined/null
@@ -71,7 +70,7 @@ impl<'a> CodeGen<'a> {
             Diagnostic::simple_with_span_boxed(
                 Severity::Error,
                 "generator next function missing out parameter",
-                yield_expr.span.start,
+                yield_expr.span.start as usize,
             )
         })?;
         let out_ptr = out_param.into_pointer_value();
@@ -126,7 +125,7 @@ impl<'a> CodeGen<'a> {
             Diagnostic::simple_with_span_boxed(
                 Severity::Error,
                 "generator next function missing state parameter",
-                yield_expr.span.start,
+                yield_expr.span.start as usize,
             )
         })?;
         let state_ptr = state_param.into_pointer_value();
@@ -158,16 +157,13 @@ impl<'a> CodeGen<'a> {
 
                             // Compute slot offset in state
                             let slot_offset = 16 + (*slot_idx * 8) as u64; // header(8) + state(4) + pad(4) = 16
-                            let offset_const = self.i64_t.const_int(slot_offset, false);
-                            let slot_i8ptr = unsafe {
-                                self.builder.build_gep(
-                                    self.i8_t,
+                            let slot_i8ptr = self
+                                .offset_i8_ptr(
                                     state_ptr,
-                                    &[offset_const],
+                                    slot_offset,
                                     &format!("slot_{}_i8ptr", live_name),
                                 )
-                            }
-                            .map_err(|_| Diagnostic::error("gep failed"))?;
+                                .map_err(|_| Diagnostic::error("gep failed"))?;
 
                             // Store to state slot
                             let slot_ptr_ty =
@@ -274,13 +270,13 @@ impl<'a> CodeGen<'a> {
         use crate::diagnostics::Severity;
 
         // Lower the expression to get the delegated generator object (state pointer)
-        let delegated_gen = if let Some(arg) = &yield_expr.arg {
+        let delegated_gen = if let Some(arg) = &yield_expr.argument {
             self.lower_expr(arg, function, param_map, locals)?
         } else {
             return Err(Diagnostic::simple_with_span_boxed(
                 Severity::Error,
                 "yield* requires a generator expression",
-                yield_expr.span.start,
+                yield_expr.span.start as usize,
             ));
         };
 
@@ -290,7 +286,7 @@ impl<'a> CodeGen<'a> {
                 return Err(Diagnostic::simple_with_span_boxed(
                     Severity::Error,
                     "yield* requires a generator object (pointer type)",
-                    yield_expr.span.start,
+                    yield_expr.span.start as usize,
                 ));
             }
         };
@@ -300,7 +296,7 @@ impl<'a> CodeGen<'a> {
             Diagnostic::simple_with_span_boxed(
                 Severity::Error,
                 "generator next function missing state parameter",
-                yield_expr.span.start,
+                yield_expr.span.start as usize,
             )
         })?;
         let state_ptr = state_param.into_pointer_value();
@@ -309,7 +305,7 @@ impl<'a> CodeGen<'a> {
             Diagnostic::simple_with_span_boxed(
                 Severity::Error,
                 "generator next function missing out parameter",
-                yield_expr.span.start,
+                yield_expr.span.start as usize,
             )
         })?;
         let out_ptr = out_param.into_pointer_value();
@@ -458,16 +454,13 @@ impl<'a> CodeGen<'a> {
                             .map_err(|_| Diagnostic::error("load local failed"))?;
 
                         let slot_offset = 16 + (*slot_idx * 8) as u64;
-                        let offset_const = self.i64_t.const_int(slot_offset, false);
-                        let slot_i8ptr = unsafe {
-                            self.builder.build_gep(
-                                self.i8_t,
+                        let slot_i8ptr = self
+                            .offset_i8_ptr(
                                 state_ptr,
-                                &[offset_const],
+                                slot_offset,
                                 &format!("slot_{}_i8ptr", live_name),
                             )
-                        }
-                        .map_err(|_| Diagnostic::error("gep failed"))?;
+                            .map_err(|_| Diagnostic::error("gep failed"))?;
 
                         let slot_ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
                         let slot_ptr = self

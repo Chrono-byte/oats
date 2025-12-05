@@ -78,18 +78,22 @@ impl<'a> crate::codegen::CodeGen<'a> {
         // statements, return statements and blocks. This is intentionally
         // minimal: more statements can be added into `stmt.rs` later.
         match stmt {
-            oxc_ast::ast::Statement::VariableDeclaration(vd) => self.lower_decl_stmt(vd, function, param_map, locals_stack),
+            oxc_ast::ast::Statement::VariableDeclaration(vd) => {
+                self.lower_decl_stmt(vd, function, param_map, locals_stack)
+            }
             oxc_ast::ast::Statement::SwitchStatement(switch_stmt) => {
                 self.lower_switch_stmt(switch_stmt, function, param_map, locals_stack)
             }
-            oxc_ast::ast::Statement::TryStatement(try_stmt) => self.lower_try_stmt(try_stmt, function, param_map, locals_stack),
+            oxc_ast::ast::Statement::TryStatement(try_stmt) => {
+                self.lower_try_stmt(try_stmt, function, param_map, locals_stack)
+            }
             oxc_ast::ast::Statement::ThrowStatement(throw_stmt) => {
                 self.lower_throw_stmt(throw_stmt, function, param_map, locals_stack)
             }
             _ => {
                 // These are handled at module level, not in statement lowering
                 Ok(false)
-            }   
+            }
         }
     }
 }

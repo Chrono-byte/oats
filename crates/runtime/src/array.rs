@@ -825,10 +825,7 @@ pub unsafe extern "C" fn array_to_string(arr: *mut c_void) -> *mut c_char {
                 s.push_str(&format!("{}", v));
             }
             s.push(']');
-            let c = match std::ffi::CString::new(s) {
-                Ok(cstr) => cstr,
-                Err(_) => std::ffi::CString::default(),
-            };
+            let c = std::ffi::CString::new(s).unwrap_or_default();
             heap_str_from_cstr(c.as_ptr())
         } else {
             let mut s = String::new();
@@ -872,10 +869,7 @@ pub unsafe extern "C" fn array_to_string(arr: *mut c_void) -> *mut c_char {
                 rc_dec(p);
             }
             s.push(']');
-            let c = match std::ffi::CString::new(s) {
-                Ok(cstr) => cstr,
-                Err(_) => std::ffi::CString::default(),
-            };
+            let c = std::ffi::CString::new(s).unwrap_or_default();
             heap_str_from_cstr(c.as_ptr())
         }
     }

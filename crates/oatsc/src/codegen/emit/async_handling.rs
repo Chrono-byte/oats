@@ -1076,9 +1076,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 if let Some(inst) = first_inst
                     && inst.get_opcode() == inkwell::values::InstructionOpcode::Phi
                 {
-                    unsafe {
-                        use inkwell::values::AsValueRef;
-                        let phi_value = inkwell::values::PhiValue::new(inst.as_value_ref());
+                    use inkwell::values::AsValueRef;
+                    if let Some(phi_value) = inkwell::values::PhiValue::new(inst.as_value_ref()) {
                         phi_value.add_incoming(&[(&resumed_value.as_basic_value_enum(), *rb)]);
                     }
                 }

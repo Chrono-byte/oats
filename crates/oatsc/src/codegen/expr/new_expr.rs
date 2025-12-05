@@ -3,8 +3,8 @@ use crate::diagnostics::{Diagnostic, Severity};
 use crate::types::OatsType;
 use inkwell::types::BasicTypeEnum;
 use inkwell::values::{BasicValue, BasicValueEnum, FunctionValue};
-use std::collections::HashMap;
 use oxc_ast::ast::*;
+use std::collections::HashMap;
 
 // LocalEntry now includes an Option<String> for an optional nominal type name
 // LocalEntry now includes an Option<OatsType> for union tracking
@@ -28,12 +28,20 @@ impl<'a> CodeGen<'a> {
         param_map: &HashMap<String, u32>,
         locals: &mut LocalsStackLocal<'a>,
     ) -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
-        if let Expression::Identifier(ident) = &*new_expr.callee {
+        if let Expression::Identifier(ident) = &new_expr.callee {
             let ctor_name = format!("{}_ctor", ident.name);
             if let Some(fv) = self.module.get_function(&ctor_name) {
                 let mut lowered_args: Vec<inkwell::values::BasicMetadataValueEnum> = Vec::new();
-                for arg in &new_expr.args {
-                    if let Ok(val) = self.lower_expr(arg, function, param_map, locals) {
+                for arg in &new_expr.arguments {
+                    // Spread arguments are not yet supported in lowering.
+                    let expr = arg.as_expression().ok_or_else(|| {
+                        Diagnostic::simple_with_span_boxed(
+                            Severity::Error,
+                            "spread arguments are not supported",
+                            new_expr.span.start as usize,
+                        )
+                    })?;
+                    if let Ok(val) = self.lower_expr(expr, function, param_map, locals) {
                         lowered_args.push(val.into());
                     } else {
                         return Err(Diagnostic::simple_boxed(
@@ -62,9 +70,8 @@ impl<'a> CodeGen<'a> {
                     .builder
                     .build_call(fv, &call_args, "new_call")
                     .map_err(|_| Diagnostic::error("LLVM builder error"))?;
-                let either = cs.try_as_basic_value();
-                match either {
-                    either::Either::Left(bv) => Ok(bv),
+                match cs.try_as_basic_value() {
+                    inkwell::values::ValueKind::Basic(bv) => Ok(bv),
                     _ => Err(Diagnostic::simple_boxed(
                         Severity::Error,
                         "operation not supported",
@@ -74,14 +81,14 @@ impl<'a> CodeGen<'a> {
                 Err(Diagnostic::simple_with_span_boxed(
                     Severity::Error,
                     "unknown constructor or missing `<Name>_ctor` function",
-                    new_expr.span.start,
+                    new_expr.span.start as usize,
                 ))
             }
         } else {
             Err(Diagnostic::simple_with_span_boxed(
                 Severity::Error,
                 "unsupported `new` callee: only identifier constructors are supported",
-                new_expr.span.start,
+                new_expr.span.start as usize,
             ))
         }
     }

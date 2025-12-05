@@ -148,8 +148,7 @@ fn init_runtime_log() {
         Ok(v) => !v.is_empty() && v != "0",
         Err(_) => false,
     };
-    if runtime_log
-    {
+    if runtime_log {
         RUNTIME_LOG.store(true, Ordering::Relaxed);
     }
 }
@@ -164,8 +163,7 @@ pub fn init_collector() -> Arc<collector::Collector> {
                 Ok(v) => !v.is_empty() && v != "0",
                 Err(_) => false,
             };
-            if collector_log
-            {
+            if collector_log {
                 COLLECTOR_LOG.store(true, Ordering::Relaxed);
             }
 

@@ -224,8 +224,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
         use oxc_ast::ast::*;
 
         // Only simple identifier updates are supported at present.
-        if let Expression::Identifier(ident) = &*update.argument {
-            let name = ident.name().to_string();
+        if let oxc_ast::ast::SimpleAssignmentTarget::AssignmentTargetIdentifier(ident) =
+            &update.argument
+        {
+            let name = ident.name.to_string();
 
             // Find the variable (parameter or local)
             let var_entry = if param_map.contains_key(&name) {

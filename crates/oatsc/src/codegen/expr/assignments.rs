@@ -201,13 +201,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         {
                             class_name_opt = Some(nom);
                         } else if let Some(param_idx) = param_map.get(&ident_name)
-                            && let Some(param_types) = self
-                                .fn_param_types
-                                .borrow()
-                                .get(match function.get_name().to_str() {
+                            && let Some(param_types) = self.fn_param_types.borrow().get(
+                                match function.get_name().to_str() {
                                     Some(name) => name,
                                     None => "",
-                                })
+                                },
+                            )
                         {
                             let idx = *param_idx as usize;
                             if idx < param_types.len()
@@ -319,7 +318,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     AssignmentOperator::Remainder => BinaryOperator::Remainder,
                                     AssignmentOperator::ShiftLeft => BinaryOperator::ShiftLeft,
                                     AssignmentOperator::ShiftRight => BinaryOperator::ShiftRight,
-                                    AssignmentOperator::ShiftRightZeroFill => BinaryOperator::ShiftRight, // TODO: Use UnsignedShiftRight when available
+                                    AssignmentOperator::ShiftRightZeroFill => {
+                                        BinaryOperator::ShiftRight
+                                    } // TODO: Use UnsignedShiftRight when available
                                     AssignmentOperator::BitwiseAnd => BinaryOperator::BitwiseAnd,
                                     AssignmentOperator::BitwiseOR => BinaryOperator::BitwiseOR,
                                     AssignmentOperator::BitwiseXOR => BinaryOperator::BitwiseXOR,
@@ -508,13 +509,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         {
                             class_name_opt = Some(nom);
                         } else if let Some(param_idx) = param_map.get(&ident_name)
-                            && let Some(param_types) = self
-                                .fn_param_types
-                                .borrow()
-                                .get(match function.get_name().to_str() {
+                            && let Some(param_types) = self.fn_param_types.borrow().get(
+                                match function.get_name().to_str() {
                                     Some(name) => name,
                                     None => "",
-                                })
+                                },
+                            )
                         {
                             let idx = *param_idx as usize;
                             if idx < param_types.len()
@@ -541,7 +541,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     let (field_idx, field_ty) = if let Some(class_name) = class_name_opt.clone() {
                         if let Some(fields) = self.class_fields.borrow().get(&class_name) {
                             // const_eval removed - check for string literal directly
-                            if let oxc_ast::ast::Expression::StringLiteral(lit) = &*computed_member.expression {
+                            if let oxc_ast::ast::Expression::StringLiteral(lit) =
+                                &*computed_member.expression
+                            {
                                 let s = lit.value.to_string();
                                 // Look up field by name
                                 if let Some((idx, (_name, ty))) =
@@ -1005,13 +1007,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     class_name_opt = Some(n.clone());
                                 }
                             } else if let Some(param_idx) = param_map.get(&ident_name)
-                                && let Some(param_types) = self
-                                    .fn_param_types
-                                    .borrow()
-                                    .get(match function.get_name().to_str() {
+                                && let Some(param_types) = self.fn_param_types.borrow().get(
+                                    match function.get_name().to_str() {
                                         Some(name) => name,
                                         None => "",
-                                    })
+                                    },
+                                )
                             {
                                 let idx = *param_idx as usize;
                                 if idx < param_types.len()
@@ -1161,64 +1162,64 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         };
 
                                         // If new_val is a number, box it with union_box_f64; if pointer, box with union_box_ptr.
-                                        let boxed_new: BasicValueEnum = if let BasicValueEnum::FloatValue(fv) =
-                                            new_val
-                                        {
-                                            let box_fn = self.get_union_box_f64();
-                                            let cs = match self.builder.build_call(
-                                                box_fn,
-                                                &[fv.into()],
-                                                "union_box_f64_call",
-                                            ) {
-                                                Ok(cs) => cs,
-                                                Err(_) => {
-                                                    return Err(Diagnostic::simple_boxed(
-                                                        Severity::Error,
-                                                        "operation failed",
-                                                    ));
+                                        let boxed_new: BasicValueEnum =
+                                            if let BasicValueEnum::FloatValue(fv) = new_val {
+                                                let box_fn = self.get_union_box_f64();
+                                                let cs = match self.builder.build_call(
+                                                    box_fn,
+                                                    &[fv.into()],
+                                                    "union_box_f64_call",
+                                                ) {
+                                                    Ok(cs) => cs,
+                                                    Err(_) => {
+                                                        return Err(Diagnostic::simple_boxed(
+                                                            Severity::Error,
+                                                            "operation failed",
+                                                        ));
+                                                    }
+                                                };
+                                                let vk = cs.try_as_basic_value();
+                                                match extract_basic_value_from_valuekind(vk) {
+                                                    Some(bv) => bv,
+                                                    None => {
+                                                        return Err(Diagnostic::simple_boxed(
+                                                            Severity::Error,
+                                                            "operation failed",
+                                                        ));
+                                                    }
                                                 }
+                                            } else if let BasicValueEnum::PointerValue(pv) = new_val
+                                            {
+                                                let box_fn = self.get_union_box_ptr();
+                                                let cs = match self.builder.build_call(
+                                                    box_fn,
+                                                    &[pv.into()],
+                                                    "union_box_ptr_call",
+                                                ) {
+                                                    Ok(cs) => cs,
+                                                    Err(_) => {
+                                                        return Err(Diagnostic::simple_boxed(
+                                                            Severity::Error,
+                                                            "operation failed",
+                                                        ));
+                                                    }
+                                                };
+                                                let vk = cs.try_as_basic_value();
+                                                match extract_basic_value_from_valuekind(vk) {
+                                                    Some(bv) => bv,
+                                                    None => {
+                                                        return Err(Diagnostic::simple_boxed(
+                                                            Severity::Error,
+                                                            "operation failed",
+                                                        ));
+                                                    }
+                                                }
+                                            } else {
+                                                return Err(Diagnostic::simple_boxed(
+                                                    Severity::Error,
+                                                    "unsupported union payload type",
+                                                ));
                                             };
-                                            let vk = cs.try_as_basic_value();
-                                            match extract_basic_value_from_valuekind(vk) {
-                                                Some(bv) => bv,
-                                                None => {
-                                                    return Err(Diagnostic::simple_boxed(
-                                                        Severity::Error,
-                                                        "operation failed",
-                                                    ));
-                                                }
-                                            }
-                                        } else if let BasicValueEnum::PointerValue(pv) = new_val {
-                                            let box_fn = self.get_union_box_ptr();
-                                            let cs = match self.builder.build_call(
-                                                box_fn,
-                                                &[pv.into()],
-                                                "union_box_ptr_call",
-                                            ) {
-                                                Ok(cs) => cs,
-                                                Err(_) => {
-                                                    return Err(Diagnostic::simple_boxed(
-                                                        Severity::Error,
-                                                        "operation failed",
-                                                    ));
-                                                }
-                                            };
-                                            let vk = cs.try_as_basic_value();
-                                            match extract_basic_value_from_valuekind(vk) {
-                                                Some(bv) => bv,
-                                                None => {
-                                                    return Err(Diagnostic::simple_boxed(
-                                                        Severity::Error,
-                                                        "operation failed",
-                                                    ));
-                                                }
-                                            }
-                                        } else {
-                                            return Err(Diagnostic::simple_boxed(
-                                                Severity::Error,
-                                                "unsupported union payload type",
-                                            ));
-                                        };
 
                                         // Load old value for RC decrement AFTER incrementing new value
                                         let old_val = match self.builder.build_load(

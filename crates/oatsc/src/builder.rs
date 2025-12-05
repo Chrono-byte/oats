@@ -185,7 +185,10 @@ pub fn run_from_args(
             // Note: oxc_ast doesn't have separate export declarations in the AST
             // Exports are handled differently - for now we only handle non-exported
         }
-        arrows.into_iter().map(|(name, arrow, is_exported)| (name, arrow.as_ref(), is_exported)).collect()
+        arrows
+            .into_iter()
+            .map(|(name, arrow, is_exported)| (name, arrow.as_ref(), is_exported))
+            .collect()
     }
 
     let arrow_functions = extract_arrow_functions(parsed);
@@ -297,10 +300,7 @@ pub fn run_from_args(
         };
 
         for symbol in symbols {
-            let (param_types, ret_type) = match external_function_signatures
-                .get(&symbol)
-                .cloned()
-            {
+            let (param_types, ret_type) = match external_function_signatures.get(&symbol).cloned() {
                 Some(types) => types,
                 None => (vec![], crate::types::OatsType::Number),
             };
@@ -369,7 +369,7 @@ pub fn run_from_args(
     // Perform Rapid Type Analysis on all modules
     // For now, we only have a single module, but RTA is designed to work with multiple modules
     // We create a HashMap with the single module for RTA analysis
-    let mut modules_map = std::collections::HashMap::new();
+    let modules_map = std::collections::HashMap::new();
     // RTA only reads from parsed_mod, so we can pass a reference
     // For now, we'll need to restructure RTA to work with references
     // TODO: Refactor RTA to work with references instead of owned values
@@ -569,7 +569,9 @@ pub fn run_from_args(
                             }
                         }
                     }
-                    ClassElement::MethodDefinition(ctor) if ctor.kind == MethodDefinitionKind::Constructor => {
+                    ClassElement::MethodDefinition(ctor)
+                        if ctor.kind == MethodDefinitionKind::Constructor =>
+                    {
                         // Compute fields for this class from explicit props, constructor
                         // param properties, and `this.x = ...` assignments inside the ctor.
                         let mut fields: Vec<(String, crate::types::OatsType)> = Vec::new();
@@ -648,9 +650,7 @@ pub fn run_from_args(
             codegen
                 .type_aliases
                 .borrow_mut()
-                // TODO: Convert TSType to oats_ast::TsType for storage
-                // For now, we'll skip storing the type annotation as it requires conversion
-                // .insert(alias_name, (type_params, ta.type_annotation.clone()));
+                .insert(alias_name, (type_params, ta.type_annotation.clone()));
         }
 
         // Handle interface declarations: `interface Name { ... }`
@@ -743,7 +743,10 @@ pub fn run_from_args(
                         for el in &arr.elements {
                             if let Some(expr) = el.as_expression() {
                                 collect_idents(expr, out);
-                            } else if let oxc_ast::ast::ArrayExpressionElement::SpreadElement(spread) = el {
+                            } else if let oxc_ast::ast::ArrayExpressionElement::SpreadElement(
+                                spread,
+                            ) = el
+                            {
                                 collect_idents(&spread.argument, out);
                             }
                             // Elision (empty slot) - nothing to collect

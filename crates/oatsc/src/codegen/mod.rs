@@ -318,7 +318,9 @@ impl<'a> CodeGen<'a> {
         let fn_type = self.i8ptr_t.fn_type(&[self.i8ptr_t.into()], false);
         match self.module.get_function("promise_new_from_state") {
             Some(f) => f,
-            None => self.module.add_function("promise_new_from_state", fn_type, None),
+            None => self
+                .module
+                .add_function("promise_new_from_state", fn_type, None),
         }
     }
 
@@ -622,15 +624,21 @@ impl<'a> CodeGen<'a> {
         );
         gv.set_initializer(&initializer);
 
-        // Return pointer to data section (field index 2)
-        let zero = self.i32_t.const_int(0, false);
-        let two = self.i32_t.const_int(2, false);
-        let indices = &[zero, two];
-        let gep = unsafe {
-            self.builder
-                .build_gep(struct_ty, gv.as_pointer_value(), indices, "strptr")
+        // Return pointer to data section (offset 16 bytes: header + len)
+        let gv_i8 = match self.builder.build_pointer_cast(
+            gv.as_pointer_value(),
+            self.i8ptr_t,
+            "str_data_base",
+        ) {
+            Ok(p) => p,
+            Err(_) => {
+                return self
+                    .context
+                    .ptr_type(inkwell::AddressSpace::default())
+                    .const_null();
+            }
         };
-        if let Ok(ptr) = gep {
+        if let Ok(ptr) = self.offset_i8_ptr(gv_i8, 16, "strptr") {
             self.string_literals.borrow_mut().insert(s.to_string(), ptr);
             return ptr;
         }
@@ -681,11 +689,7 @@ impl<'a> CodeGen<'a> {
                 Some(name) => name,
                 None => "",
             };
-            if let Some(param_types) = self
-                .fn_param_types
-                .borrow()
-                .get(function_name)
-            {
+            if let Some(param_types) = self.fn_param_types.borrow().get(function_name) {
                 let idx_usize = idx as usize;
                 if idx_usize < param_types.len() {
                     let pty = &param_types[idx_usize];

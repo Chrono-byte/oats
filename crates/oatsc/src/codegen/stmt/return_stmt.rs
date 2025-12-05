@@ -59,7 +59,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             "Failed to box f64 as union in return",
                                         )
                                     })?;
-                                match extract_basic_value_from_valuekind(union_box_call.try_as_basic_value()) {
+                                match extract_basic_value_from_valuekind(
+                                    union_box_call.try_as_basic_value(),
+                                ) {
                                     Some(bv) => bv,
                                     None => {
                                         return Err(crate::diagnostics::Diagnostic::simple_boxed(
@@ -81,7 +83,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             "Failed to box ptr as union in return",
                                         )
                                     })?;
-                                match extract_basic_value_from_valuekind(union_box_ptr_call.try_as_basic_value()) {
+                                match extract_basic_value_from_valuekind(
+                                    union_box_ptr_call.try_as_basic_value(),
+                                ) {
                                     Some(bv) => bv,
                                     None => {
                                         return Err(crate::diagnostics::Diagnostic::simple_boxed(
@@ -113,7 +117,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             "Failed to box bool as union in return",
                                         )
                                     })?;
-                                match extract_basic_value_from_valuekind(union_box_bool_call.try_as_basic_value()) {
+                                match extract_basic_value_from_valuekind(
+                                    union_box_bool_call.try_as_basic_value(),
+                                ) {
                                     Some(bv) => bv,
                                     None => {
                                         return Err(crate::diagnostics::Diagnostic::simple_boxed(

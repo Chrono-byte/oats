@@ -18,7 +18,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
         fn contains_yield_expr(expr: &oxc_ast::ast::Expression) -> bool {
             match expr {
                 oxc_ast::ast::Expression::YieldExpression(_) => true,
-                oxc_ast::ast::Expression::BinaryExpression(b) => contains_yield_expr(&b.left) || contains_yield_expr(&b.right),
+                oxc_ast::ast::Expression::BinaryExpression(b) => {
+                    contains_yield_expr(&b.left) || contains_yield_expr(&b.right)
+                }
                 oxc_ast::ast::Expression::UnaryExpression(u) => contains_yield_expr(&u.argument),
                 oxc_ast::ast::Expression::CallExpression(c) => {
                     // Handle callee - it's an Expression, so recurse
@@ -45,7 +47,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         || contains_yield_expr(&c.alternate)
                 }
                 oxc_ast::ast::Expression::AssignmentExpression(a) => contains_yield_expr(&a.right),
-                oxc_ast::ast::Expression::ParenthesizedExpression(p) => contains_yield_expr(&p.expression),
+                oxc_ast::ast::Expression::ParenthesizedExpression(p) => {
+                    contains_yield_expr(&p.expression)
+                }
                 oxc_ast::ast::Expression::ArrayExpression(arr) => arr.elements.iter().any(|el| {
                     if let Some(expr) = el.as_expression() {
                         contains_yield_expr(expr)
@@ -54,45 +58,71 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     }
                 }),
                 oxc_ast::ast::Expression::NewExpression(n) => {
-                    contains_yield_expr(&n.callee) || n.arguments.iter().any(|arg| {
-                        if let Some(expr) = arg.as_expression() {
-                            contains_yield_expr(expr)
-                        } else {
-                            false
-                        }
-                    })
+                    contains_yield_expr(&n.callee)
+                        || n.arguments.iter().any(|arg| {
+                            if let Some(expr) = arg.as_expression() {
+                                contains_yield_expr(expr)
+                            } else {
+                                false
+                            }
+                        })
                 }
-                oxc_ast::ast::Expression::SequenceExpression(s) => s.expressions.iter().any(contains_yield_expr),
+                oxc_ast::ast::Expression::SequenceExpression(s) => {
+                    s.expressions.iter().any(contains_yield_expr)
+                }
                 _ => false,
             }
         }
 
         fn contains_yield_stmt(stmt: &oxc_ast::ast::Statement) -> bool {
             match stmt {
-                oxc_ast::ast::Statement::ExpressionStatement(es) => contains_yield_expr(&es.expression),
-                oxc_ast::ast::Statement::ReturnStatement(r) => r.argument.as_ref().is_some_and(|arg| contains_yield_expr(arg)),
-                oxc_ast::ast::Statement::VariableDeclaration(vd) => vd
-                    .declarations
-                    .iter()
-                    .any(|d| d.init.as_ref().is_some_and(|init| contains_yield_expr(init))),
+                oxc_ast::ast::Statement::ExpressionStatement(es) => {
+                    contains_yield_expr(&es.expression)
+                }
+                oxc_ast::ast::Statement::ReturnStatement(r) => r
+                    .argument
+                    .as_ref()
+                    .is_some_and(|arg| contains_yield_expr(arg)),
+                oxc_ast::ast::Statement::VariableDeclaration(vd) => {
+                    vd.declarations.iter().any(|d| {
+                        d.init
+                            .as_ref()
+                            .is_some_and(|init| contains_yield_expr(init))
+                    })
+                }
                 oxc_ast::ast::Statement::IfStatement(if_stmt) => {
                     contains_yield_expr(&if_stmt.test)
                         || contains_yield_stmt(&if_stmt.consequent)
-                        || if_stmt.alternate.as_ref().is_some_and(|a| contains_yield_stmt(a))
+                        || if_stmt
+                            .alternate
+                            .as_ref()
+                            .is_some_and(|a| contains_yield_stmt(a))
                 }
-                oxc_ast::ast::Statement::WhileStatement(w) => contains_yield_expr(&w.test) || contains_yield_stmt(&w.body),
+                oxc_ast::ast::Statement::WhileStatement(w) => {
+                    contains_yield_expr(&w.test) || contains_yield_stmt(&w.body)
+                }
                 oxc_ast::ast::Statement::ForStatement(f) => {
                     (f.init.as_ref().is_some_and(|i| match i {
-                        oxc_ast::ast::ForStatementInit::VariableDeclaration(vd) => vd
-                            .declarations
-                            .iter()
-                            .any(|d| d.init.as_ref().is_some_and(|init| contains_yield_expr(init))),
+                        oxc_ast::ast::ForStatementInit::VariableDeclaration(vd) => {
+                            vd.declarations.iter().any(|d| {
+                                d.init
+                                    .as_ref()
+                                    .is_some_and(|init| contains_yield_expr(init))
+                            })
+                        }
                         _ => false,
-                    })) || f.test.as_ref().is_some_and(|test| contains_yield_expr(test))
-                        || f.update.as_ref().is_some_and(|update| contains_yield_expr(update))
+                    })) || f
+                        .test
+                        .as_ref()
+                        .is_some_and(|test| contains_yield_expr(test))
+                        || f.update
+                            .as_ref()
+                            .is_some_and(|update| contains_yield_expr(update))
                         || contains_yield_stmt(&f.body)
                 }
-                oxc_ast::ast::Statement::BlockStatement(b) => b.body.iter().any(contains_yield_stmt),
+                oxc_ast::ast::Statement::BlockStatement(b) => {
+                    b.body.iter().any(contains_yield_stmt)
+                }
                 _ => false,
             }
         }
@@ -123,7 +153,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
         fn flatten_expr(e: &oxc_ast::ast::Expression, out: &mut Vec<Node>) {
             match e {
-                oxc_ast::ast::Expression::Identifier(id) => out.push(Node::Ident(id.name.to_string())),
+                oxc_ast::ast::Expression::Identifier(id) => {
+                    out.push(Node::Ident(id.name.to_string()))
+                }
                 oxc_ast::ast::Expression::CallExpression(c) => {
                     // Handle callee - it's an Expression, so recurse
                     flatten_expr(&c.callee, out);
@@ -132,8 +164,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             flatten_expr(expr, out);
                         } else if let oxc_ast::ast::Argument::SpreadElement(spread) = a {
                             flatten_expr(&spread.argument, out);
+                        }
                     }
-                }
                 }
                 oxc_ast::ast::Expression::StaticMemberExpression(m) => {
                     flatten_expr(&m.object, out);
@@ -141,7 +173,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 oxc_ast::ast::Expression::ComputedMemberExpression(m) => {
                     flatten_expr(&m.object, out);
                     flatten_expr(&m.expression, out);
-                    }
+                }
                 oxc_ast::ast::Expression::BinaryExpression(b) => {
                     flatten_expr(&b.left, out);
                     flatten_expr(&b.right, out);
@@ -156,13 +188,15 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     }
                     out.push(Node::YieldMarker);
                 }
-                oxc_ast::ast::Expression::ParenthesizedExpression(p) => flatten_expr(&p.expression, out),
+                oxc_ast::ast::Expression::ParenthesizedExpression(p) => {
+                    flatten_expr(&p.expression, out)
+                }
                 oxc_ast::ast::Expression::ArrayExpression(arr) => {
                     for el in arr.elements.iter() {
                         if let Some(expr) = el.as_expression() {
                             flatten_expr(expr, out);
+                        }
                     }
-                }
                 }
                 oxc_ast::ast::Expression::NewExpression(n) => {
                     flatten_expr(&n.callee, out);
@@ -171,8 +205,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             flatten_expr(expr, out);
                         } else if let oxc_ast::ast::Argument::SpreadElement(spread) = a {
                             flatten_expr(&spread.argument, out);
+                        }
                     }
-                }
                 }
                 oxc_ast::ast::Expression::AssignmentExpression(asg) => {
                     flatten_expr(&asg.right, out);
@@ -200,7 +234,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
         fn flatten_stmt(s: &oxc_ast::ast::Statement, out: &mut Vec<Node>) {
             match s {
-                oxc_ast::ast::Statement::ExpressionStatement(es) => flatten_expr(&es.expression, out),
+                oxc_ast::ast::Statement::ExpressionStatement(es) => {
+                    flatten_expr(&es.expression, out)
+                }
                 oxc_ast::ast::Statement::ReturnStatement(r) => {
                     if let Some(arg) = &r.argument {
                         flatten_expr(arg, out);
@@ -533,21 +569,14 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
             // Compute slot offset: after header (8) + state (4) + padding (4) = 16, then param slots
             let slot_offset = 16 + (i * 8) as u64;
-            let offset_const = self.i64_t.const_int(slot_offset, false);
-            let param_i8ptr = unsafe {
-                self.builder.build_gep(
-                    self.i8_t,
-                    state_ptr,
-                    &[offset_const],
-                    &format!("param_{}_i8ptr", i),
-                )
-            }
-            .map_err(|_| {
-                crate::diagnostics::Diagnostic::simple_boxed(
-                    Severity::Error,
-                    "gep failed for param",
-                )
-            })?;
+            let param_i8ptr = self
+                .offset_i8_ptr(state_ptr, slot_offset, &format!("param_{}_i8ptr", i))
+                .map_err(|_| {
+                    crate::diagnostics::Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "gep failed for param",
+                    )
+                })?;
 
             let llvm_ty_meta = llvm_param_types[i];
             let llvm_ty: inkwell::types::BasicTypeEnum = match llvm_ty_meta {
@@ -685,7 +714,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 }
 
                 // Lower this statement
-                if self.lower_stmt(&body.statements[stmt_idx], next_f, &param_map, &mut locals_stack)? {
+                if self.lower_stmt(
+                    &body.statements[stmt_idx],
+                    next_f,
+                    &param_map,
+                    &mut locals_stack,
+                )? {
                     // Terminator found (return, break, etc.)
                     break;
                 }
@@ -696,8 +730,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
             if yield_idx < yield_positions.len() && stmt_idx == yield_positions[yield_idx] {
                 // Lower the statement containing the yield
                 // The yield expression will save state and return
-                let _ =
-                    self.lower_stmt(&body.statements[stmt_idx], next_f, &param_map, &mut locals_stack);
+                let _ = self.lower_stmt(
+                    &body.statements[stmt_idx],
+                    next_f,
+                    &param_map,
+                    &mut locals_stack,
+                );
             }
         }
 
@@ -732,21 +770,18 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             {
                                 // Compute slot offset in state
                                 let slot_offset = 16 + (*slot_idx * 8) as u64;
-                                let offset_const = self.i64_t.const_int(slot_offset, false);
-                                let slot_i8ptr = unsafe {
-                                    self.builder.build_gep(
-                                        self.i8_t,
+                                let slot_i8ptr = self
+                                    .offset_i8_ptr(
                                         state_ptr,
-                                        &[offset_const],
+                                        slot_offset,
                                         &format!("restore_{}_i8ptr", live_name),
                                     )
-                                }
-                                .map_err(|_| {
-                                    crate::diagnostics::Diagnostic::simple_boxed(
-                                        Severity::Error,
-                                        "gep failed for restore",
-                                    )
-                                })?;
+                                    .map_err(|_| {
+                                        crate::diagnostics::Diagnostic::simple_boxed(
+                                            Severity::Error,
+                                            "gep failed for restore",
+                                        )
+                                    })?;
 
                                 // Load from state slot
                                 let slot_ptr_ty =
@@ -1020,21 +1055,18 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
             // Compute slot offset: after header (8) + state (4) + padding (4) = 16, then param slots
             let slot_offset = 16 + (i * 8) as u64;
-            let offset_const = self.i64_t.const_int(slot_offset, false);
-            let slot_i8ptr = unsafe {
-                self.builder.build_gep(
-                    self.i8_t,
+            let slot_i8ptr = self
+                .offset_i8_ptr(
                     state_ptr_wrapper,
-                    &[offset_const],
+                    slot_offset,
                     &format!("param_{}_slot_i8ptr", i),
                 )
-            }
-            .map_err(|_| {
-                crate::diagnostics::Diagnostic::simple_boxed(
-                    Severity::Error,
-                    "gep failed for param slot",
-                )
-            })?;
+                .map_err(|_| {
+                    crate::diagnostics::Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "gep failed for param slot",
+                    )
+                })?;
 
             // Store parameter value in state slot
             let slot_ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
@@ -1063,15 +1095,16 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 "union_box_f64 call failed",
                             )
                         })?;
-                    let boxed_ptr = match extract_basic_value_from_valuekind(cs.try_as_basic_value()) {
-                        Some(bv) => bv.into_pointer_value(),
-                        None => {
-                            return Err(crate::diagnostics::Diagnostic::simple_boxed(
-                                Severity::Error,
-                                "boxing returned no value",
-                            ));
-                        }
-                    };
+                    let boxed_ptr =
+                        match extract_basic_value_from_valuekind(cs.try_as_basic_value()) {
+                            Some(bv) => bv.into_pointer_value(),
+                            None => {
+                                return Err(crate::diagnostics::Diagnostic::simple_boxed(
+                                    Severity::Error,
+                                    "boxing returned no value",
+                                ));
+                            }
+                        };
                     let f64_ptr = self
                         .builder
                         .build_pointer_cast(

@@ -157,11 +157,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             .builder
                             .build_alloca(self.i8ptr_t, &ident.name.to_string())
                             .map_err(|_| {
-                            Diagnostic::simple_boxed(
-                                crate::diagnostics::Severity::Error,
-                                "failed to allocate exception local",
-                            )
-                        })?;
+                                Diagnostic::simple_boxed(
+                                    crate::diagnostics::Severity::Error,
+                                    "failed to allocate exception local",
+                                )
+                            })?;
                         let null_ptr = self.i8ptr_t.const_null();
                         let _ = self.builder.build_store(exception_local, null_ptr);
 

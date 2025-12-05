@@ -10,7 +10,7 @@
 //! decisions in one place so they can be updated consistently as the ABI
 //! evolves.
 
-use crate::diagnostics::Severity;
+use crate::diagnostics::{Diagnostic, Severity};
 use crate::types::OatsType;
 use inkwell::types::BasicType;
 use inkwell::types::BasicTypeEnum;
@@ -22,14 +22,9 @@ use std::collections::HashMap;
 pub(crate) fn extract_basic_value_from_valuekind<'a>(
     vk: ValueKind<'a>,
 ) -> Option<BasicValueEnum<'a>> {
-    // ValueKind is a type alias for Either, so we can safely transmute
-    unsafe {
-        use either::Either;
-        let either_ptr = &vk as *const ValueKind<'a> as *const Either<BasicValueEnum<'a>, inkwell::values::CallSiteValue<'a>>;
-        match *either_ptr {
-            Either::Left(bv) => Some(bv),
-            Either::Right(_) => None,
-        }
+    match vk {
+        either::Either::Left(bv) => Some(bv),
+        either::Either::Right(_) => None,
     }
 }
 
@@ -57,6 +52,29 @@ pub(crate) struct LocalVarInfo<'a> {
 }
 
 impl<'a> super::CodeGen<'a> {
+    /// Compute an i8* offset from a base pointer.
+    pub(crate) fn offset_i8_ptr(
+        &self,
+        base: inkwell::values::PointerValue<'a>,
+        offset: u64,
+        name: &str,
+    ) -> crate::diagnostics::DiagnosticResult<inkwell::values::PointerValue<'a>> {
+        let base_addr = self
+            .builder
+            .build_ptr_to_int(base, self.i64_t, &format!("{name}_addr"))
+            .map_err(|_| Diagnostic::error("ptr_to_int failed"))?;
+        let offset_val = self.i64_t.const_int(offset, false);
+        let addr = self
+            .builder
+            .build_int_add(base_addr, offset_val, &format!("{name}_addr_off"))
+            .map_err(|_| Diagnostic::error("int_add failed"))?;
+        let ptr = self
+            .builder
+            .build_int_to_ptr(addr, self.i8ptr_t, name)
+            .map_err(|_| Diagnostic::error("int_to_ptr failed"))?;
+        Ok(ptr)
+    }
+
     /// Map an `OatsType` to an LLVM `BasicTypeEnum` for parameter/alloca ABI.
     ///
     /// This follows the current ABI decisions:
@@ -384,7 +402,8 @@ impl<'a> super::CodeGen<'a> {
                     BasicValueEnum::FloatValue(fv) => {
                         let box_fn = self.get_union_box_f64();
                         if let Ok(cs) = self.builder.build_call(box_fn, &[fv.into()], "box_for_phi")
-                            && let Some(bv2) = extract_basic_value_from_valuekind(cs.try_as_basic_value())
+                            && let Some(bv2) =
+                                extract_basic_value_from_valuekind(cs.try_as_basic_value())
                         {
                             return Some(bv2);
                         }
@@ -401,7 +420,8 @@ impl<'a> super::CodeGen<'a> {
                         };
                         let box_fn = self.get_union_box_f64();
                         if let Ok(cs) = self.builder.build_call(box_fn, &[fv.into()], "box_for_phi")
-                            && let Some(bv2) = extract_basic_value_from_valuekind(cs.try_as_basic_value())
+                            && let Some(bv2) =
+                                extract_basic_value_from_valuekind(cs.try_as_basic_value())
                         {
                             return Some(bv2);
                         }

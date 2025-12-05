@@ -41,7 +41,12 @@ impl<'a> CodeGen<'a> {
         // for `this` binding and hoisting behavior.
 
         // Extract parameters - FunctionExpression has function which has params
-        let params = fn_expr.function.params.iter().map(|p| p.pattern.clone()).collect();
+        let params = fn_expr
+            .function
+            .params
+            .iter()
+            .map(|p| p.pattern.clone())
+            .collect();
 
         // Extract body - Function has body
         let body = match &fn_expr.function.body {

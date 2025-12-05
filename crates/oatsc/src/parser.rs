@@ -6,10 +6,10 @@
 use crate::diagnostics;
 use crate::types::{FunctionSig, OatsType};
 use anyhow::Result;
+use oxc_allocator::Allocator;
 use oxc_ast::ast::*;
 use oxc_parser::Parser;
 use oxc_span::SourceType;
-use oxc_allocator::Allocator;
 
 /// Lightweight representation of a top-level `declare function` signature
 /// extracted from source text. The builder will convert these into
@@ -295,7 +295,7 @@ pub fn parse_oats_module_with_options(
 
     // Create a leaked allocator to get 'static lifetime
     let allocator = Box::leak(Box::new(Allocator::default()));
-    
+
     // Convert source to 'static string by leaking it
     // This is safe because we store the source in ParsedModule anyway
     let source_static: &'static str = Box::leak(source_without_bom.to_string().into_boxed_str());

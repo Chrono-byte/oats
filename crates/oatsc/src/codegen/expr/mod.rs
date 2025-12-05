@@ -135,7 +135,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
             Expression::ArrayExpression(arr) => Ok(literals::lower_array(
                 self, arr, function, param_map, locals,
             )?),
-            Expression::StaticMemberExpression(member) | Expression::ComputedMemberExpression(member) => {
+            Expression::StaticMemberExpression(member)
+            | Expression::ComputedMemberExpression(member) => {
                 self.lower_member_expr(expr, function, param_map, locals)
             }
             // Optional chaining expressions may not be available in this version of oxc_ast
@@ -212,14 +213,13 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     let ident_name = ident.name.to_string();
                     // Check if it's `this`
                     if ident_name == "this" {
-                        if let Some(param_types) = self
-                            .fn_param_types
-                            .borrow()
-                            .get(match function.get_name().to_str() {
-                                Some(name) => name,
-                                None => "",
-                            })
-                            && !param_types.is_empty()
+                        if let Some(param_types) = self.fn_param_types.borrow().get(match function
+                            .get_name()
+                            .to_str()
+                        {
+                            Some(name) => name,
+                            None => "",
+                        }) && !param_types.is_empty()
                             && let crate::types::OatsType::NominalStruct(n) = &param_types[0]
                         {
                             Some(n.clone())
@@ -229,14 +229,13 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     }
                     // Check params
                     else if let Some(param_idx) = param_map.get(&ident_name) {
-                        if let Some(param_types) = self
-                            .fn_param_types
-                            .borrow()
-                            .get(match function.get_name().to_str() {
-                                Some(name) => name,
-                                None => "",
-                            })
+                        if let Some(param_types) = self.fn_param_types.borrow().get(match function
+                            .get_name()
+                            .to_str()
                         {
+                            Some(name) => name,
+                            None => "",
+                        }) {
                             let idx = *param_idx as usize;
                             if idx < param_types.len()
                                 && let crate::types::OatsType::NominalStruct(n) = &param_types[idx]
@@ -276,8 +275,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
             && let Some(fields) = self.class_fields.borrow().get(&obj_type_name)
         {
             // Get the property name from member
-            if let Expression::StaticMemberExpression(mem) | Expression::ComputedMemberExpression(mem) =
-                member
+            if let Expression::StaticMemberExpression(mem)
+            | Expression::ComputedMemberExpression(mem) = member
             {
                 if let oxc_ast::ast::MemberExpression::StaticMemberExpression(static_mem) = mem {
                     let field_name = static_mem.property.name.to_string();

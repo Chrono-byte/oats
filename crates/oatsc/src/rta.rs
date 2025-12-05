@@ -315,7 +315,9 @@ fn find_instantiations(modules: &HashMap<String, ParsedModule>) -> LiveClasses {
 
 fn visit_stmt_for_instantiations(stmt: &Statement, live_classes: &mut LiveClasses) {
     match stmt {
-        Statement::ExpressionStatement(expr_stmt) => visit_expr_for_instantiations(&expr_stmt.expression, live_classes),
+        Statement::ExpressionStatement(expr_stmt) => {
+            visit_expr_for_instantiations(&expr_stmt.expression, live_classes)
+        }
         Statement::VariableDeclaration(vd) => {
             for decl in &vd.declarations {
                 if let Some(init) = &decl.init {
@@ -428,7 +430,9 @@ fn build_call_graph(
 }
 
 /// Collects all function and method ASTs for worklist processing
-fn collect_function_asts(modules: &HashMap<String, ParsedModule>) -> HashMap<String, &Function<'static>> {
+fn collect_function_asts(
+    modules: &HashMap<String, ParsedModule>,
+) -> HashMap<String, &Function<'static>> {
     let mut functions = HashMap::new();
 
     for module in modules.values() {
@@ -452,7 +456,8 @@ fn collect_function_asts(modules: &HashMap<String, ParsedModule>) -> HashMap<Str
                     for member in &class_decl.body.body {
                         if let ClassElement::MethodDefinition(method) = member {
                             if let PropertyKey::Identifier(ident) = &method.key {
-                                let method_name = format!("{}_{}", class_name, ident.name.to_string());
+                                let method_name =
+                                    format!("{}_{}", class_name, ident.name.to_string());
                                 // method.value is &Box<Function>, use as_ref() to get &Function
                                 functions.insert(method_name, method.value.as_ref());
                             }
@@ -618,7 +623,10 @@ fn find_method_calls_in_expr_with_depth(
                         // Assume the identifier might be a class instance
                         // This is a heuristic and may not always be correct
                         // StaticMemberExpression.property is IdentifierName, not PropertyKey
-                        calls.push((obj_ident.name.to_string(), static_member.property.name.to_string()));
+                        calls.push((
+                            obj_ident.name.to_string(),
+                            static_member.property.name.to_string(),
+                        ));
                     }
                 }
             }

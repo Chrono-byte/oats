@@ -1,5 +1,5 @@
-use std::collections::{HashMap, HashSet};
 use oxc_ast::ast::*;
+use std::collections::{HashMap, HashSet};
 
 /// Escape analysis results for a function.
 ///
@@ -443,7 +443,11 @@ impl EscapeAnalyzer {
         Self::collect_vars_from_expr_with_depth(expr, vars, 0)
     }
 
-    fn collect_vars_from_expr_with_depth(expr: &Expression, vars: &mut HashSet<String>, depth: usize) {
+    fn collect_vars_from_expr_with_depth(
+        expr: &Expression,
+        vars: &mut HashSet<String>,
+        depth: usize,
+    ) {
         // Prevent stack overflow from deeply nested expressions
         const MAX_VAR_COLLECTION_DEPTH: usize = 1000;
         if depth > MAX_VAR_COLLECTION_DEPTH {
@@ -565,9 +569,7 @@ impl AwaitLiveAnalyzer {
 
     fn analyze_stmt(&mut self, stmt: &Statement) {
         match stmt {
-            Statement::ExpressionStatement(expr_stmt) => {
-                self.analyze_expr(&expr_stmt.expression)
-            }
+            Statement::ExpressionStatement(expr_stmt) => self.analyze_expr(&expr_stmt.expression),
             Statement::BlockStatement(block) => self.analyze_stmts(&block.body),
             Statement::IfStatement(if_stmt) => {
                 self.analyze_expr(&if_stmt.test);

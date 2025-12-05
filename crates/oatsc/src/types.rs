@@ -309,7 +309,8 @@ pub fn map_ts_type_with_aliases(
 
                 // Check for type aliases before falling back to built-in types
                 if let Some(aliases) = type_aliases
-                    && let Some((alias_type_params, aliased_type)) = aliases.get(ident.name.as_str())
+                    && let Some((alias_type_params, aliased_type)) =
+                        aliases.get(ident.name.as_str())
                 {
                     // This is a type alias reference
                     if let Some(type_args) = &type_ref.type_arguments {
@@ -326,8 +327,7 @@ pub fn map_ts_type_with_aliases(
                                 }
                             }
                             // Apply substitution to aliased type, then resolve any nested aliases
-                            if let Some(substituted) =
-                                map_ts_type_with_subst(aliased_type, &subst)
+                            if let Some(substituted) = map_ts_type_with_subst(aliased_type, &subst)
                             {
                                 // The substituted type might still contain other type aliases,
                                 // so we need to resolve them. However, we can't easily do that
@@ -497,7 +497,10 @@ pub fn map_ts_type_with_aliases(
                         match &prop.key {
                             PropertyKey::Identifier(ident) => {
                                 if let Some(type_ann) = &prop.type_annotation {
-                                    if let Some(mapped_ty) = map_ts_type_with_aliases(&type_ann.type_annotation, type_aliases) {
+                                    if let Some(mapped_ty) = map_ts_type_with_aliases(
+                                        &type_ann.type_annotation,
+                                        type_aliases,
+                                    ) {
                                         fields.push((ident.name.to_string(), mapped_ty));
                                     } else {
                                         return None;
@@ -688,7 +691,9 @@ fn map_ts_type_with_subst_depth(
                         match &prop.key {
                             PropertyKey::Identifier(ident) => {
                                 if let Some(type_ann) = &prop.type_annotation {
-                                    if let Some(mapped_ty) = map_ts_type_with_subst(&type_ann.type_annotation, subst) {
+                                    if let Some(mapped_ty) =
+                                        map_ts_type_with_subst(&type_ann.type_annotation, subst)
+                                    {
                                         fields.push((ident.name.to_string(), mapped_ty));
                                     } else {
                                         return None;

@@ -55,7 +55,7 @@ pub fn compile_to_object(module: &Module, config: &LinkingConfig) -> Result<Stri
     };
     let features = match config.target_features.clone() {
         Some(f) => f,
-        None => vec![],
+        None => String::new(),
     };
 
     // Get the target from the triple

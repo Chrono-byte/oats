@@ -241,15 +241,11 @@ pub fn gen_ir_for_source(src: &str) -> Result<String> {
                     }
                     ClassMember::Constructor(cons) => {
                         // Use empty fields list if none were recorded to avoid borrow-panics
-                        let fields_vec = match codegen
-                            .class_fields
-                            .borrow()
-                            .get(&class_name)
-                            .cloned()
-                        {
-                            Some(fields) => fields,
-                            None => Vec::new(),
-                        };
+                        let fields_vec =
+                            match codegen.class_fields.borrow().get(&class_name).cloned() {
+                                Some(fields) => fields,
+                                None => Vec::new(),
+                            };
                         codegen
                             .gen_constructor_ir(&class_name, cons, &fields_vec, None)
                             .map_err(|d| anyhow::anyhow!(d.message))?;

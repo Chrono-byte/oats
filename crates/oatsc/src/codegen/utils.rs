@@ -91,11 +91,13 @@ pub mod memory {
             .builder
             .build_call(malloc_fn, &[size.into()], name)
             .map_err(|_| Diagnostic::error("failed to build malloc call"))?;
-        let ptr = call_site
-            .try_as_basic_value()
-            .left()
-            .ok_or_else(|| Diagnostic::error("malloc call returned no value"))?;
-        Ok(ptr.into_pointer_value())
+        let ptr = match call_site.try_as_basic_value() {
+            either::Either::Left(bv) => bv.into_pointer_value(),
+            _ => {
+                return Err(Diagnostic::error("malloc call returned no value"));
+            }
+        };
+        Ok(ptr)
     }
 
     /// Allocate an array using the runtime array_alloc function
@@ -109,11 +111,13 @@ pub mod memory {
             .builder
             .build_call(array_alloc_fn, &[length.into()], name)
             .map_err(|_| Diagnostic::error("failed to build array_alloc call"))?;
-        let ptr = call_site
-            .try_as_basic_value()
-            .left()
-            .ok_or_else(|| Diagnostic::error("array_alloc call returned no value"))?;
-        Ok(ptr.into_pointer_value())
+        let ptr = match call_site.try_as_basic_value() {
+            either::Either::Left(bv) => bv.into_pointer_value(),
+            _ => {
+                return Err(Diagnostic::error("array_alloc call returned no value"));
+            }
+        };
+        Ok(ptr)
     }
 }
 

@@ -87,11 +87,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 }
             };
 
-            let either = cs.try_as_basic_value();
-            let ret_iv = either
-                .left()
-                .ok_or_else(|| Diagnostic::error("promise_poll_into returned no value"))?
-                .into_int_value();
+            let ret_iv = match cs.try_as_basic_value() {
+                either::Either::Left(bv) => bv.into_int_value(),
+                _ => {
+                    return Err(Diagnostic::error("promise_poll_into returned no value"));
+                }
+            };
 
             use inkwell::IntPredicate;
             let one = self.i32_t.const_int(1, false);
@@ -275,15 +276,14 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                 ));
                                             }
                                         };
-                                        let boxed_ptr = cs
-                                            .try_as_basic_value()
-                                            .left()
-                                            .ok_or_else(|| {
-                                                Diagnostic::error(
+                                        let boxed_ptr = match cs.try_as_basic_value() {
+                                            either::Either::Left(bv) => bv.into_pointer_value(),
+                                            _ => {
+                                                return Err(Diagnostic::error(
                                                     "boxing returned no value when saving locals",
-                                                )
-                                            })?
-                                            .into_pointer_value();
+                                                ));
+                                            }
+                                        };
                                         let _ = self
                                             .builder
                                             .build_store(slot_ptr, boxed_ptr.as_basic_value_enum());

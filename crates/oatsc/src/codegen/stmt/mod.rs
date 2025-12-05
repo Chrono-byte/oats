@@ -73,7 +73,6 @@ impl<'a> crate::codegen::CodeGen<'a> {
         param_map: &HashMap<String, u32>,
         locals_stack: &mut LocalsStackLocal<'a>,
     ) -> crate::diagnostics::DiagnosticResult<bool> {
-        use oats_ast::*;
         // A small statement lowering implementation that covers the test
         // cases: variable declarations with initializers, expression
         // statements, return statements and blocks. This is intentionally

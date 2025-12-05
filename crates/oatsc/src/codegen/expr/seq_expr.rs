@@ -6,7 +6,7 @@
 use crate::codegen::CodeGen;
 use crate::diagnostics::Diagnostic;
 use inkwell::values::{BasicValueEnum, FunctionValue};
-use oats_ast::*;
+use oxc_ast::ast::*;
 use std::collections::HashMap;
 
 type LocalEntry<'a> = (
@@ -28,25 +28,25 @@ impl<'a> CodeGen<'a> {
     #[allow(clippy::result_large_err)]
     pub(super) fn lower_seq_expr(
         &self,
-        seq: &SeqExpr,
+        seq: &SequenceExpression<'_>,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals: &mut LocalsStackLocal<'a>,
     ) -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
-        if seq.exprs.is_empty() {
+        if seq.expressions.is_empty() {
             return Err(Diagnostic::simple_with_span_boxed(
                 crate::diagnostics::Severity::Error,
                 "empty sequence expression",
-                seq.span.start,
+                seq.span.start as usize,
             ));
         }
 
         // Evaluate all expressions except the last (for side effects)
-        for expr in &seq.exprs[..seq.exprs.len() - 1] {
+        for expr in &seq.expressions[..seq.expressions.len() - 1] {
             self.lower_expr(expr, function, param_map, locals)?;
         }
 
         // Return the value of the last expression
-        self.lower_expr(&seq.exprs[seq.exprs.len() - 1], function, param_map, locals)
+        self.lower_expr(&seq.expressions[seq.expressions.len() - 1], function, param_map, locals)
     }
 }

@@ -1,5 +1,4 @@
 use crate::diagnostics::{Diagnostic, Severity};
-use oats_ast::*;
 
 /// Compile-time constant values.
 #[derive(Clone, Debug)]

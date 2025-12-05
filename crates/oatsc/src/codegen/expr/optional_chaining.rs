@@ -7,7 +7,6 @@
 use crate::codegen::CodeGen;
 use crate::diagnostics::{Diagnostic, Severity};
 use inkwell::values::{BasicValue, BasicValueEnum, FunctionValue};
-use oats_ast::*;
 use std::collections::HashMap;
 
 type LocalEntry<'a> = (

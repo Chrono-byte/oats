@@ -26,7 +26,6 @@ impl<'a> crate::codegen::CodeGen<'a> {
         param_map: &HashMap<String, u32>,
         locals_stack: &mut LocalsStackLocal<'a>,
     ) -> crate::diagnostics::DiagnosticResult<bool> {
-        use oats_ast::*;
 
         // For-in loops iterate over object property keys
         // Only handle the case where the left-hand side is a var declaration (e.g., `for (let key in obj)`)
@@ -197,7 +196,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     "get_key",
                 )
                 .map_err(|_| Diagnostic::error("failed to get key"))?;
-            let key_ptr = if let inkwell::Either::Left(bv) = key_val.try_as_basic_value() {
+            let key_ptr = if let either::Either::Left(bv) = key_val.try_as_basic_value() {
                 if let BasicValueEnum::PointerValue(pv) = bv {
                     pv
                 } else {
@@ -314,7 +313,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             )
             .map_err(|_| Diagnostic::error("failed to allocate keys array"))?;
 
-        let array_ptr_val = if let inkwell::Either::Left(bv) = array_ptr.try_as_basic_value() {
+        let array_ptr_val = if let either::Either::Left(bv) = array_ptr.try_as_basic_value() {
             if let BasicValueEnum::PointerValue(pv) = bv {
                 pv
             } else {

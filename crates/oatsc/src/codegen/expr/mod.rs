@@ -85,17 +85,17 @@ impl<'a> crate::codegen::CodeGen<'a> {
     /// A lowered `BasicValueEnum` on success, or a `Diagnostic` on failure.
     pub fn lower_expr(
         &self,
-        expr: &oats_ast::Expr,
+        expr: &oxc_ast::ast::Expression<'_>,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals: &mut LocalsStackLocal<'a>,
     ) -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
-        use oats_ast::*;
+        use oxc_ast::ast::Expression;
 
         match expr {
-            // Removed duplicate `Expr::Call(call)` match arm at line 482 to fix unreachable pattern warning.
+            // Removed duplicate `CallExpression` match arm at line 482 to fix unreachable pattern warning.
             // Removed unused `parent` variable to resolve the warning.
-            Expr::Bin(bin) => self.lower_binary_expr(bin, function, param_map, locals),
+            Expression::BinaryExpression(bin) => self.lower_binary_expr(bin, function, param_map, locals),
             // Identifier lookup and TDZ handling
             //
             // Identifiers can refer to function parameters (which are
@@ -104,71 +104,49 @@ impl<'a> crate::codegen::CodeGen<'a> {
             // unreachable) for Temporal Dead Zone reads. We also record the
             // origin local name for the last-lowered expression which helps
             // propagate closure-local typing information.
-            Expr::Ident(id) => self.lower_ident_expr(id, function, param_map, locals),
-            Expr::This(this_expr) => self.lower_this_expr(this_expr, function, param_map, locals),
-            Expr::Super(super_expr) => {
+            Expression::Identifier(id) => self.lower_ident_expr(id, function, param_map, locals),
+            Expression::ThisExpression(this_expr) => self.lower_this_expr(this_expr, function, param_map, locals),
+            Expression::Super(super_expr) => {
                 self.lower_super_expr(super_expr, function, param_map, locals)
             }
-            Expr::Call(call) => self.lower_call_expr(call, function, param_map, locals),
+            Expression::CallExpression(call) => self.lower_call_expr(call, function, param_map, locals),
             // (Duplicate closure-call lowering removed; handled in the primary Call arm above.)
-            Expr::Assign(assign) => self.lower_assign_expr(assign, function, param_map, locals),
-            Expr::Paren(paren) => self.lower_paren_expr(paren, function, param_map, locals),
-            Expr::Cond(cond) => self.lower_cond_expr(cond, function, param_map, locals),
-            Expr::Lit(lit) => Ok(crate::codegen::expr::literals::lower_lit(self, lit)?),
-            Expr::Array(arr) => Ok(literals::lower_array(
+            Expression::AssignmentExpression(assign) => self.lower_assign_expr(assign, function, param_map, locals),
+            Expression::ParenthesizedExpression(paren) => self.lower_paren_expr(paren, function, param_map, locals),
+            Expression::ConditionalExpression(cond) => self.lower_cond_expr(cond, function, param_map, locals),
+            Expression::NumericLiteral(_) | Expression::StringLiteral(_) | Expression::BooleanLiteral(_) | Expression::NullLiteral(_) => {
+                Ok(crate::codegen::expr::literals::lower_lit(self, expr)?)
+            },
+            Expression::ArrayExpression(arr) => Ok(literals::lower_array(
                 self, arr, function, param_map, locals,
             )?),
-            Expr::Member(member) => self.lower_member_expr(member, function, param_map, locals),
-            Expr::OptionalMember(optional) => {
+            Expression::MemberExpression(member) | Expression::ComputedMemberExpression(member) => {
+                self.lower_member_expr(expr, function, param_map, locals)
+            }
+            Expression::OptionalCallExpression(_) | Expression::OptionalMemberExpression(optional) => {
                 self.lower_optional_member_expr(optional, function, param_map, locals)
             }
-            Expr::New(new_expr) => self.lower_new_expr(new_expr, function, param_map, locals),
-            Expr::Await(await_expr) => {
+            Expression::NewExpression(new_expr) => self.lower_new_expr(new_expr, function, param_map, locals),
+            Expression::AwaitExpression(await_expr) => {
                 self.lower_await_expr(await_expr, function, param_map, locals)
             }
-            Expr::Arrow(arrow) => self.lower_arrow_expr(arrow, function, param_map, locals),
-            Expr::Fn(fn_expr) => self.lower_fn_expr(fn_expr, function, param_map, locals),
-            Expr::Seq(seq) => self.lower_seq_expr(seq, function, param_map, locals),
-            Expr::Object(obj_lit) => Ok(literals::lower_object(
+            Expression::ArrowFunctionExpression(arrow) => self.lower_arrow_expr(arrow, function, param_map, locals),
+            Expression::FunctionExpression(fn_expr) => self.lower_fn_expr(fn_expr, function, param_map, locals),
+            Expression::SequenceExpression(seq) => self.lower_seq_expr(seq, function, param_map, locals),
+            Expression::ObjectExpression(obj_lit) => Ok(literals::lower_object(
                 self, obj_lit, function, param_map, locals,
             )?),
-            Expr::Tpl(tpl) => Ok(literals::lower_template(
+            Expression::TemplateLiteral(tpl) => Ok(literals::lower_template(
                 self, tpl, function, param_map, locals,
             )?),
-            Expr::Unary(unary) => self.lower_unary_expr(unary, function, param_map, locals),
-            Expr::Update(update) => self.lower_update_expr(update, function, param_map, locals),
-            // Process model expressions
-            Expr::Spawn(spawn) => self.lower_spawn_expr(spawn, function, param_map, locals),
-            Expr::Send(send) => self.lower_send_expr(send, function, param_map, locals),
-            Expr::Receive(receive) => self.lower_receive_expr(receive, function, param_map, locals),
-            Expr::ProcessSelf(self_expr) => self.lower_process_self_expr(self_expr),
-            Expr::ProcessExit(exit) => {
-                self.lower_process_exit_expr(exit, function, param_map, locals)
-            }
-            Expr::ProcessLink(link) => {
-                self.lower_process_link_expr(link, function, param_map, locals)
-            }
-            Expr::ProcessUnlink(unlink) => {
-                self.lower_process_unlink_expr(unlink, function, param_map, locals)
-            }
-            Expr::ProcessMonitor(monitor) => {
-                self.lower_process_monitor_expr(monitor, function, param_map, locals)
-            }
-            Expr::ProcessDemonitor(demonitor) => {
-                self.lower_process_demonitor_expr(demonitor, function, param_map, locals)
-            }
-            Expr::ProcessWhereis(whereis) => {
-                self.lower_process_whereis_expr(whereis, function, param_map, locals)
-            }
-            Expr::ProcessRegister(register) => {
-                self.lower_process_register_expr(register, function, param_map, locals)
-            }
-            Expr::ProcessUnregister(unregister) => {
-                self.lower_process_unregister_expr(unregister, function, param_map, locals)
-            }
-            Expr::Yield(yield_expr) => {
-                self.lower_yield_expr(yield_expr, function, param_map, locals)
-            }
+            Expression::UnaryExpression(unary) => self.lower_unary_expr(unary, function, param_map, locals),
+            Expression::UpdateExpression(update) => self.lower_update_expr(update, function, param_map, locals),
+            // Process model expressions - these don't exist in oxc_ast, so they need special handling
+            // For now, we'll need to handle these differently or they may need to be custom extensions
+            _ => Err(crate::diagnostics::Diagnostic::simple_boxed(
+                crate::diagnostics::Severity::Error,
+                format!("Unsupported expression type: {:?}", expr),
+            )),
         }
     }
 
@@ -176,7 +154,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
     /// For example, given `outer.data`, this returns the nominal type of the `data` field.
     fn resolve_member_type(
         &self,
-        member: &oats_ast::MemberExpr,
+        member: &oxc_ast::ast::Expression<'_>,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals: &mut LocalsStackLocal<'a>,
@@ -187,13 +165,13 @@ impl<'a> crate::codegen::CodeGen<'a> {
     /// Internal helper with recursion depth tracking to prevent stack overflow.
     fn resolve_member_type_with_depth(
         &self,
-        member: &oats_ast::MemberExpr,
+        member: &oxc_ast::ast::Expression<'_>,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals: &mut LocalsStackLocal<'a>,
         depth: usize,
     ) -> Option<String> {
-        use oats_ast::*;
+        use oxc_ast::ast::Expression;
 
         // Prevent stack overflow from deeply nested member access chains
         const MAX_MEMBER_DEPTH: usize = 128;
@@ -202,77 +180,82 @@ impl<'a> crate::codegen::CodeGen<'a> {
         }
 
         // First, determine the nominal type of member.obj
-        let obj_nominal = if let Expr::Ident(ident) = &*member.obj {
-            let ident_name = ident.sym.clone();
-            // Check if it's `this`
-            if ident_name == "this" {
-                if let Some(param_types) = self
-                    .fn_param_types
-                    .borrow()
-                    .get(function.get_name().to_str().unwrap_or(""))
-                    && !param_types.is_empty()
-                    && let crate::types::OatsType::NominalStruct(n) = &param_types[0]
-                {
-                    Some(n.clone())
-                } else {
-                    None
-                }
-            }
-            // Check params
-            else if let Some(param_idx) = param_map.get(&ident_name) {
-                if let Some(param_types) = self
-                    .fn_param_types
-                    .borrow()
-                    .get(function.get_name().to_str().unwrap_or(""))
-                {
-                    let idx = *param_idx as usize;
-                    if idx < param_types.len()
-                        && let crate::types::OatsType::NominalStruct(n) = &param_types[idx]
+        let obj_nominal = match member {
+            Expression::MemberExpression(mem) | Expression::ComputedMemberExpression(mem) => {
+                if let Expression::Identifier(ident) = &mem.object() {
+                    let ident_name = ident.name.to_string();
+                    // Check if it's `this`
+                    if ident_name == "this" {
+                        if let Some(param_types) = self
+                            .fn_param_types
+                            .borrow()
+                            .get(function.get_name().to_str().unwrap_or(""))
+                            && !param_types.is_empty()
+                            && let crate::types::OatsType::NominalStruct(n) = &param_types[0]
+                        {
+                            Some(n.clone())
+                        } else {
+                            None
+                        }
+                    }
+                    // Check params
+                    else if let Some(param_idx) = param_map.get(&ident_name) {
+                        if let Some(param_types) = self
+                            .fn_param_types
+                            .borrow()
+                            .get(function.get_name().to_str().unwrap_or(""))
+                        {
+                            let idx = *param_idx as usize;
+                            if idx < param_types.len()
+                                && let crate::types::OatsType::NominalStruct(n) = &param_types[idx]
+                            {
+                                Some(n.clone())
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    }
+                    // Check locals
+                    else if let Some((_, _, _, _, _, nominal, _oats_type)) =
+                        self.find_local(locals, &ident_name)
                     {
-                        Some(n.clone())
+                        nominal
                     } else {
                         None
                     }
                 } else {
-                    None
+                    // Recursively resolve nested member expressions with depth tracking
+                    self.resolve_member_type_with_depth(
+                        &mem.object(),
+                        function,
+                        param_map,
+                        locals,
+                        depth + 1,
+                    )
                 }
             }
-            // Check locals
-            else if let Some((_, _, _, _, _, nominal, _oats_type)) =
-                self.find_local(locals, &ident_name)
-            {
-                nominal
-            } else {
-                None
-            }
-        } else if let Expr::Member(inner_member) = &*member.obj {
-            // Recursively resolve nested member expressions with depth tracking
-            self.resolve_member_type_with_depth(
-                inner_member,
-                function,
-                param_map,
-                locals,
-                depth + 1,
-            )
-        } else {
-            None
+            _ => None,
         };
 
         // Now look up the field type in the class_fields map
         if let Some(obj_type_name) = obj_nominal
             && let Some(fields) = self.class_fields.borrow().get(&obj_type_name)
         {
-            // Get the property name from member.prop
-            if let MemberProp::Ident(prop_ident) = &member.prop {
-                let field_name = prop_ident.sym.clone();
-                // Find the field and return its type if it's a NominalStruct
-                for (fname, ftype) in fields {
-                    if fname == &field_name {
-                        if let crate::types::OatsType::NominalStruct(n) = ftype {
-                            return Some(n.clone());
-                        } else {
-                            // Field exists but is not a nominal struct
-                            return None;
+            // Get the property name from member
+            if let Expression::MemberExpression(mem) | Expression::ComputedMemberExpression(mem) = member {
+                if let oxc_ast::ast::MemberExpression::StaticMemberExpression(static_mem) = mem {
+                    let field_name = static_mem.property.name.to_string();
+                    // Find the field and return its type if it's a NominalStruct
+                    for (fname, ftype) in fields {
+                        if fname == &field_name {
+                            if let crate::types::OatsType::NominalStruct(n) = ftype {
+                                return Some(n.clone());
+                            } else {
+                                // Field exists but is not a nominal struct
+                                return None;
+                            }
                         }
                     }
                 }

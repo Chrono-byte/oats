@@ -67,7 +67,7 @@ impl<'a> CodeGen<'a> {
         // Interpret the result depending on its type. If the function returns an i64 or f64
         // we coerce/truncate to i32; if void, return 0.
         let either = call_site.try_as_basic_value();
-        if let inkwell::Either::Left(bv) = either {
+        if let either::Either::Left(bv) = either {
             let ret_val = self.coerce_return_value_to_i32(bv, i32_t);
             let exit_code = self.compute_exit_code(ret_val, i32_t);
             let _ = self.builder.build_return(Some(&exit_code));

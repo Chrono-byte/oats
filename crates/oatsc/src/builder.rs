@@ -164,7 +164,6 @@ pub fn run_from_args(
     fn extract_arrow_functions(
         parsed: &oats_ast::Module,
     ) -> Vec<(String, oats_ast::ArrowExpr, bool)> {
-        use oats_ast::*;
         let mut arrows = Vec::new();
 
         for stmt in &parsed.body {
@@ -198,7 +197,6 @@ pub fn run_from_args(
     // Require the user script to export a `main` function as the program entrypoint
     let mut func_decl_opt: Option<oats_ast::Function> = None;
     for stmt in &parsed.body {
-        use oats_ast::*;
         if let Stmt::FnDecl(fn_decl) = stmt {
             let name = fn_decl.ident.sym.clone();
             if name == "main" {
@@ -465,7 +463,6 @@ pub fn run_from_args(
     // non-exported class declarations so constructors are available for
     // `new` expressions regardless of export status.
     for stmt in &parsed.body {
-        use oats_ast::*;
         // Handle class declarations: `class Foo {}`
         if let Stmt::ClassDecl(c) = stmt {
             let class_name = c.ident.sym.clone();
@@ -570,7 +567,6 @@ pub fn run_from_args(
                         // Compute fields for this class from explicit props, constructor
                         // param properties, and `this.x = ...` assignments inside the ctor.
                         let mut fields: Vec<(String, crate::types::OatsType)> = Vec::new();
-                        use oats_ast::*;
                         // explicit class properties
                         for m in &c.body {
                             if let ClassMember::Field(field) = m {
@@ -685,7 +681,6 @@ pub fn run_from_args(
     // globals via `CodeGen::emit_const_global` and cached in
     // `codegen.const_globals` so expression lowering can reuse them.
     {
-        use oats_ast::*;
         use std::collections::{HashMap, HashSet, VecDeque};
 
         // Collect top-level const declarations: name -> (init_expr, span_start)
@@ -723,7 +718,6 @@ pub fn run_from_args(
 
             // Helper: collect identifier names referenced by an expression
             fn collect_idents(e: &oats_ast::Expr, out: &mut HashSet<String>) {
-                use oats_ast::*;
                 match e {
                     Expr::Ident(id) => {
                         out.insert(id.sym.clone());
@@ -873,7 +867,6 @@ pub fn run_from_args(
     // Note: oats_ast doesn't have separate export syntax - exports are handled
     // separately via the arrow_functions collection and main function detection
     for stmt in &parsed.body {
-        use oats_ast::*;
         if let Stmt::FnDecl(fn_decl) = stmt {
             let fname = fn_decl.ident.sym.clone();
             // Convert FnDecl to Function for codegen
@@ -920,7 +913,6 @@ pub fn run_from_args(
 
         // Convert arrow function to regular function format that gen_function_ir expects
         // Arrow functions need special handling because their structure differs slightly
-        use oats_ast::*;
 
         // Convert arrow params (Vec<Param>) to function params (Vec<Param>)
         // ArrowExpr.params is now Vec<Param>, so we can directly use the type annotations

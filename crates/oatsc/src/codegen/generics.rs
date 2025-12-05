@@ -60,12 +60,15 @@ impl<'a> CodeGen<'a> {
                 )
             })?;
 
-        let arr_ptr = call_site.try_as_basic_value().left().ok_or_else(|| {
-            Diagnostic::simple_boxed(
-                Severity::Error,
-                "array allocation returned no value".to_string(),
-            )
-        })?;
+        let arr_ptr = match call_site.try_as_basic_value() {
+            either::Either::Left(bv) => bv.into_pointer_value(),
+            _ => {
+                return Err(Diagnostic::simple_boxed(
+                    Severity::Error,
+                    "array allocation returned no value".to_string(),
+                ));
+            }
+        };
 
         Ok(arr_ptr.into_pointer_value().as_basic_value_enum())
     }
@@ -137,7 +140,6 @@ impl<'a> CodeGen<'a> {
         // Pre-allocate with estimated capacity (most params will be processed)
         let mut concrete_params = Vec::with_capacity(func_ast.params.len());
         for param in &func_ast.params {
-            use oats_ast::*;
             // Only handle simple identifier parameters for now
             if !matches!(&param.pat, Pat::Ident(_)) {
                 continue; // Skip destructuring parameters
@@ -267,7 +269,6 @@ impl<'a> CodeGen<'a> {
     }
 
     fn collect_return_exprs_from_stmt(&self, stmt: &oats_ast::Stmt, out: &mut Vec<oats_ast::Expr>) {
-        use oats_ast::*;
         match stmt {
             Stmt::Return(ret) => {
                 if let Some(expr) = &ret.arg {

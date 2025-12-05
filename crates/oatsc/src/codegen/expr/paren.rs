@@ -22,12 +22,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
     #[allow(clippy::result_large_err)]
     pub(super) fn lower_paren_expr(
         &self,
-        paren: &oats_ast::ParenExpr,
+        paren: &oxc_ast::ast::ParenthesizedExpression<'_>,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals: &mut LocalsStackLocal<'a>,
     ) -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
         // Unwrap parenthesized expression
-        self.lower_expr(&paren.expr, function, param_map, locals)
+        self.lower_expr(&paren.expression, function, param_map, locals)
     }
 }

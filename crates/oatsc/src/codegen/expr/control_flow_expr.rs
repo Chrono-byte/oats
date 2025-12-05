@@ -23,7 +23,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
     #[allow(clippy::result_large_err)]
     pub(super) fn lower_cond_expr(
         &self,
-        cond: &oats_ast::CondExpr,
+        cond: &oxc_ast::ast::ConditionalExpression<'_>,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals: &mut LocalsStackLocal<'a>,
@@ -112,7 +112,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         }
                     };
                     let either = cs.try_as_basic_value();
-                    if let inkwell::Either::Left(bv) = either {
+                    if let either::Either::Left(bv) = either {
                         let len = bv.into_int_value();
                         let zero64 = self.i64_t.const_int(0, false);
                         let len_nonzero = match self.builder.build_int_compare(
@@ -171,19 +171,19 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
         // then
         self.builder.position_at_end(then_bb);
-        let then_val = self.lower_expr(&cond.cons, function, param_map, locals);
+        let then_val = self.lower_expr(&cond.consequent, function, param_map, locals);
 
         // else
         self.builder.position_at_end(else_bb);
-        let else_val = self.lower_expr(&cond.alt, function, param_map, locals);
+        let else_val = self.lower_expr(&cond.alternate, function, param_map, locals);
 
         // Fallback: if else arm failed to lower but is the identifier `undefined`,
         // treat it as a null pointer so ternaries like `x ? y : undefined` work.
         let else_val = match else_val {
             Ok(v) => Ok(v),
             Err(_) => {
-                if let oats_ast::Expr::Ident(id) = &*cond.alt {
-                    if id.sym == "undefined" {
+                if let oxc_ast::ast::Expression::Identifier(id) = &*cond.alternate {
+                    if id.name == "undefined" {
                         let null_ptr = self.i8ptr_t.const_null();
                         // else arm is `undefined` -> using null pointer fallback
                         Ok(null_ptr.as_basic_value_enum())
@@ -241,7 +241,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             let box_fn = codegen.get_union_box_f64();
                             let cs = codegen.builder.build_call(box_fn, &[fv.into()], "box_phi");
                             if let Ok(cs) = cs
-                                && let inkwell::Either::Left(bv2) = cs.try_as_basic_value()
+                                && let either::Either::Left(bv2) = cs.try_as_basic_value()
                             {
                                 return Ok(bv2);
                             }
@@ -262,7 +262,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     .builder
                                     .build_call(box_fn, &[as_f64.into()], "box_phi");
                             if let Ok(cs) = cs
-                                && let inkwell::Either::Left(bv2) = cs.try_as_basic_value()
+                                && let either::Either::Left(bv2) = cs.try_as_basic_value()
                             {
                                 return Ok(bv2);
                             }
@@ -330,7 +330,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         .builder
                         .build_call(unbox_fn, &[boxed_else.into()], "unbox_else");
                     if let Ok(cs) = cs
-                        && let inkwell::Either::Left(bv) = cs.try_as_basic_value()
+                        && let either::Either::Left(bv) = cs.try_as_basic_value()
                     {
                         let else_f64 = bv;
                         self.ensure_unconditional_branch(merge_bb);
@@ -469,7 +469,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         Err(Diagnostic::simple_with_span_boxed(
             Severity::Error,
             "unsupported conditional expression (ternary) form",
-            cond.span.start,
+            cond.span.start as usize,
         ))
     }
 }

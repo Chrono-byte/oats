@@ -96,7 +96,6 @@ impl<'a> crate::codegen::CodeGen<'a> {
         param_map: &HashMap<String, u32>,
         locals_stack: &mut LocalsStackLocal<'a>,
     ) -> crate::diagnostics::DiagnosticResult<bool> {
-        use oats_ast::*;
         // Push new scope for the loop (init vars live in this scope)
         locals_stack.push(HashMap::new());
 
@@ -200,7 +199,6 @@ impl<'a> crate::codegen::CodeGen<'a> {
         param_map: &HashMap<String, u32>,
         locals_stack: &mut LocalsStackLocal<'a>,
     ) -> crate::diagnostics::DiagnosticResult<bool> {
-        use oats_ast::*;
         // Create basic blocks
         let loop_cond_bb = self.context.append_basic_block(function, "while.cond");
         let loop_body_bb = self.context.append_basic_block(function, "while.body");
@@ -267,7 +265,6 @@ impl<'a> crate::codegen::CodeGen<'a> {
         param_map: &HashMap<String, u32>,
         locals_stack: &mut LocalsStackLocal<'a>,
     ) -> crate::diagnostics::DiagnosticResult<bool> {
-        use oats_ast::*;
         // Create basic blocks
         let loop_body_bb = self.context.append_basic_block(function, "dowhile.body");
         let loop_cond_bb = self.context.append_basic_block(function, "dowhile.cond");

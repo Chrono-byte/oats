@@ -193,7 +193,7 @@ impl<'a> super::CodeGen<'a> {
                         .build_call(unbox_fn, &[pv.into()], "union_unbox_f64_call")
                 {
                     let either = cs.try_as_basic_value();
-                    if let inkwell::Either::Left(bv) = either
+                    if let either::Either::Left(bv) = either
                         && let BasicValueEnum::FloatValue(fv) = bv
                     {
                         return Some(fv);
@@ -369,7 +369,7 @@ impl<'a> super::CodeGen<'a> {
                     BasicValueEnum::FloatValue(fv) => {
                         let box_fn = self.get_union_box_f64();
                         if let Ok(cs) = self.builder.build_call(box_fn, &[fv.into()], "box_for_phi")
-                            && let inkwell::Either::Left(bv2) = cs.try_as_basic_value()
+                            && let either::Either::Left(bv2) = cs.try_as_basic_value()
                         {
                             return Some(bv2);
                         }
@@ -386,7 +386,7 @@ impl<'a> super::CodeGen<'a> {
                         };
                         let box_fn = self.get_union_box_f64();
                         if let Ok(cs) = self.builder.build_call(box_fn, &[fv.into()], "box_for_phi")
-                            && let inkwell::Either::Left(bv2) = cs.try_as_basic_value()
+                            && let either::Either::Left(bv2) = cs.try_as_basic_value()
                         {
                             return Some(bv2);
                         }
@@ -723,16 +723,15 @@ impl<'a> super::CodeGen<'a> {
             .map_err(|_| {
                 crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "build_call failed")
             })?;
-        let malloc_ret = call_site
-            .try_as_basic_value()
-            .left()
-            .ok_or_else(|| {
-                crate::diagnostics::Diagnostic::simple_boxed(
+        let malloc_ret = match call_site.try_as_basic_value() {
+            either::Either::Left(bv) => bv.into_pointer_value(),
+            _ => {
+                return Err(crate::diagnostics::Diagnostic::simple_boxed(
                     Severity::Error,
                     "malloc call did not return a value",
-                )
-            })?
-            .into_pointer_value();
+                ));
+            }
+        };
 
         // Cast to i8* for stores
         let obj_ptr = self
@@ -966,16 +965,15 @@ impl<'a> super::CodeGen<'a> {
             .map_err(|_| {
                 crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "build_call failed")
             })?;
-        let malloc_ret = call_site
-            .try_as_basic_value()
-            .left()
-            .ok_or_else(|| {
-                crate::diagnostics::Diagnostic::simple_boxed(
+        let malloc_ret = match call_site.try_as_basic_value() {
+            either::Either::Left(bv) => bv.into_pointer_value(),
+            _ => {
+                return Err(crate::diagnostics::Diagnostic::simple_boxed(
                     Severity::Error,
                     "malloc call did not return a value",
-                )
-            })?
-            .into_pointer_value();
+                ));
+            }
+        };
 
         let obj_ptr = self
             .builder

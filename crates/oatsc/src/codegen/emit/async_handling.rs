@@ -5,7 +5,6 @@
 
 use crate::diagnostics::Severity;
 use inkwell::values::{BasicValue, FunctionValue};
-use oats_ast::*;
 use std::collections::{HashMap, HashSet};
 
 impl<'a> crate::codegen::CodeGen<'a> {
@@ -518,16 +517,15 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 ));
                             }
                         };
-                    let fv = cs
-                        .try_as_basic_value()
-                        .left()
-                        .ok_or_else(|| {
-                            crate::diagnostics::Diagnostic::simple_boxed(
+                    let fv = match cs.try_as_basic_value() {
+                        either::Either::Left(bv) => bv.into_float_value(),
+                        _ => {
+                            return Err(crate::diagnostics::Diagnostic::simple_boxed(
                                 Severity::Error,
                                 "unbox returned no value",
-                            )
-                        })?
-                        .into_float_value();
+                            ));
+                        }
+                    };
                     let _ = self.builder.build_store(alloca, fv.as_basic_value_enum());
                 }
                 _ => {
@@ -625,12 +623,15 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     "boxing failed",
                                 )
                             })?;
-                        cs.try_as_basic_value().left().ok_or_else(|| {
-                            crate::diagnostics::Diagnostic::simple_boxed(
-                                Severity::Error,
-                                "boxing returned no value",
-                            )
-                        })?
+                        match cs.try_as_basic_value() {
+                            either::Either::Left(bv) => bv,
+                            _ => {
+                                return Err(crate::diagnostics::Diagnostic::simple_boxed(
+                                    Severity::Error,
+                                    "boxing returned no value",
+                                ));
+                            }
+                        }
                     }
                     _ => {
                         let nullp = self.i8ptr_t.const_null();
@@ -696,16 +697,24 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 ));
             }
         };
-        let state_ptr_wrapper = cs
-            .try_as_basic_value()
-            .left()
-            .ok_or_else(|| {
-                crate::diagnostics::Diagnostic::simple_boxed(
+        let state_ptr_wrapper = match cs.try_as_basic_value() {
+            either::Either::Left(bv) => bv.into_pointer_value(),
+            _ => {
+                return Err(crate::diagnostics::Diagnostic::simple_boxed(
                     Severity::Error,
                     "malloc failed for state",
-                )
-            })?
-            .into_pointer_value();
+                ));
+            }
+        };
+        let state_ptr_wrapper = match cs.try_as_basic_value() {
+            either::Either::Left(bv) => bv.into_pointer_value(),
+            _ => {
+                return Err(crate::diagnostics::Diagnostic::simple_boxed(
+                    Severity::Error,
+                    "malloc failed for state",
+                ));
+            }
+        };
 
         // store poll function pointer at offset 0 (first word of state)
         // cast poll_f to i8* and store at state_ptr
@@ -807,16 +816,15 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 ));
                             }
                         };
-                        let boxed_ptr = cs
-                            .try_as_basic_value()
-                            .left()
-                            .ok_or_else(|| {
-                                crate::diagnostics::Diagnostic::simple_boxed(
+                        let boxed_ptr = match cs.try_as_basic_value() {
+                            either::Either::Left(bv) => bv.into_pointer_value(),
+                            _ => {
+                                return Err(crate::diagnostics::Diagnostic::simple_boxed(
                                     Severity::Error,
                                     "boxing returned no value",
-                                )
-                            })?
-                            .into_pointer_value();
+                                ));
+                            }
+                        };
                         let _ = self
                             .builder
                             .build_store(slot_ptr, boxed_ptr.as_basic_value_enum());
@@ -845,12 +853,15 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     "promise_new_from_state call failed in wrapper",
                 )
             })?;
-        let pres_val = pres_cs.try_as_basic_value().left().ok_or_else(|| {
-            crate::diagnostics::Diagnostic::simple_boxed(
-                Severity::Error,
-                "promise_new_from_state returned no value in wrapper",
-            )
-        })?;
+        let pres_val = match pres_cs.try_as_basic_value() {
+            either::Either::Left(bv) => bv,
+            _ => {
+                return Err(crate::diagnostics::Diagnostic::simple_boxed(
+                    Severity::Error,
+                    "promise_new_from_state returned no value in wrapper",
+                ));
+            }
+        };
 
         // Enqueue the promise (executor will schedule it)
         let enq = self.get_executor_enqueue();
@@ -996,16 +1007,15 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                 );
                                             }
                                         };
-                                        let fv = cs
-                                            .try_as_basic_value()
-                                            .left()
-                                            .ok_or_else(|| {
-                                                crate::diagnostics::Diagnostic::simple_boxed(
+                                        let fv = match cs.try_as_basic_value() {
+                                            either::Either::Left(bv) => bv.into_float_value(),
+                                            _ => {
+                                                return Err(crate::diagnostics::Diagnostic::simple_boxed(
                                                     Severity::Error,
                                                     "unbox returned no value when resuming locals",
-                                                )
-                                            })?
-                                            .into_float_value();
+                                                ));
+                                            }
+                                        };
                                         let _ = self
                                             .builder
                                             .build_store(alloca_ptr, fv.as_basic_value_enum());

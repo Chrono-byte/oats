@@ -5,7 +5,6 @@
 use crate::codegen::emit::LocalsStackLocal;
 use crate::diagnostics::Severity;
 use inkwell::values::BasicValue;
-use oats_ast::*;
 use std::collections::HashMap;
 
 impl<'a> crate::codegen::CodeGen<'a> {
@@ -208,16 +207,15 @@ impl<'a> crate::codegen::CodeGen<'a> {
             .map_err(|_| {
                 crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "build_call failed")
             })?;
-        let malloc_ret = call_site
-            .try_as_basic_value()
-            .left()
-            .ok_or_else(|| {
-                crate::diagnostics::Diagnostic::simple_boxed(
+        let malloc_ret = match call_site.try_as_basic_value() {
+            either::Either::Left(bv) => bv.into_pointer_value(),
+            _ => {
+                return Err(crate::diagnostics::Diagnostic::simple_boxed(
                     Severity::Error,
                     "malloc call did not return a value",
-                )
-            })?
-            .into_pointer_value();
+                ));
+            }
+        };
 
         // Set header with cycle bit
         let header_ptr = self
@@ -411,7 +409,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 "union_box_f64_ctor",
                             );
                             if let Ok(cs) = cs
-                                && let inkwell::Either::Left(bv) = cs.try_as_basic_value()
+                                && let either::Either::Left(bv) = cs.try_as_basic_value()
                             {
                                 let boxed_ptr = bv.into_pointer_value();
                                 let boxed_bv =
@@ -438,7 +436,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 "union_box_ptr_ctor",
                             );
                             if let Ok(cs) = cs
-                                && let inkwell::Either::Left(bv) = cs.try_as_basic_value()
+                                && let either::Either::Left(bv) = cs.try_as_basic_value()
                             {
                                 let boxed_ptr = bv.into_pointer_value();
                                 let boxed_bv =
@@ -639,16 +637,15 @@ impl<'a> crate::codegen::CodeGen<'a> {
             .map_err(|_| {
                 crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "build_call failed")
             })?;
-        let malloc_ret2 = call_site2
-            .try_as_basic_value()
-            .left()
-            .ok_or_else(|| {
-                crate::diagnostics::Diagnostic::simple_boxed(
+        let malloc_ret2 = match call_site2.try_as_basic_value() {
+            either::Either::Left(bv) => bv.into_pointer_value(),
+            _ => {
+                return Err(crate::diagnostics::Diagnostic::simple_boxed(
                     Severity::Error,
                     "malloc call did not return a value",
-                )
-            })?
-            .into_pointer_value();
+                ));
+            }
+        };
 
         // Set header with cycle bit
         let header_ptr = self
@@ -679,12 +676,15 @@ impl<'a> crate::codegen::CodeGen<'a> {
             .map_err(|_| {
                 crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "build_call failed")
             })?;
-        let init_result = call_init.try_as_basic_value().left().ok_or_else(|| {
-            crate::diagnostics::Diagnostic::simple_boxed(
-                Severity::Error,
-                "init call did not return a value",
-            )
-        })?;
+        let init_result = match call_init.try_as_basic_value() {
+            either::Either::Left(bv) => bv,
+            _ => {
+                return Err(crate::diagnostics::Diagnostic::simple_boxed(
+                    Severity::Error,
+                    "init call did not return a value",
+                ));
+            }
+        };
         let _ = self.builder.build_return(Some(&init_result));
 
         // Build the public wrapper `fname` which will apply decorators (if any)
@@ -716,7 +716,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     self.builder
                         .build_call(deco_fn, &[current_ctor_ptr.into()], "apply_decorator");
                 if let Ok(cs) = call_site
-                    && let inkwell::Either::Left(bv) = cs.try_as_basic_value()
+                    && let either::Either::Left(bv) = cs.try_as_basic_value()
                 {
                     current_ctor_ptr = bv.into_pointer_value();
                 }
@@ -745,7 +745,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         // get the returned basic value (ctor returns an i8*). Return null on
         // any failure to be conservative.
         if let Ok(cs) = call_res {
-            if let inkwell::Either::Left(bv) = cs.try_as_basic_value() {
+            if let either::Either::Left(bv) = cs.try_as_basic_value() {
                 let ret_val = bv;
                 let _ = self.builder.build_return(Some(&ret_val));
             } else {

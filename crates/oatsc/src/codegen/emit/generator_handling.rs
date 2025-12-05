@@ -5,7 +5,6 @@
 
 use crate::diagnostics::Severity;
 use inkwell::values::{BasicValue, FunctionValue};
-use oats_ast::*;
 use std::collections::{HashMap, HashSet};
 
 impl<'a> crate::codegen::CodeGen<'a> {
@@ -14,7 +13,6 @@ impl<'a> crate::codegen::CodeGen<'a> {
     /// This walks through statements and identifies which statements contain yield expressions.
     /// Returns a vector of statement indices where yields occur.
     fn find_yield_positions_in_stmts(&self, stmts: &[Stmt]) -> Vec<usize> {
-        use oats_ast::*;
 
         fn contains_yield_expr(expr: &Expr) -> bool {
             match expr {
@@ -903,16 +901,15 @@ impl<'a> crate::codegen::CodeGen<'a> {
             }
         };
 
-        let state_ptr_wrapper = cs
-            .try_as_basic_value()
-            .left()
-            .ok_or_else(|| {
-                crate::diagnostics::Diagnostic::simple_boxed(
+        let state_ptr_wrapper = match cs.try_as_basic_value() {
+            either::Either::Left(bv) => bv.into_pointer_value(),
+            _ => {
+                return Err(crate::diagnostics::Diagnostic::simple_boxed(
                     Severity::Error,
                     "malloc returned no value",
-                )
-            })?
-            .into_pointer_value();
+                ));
+            }
+        };
 
         // Store next function pointer at offset 0
         let next_fn_ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
@@ -1034,16 +1031,15 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 "union_box_f64 call failed",
                             )
                         })?;
-                    let boxed_ptr = cs
-                        .try_as_basic_value()
-                        .left()
-                        .ok_or_else(|| {
-                            crate::diagnostics::Diagnostic::simple_boxed(
+                    let boxed_ptr = match cs.try_as_basic_value() {
+                        either::Either::Left(bv) => bv.into_pointer_value(),
+                        _ => {
+                            return Err(crate::diagnostics::Diagnostic::simple_boxed(
                                 Severity::Error,
                                 "boxing returned no value",
-                            )
-                        })?
-                        .into_pointer_value();
+                            ));
+                        }
+                    };
                     let f64_ptr = self
                         .builder
                         .build_pointer_cast(

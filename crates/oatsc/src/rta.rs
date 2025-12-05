@@ -18,7 +18,6 @@
 //! The analysis results are consumed by the code generator to perform optimizations.
 
 use crate::parser::ParsedModule;
-use oats_ast::*;
 use std::collections::{HashMap, HashSet, VecDeque};
 
 /// Represents the class hierarchy as a directed graph.

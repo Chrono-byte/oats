@@ -6,7 +6,6 @@
 use crate::codegen::CodeGen;
 use crate::diagnostics::Diagnostic;
 use inkwell::values::{BasicValue, BasicValueEnum, FunctionValue};
-use oats_ast::*;
 use std::collections::HashMap;
 
 type LocalEntry<'a> = (
@@ -86,7 +85,7 @@ impl<'a> CodeGen<'a> {
                     .builder
                     .build_call(box_fn, &[fv.into()], "box_yield_f64")
                     .map_err(|_| Diagnostic::error("box call failed"))?;
-                if let inkwell::Either::Left(bv) = cs.try_as_basic_value() {
+                if let either::Either::Left(bv) = cs.try_as_basic_value() {
                     bv
                 } else {
                     return Err(Diagnostic::simple_boxed(
@@ -390,7 +389,7 @@ impl<'a> CodeGen<'a> {
                 )
             })?;
 
-        let result_val = if let inkwell::Either::Left(bv) = call_result.try_as_basic_value() {
+        let result_val = if let either::Either::Left(bv) = call_result.try_as_basic_value() {
             if let BasicValueEnum::IntValue(iv) = bv {
                 iv
             } else {

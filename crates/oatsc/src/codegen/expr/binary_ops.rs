@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use inkwell::builder::Builder;
 use inkwell::types::BasicTypeEnum;
 use inkwell::values::{BasicValue, PointerValue};
-use oats_ast::*;
+use oxc_ast::ast::*;
 
 // LocalEntry now includes an Option<String> for an optional nominal type name
 // LocalEntry now includes an Option<OatsType> for union tracking
@@ -25,7 +25,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
     #[allow(clippy::result_large_err)]
     pub(super) fn lower_binary_expr(
         &self,
-        bin: &oats_ast::BinExpr,
+        bin: &oxc_ast::ast::BinaryExpression<'_>,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals: &mut LocalsStackLocal<'a>,
@@ -40,12 +40,13 @@ impl<'a> crate::codegen::CodeGen<'a> {
         // discriminant instead of performing a heavier dynamic check.
         // This keeps the emitted IR small for the common guarded
         // branches used in tests and examples.
-        if let Expr::Unary(unary) = &*bin.left
-            && let UnaryOp::TypeOf = unary.op
-            && let Expr::Lit(Lit::Str(s)) = &*bin.right
+        if let Expression::UnaryExpression(unary) = &*bin.left
+            && let UnaryOperator::Typeof = unary.operator
+            && let Expression::StringLiteral(s_lit) = &*bin.right
         {
             // Lower inner expression and then check union discriminant if it's a pointer
-            let inner = self.lower_expr(&unary.arg, function, param_map, locals)?;
+            let inner = self.lower_expr(&unary.operand, function, param_map, locals)?;
+            let s = s_lit.value.to_string();
             if let BasicValueEnum::PointerValue(pv) = inner {
                 // For pointer-like values, consult the union discriminant helper.
                 // Runtime layout: union-boxed objects expose a small tag (discriminant)
@@ -58,7 +59,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 let get_disc = self.get_union_get_discriminant();
                 let cs = self.builder.build_call(get_disc, &[pv.into()], "get_disc");
                 if let Ok(cs) = cs
-                    && let inkwell::Either::Left(bv) = cs.try_as_basic_value()
+                    && let either::Either::Left(bv) = cs.try_as_basic_value()
                 {
                     let disc = bv.into_int_value();
                     let expected = match s.as_str() {
@@ -87,7 +88,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
         // Handle string concatenation BEFORE numeric coercion
         // If both operands are pointers and op is Add, treat as string concat
-        if let BinaryOp::Plus = bin.op
+        if let BinaryOperator::Addition = bin.operator
             && let (BasicValueEnum::PointerValue(lp), BasicValueEnum::PointerValue(rp)) = (l, r)
         {
             if let Some(strcat) = self.module.get_function("str_concat") {
@@ -106,7 +107,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     };
                 let either = call_site.try_as_basic_value();
                 match either {
-                    inkwell::Either::Left(bv) => {
+                    either::Either::Left(bv) => {
                         // After creating the concatenated string, decrement
                         // temporary operands that didn't originate from locals.
                         if left_origin.is_none()
@@ -155,34 +156,34 @@ impl<'a> crate::codegen::CodeGen<'a> {
         let float_bin = |builder: &Builder<'a>,
                          lf: inkwell::values::FloatValue<'a>,
                          rf: inkwell::values::FloatValue<'a>,
-                         op: &BinaryOp|
+                         op: &BinaryOperator|
          -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
             match op {
-                BinaryOp::Plus => {
+                BinaryOperator::Addition => {
                     let v = builder
                         .build_float_add(lf, rf, "sum")
                         .map_err(|_| Diagnostic::error("float add failed"))?;
                     Ok(v.as_basic_value_enum())
                 }
-                BinaryOp::Minus => {
+                BinaryOperator::Subtraction => {
                     let v = builder
                         .build_float_sub(lf, rf, "sub")
                         .map_err(|_| Diagnostic::error("float sub failed"))?;
                     Ok(v.as_basic_value_enum())
                 }
-                BinaryOp::Mul => {
+                BinaryOperator::Multiplication => {
                     let v = builder
                         .build_float_mul(lf, rf, "mul")
                         .map_err(|_| Diagnostic::error("float mul failed"))?;
                     Ok(v.as_basic_value_enum())
                 }
-                BinaryOp::Div => {
+                BinaryOperator::Division => {
                     let v = builder
                         .build_float_div(lf, rf, "div")
                         .map_err(|_| Diagnostic::error("float div failed"))?;
                     Ok(v.as_basic_value_enum())
                 }
-                BinaryOp::Mod => {
+                BinaryOperator::Remainder => {
                     let v = builder
                         .build_float_rem(lf, rf, "rem")
                         .map_err(|_| Diagnostic::error("float rem failed"))?;
@@ -199,15 +200,15 @@ impl<'a> crate::codegen::CodeGen<'a> {
         let float_cmp = |builder: &Builder<'a>,
                          lf: inkwell::values::FloatValue<'a>,
                          rf: inkwell::values::FloatValue<'a>,
-                         op: &BinaryOp|
+                         op: &BinaryOperator|
          -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
             let pred = match op {
-                BinaryOp::Lt => FloatPredicate::OLT,
-                BinaryOp::LtEq => FloatPredicate::OLE,
-                BinaryOp::Gt => FloatPredicate::OGT,
-                BinaryOp::GtEq => FloatPredicate::OGE,
-                BinaryOp::EqEq => FloatPredicate::OEQ,
-                BinaryOp::NotEq => FloatPredicate::ONE,
+                BinaryOperator::LessThan => FloatPredicate::OLT,
+                BinaryOperator::LessEqualThan => FloatPredicate::OLE,
+                BinaryOperator::GreaterThan => FloatPredicate::OGT,
+                BinaryOperator::GreaterEqualThan => FloatPredicate::OGE,
+                BinaryOperator::Equality => FloatPredicate::OEQ,
+                BinaryOperator::Inequality => FloatPredicate::ONE,
                 _ => {
                     return Err(Diagnostic::simple_boxed(
                         Severity::Error,
@@ -223,10 +224,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
         // Try float path by coercing ints/bools to float as needed
         if let (Some(lf), Some(rf)) = (self.coerce_to_f64(l), self.coerce_to_f64(r)) {
-            if let Ok(v) = float_bin(&self.builder, lf, rf, &bin.op) {
+            if let Ok(v) = float_bin(&self.builder, lf, rf, &bin.operator) {
                 return Ok(v);
             }
-            if let Ok(v) = float_cmp(&self.builder, lf, rf, &bin.op) {
+            if let Ok(v) = float_cmp(&self.builder, lf, rf, &bin.operator) {
                 return Ok(v);
             }
         }
@@ -247,7 +248,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         // two incoming values to a common ABI representation; `build_phi_merge`
         // performs those coercions conservatively (boxing numeric values
         // if the other arm expects a pointer-like value, etc.).
-        if let BinaryOp::And = bin.op {
+        if let BinaryOperator::LogicalAND = bin.operator {
             // a && b -> if a truthy then b else a
             let left_val = l;
             let cond = self
@@ -307,7 +308,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 "expression lowering failed",
             ))?;
         }
-        if let BinaryOp::Or = bin.op {
+        if let BinaryOperator::LogicalOR = bin.operator {
             // `||` mirrors `&&` but keeps the left value when truthy.
             // a || b -> if a truthy then a else b
             let left_val = l;
@@ -362,7 +363,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         match (l, r) {
             (BasicValueEnum::PointerValue(lp), BasicValueEnum::PointerValue(rp)) => {
                 // Keep string concat behavior for Add
-                if let BinaryOp::Plus = bin.op {
+                if let BinaryOperator::Addition = bin.operator {
                     if let Some(strcat) = self.module.get_function("str_concat") {
                         let call_site =
                             match self
@@ -379,7 +380,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             };
                         let either = call_site.try_as_basic_value();
                         match either {
-                            inkwell::Either::Left(bv) => Ok(bv),
+                            either::Either::Left(bv) => Ok(bv),
                             _ => Err(Diagnostic::simple_boxed(
                                 Severity::Error,
                                 "operation not supported (bin strcat result)",
@@ -389,14 +390,14 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         Err(Diagnostic::simple_with_span_boxed(
                             Severity::Error,
                             "string concatenation helper `str_concat` not found",
-                            bin.span.start,
+                            bin.span.start as usize,
                         ))
                     }
                 } else {
                     Err(Diagnostic::simple_with_span_boxed(
                         Severity::Error,
                         "pointer binary operation not supported",
-                        bin.span.start,
+                        bin.span.start as usize,
                     ))
                 }
             }
@@ -411,7 +412,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
     /// This is used for compound assignments where we need to operate on loaded values.
     pub(super) fn lower_binary_expr_with_values(
         &self,
-        op: &BinaryOp,
+        op: &BinaryOperator,
         left: BasicValueEnum<'a>,
         right: BasicValueEnum<'a>,
         _function: FunctionValue<'a>,
@@ -422,40 +423,40 @@ impl<'a> crate::codegen::CodeGen<'a> {
         let float_bin = |builder: &Builder<'a>,
                          lf: inkwell::values::FloatValue<'a>,
                          rf: inkwell::values::FloatValue<'a>,
-                         op: &BinaryOp|
+                         op: &BinaryOperator|
          -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
             match op {
-                BinaryOp::Plus => {
+                BinaryOperator::Addition => {
                     let v = builder
                         .build_float_add(lf, rf, "sum")
                         .map_err(|_| Diagnostic::error("float add failed"))?;
                     Ok(v.as_basic_value_enum())
                 }
-                BinaryOp::Minus => {
+                BinaryOperator::Subtraction => {
                     let v = builder
                         .build_float_sub(lf, rf, "sub")
                         .map_err(|_| Diagnostic::error("float sub failed"))?;
                     Ok(v.as_basic_value_enum())
                 }
-                BinaryOp::Mul => {
+                BinaryOperator::Multiplication => {
                     let v = builder
                         .build_float_mul(lf, rf, "mul")
                         .map_err(|_| Diagnostic::error("float mul failed"))?;
                     Ok(v.as_basic_value_enum())
                 }
-                BinaryOp::Div => {
+                BinaryOperator::Division => {
                     let v = builder
                         .build_float_div(lf, rf, "div")
                         .map_err(|_| Diagnostic::error("float div failed"))?;
                     Ok(v.as_basic_value_enum())
                 }
-                BinaryOp::Mod => {
+                BinaryOperator::Remainder => {
                     let v = builder
                         .build_float_rem(lf, rf, "rem")
                         .map_err(|_| Diagnostic::error("float rem failed"))?;
                     Ok(v.as_basic_value_enum())
                 }
-                BinaryOp::Exp => {
+                BinaryOperator::Exponential => {
                     // Exponentiation: use standard library pow function
                     // Declare pow(double, double) -> double if not already declared
                     let pow_fn = self.module.get_function("pow").unwrap_or_else(|| {
@@ -470,7 +471,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         .build_call(pow_fn, &[lf.into(), rf.into()], "pow_call")
                         .map_err(|_| Diagnostic::error("pow call failed"))?;
 
-                    if let inkwell::Either::Left(bv) = call_site.try_as_basic_value() {
+                    if let either::Either::Left(bv) = call_site.try_as_basic_value() {
                         Ok(bv)
                     } else {
                         Err(Diagnostic::simple_boxed(
@@ -496,7 +497,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         // Handle integer bitwise operations
         if let (BasicValueEnum::IntValue(li), BasicValueEnum::IntValue(ri)) = (left, right) {
             match op {
-                BinaryOp::LShift => {
+                BinaryOperator::ShiftLeft => {
                     // Ensure both are i64 for shift operations
                     let li64 = if li.get_type().get_bit_width() < 64 {
                         self.builder
@@ -518,7 +519,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         .map_err(|_| Diagnostic::error("left shift failed"))?;
                     Ok(v.as_basic_value_enum())
                 }
-                BinaryOp::RShift => {
+                BinaryOperator::ShiftRight => {
                     let li64 = if li.get_type().get_bit_width() < 64 {
                         self.builder
                             .build_int_s_extend(li, self.i64_t, "rshift_left")
@@ -539,7 +540,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         .map_err(|_| Diagnostic::error("right shift failed"))?;
                     Ok(v.as_basic_value_enum())
                 }
-                BinaryOp::URShift => {
+                BinaryOperator::UnsignedShiftRight => {
                     let li64 = if li.get_type().get_bit_width() < 64 {
                         self.builder
                             .build_int_z_extend(li, self.i64_t, "urshift_left")
@@ -560,7 +561,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         .map_err(|_| Diagnostic::error("unsigned right shift failed"))?;
                     Ok(v.as_basic_value_enum())
                 }
-                BinaryOp::BitwiseAnd => {
+                BinaryOperator::BitwiseAND => {
                     let li64 = if li.get_type().get_bit_width() < 64 {
                         self.builder
                             .build_int_s_extend(li, self.i64_t, "and_left")
@@ -581,7 +582,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         .map_err(|_| Diagnostic::error("bitwise and failed"))?;
                     Ok(v.as_basic_value_enum())
                 }
-                BinaryOp::BitwiseOr => {
+                BinaryOperator::BitwiseOR => {
                     let li64 = if li.get_type().get_bit_width() < 64 {
                         self.builder
                             .build_int_s_extend(li, self.i64_t, "or_left")
@@ -602,7 +603,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         .map_err(|_| Diagnostic::error("bitwise or failed"))?;
                     Ok(v.as_basic_value_enum())
                 }
-                BinaryOp::BitwiseXor => {
+                BinaryOperator::BitwiseXOR => {
                     let li64 = if li.get_type().get_bit_width() < 64 {
                         self.builder
                             .build_int_s_extend(li, self.i64_t, "xor_left")

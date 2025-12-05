@@ -4,7 +4,6 @@ use crate::types::OatsType;
 use inkwell::AddressSpace;
 use inkwell::types::BasicTypeEnum;
 use inkwell::values::{BasicValue, BasicValueEnum, PointerValue};
-use oats_ast::*;
 use std::collections::HashMap;
 
 type LocalEntry<'a> = (
@@ -86,7 +85,7 @@ impl<'a> CodeGen<'a> {
                         }
                     };
                     let either = cs.try_as_basic_value();
-                    if let inkwell::Either::Left(bv) = either {
+                    if let either::Either::Left(bv) = either {
                         Ok(bv)
                     } else {
                         let zero = self.f64_t.const_float(0.0);
@@ -123,7 +122,6 @@ impl<'a> CodeGen<'a> {
                         // treat it as a potential std namespace (e.g. `Math.max`).
                         if self.find_local(locals, &obj_name).is_some() {
                             // Handle as complex member call on a local value.
-                            use oats_ast::*;
 
                             // Support both direct property access (obj.prop()) and computed property access (obj[prop]())
                             let method_name = match &member.prop {
@@ -215,7 +213,7 @@ impl<'a> CodeGen<'a> {
                                             "rc_weak_upgrade_call",
                                         );
                                         if let Ok(cs) = cs
-                                            && let inkwell::Either::Left(bv) =
+                                            && let either::Either::Left(bv) =
                                                 cs.try_as_basic_value()
                                         {
                                             return Ok(bv);
@@ -284,7 +282,7 @@ impl<'a> CodeGen<'a> {
                                             }
                                         };
                                         let either = cs.try_as_basic_value();
-                                        if let inkwell::Either::Left(bv) = either {
+                                        if let either::Either::Left(bv) = either {
                                             return Ok(bv);
                                         } else {
                                             let zero = self.f64_t.const_float(0.0);
@@ -387,7 +385,7 @@ impl<'a> CodeGen<'a> {
                                         }
                                     };
                                     match cs.try_as_basic_value() {
-                                        inkwell::Either::Left(bv) => bv,
+                                        either::Either::Left(bv) => bv,
                                         _ => {
                                             return Err(Diagnostic::simple_boxed(
                                                 Severity::Error,
@@ -418,7 +416,7 @@ impl<'a> CodeGen<'a> {
                                 }
                             };
                             match cs.try_as_basic_value() {
-                                inkwell::Either::Left(bv) => Ok(bv),
+                                either::Either::Left(bv) => Ok(bv),
                                 _ => Err(Diagnostic::simple_boxed(
                                     Severity::Error,
                                     "promise_resolve returned non-value",
@@ -453,7 +451,7 @@ impl<'a> CodeGen<'a> {
                                         }
                                     };
                                 let either = cs.try_as_basic_value();
-                                if let inkwell::Either::Left(bv) = either {
+                                if let either::Either::Left(bv) = either {
                                     Ok(bv)
                                 } else {
                                     let zero = self.f64_t.const_float(0.0);
@@ -469,7 +467,6 @@ impl<'a> CodeGen<'a> {
                         }
                     } else {
                         // Handle complex member calls (obj.method())
-                        use oats_ast::*;
                         if let MemberProp::Ident(prop_ident) = &member.prop {
                             let method_name = prop_ident.sym.clone();
 
@@ -520,7 +517,7 @@ impl<'a> CodeGen<'a> {
                                             }
                                         };
                                         match cs.try_as_basic_value() {
-                                            inkwell::Either::Left(bv) => bv,
+                                            either::Either::Left(bv) => bv,
                                             _ => {
                                                 return Err(Diagnostic::simple_boxed(
                                                     Severity::Error,
@@ -551,7 +548,7 @@ impl<'a> CodeGen<'a> {
                                     }
                                 };
                                 match cs.try_as_basic_value() {
-                                    inkwell::Either::Left(bv) => return Ok(bv),
+                                    either::Either::Left(bv) => return Ok(bv),
                                     _ => {
                                         return Err(Diagnostic::simple_boxed(
                                             Severity::Error,
@@ -604,7 +601,7 @@ impl<'a> CodeGen<'a> {
                                             "rc_weak_upgrade_call",
                                         );
                                         if let Ok(cs) = cs
-                                            && let inkwell::Either::Left(bv) =
+                                            && let either::Either::Left(bv) =
                                                 cs.try_as_basic_value()
                                         {
                                             return Ok(bv);
@@ -681,7 +678,7 @@ impl<'a> CodeGen<'a> {
                                             }
                                         };
                                         let either = cs.try_as_basic_value();
-                                        if let inkwell::Either::Left(bv) = either {
+                                        if let either::Either::Left(bv) = either {
                                             return Ok(bv);
                                         } else {
                                             let zero = self.f64_t.const_float(0.0);
@@ -718,7 +715,7 @@ impl<'a> CodeGen<'a> {
                                         .build_call(method_fn, &call_args, "method_call");
                                 if let Ok(cs) = cs {
                                     let either = cs.try_as_basic_value();
-                                    if let inkwell::Either::Left(bv) = either {
+                                    if let either::Either::Left(bv) = either {
                                         Ok(bv)
                                     } else {
                                         let zero = self.f64_t.const_float(0.0);
@@ -773,7 +770,7 @@ impl<'a> CodeGen<'a> {
                                 }
                             };
                             let either = cs.try_as_basic_value();
-                            if let inkwell::Either::Left(bv) = either {
+                            if let either::Either::Left(bv) = either {
                                 return Ok(bv);
                             } else {
                                 let zero = self.f64_t.const_float(0.0);
@@ -830,7 +827,7 @@ impl<'a> CodeGen<'a> {
                                                 }
                                             };
                                             let either = cs.try_as_basic_value();
-                                            if let inkwell::Either::Left(bv) = either {
+                                            if let either::Either::Left(bv) = either {
                                                 return Ok(bv);
                                             } else {
                                                 let zero = self.f64_t.const_float(0.0);
@@ -1055,7 +1052,7 @@ impl<'a> CodeGen<'a> {
                                     }
                                 };
                                 let either = cs.try_as_basic_value();
-                                if let inkwell::Either::Left(bv) = either {
+                                if let either::Either::Left(bv) = either {
                                     // clear origin marker
                                     self.last_expr_origin_local.borrow_mut().take();
                                     return Ok(bv);
@@ -1248,7 +1245,7 @@ impl<'a> CodeGen<'a> {
                 }
             };
             let either = cs.try_as_basic_value();
-            if let inkwell::Either::Left(bv) = either {
+            if let either::Either::Left(bv) = either {
                 Ok(bv)
             } else {
                 let zero = self.f64_t.const_float(0.0);

@@ -22,7 +22,7 @@ type LocalsStackLocal<'a> = Vec<HashMap<String, LocalEntry<'a>>>;
 impl<'a> crate::codegen::CodeGen<'a> {
     pub(super) fn lower_this_expr(
         &self,
-        this_expr: &oats_ast::ThisExpr,
+        this_expr: &oxc_ast::ast::ThisExpression,
         function: FunctionValue<'a>,
         _param_map: &HashMap<String, u32>,
         _locals: &mut LocalsStackLocal<'a>,
@@ -38,7 +38,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             Err(Diagnostic::simple_with_span_boxed(
                 Severity::Error,
                 "'this' used in function with no parameters",
-                this_expr.span.start,
+                this_expr.span.start as usize,
             ))
         }
     }

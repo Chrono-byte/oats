@@ -30,7 +30,6 @@ impl<'a> crate::codegen::CodeGen<'a> {
         param_map: &HashMap<String, u32>,
         locals_stack: &mut LocalsStackLocal<'a>,
     ) -> crate::diagnostics::DiagnosticResult<bool> {
-        use oats_ast::*;
         // Only handle the case where the left-hand side is a var
         // declaration (e.g., `for (let v of rhs)`).
         // forof.left can be either a VarDecl or a Pat; we match on VarDecl
@@ -114,7 +113,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             Ok(cs) => cs,
                             Err(_) => return Ok(false),
                         };
-                        if let inkwell::Either::Left(bv) = cs.try_as_basic_value() {
+                        if let either::Either::Left(bv) = cs.try_as_basic_value() {
                             let len = bv.into_int_value();
                             let cur_idx =
                                 match self.builder.build_load(self.i64_t, idx_alloca, "idx_load") {
@@ -168,7 +167,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             Ok(cs) => cs,
                             Err(_) => return Ok(false),
                         };
-                        if let inkwell::Either::Left(bv) = cs.try_as_basic_value() {
+                        if let either::Either::Left(bv) = cs.try_as_basic_value() {
                             let ty = bv.get_type().as_basic_type_enum();
                             let alloca = match self.builder.build_alloca(ty, &loop_var_name) {
                                 Ok(a) => a,
@@ -208,7 +207,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             Ok(cs) => cs,
                             Err(_) => return Ok(false),
                         };
-                        if let inkwell::Either::Left(bv) = cs.try_as_basic_value() {
+                        if let either::Either::Left(bv) = cs.try_as_basic_value() {
                             let pv = bv.into_pointer_value();
                             let ty = pv.get_type().as_basic_type_enum();
                             let alloca = match self.builder.build_alloca(ty, &loop_var_name) {

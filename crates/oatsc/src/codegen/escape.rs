@@ -1,4 +1,3 @@
-use oats_ast::*;
 use std::collections::{HashMap, HashSet};
 
 /// Escape analysis results for a function.

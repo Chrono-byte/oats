@@ -22,17 +22,17 @@ type LocalsStackLocal<'a> = Vec<HashMap<String, LocalEntry<'a>>>;
 impl<'a> crate::codegen::CodeGen<'a> {
     pub(super) fn lower_unary_expr(
         &self,
-        unary: &oats_ast::UnaryExpr,
+        unary: &oxc_ast::ast::UnaryExpression<'_>,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals: &mut LocalsStackLocal<'a>,
     ) -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
         // Handle unary operators: -, +, !, ~, typeof
-        use oats_ast::*;
+        use oxc_ast::ast::*;
 
         // Short-circuit typeof since it returns a string literal based on runtime kind
-        if matches!(unary.op, UnaryOp::TypeOf) {
-            let inner = self.lower_expr(&unary.arg, function, param_map, locals)?;
+        if matches!(unary.operator, UnaryOperator::Typeof) {
+            let inner = self.lower_expr(&unary.operand, function, param_map, locals)?;
             // If we can coerce to f64 (including union-unboxed numbers), it's a number
             if self.coerce_to_f64(inner).is_some() {
                 let ptr = self.intern_string_literal("number");
@@ -52,7 +52,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     .build_call(disc_fn, &[pv.into()], "union_get_disc");
                 let cs = call_site
                     .map_err(|_| Diagnostic::error("failed to call union_get_discriminant"))?;
-                if let inkwell::Either::Left(bv) = cs.try_as_basic_value() {
+                if let either::Either::Left(bv) = cs.try_as_basic_value() {
                     let disc = bv.into_int_value();
                     // Compare disc to constants: 0 -> number, 1 -> string, 2 -> boolean
                     let zero = self.i64_t.const_int(0, false);
@@ -117,10 +117,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
             return Ok(ptr.as_basic_value_enum());
         }
 
-        let arg_val = self.lower_expr(&unary.arg, function, param_map, locals)?;
+        let arg_val = self.lower_expr(&unary.operand, function, param_map, locals)?;
 
-        match unary.op {
-            UnaryOp::Minus => {
+        match unary.operator {
+            UnaryOperator::UnaryNegation => {
                 // Unary minus: negate the value
                 if let Some(fv) = self.coerce_to_f64(arg_val) {
                     let neg = self
@@ -135,7 +135,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     ))
                 }
             }
-            UnaryOp::Plus => {
+            UnaryOperator::UnaryPlus => {
                 // Unary plus: coerce to number (no-op for numbers)
                 if let Some(fv) = self.coerce_to_f64(arg_val) {
                     Ok(fv.as_basic_value_enum())
@@ -146,7 +146,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     ))
                 }
             }
-            UnaryOp::Not => {
+            UnaryOperator::LogicalNot => {
                 // Logical NOT: convert to boolean and negate using XOR
                 let cond = self
                     .to_condition_i1(arg_val)
@@ -158,7 +158,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     .map_err(|_| Diagnostic::error("LLVM builder error"))?;
                 Ok(not.as_basic_value_enum())
             }
-            UnaryOp::BitwiseNot => {
+            UnaryOperator::BitwiseNot => {
                 // Bitwise NOT: convert to integer, apply NOT, convert back
                 if let Some(fv) = self.coerce_to_f64(arg_val) {
                     // Convert to i32
@@ -184,19 +184,19 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     ))
                 }
             }
-            UnaryOp::Void => {
+            UnaryOperator::Void => {
                 // Void operator: evaluate expression, return undefined (null pointer)
                 // Evaluate the expression for side effects
-                let _ = self.lower_expr(&unary.arg, function, param_map, locals)?;
+                let _ = self.lower_expr(&unary.operand, function, param_map, locals)?;
                 // Return undefined (null pointer)
                 Ok(self.i8ptr_t.const_null().as_basic_value_enum())
             }
-            UnaryOp::Delete => {
+            UnaryOperator::Delete => {
                 // Delete operator: delete a property from an object
                 // This requires runtime support for object property deletion
                 // For now, evaluate the expression and return true (success)
                 // TODO: Implement proper property deletion when runtime support is available
-                let _ = self.lower_expr(&unary.arg, function, param_map, locals)?;
+                let _ = self.lower_expr(&unary.operand, function, param_map, locals)?;
                 // Return true (1) to indicate successful deletion
                 // Note: In JavaScript, delete returns a boolean
                 Ok(self
@@ -214,18 +214,18 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
     pub(super) fn lower_update_expr(
         &self,
-        update: &oats_ast::UpdateExpr,
+        update: &oxc_ast::ast::UpdateExpression<'_>,
         _function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals: &mut LocalsStackLocal<'a>,
     ) -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
         // Handle update operators: ++, --
         // These modify the variable and return the old (postfix) or new (prefix) value
-        use oats_ast::UpdateOp;
+        use oxc_ast::ast::*;
 
         // Only simple identifier updates are supported at present.
-        if let oats_ast::Expr::Ident(ident) = &*update.arg {
-            let name = ident.sym.clone();
+        if let Expression::Identifier(ident) = &*update.argument {
+            let name = ident.name().to_string();
 
             // Find the variable (parameter or local)
             let var_entry = if param_map.contains_key(&name) {
@@ -267,12 +267,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     let one = self.f64_t.const_float(1.0);
 
                     // Compute new value based on operator
-                    let new_fv = match update.op {
-                        UpdateOp::Inc => self
+                    let new_fv = match update.operator {
+                        UpdateOperator::Increment => self
                             .builder
                             .build_float_add(old_fv, one, "inc")
                             .map_err(|_| Diagnostic::error("LLVM builder error"))?,
-                        UpdateOp::Dec => self
+                        UpdateOperator::Decrement => self
                             .builder
                             .build_float_sub(old_fv, one, "dec")
                             .map_err(|_| Diagnostic::error("LLVM builder error"))?,

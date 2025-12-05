@@ -3,7 +3,6 @@ use crate::diagnostics::{Diagnostic, Severity};
 use crate::types::OatsType;
 use inkwell::types::{BasicType, BasicTypeEnum};
 use inkwell::values::{BasicValue, BasicValueEnum, FunctionValue};
-use oats_ast::*;
 use std::collections::HashMap;
 
 // LocalEntry now includes an Option<String> for an optional nominal type name
@@ -85,6 +84,7 @@ impl<'a> CodeGen<'a> {
                             collect_idents_in_expr_with_depth(e, out, depth + 1);
                         }
                     }
+
                 }
                 Expr::Object(o) => {
                     for prop in &o.props {
@@ -94,6 +94,7 @@ impl<'a> CodeGen<'a> {
                             collect_idents_in_expr_with_depth(&kv.value, out, depth + 1);
                         }
                     }
+
                 }
                 Expr::Array(a) => {
                     for elem in a.elems.iter().flatten() {
@@ -122,6 +123,7 @@ impl<'a> CodeGen<'a> {
                     for arg in &new_expr.args {
                         collect_idents_in_expr_with_depth(arg, out, depth + 1);
                     }
+
                 }
                 Expr::Update(update) => {
                     collect_idents_in_expr_with_depth(&update.arg, out, depth + 1);
@@ -380,7 +382,7 @@ impl<'a> CodeGen<'a> {
                             self.builder
                                 .build_call(box_fn, &[pv.into()], "union_box_f64_ctor");
                         if let Ok(cs) = cs
-                            && let inkwell::Either::Left(bv) = cs.try_as_basic_value()
+                            && let either::Either::Left(bv) = cs.try_as_basic_value()
                         {
                             let boxed_ptr = bv.into_pointer_value();
                             captured_vals.push((boxed_ptr.as_basic_value_enum(), is_weak));
@@ -402,7 +404,7 @@ impl<'a> CodeGen<'a> {
                             self.builder
                                 .build_call(box_fn, &[fconv.into()], "union_box_f64_ctor");
                         if let Ok(cs) = cs
-                            && let inkwell::Either::Left(bv) = cs.try_as_basic_value()
+                            && let either::Either::Left(bv) = cs.try_as_basic_value()
                         {
                             let boxed_ptr = bv.into_pointer_value();
                             captured_vals.push((boxed_ptr.as_basic_value_enum(), is_weak));
@@ -463,7 +465,7 @@ impl<'a> CodeGen<'a> {
                                 self.builder
                                     .build_call(box_fn, &[fv.into()], "union_box_f64_ctor");
                             if let Ok(cs) = cs
-                                && let inkwell::Either::Left(bv) = cs.try_as_basic_value()
+                                && let either::Either::Left(bv) = cs.try_as_basic_value()
                             {
                                 let boxed_ptr = bv.into_pointer_value();
                                 captured_vals.push((boxed_ptr.as_basic_value_enum(), is_weak_flag));
@@ -486,7 +488,7 @@ impl<'a> CodeGen<'a> {
                                 "union_box_f64_ctor",
                             );
                             if let Ok(cs) = cs
-                                && let inkwell::Either::Left(bv) = cs.try_as_basic_value()
+                                && let either::Either::Left(bv) = cs.try_as_basic_value()
                             {
                                 let boxed_ptr = bv.into_pointer_value();
                                 captured_vals.push((boxed_ptr.as_basic_value_enum(), is_weak_flag));
@@ -723,3 +725,4 @@ impl<'a> CodeGen<'a> {
             .as_basic_value_enum())
     }
 }
+

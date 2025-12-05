@@ -8,7 +8,6 @@
 
 use crate::diagnostics::{Diagnostic, Label, Span};
 use anyhow::Result;
-use oats_ast::*;
 use std::collections::HashMap;
 
 // Type alias for the locals stack used in codegen

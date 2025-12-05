@@ -317,7 +317,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             .builder
             .build_call(malloc_fn, &[size_const.into()], "tuple_malloc");
         let malloc_ret = if let Ok(cs) = cs
-            && let inkwell::Either::Left(bv) = cs.try_as_basic_value()
+            && let either::Either::Left(bv) = cs.try_as_basic_value()
         {
             bv.into_pointer_value()
         } else {
@@ -484,7 +484,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         .builder
                         .build_call(box_fn, &[ev.into()], "union_box_f64_ctor");
                     if let Ok(cs2) = cs2
-                        && let inkwell::Either::Left(bv2) = cs2.try_as_basic_value()
+                        && let either::Either::Left(bv2) = cs2.try_as_basic_value()
                     {
                         let boxed_ptr = bv2.into_pointer_value();
                         let rc_inc = self.get_rc_inc();
@@ -500,7 +500,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         .builder
                         .build_call(box_fn, &[ev.into()], "union_box_ptr_ctor");
                     if let Ok(cs2) = cs2
-                        && let inkwell::Either::Left(bv2) = cs2.try_as_basic_value()
+                        && let either::Either::Left(bv2) = cs2.try_as_basic_value()
                     {
                         let boxed_ptr = bv2.into_pointer_value();
                         let rc_inc = self.get_rc_inc();
@@ -573,7 +573,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         .builder
                         .build_call(box_fn, &[val.into()], "union_box_f64_ctor");
                     if let Ok(cs) = cs
-                        && let inkwell::Either::Left(bv) = cs.try_as_basic_value()
+                        && let either::Either::Left(bv) = cs.try_as_basic_value()
                     {
                         val = bv;
                     }
@@ -590,7 +590,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 self.builder
                                     .build_call(box_fn, &[fv.into()], "union_box_f64_ctor");
                             if let Ok(cs) = cs
-                                && let inkwell::Either::Left(bv) = cs.try_as_basic_value()
+                                && let either::Either::Left(bv) = cs.try_as_basic_value()
                             {
                                 val = bv;
                             }
@@ -630,7 +630,6 @@ impl<'a> crate::codegen::CodeGen<'a> {
         param_map: &HashMap<String, u32>,
         locals_stack: &mut LocalsStackLocal<'a>,
     ) -> crate::diagnostics::DiagnosticResult<()> {
-        use oats_ast::*;
 
         // Lower the initializer (should be an array)
         let arr_val = self.lower_expr(init, function, param_map, locals_stack)?;
@@ -651,7 +650,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "failed to get array length"))?;
         // Note: length is computed but not currently used for bounds checking
         // This could be used in the future to validate array destructuring bounds
-        let length = if let inkwell::Either::Left(bv) = length_call.try_as_basic_value() {
+        let length = if let either::Either::Left(bv) = length_call.try_as_basic_value() {
             bv.into_int_value()
         } else {
             return Err(Diagnostic::simple_boxed(
@@ -694,7 +693,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     .map_err(|_| {
                         Diagnostic::simple_boxed(Severity::Error, "failed to get array element")
                     })?;
-                let elem_val = if let inkwell::Either::Left(bv) = elem_call.try_as_basic_value() {
+                let elem_val = if let either::Either::Left(bv) = elem_call.try_as_basic_value() {
                     bv
                 } else {
                     return Err(Diagnostic::simple_boxed(
@@ -919,7 +918,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             })?;
 
                         let rest_arr_ptr =
-                            if let inkwell::Either::Left(bv) = rest_arr_call.try_as_basic_value() {
+                            if let either::Either::Left(bv) = rest_arr_call.try_as_basic_value() {
                                 bv.into_pointer_value()
                             } else {
                                 return Err(Diagnostic::simple_boxed(
@@ -1007,7 +1006,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 Diagnostic::simple_boxed(Severity::Error, "get elem failed")
                             })?;
                         let src_elem =
-                            if let inkwell::Either::Left(bv) = src_elem_call.try_as_basic_value() {
+                            if let either::Either::Left(bv) = src_elem_call.try_as_basic_value() {
                                 bv
                             } else {
                                 return Err(Diagnostic::simple_boxed(
@@ -1140,7 +1139,6 @@ impl<'a> crate::codegen::CodeGen<'a> {
         param_map: &HashMap<String, u32>,
         locals_stack: &mut LocalsStackLocal<'a>,
     ) -> crate::diagnostics::DiagnosticResult<()> {
-        use oats_ast::*;
 
         // Lower the initializer (should be an object)
         let obj_val = self.lower_expr(init, function, param_map, locals_stack)?;
@@ -1530,7 +1528,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "malloc failed"))?;
 
                     let rest_obj_ptr =
-                        if let inkwell::Either::Left(bv) = malloc_call.try_as_basic_value() {
+                        if let either::Either::Left(bv) = malloc_call.try_as_basic_value() {
                             bv.into_pointer_value()
                         } else {
                             return Err(Diagnostic::simple_boxed(

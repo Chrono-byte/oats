@@ -26,22 +26,23 @@ impl<'a> crate::codegen::CodeGen<'a> {
     #[allow(clippy::result_large_err)]
     pub(super) fn lower_assign_expr(
         &self,
-        assign: &oats_ast::AssignExpr,
+        assign: &oxc_ast::ast::AssignmentExpression<'_>,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals: &mut LocalsStackLocal<'a>,
     ) -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
-        use oats_ast::*;
+        use oxc_ast::ast::*;
 
         // Handle compound assignment operators (e.g., +=, -=, *=, etc.)
         // For compound assignments, we need to:
         // 1. Load the current value of the left-hand side
         // 2. Perform the binary operation with the right-hand side
         // 3. Store the result back
-        if !matches!(assign.op, AssignOp::Eq) {
+        use oxc_ast::ast::{AssignmentOperator, AssignmentTarget, SimpleAssignmentTarget};
+        if !matches!(assign.operator, AssignmentOperator::Assign) {
             // This is a compound assignment (e.g., +=, -=, *=)
-            if let AssignTarget::Pat(Pat::Ident(ident)) = &assign.left {
-                let name = ident.sym.clone();
+            if let AssignmentTarget::SimpleAssignmentTarget(SimpleAssignmentTarget::AssignmentTargetIdentifier(ident)) = &assign.left {
+                let name = ident.name.to_string();
                 if let Some((ptr, _ty, _init, is_const, _extra, _nominal, _oats_type)) =
                     self.find_local(locals, &name)
                 {
@@ -72,20 +73,21 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     let rhs_val = self.lower_expr(&assign.right, function, param_map, locals)?;
 
                     // Convert compound assignment operator to binary operator
-                    let bin_op = match assign.op {
-                        AssignOp::PlusEq => BinaryOp::Plus,
-                        AssignOp::MinusEq => BinaryOp::Minus,
-                        AssignOp::MulEq => BinaryOp::Mul,
-                        AssignOp::DivEq => BinaryOp::Div,
-                        AssignOp::ModEq => BinaryOp::Mod,
-                        AssignOp::LShiftEq => BinaryOp::LShift,
-                        AssignOp::RShiftEq => BinaryOp::RShift,
-                        AssignOp::URShiftEq => BinaryOp::URShift,
-                        AssignOp::BitwiseAndEq => BinaryOp::BitwiseAnd,
-                        AssignOp::BitwiseOrEq => BinaryOp::BitwiseOr,
-                        AssignOp::BitwiseXorEq => BinaryOp::BitwiseXor,
-                        AssignOp::ExpEq => BinaryOp::Exp,
-                        AssignOp::Eq => unreachable!(), // Already handled above
+                    use oxc_ast::ast::BinaryOperator;
+                    let bin_op = match assign.operator {
+                        AssignmentOperator::Addition => BinaryOperator::Addition,
+                        AssignmentOperator::Subtraction => BinaryOperator::Subtraction,
+                        AssignmentOperator::Multiplication => BinaryOperator::Multiplication,
+                        AssignmentOperator::Division => BinaryOperator::Division,
+                        AssignmentOperator::Remainder => BinaryOperator::Remainder,
+                        AssignmentOperator::LeftShift => BinaryOperator::LeftShift,
+                        AssignmentOperator::RightShift => BinaryOperator::RightShift,
+                        AssignmentOperator::UnsignedRightShift => BinaryOperator::UnsignedRightShift,
+                        AssignmentOperator::BitwiseAnd => BinaryOperator::BitwiseAnd,
+                        AssignmentOperator::BitwiseOr => BinaryOperator::BitwiseOr,
+                        AssignmentOperator::BitwiseXor => BinaryOperator::BitwiseXor,
+                        AssignmentOperator::Exponential => BinaryOperator::Exponential,
+                        AssignmentOperator::Assign => unreachable!(), // Already handled above
                     };
 
                     // Lower the binary expression using the current value as left operand
@@ -143,7 +145,6 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 // Load the field, perform the operation, and store back
 
                 // Only support dot-member (obj.prop), not computed (obj[expr])
-                use oats_ast::*;
                 if let MemberProp::Ident(prop_ident) = &member.prop {
                     let field_name = prop_ident.sym.clone();
 
@@ -272,20 +273,20 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     self.lower_expr(&assign.right, function, param_map, locals)?;
 
                                 // Convert compound assignment operator to binary operator
-                                let bin_op = match assign.op {
-                                    AssignOp::PlusEq => BinaryOp::Plus,
-                                    AssignOp::MinusEq => BinaryOp::Minus,
-                                    AssignOp::MulEq => BinaryOp::Mul,
-                                    AssignOp::DivEq => BinaryOp::Div,
-                                    AssignOp::ModEq => BinaryOp::Mod,
-                                    AssignOp::LShiftEq => BinaryOp::LShift,
-                                    AssignOp::RShiftEq => BinaryOp::RShift,
-                                    AssignOp::URShiftEq => BinaryOp::URShift,
-                                    AssignOp::BitwiseAndEq => BinaryOp::BitwiseAnd,
-                                    AssignOp::BitwiseOrEq => BinaryOp::BitwiseOr,
-                                    AssignOp::BitwiseXorEq => BinaryOp::BitwiseXor,
-                                    AssignOp::ExpEq => BinaryOp::Exp,
-                                    AssignOp::Eq => unreachable!(),
+                                let bin_op = match assign.operator {
+                                    AssignmentOperator::Addition => BinaryOperator::Addition,
+                                    AssignmentOperator::Subtraction => BinaryOperator::Subtraction,
+                                    AssignmentOperator::Multiplication => BinaryOperator::Multiplication,
+                                    AssignmentOperator::Division => BinaryOperator::Division,
+                                    AssignmentOperator::Remainder => BinaryOperator::Remainder,
+                                    AssignmentOperator::LeftShift => BinaryOperator::LeftShift,
+                                    AssignmentOperator::RightShift => BinaryOperator::RightShift,
+                                    AssignmentOperator::UnsignedRightShift => BinaryOperator::UnsignedRightShift,
+                                    AssignmentOperator::BitwiseAnd => BinaryOperator::BitwiseAnd,
+                                    AssignmentOperator::BitwiseOr => BinaryOperator::BitwiseOr,
+                                    AssignmentOperator::BitwiseXor => BinaryOperator::BitwiseXor,
+                                    AssignmentOperator::Exponential => BinaryOperator::Exponential,
+                                    AssignmentOperator::Assign => unreachable!(),
                                 };
 
                                 // Perform binary operation
@@ -622,20 +623,20 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     let rhs_val = self.lower_expr(&assign.right, function, param_map, locals)?;
 
                     // Convert compound assignment operator to binary operator
-                    let bin_op = match assign.op {
-                        AssignOp::PlusEq => BinaryOp::Plus,
-                        AssignOp::MinusEq => BinaryOp::Minus,
-                        AssignOp::MulEq => BinaryOp::Mul,
-                        AssignOp::DivEq => BinaryOp::Div,
-                        AssignOp::ModEq => BinaryOp::Mod,
-                        AssignOp::LShiftEq => BinaryOp::LShift,
-                        AssignOp::RShiftEq => BinaryOp::RShift,
-                        AssignOp::URShiftEq => BinaryOp::URShift,
-                        AssignOp::BitwiseAndEq => BinaryOp::BitwiseAnd,
-                        AssignOp::BitwiseOrEq => BinaryOp::BitwiseOr,
-                        AssignOp::BitwiseXorEq => BinaryOp::BitwiseXor,
-                        AssignOp::ExpEq => BinaryOp::Exp,
-                        AssignOp::Eq => unreachable!(),
+                    let bin_op = match assign.operator {
+                        AssignmentOperator::Addition => BinaryOperator::Addition,
+                        AssignmentOperator::Subtraction => BinaryOperator::Subtraction,
+                        AssignmentOperator::Multiplication => BinaryOperator::Multiplication,
+                        AssignmentOperator::Division => BinaryOperator::Division,
+                        AssignmentOperator::Remainder => BinaryOperator::Remainder,
+                        AssignmentOperator::LeftShift => BinaryOperator::LeftShift,
+                        AssignmentOperator::RightShift => BinaryOperator::RightShift,
+                        AssignmentOperator::UnsignedRightShift => BinaryOperator::UnsignedRightShift,
+                        AssignmentOperator::BitwiseAnd => BinaryOperator::BitwiseAnd,
+                        AssignmentOperator::BitwiseOr => BinaryOperator::BitwiseOr,
+                        AssignmentOperator::BitwiseXor => BinaryOperator::BitwiseXor,
+                        AssignmentOperator::Exponential => BinaryOperator::Exponential,
+                        AssignmentOperator::Assign => unreachable!(),
                     };
 
                     // Perform binary operation
@@ -756,7 +757,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     .build_call(box_f64_fn, &[fv.into()], "box_union_f64")
                                     .map_err(|_| Diagnostic::error("union box failed"))?;
 
-                                if let inkwell::Either::Left(bv) = boxed_call.try_as_basic_value() {
+                                if let either::Either::Left(bv) = boxed_call.try_as_basic_value() {
                                     bv
                                 } else {
                                     return Err(Diagnostic::simple_boxed(
@@ -773,7 +774,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     .build_call(box_ptr_fn, &[pv.into()], "box_union_ptr")
                                     .map_err(|_| Diagnostic::error("union box failed"))?;
 
-                                if let inkwell::Either::Left(bv) = boxed_call.try_as_basic_value() {
+                                if let either::Either::Left(bv) = boxed_call.try_as_basic_value() {
                                     bv
                                 } else {
                                     return Err(Diagnostic::simple_boxed(
@@ -858,7 +859,6 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 // Capture RHS origin (if this RHS expression originated from a local)
                 let rhs_origin_after_rhs = self.last_expr_origin_local.borrow().clone();
                 // Only handle dot-member (obj.prop), not computed (obj[expr])
-                use oats_ast::*;
                 if let MemberProp::Ident(prop_ident) = &member.prop {
                     let field_name = prop_ident.sym.clone();
 
@@ -1065,7 +1065,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                 }
                                             };
                                             match cs.try_as_basic_value() {
-                                                inkwell::Either::Left(bv) => bv,
+                                                either::Either::Left(bv) => bv,
                                                 _ => {
                                                     return Err(Diagnostic::simple_boxed(
                                                         Severity::Error,
@@ -1089,7 +1089,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                 }
                                             };
                                             match cs.try_as_basic_value() {
-                                                inkwell::Either::Left(bv) => bv,
+                                                either::Either::Left(bv) => bv,
                                                 _ => {
                                                     return Err(Diagnostic::simple_boxed(
                                                         Severity::Error,
@@ -1273,13 +1273,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
         // Handle array element assignment: arr[idx] = value
         if let AssignTarget::Member(member) = &assign.left {
-            use oats_ast::*;
             if let MemberProp::Computed(computed) = &member.prop {
                 // This is arr[idx] = value
 
                 // Get the alloca pointer for the array variable (needed for reallocation)
                 let arr_alloca_opt = if let Expr::Ident(ident) = &*member.obj {
-                    let name = ident.sym.clone();
+                    let name = ident.name.to_string();
                     self.find_local(locals, &name)
                         .map(|(ptr, _, _, _, _, _, _)| ptr)
                 } else {

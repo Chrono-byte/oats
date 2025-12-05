@@ -654,7 +654,6 @@ impl<'a> CodeGen<'a> {
             param_map.insert(rname.to_string(), 0u32);
         }
         for (i, p) in func_decl.params.iter().enumerate() {
-            use oats_ast::*;
             match &p.pat {
                 Pat::Ident(ident) => {
                     let name = ident.sym.clone();
@@ -716,7 +715,7 @@ impl<'a> CodeGen<'a> {
                                         "union_box_f64_param",
                                     );
                                     if let Ok(cs) = cs
-                                        && let inkwell::Either::Left(bv) = cs.try_as_basic_value()
+                                        && let either::Either::Left(bv) = cs.try_as_basic_value()
                                         && let inkwell::values::BasicValueEnum::PointerValue(pv) =
                                             bv
                                     {
@@ -736,7 +735,7 @@ impl<'a> CodeGen<'a> {
                                         "union_box_ptr_param",
                                     );
                                     if let Ok(cs) = cs
-                                        && let inkwell::Either::Left(bv) = cs.try_as_basic_value()
+                                        && let either::Either::Left(bv) = cs.try_as_basic_value()
                                         && let inkwell::values::BasicValueEnum::PointerValue(pv) =
                                             bv
                                     {

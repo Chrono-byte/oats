@@ -7,7 +7,7 @@
 use crate::codegen::CodeGen;
 use crate::diagnostics::{Diagnostic, Severity};
 use inkwell::values::{BasicValue, BasicValueEnum, FunctionValue};
-use oats_ast::*;
+use oxc_ast::ast::*;
 use std::collections::HashMap;
 
 type LocalEntry<'a> = (
@@ -31,7 +31,7 @@ impl<'a> CodeGen<'a> {
     #[allow(clippy::result_large_err)]
     pub(super) fn lower_super_expr(
         &self,
-        _super_expr: &SuperExpr,
+        _super_expr: &Super,
         function: FunctionValue<'a>,
         _param_map: &HashMap<String, u32>,
         _locals: &mut LocalsStackLocal<'a>,

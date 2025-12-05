@@ -3,7 +3,6 @@
 //! This module contains code generation logic for Rust-like enums.
 
 use crate::diagnostics::Severity;
-use oats_ast::*;
 
 impl<'a> crate::codegen::CodeGen<'a> {
     /// Generate IR for a Rust-like enum declaration.
@@ -164,7 +163,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     )
                 })?;
 
-            let enum_ptr = if let inkwell::Either::Left(bv) = malloc_call.try_as_basic_value() {
+            let enum_ptr = if let either::Either::Left(bv) = malloc_call.try_as_basic_value() {
                 bv.into_pointer_value()
             } else {
                 return Err(crate::diagnostics::Diagnostic::simple_boxed(

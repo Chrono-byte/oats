@@ -4,7 +4,6 @@
 
 use crate::diagnostics::Severity;
 use inkwell::values::{BasicValue, FunctionValue};
-use oats_ast::*;
 
 impl<'a> crate::codegen::CodeGen<'a> {
     /// Generates LLVM IR for a function declaration.

@@ -49,42 +49,44 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             BasicValueEnum::FloatValue(fv) => {
                                 let box_fn = self.get_union_box_f64();
 
-                                self.builder
+                                let union_box_call = self.builder
                                     .build_call(box_fn, &[fv.into()], "union_box")
                                     .map_err(|_| {
                                         crate::diagnostics::Diagnostic::simple_boxed(
                                             Severity::Error,
                                             "Failed to box f64 as union in return",
                                         )
-                                    })?
-                                    .try_as_basic_value()
-                                    .left()
-                                    .ok_or_else(|| {
-                                        crate::diagnostics::Diagnostic::simple_boxed(
+                                    })?;
+                                match union_box_call.try_as_basic_value() {
+                                    either::Either::Left(bv) => bv,
+                                    _ => {
+                                        return Err(crate::diagnostics::Diagnostic::simple_boxed(
                                             Severity::Error,
                                             "union_box_f64 did not return value",
-                                        )
-                                    })?
+                                        ));
+                                    }
+                                }
                             }
                             BasicValueEnum::PointerValue(pv) => {
                                 let box_fn = self.get_union_box_ptr();
 
-                                self.builder
+                                let union_box_ptr_call = self.builder
                                     .build_call(box_fn, &[pv.into()], "union_box")
                                     .map_err(|_| {
                                         crate::diagnostics::Diagnostic::simple_boxed(
                                             Severity::Error,
                                             "Failed to box ptr as union in return",
                                         )
-                                    })?
-                                    .try_as_basic_value()
-                                    .left()
-                                    .ok_or_else(|| {
-                                        crate::diagnostics::Diagnostic::simple_boxed(
+                                    })?;
+                                match union_box_ptr_call.try_as_basic_value() {
+                                    either::Either::Left(bv) => bv,
+                                    _ => {
+                                        return Err(crate::diagnostics::Diagnostic::simple_boxed(
                                             Severity::Error,
                                             "union_box_ptr did not return value",
-                                        )
-                                    })?
+                                        ));
+                                    }
+                                }
                             }
                             BasicValueEnum::IntValue(iv) if iv.get_type().get_bit_width() == 1 => {
                                 // Boolean -> convert to f64 and box
@@ -99,22 +101,23 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     })?;
                                 let box_fn = self.get_union_box_f64();
 
-                                self.builder
+                                let union_box_bool_call = self.builder
                                     .build_call(box_fn, &[as_f64.into()], "union_box")
                                     .map_err(|_| {
                                         crate::diagnostics::Diagnostic::simple_boxed(
                                             Severity::Error,
                                             "Failed to box bool as union in return",
                                         )
-                                    })?
-                                    .try_as_basic_value()
-                                    .left()
-                                    .ok_or_else(|| {
-                                        crate::diagnostics::Diagnostic::simple_boxed(
+                                    })?;
+                                match union_box_bool_call.try_as_basic_value() {
+                                    either::Either::Left(bv) => bv,
+                                    _ => {
+                                        return Err(crate::diagnostics::Diagnostic::simple_boxed(
                                             Severity::Error,
                                             "union_box_f64 did not return value",
-                                        )
-                                    })?
+                                        ));
+                                    }
+                                }
                             }
                             _ => val, // Already boxed or unsupported type
                         };

@@ -63,7 +63,7 @@ impl<'a> CodeGen<'a> {
                     .map_err(|_| Diagnostic::error("LLVM builder error"))?;
                 let either = cs.try_as_basic_value();
                 match either {
-                    inkwell::Either::Left(bv) => Ok(bv),
+                    either::Either::Left(bv) => Ok(bv),
                     _ => Err(Diagnostic::simple_boxed(
                         Severity::Error,
                         "operation not supported",

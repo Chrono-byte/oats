@@ -6,7 +6,6 @@
 use crate::codegen::CodeGen;
 use crate::diagnostics::Diagnostic;
 use inkwell::values::{BasicValueEnum, FunctionValue};
-use oats_ast::*;
 use std::collections::HashMap;
 
 type LocalEntry<'a> = (

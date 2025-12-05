@@ -29,7 +29,6 @@ impl<'a> crate::codegen::CodeGen<'a> {
         param_map: &HashMap<String, u32>,
         locals_stack: &mut LocalsStackLocal<'a>,
     ) -> crate::diagnostics::DiagnosticResult<bool> {
-        use oats_ast::*;
 
         // Create a global exception state variable for this try block
         // This is a simplified approach - a more sophisticated implementation

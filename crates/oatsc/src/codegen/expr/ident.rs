@@ -24,12 +24,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
     #[allow(clippy::result_large_err)]
     pub(super) fn lower_ident_expr(
         &self,
-        id: &oats_ast::Ident,
+        id: &oxc_ast::ast::IdentifierReference<'_>,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals: &mut LocalsStackLocal<'a>,
     ) -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
-        let name = id.sym.clone();
+        let name = id.name.to_string();
 
         // First, check if the identifier is a function parameter.
         if let Some(idx) = param_map.get(&name)

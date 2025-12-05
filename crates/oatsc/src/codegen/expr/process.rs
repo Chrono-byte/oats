@@ -127,7 +127,14 @@ impl<'a> crate::codegen::CodeGen<'a> {
         };
 
         // Result is i8* (pointer to heap-allocated u64 containing ProcessId)
-        Ok(result.try_as_basic_value().unwrap_left())
+        match result.try_as_basic_value() {
+            either::Either::Left(bv) => Ok(bv),
+            _ => Err(Diagnostic::simple_with_span_boxed(
+                Severity::Error,
+                "process_spawn did not return a value",
+                spawn_expr.span.start,
+            )),
+        }
     }
 
     /// Lower send expression: send(to, message)
@@ -154,7 +161,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     send_expr.span.start,
                 )
             })?;
-        let self_pid_ptr_val = self
+        let self_pid_ptr_call = self
             .builder
             .build_call(self_fn, &[], "self_pid")
             .map_err(|_| {
@@ -163,9 +170,17 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     "failed to call process_self",
                     send_expr.span.start,
                 )
-            })?
-            .try_as_basic_value()
-            .unwrap_left();
+            })?;
+        let self_pid_ptr_val = match self_pid_ptr_call.try_as_basic_value() {
+            either::Either::Left(bv) => bv,
+            _ => {
+                return Err(Diagnostic::simple_with_span_boxed(
+                    Severity::Error,
+                    "process_self did not return a value",
+                    send_expr.span.start,
+                ));
+            }
+        };
 
         let self_pid_ptr = if let BasicValueEnum::PointerValue(pv) = self_pid_ptr_val {
             pv
@@ -264,7 +279,14 @@ impl<'a> crate::codegen::CodeGen<'a> {
             })?;
 
         // Result is i32 (0 = success, non-zero = error)
-        Ok(result.try_as_basic_value().unwrap_left())
+        match result.try_as_basic_value() {
+            either::Either::Left(bv) => Ok(bv),
+            _ => Err(Diagnostic::simple_with_span_boxed(
+                Severity::Error,
+                "process operation did not return a value",
+                send_expr.span.start,
+            )),
+        }
     }
 
     /// Lower receive expression: receive() or receive(type_id)
@@ -297,9 +319,17 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     "failed to call process_self",
                     receive_expr.span.start,
                 )
-            })?
-            .try_as_basic_value()
-            .unwrap_left();
+            })?;
+        let self_pid_ptr_val = match self_pid_ptr_val.try_as_basic_value() {
+            either::Either::Left(bv) => bv,
+            _ => {
+                return Err(Diagnostic::simple_with_span_boxed(
+                    Severity::Error,
+                    "process_self did not return a value",
+                    send_expr.span.start,
+                ));
+            }
+        };
 
         let self_pid_ptr = if let BasicValueEnum::PointerValue(pv) = self_pid_ptr_val {
             pv
@@ -382,7 +412,14 @@ impl<'a> crate::codegen::CodeGen<'a> {
             })?;
 
         // Result is i8* (message payload or null)
-        Ok(result.try_as_basic_value().unwrap_left())
+        match result.try_as_basic_value() {
+            either::Either::Left(bv) => Ok(bv),
+            _ => Err(Diagnostic::simple_with_span_boxed(
+                Severity::Error,
+                "process_receive did not return a value",
+                receive_expr.span.start,
+            )),
+        }
     }
 
     /// Lower process self expression: self()
@@ -405,7 +442,14 @@ impl<'a> crate::codegen::CodeGen<'a> {
             })?;
 
         // Result is i8* (pointer to heap-allocated u64 containing ProcessId)
-        Ok(result.try_as_basic_value().unwrap_left())
+        match result.try_as_basic_value() {
+            either::Either::Left(bv) => Ok(bv),
+            _ => Err(Diagnostic::simple_with_span_boxed(
+                Severity::Error,
+                "process_spawn did not return a value",
+                spawn_expr.span.start,
+            )),
+        }
     }
 
     // Additional process expression lowering functions would go here...
@@ -455,7 +499,17 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         exit_expr.span.start,
                     )
                 })?;
-            if let BasicValueEnum::PointerValue(pv) = self_val.try_as_basic_value().unwrap_left() {
+            let self_val_bv = match self_val.try_as_basic_value() {
+                either::Either::Left(bv) => bv,
+                _ => {
+                    return Err(Diagnostic::simple_with_span_boxed(
+                        Severity::Error,
+                        "process_self did not return a value",
+                        link_expr.span.start,
+                    ));
+                }
+            };
+            if let BasicValueEnum::PointerValue(pv) = self_val_bv {
                 pv
             } else {
                 return Err(Diagnostic::simple_with_span_boxed(
@@ -617,7 +671,14 @@ impl<'a> crate::codegen::CodeGen<'a> {
             })?;
 
         // Result is i32 (0 = success, non-zero = error)
-        Ok(result.try_as_basic_value().unwrap_left())
+        match result.try_as_basic_value() {
+            either::Either::Left(bv) => Ok(bv),
+            _ => Err(Diagnostic::simple_with_span_boxed(
+                Severity::Error,
+                "process operation did not return a value",
+                send_expr.span.start,
+            )),
+        }
     }
 
     pub(super) fn lower_process_unlink_expr(
@@ -753,9 +814,17 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     monitor_expr.span.start,
                 )
             })?;
-        let self_pid_ptr = if let BasicValueEnum::PointerValue(pv) =
-            self_pid_ptr_val.try_as_basic_value().unwrap_left()
-        {
+        let self_pid_ptr_val_bv = match self_pid_ptr_val.try_as_basic_value() {
+            either::Either::Left(bv) => bv,
+            _ => {
+                return Err(Diagnostic::simple_with_span_boxed(
+                    Severity::Error,
+                    "process_self did not return a value",
+                    monitor_expr.span.start,
+                ));
+            }
+        };
+        let self_pid_ptr = if let BasicValueEnum::PointerValue(pv) = self_pid_ptr_val_bv {
             pv
         } else {
             return Err(Diagnostic::simple_with_span_boxed(
@@ -823,7 +892,14 @@ impl<'a> crate::codegen::CodeGen<'a> {
             })?;
 
         // Result is i8* (pointer to heap-allocated u64 containing MonitorRef)
-        Ok(result.try_as_basic_value().unwrap_left())
+        match result.try_as_basic_value() {
+            either::Either::Left(bv) => Ok(bv),
+            _ => Err(Diagnostic::simple_with_span_boxed(
+                Severity::Error,
+                "process_monitor did not return a value",
+                monitor_expr.span.start,
+            )),
+        }
     }
 
     pub(super) fn lower_process_demonitor_expr(
@@ -868,9 +944,17 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     demonitor_expr.span.start,
                 )
             })?;
-        let self_pid_ptr = if let BasicValueEnum::PointerValue(pv) =
-            self_pid_ptr_val.try_as_basic_value().unwrap_left()
-        {
+        let self_pid_ptr_val_bv = match self_pid_ptr_val.try_as_basic_value() {
+            either::Either::Left(bv) => bv,
+            _ => {
+                return Err(Diagnostic::simple_with_span_boxed(
+                    Severity::Error,
+                    "process_self did not return a value",
+                    monitor_expr.span.start,
+                ));
+            }
+        };
+        let self_pid_ptr = if let BasicValueEnum::PointerValue(pv) = self_pid_ptr_val_bv {
             pv
         } else {
             return Err(Diagnostic::simple_with_span_boxed(
@@ -938,7 +1022,14 @@ impl<'a> crate::codegen::CodeGen<'a> {
             })?;
 
         // Result is i32 (0 = success, non-zero = error)
-        Ok(result.try_as_basic_value().unwrap_left())
+        match result.try_as_basic_value() {
+            either::Either::Left(bv) => Ok(bv),
+            _ => Err(Diagnostic::simple_with_span_boxed(
+                Severity::Error,
+                "process operation did not return a value",
+                send_expr.span.start,
+            )),
+        }
     }
 
     pub(super) fn lower_process_whereis_expr(
@@ -984,7 +1075,14 @@ impl<'a> crate::codegen::CodeGen<'a> {
             })?;
 
         // Result is i8* (pointer to heap-allocated u64 containing ProcessId, or null)
-        Ok(result.try_as_basic_value().unwrap_left())
+        match result.try_as_basic_value() {
+            either::Either::Left(bv) => Ok(bv),
+            _ => Err(Diagnostic::simple_with_span_boxed(
+                Severity::Error,
+                "process_whereis did not return a value",
+                whereis_expr.span.start,
+            )),
+        }
     }
 
     pub(super) fn lower_process_register_expr(
@@ -1062,7 +1160,14 @@ impl<'a> crate::codegen::CodeGen<'a> {
             })?;
 
         // Result is i32 (0 = success, non-zero = error)
-        Ok(result.try_as_basic_value().unwrap_left())
+        match result.try_as_basic_value() {
+            either::Either::Left(bv) => Ok(bv),
+            _ => Err(Diagnostic::simple_with_span_boxed(
+                Severity::Error,
+                "process operation did not return a value",
+                send_expr.span.start,
+            )),
+        }
     }
 
     pub(super) fn lower_process_unregister_expr(

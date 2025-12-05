@@ -45,7 +45,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             && let Expression::StringLiteral(s_lit) = &*bin.right
         {
             // Lower inner expression and then check union discriminant if it's a pointer
-            let inner = self.lower_expr(&unary.operand, function, param_map, locals)?;
+            let inner = self.lower_expr(&unary.argument, function, param_map, locals)?;
             let s = s_lit.value.to_string();
             if let BasicValueEnum::PointerValue(pv) = inner {
                 // For pointer-like values, consult the union discriminant helper.
@@ -459,12 +459,15 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 BinaryOperator::Exponential => {
                     // Exponentiation: use standard library pow function
                     // Declare pow(double, double) -> double if not already declared
-                    let pow_fn = self.module.get_function("pow").unwrap_or_else(|| {
-                        let fn_type = self
-                            .f64_t
-                            .fn_type(&[self.f64_t.into(), self.f64_t.into()], false);
-                        self.module.add_function("pow", fn_type, None)
-                    });
+                    let pow_fn = match self.module.get_function("pow") {
+                        Some(f) => f,
+                        None => {
+                            let fn_type = self
+                                .f64_t
+                                .fn_type(&[self.f64_t.into(), self.f64_t.into()], false);
+                            self.module.add_function("pow", fn_type, None)
+                        }
+                    };
 
                     // Call pow(base, exponent)
                     let call_site = builder

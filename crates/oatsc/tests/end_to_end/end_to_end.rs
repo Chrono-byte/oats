@@ -25,12 +25,6 @@ fn test_add_example_end_to_end() -> Result<()> {
         .status()?;
     assert!(status.success(), "building oats_std failed");
 
-    // Build the `oats_primitives` static library
-    let status = Command::new("cargo")
-        .args(["build", "-p", "oats_primitives", "--release"])
-        .status()?;
-    assert!(status.success(), "building oats_primitives failed");
-
     let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let workspace_root = manifest_dir
         .parent()

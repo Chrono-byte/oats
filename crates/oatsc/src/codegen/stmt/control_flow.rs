@@ -2,6 +2,7 @@ use inkwell::values::FunctionValue;
 use std::collections::HashMap;
 
 use crate::types::OatsType;
+use oxc_ast::ast::*;
 
 type LocalEntry<'a> = (
     inkwell::values::PointerValue<'a>,
@@ -25,7 +26,7 @@ type LocalsStackLocal<'a> = Vec<HashMap<String, LocalEntry<'a>>>;
 impl<'a> crate::codegen::CodeGen<'a> {
     pub(crate) fn lower_if_stmt(
         &self,
-        ifstmt: &oats_ast::IfStmt,
+        ifstmt: &IfStatement<'_>,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals_stack: &mut LocalsStackLocal<'a>,
@@ -44,11 +45,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
                 // Build then block
                 self.builder.position_at_end(then_bb);
-                let then_terminated: bool = match &*ifstmt.cons {
-                    oats_ast::Stmt::Block(block) => {
-                        self.lower_stmts(&block.stmts, function, param_map, locals_stack)?
+                let then_terminated: bool = match &ifstmt.consequent {
+                    oxc_ast::ast::Statement::BlockStatement(block) => {
+                        self.lower_stmts(&block.body, function, param_map, locals_stack)?
                     }
-                    _ => self.lower_stmt(&ifstmt.cons, function, param_map, locals_stack)?,
+                    _ => self.lower_stmt(ifstmt.consequent, function, param_map, locals_stack)?,
                 };
                 if !then_terminated {
                     let _ = self.builder.build_unconditional_branch(merge_bb);
@@ -56,15 +57,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
                 // Build else block
                 self.builder.position_at_end(else_bb);
-                let else_terminated: bool = if let Some(alt) = &ifstmt.alt {
-                    match &**alt {
-                        oats_ast::Stmt::Block(block) => {
-                            self.lower_stmts(&block.stmts, function, param_map, locals_stack)?
-                        }
-                        _ => self.lower_stmt(alt, function, param_map, locals_stack)?,
+                let else_terminated: bool = match &ifstmt.alternate {
+                    oxc_ast::ast::Statement::Block(block) => {
+                        self.lower_stmts(&block.body, function, param_map, locals_stack)?
                     }
-                } else {
-                    false // no else branch
+                    _ => self.lower_stmt(ifstmt.alternate, function, param_map, locals_stack)?,
                 };
                 if !else_terminated {
                     let _ = self.builder.build_unconditional_branch(merge_bb);
@@ -91,7 +88,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
     pub(crate) fn lower_for_stmt(
         &self,
-        forstmt: &oats_ast::ForStmt,
+        forstmt: &ForStatement<'_>,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals_stack: &mut LocalsStackLocal<'a>,
@@ -162,8 +159,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
         // Build body block
         self.builder.position_at_end(loop_body_bb);
         let body_terminated: bool = match &*forstmt.body {
-            oats_ast::Stmt::Block(block) => {
-                self.lower_stmts(&block.stmts, function, param_map, locals_stack)?
+            Statement::BlockStatement(block) => {
+                self.lower_stmts(&block.body, function, param_map, locals_stack)?
             }
             _ => self.lower_stmt(&forstmt.body, function, param_map, locals_stack)?,
         };
@@ -194,7 +191,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
     pub(crate) fn lower_while_stmt(
         &self,
-        while_stmt: &oats_ast::WhileStmt,
+        while_stmt: &WhileStatement<'_>,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals_stack: &mut LocalsStackLocal<'a>,
@@ -260,7 +257,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
     pub(crate) fn lower_do_while_stmt(
         &self,
-        dowhile_stmt: &oats_ast::DoWhileStmt,
+        dowhile_stmt: &DoWhileStatement<'_>,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals_stack: &mut LocalsStackLocal<'a>,

@@ -67,10 +67,13 @@ pub fn resolve_external_dependencies<'ctx>(
 
         for symbol in symbols {
             // Get function signature or use default
-            let (param_types, ret_type) = external_function_signatures
+            let (param_types, ret_type) = match external_function_signatures
                 .get(&symbol)
                 .cloned()
-                .unwrap_or_else(|| (vec![], OatsType::Number));
+            {
+                Some(types) => types,
+                None => (vec![], OatsType::Number),
+            };
 
             // Convert OatsType to LLVM types
             let llvm_param_types: Vec<inkwell::types::BasicMetadataTypeEnum> = param_types

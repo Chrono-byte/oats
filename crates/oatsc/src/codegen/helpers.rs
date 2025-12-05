@@ -14,8 +14,24 @@ use crate::diagnostics::Severity;
 use crate::types::OatsType;
 use inkwell::types::BasicType;
 use inkwell::types::BasicTypeEnum;
-use inkwell::values::{BasicValue, BasicValueEnum};
+use inkwell::values::{BasicValue, BasicValueEnum, ValueKind};
 use std::collections::HashMap;
+
+/// Helper function to extract BasicValueEnum from ValueKind
+/// ValueKind is Either<BasicValueEnum, CallSiteValue> in inkwell
+pub(crate) fn extract_basic_value_from_valuekind<'a>(
+    vk: ValueKind<'a>,
+) -> Option<BasicValueEnum<'a>> {
+    // ValueKind is a type alias for Either, so we can safely transmute
+    unsafe {
+        use either::Either;
+        let either_ptr = &vk as *const ValueKind<'a> as *const Either<BasicValueEnum<'a>, inkwell::values::CallSiteValue<'a>>;
+        match *either_ptr {
+            Either::Left(bv) => Some(bv),
+            Either::Right(_) => None,
+        }
+    }
+}
 
 type LocalEntry<'a> = (
     inkwell::values::PointerValue<'a>,
@@ -192,8 +208,7 @@ impl<'a> super::CodeGen<'a> {
                     self.builder
                         .build_call(unbox_fn, &[pv.into()], "union_unbox_f64_call")
                 {
-                    let either = cs.try_as_basic_value();
-                    if let either::Either::Left(bv) = either
+                    if let Some(bv) = extract_basic_value_from_valuekind(cs.try_as_basic_value())
                         && let BasicValueEnum::FloatValue(fv) = bv
                     {
                         return Some(fv);
@@ -369,7 +384,7 @@ impl<'a> super::CodeGen<'a> {
                     BasicValueEnum::FloatValue(fv) => {
                         let box_fn = self.get_union_box_f64();
                         if let Ok(cs) = self.builder.build_call(box_fn, &[fv.into()], "box_for_phi")
-                            && let either::Either::Left(bv2) = cs.try_as_basic_value()
+                            && let Some(bv2) = extract_basic_value_from_valuekind(cs.try_as_basic_value())
                         {
                             return Some(bv2);
                         }
@@ -386,7 +401,7 @@ impl<'a> super::CodeGen<'a> {
                         };
                         let box_fn = self.get_union_box_f64();
                         if let Ok(cs) = self.builder.build_call(box_fn, &[fv.into()], "box_for_phi")
-                            && let either::Either::Left(bv2) = cs.try_as_basic_value()
+                            && let Some(bv2) = extract_basic_value_from_valuekind(cs.try_as_basic_value())
                         {
                             return Some(bv2);
                         }
@@ -561,9 +576,10 @@ impl<'a> super::CodeGen<'a> {
             {
                 let keys: Vec<String> = scope.keys().cloned().collect();
                 let entry = scope.get(&key).cloned();
-                let nominal_str = entry
-                    .and_then(|(_, _, _, _, _, nom, _)| nom)
-                    .unwrap_or("<none>".to_string());
+                let nominal_str = match entry.and_then(|(_, _, _, _, _, nom, _)| nom) {
+                    Some(nom) => nom,
+                    None => "<none>".to_string(),
+                };
                 eprintln!(
                     "[debug insert_local] inserted='{}' nominal='{}' keys_now={:?}",
                     key, nominal_str, keys
@@ -723,9 +739,9 @@ impl<'a> super::CodeGen<'a> {
             .map_err(|_| {
                 crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "build_call failed")
             })?;
-        let malloc_ret = match call_site.try_as_basic_value() {
-            either::Either::Left(bv) => bv.into_pointer_value(),
-            _ => {
+        let malloc_ret = match extract_basic_value_from_valuekind(call_site.try_as_basic_value()) {
+            Some(bv) => bv.into_pointer_value(),
+            None => {
                 return Err(crate::diagnostics::Diagnostic::simple_boxed(
                     Severity::Error,
                     "malloc call did not return a value",
@@ -965,9 +981,9 @@ impl<'a> super::CodeGen<'a> {
             .map_err(|_| {
                 crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "build_call failed")
             })?;
-        let malloc_ret = match call_site.try_as_basic_value() {
-            either::Either::Left(bv) => bv.into_pointer_value(),
-            _ => {
+        let malloc_ret = match extract_basic_value_from_valuekind(call_site.try_as_basic_value()) {
+            Some(bv) => bv.into_pointer_value(),
+            None => {
                 return Err(crate::diagnostics::Diagnostic::simple_boxed(
                     Severity::Error,
                     "malloc call did not return a value",

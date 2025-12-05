@@ -23,14 +23,14 @@ type LocalsStackLocal<'a> = Vec<HashMap<String, LocalEntry<'a>>>;
 impl<'a> crate::codegen::CodeGen<'a> {
     pub(crate) fn lower_block_stmt(
         &self,
-        block: &oats_ast::BlockStmt,
+        block: &oxc_ast::ast::BlockStatement,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals_stack: &mut LocalsStackLocal<'a>,
     ) -> crate::diagnostics::DiagnosticResult<bool> {
         // new scope
         locals_stack.push(HashMap::new());
-        let terminated = self.lower_stmts(&block.stmts, function, param_map, locals_stack)?;
+        let terminated = self.lower_stmts(&block.body, function, param_map, locals_stack)?;
         // pop scope
         locals_stack.pop();
         Ok(terminated)

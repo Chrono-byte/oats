@@ -8,6 +8,7 @@
 use crate::diagnostics::Diagnostic;
 use inkwell::types::BasicType;
 use inkwell::values::FunctionValue;
+use oxc_ast::ast::BindingPatternKind;
 use std::collections::HashMap;
 
 type LocalEntry<'a> = (
@@ -24,18 +25,20 @@ type LocalsStackLocal<'a> = Vec<HashMap<String, LocalEntry<'a>>>;
 impl<'a> crate::codegen::CodeGen<'a> {
     pub(crate) fn lower_try_stmt(
         &self,
-        try_stmt: &oats_ast::TryStmt,
+        try_stmt: &oxc_ast::ast::TryStatement<'_>,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals_stack: &mut LocalsStackLocal<'a>,
     ) -> crate::diagnostics::DiagnosticResult<bool> {
-
         // Create a global exception state variable for this try block
         // This is a simplified approach - a more sophisticated implementation
         // would use proper exception unwinding
         let exception_flag_name = format!(
             "__exception_flag_{}",
-            function.get_name().to_str().unwrap_or("unknown")
+            match function.get_name().to_str() {
+                Ok(name) => name,
+                Err(_) => "unknown",
+            }
         );
         let exception_flag_global =
             if let Some(existing) = self.module.get_global(&exception_flag_name) {
@@ -75,7 +78,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         // Lower try block
         self.builder.position_at_end(try_block);
         let try_terminated =
-            self.lower_stmts(&try_stmt.block.stmts, function, param_map, locals_stack)?;
+            self.lower_stmts(&try_stmt.block.body, function, param_map, locals_stack)?;
 
         // After try block, check exception flag
         if !try_terminated {
@@ -146,13 +149,13 @@ impl<'a> crate::codegen::CodeGen<'a> {
             if let Some(param) = &catch_clause.param {
                 // For now, we'll create a local variable for the exception
                 // In a full implementation, this would be the actual exception object
-                match param {
-                    Pat::Ident(ident) => {
+                match &param.pattern.kind {
+                    BindingPatternKind::BindingIdentifier(ident) => {
                         // Create a local for the exception parameter
                         // For now, we'll use a null pointer as a placeholder
                         let exception_local = self
                             .builder
-                            .build_alloca(self.i8ptr_t, &ident.sym)
+                            .build_alloca(self.i8ptr_t, &ident.name.to_string())
                             .map_err(|_| {
                             Diagnostic::simple_boxed(
                                 crate::diagnostics::Severity::Error,
@@ -166,7 +169,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         self.insert_local_current_scope(
                             locals_stack,
                             crate::codegen::helpers::LocalVarInfo {
-                                name: ident.sym.clone(),
+                                name: ident.name.to_string(),
                                 ptr: exception_local,
                                 ty: self.i8ptr_t.as_basic_type_enum(),
                                 initialized: true,
@@ -188,7 +191,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             }
 
             let catch_terminated =
-                self.lower_stmts(&catch_clause.body.stmts, function, param_map, locals_stack)?;
+                self.lower_stmts(&catch_clause.body.body, function, param_map, locals_stack)?;
 
             // If catch didn't terminate, branch to finally or merge
             if !catch_terminated {
@@ -206,7 +209,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         {
             self.builder.position_at_end(finally_bb);
             let finally_terminated =
-                self.lower_stmts(&finally_stmt.stmts, function, param_map, locals_stack)?;
+                self.lower_stmts(&finally_stmt.body, function, param_map, locals_stack)?;
 
             // If finally didn't terminate, branch to merge
             if !finally_terminated {
@@ -225,14 +228,14 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
     pub(crate) fn lower_throw_stmt(
         &self,
-        throw_stmt: &oats_ast::ThrowStmt,
+        throw_stmt: &oxc_ast::ast::ThrowStatement,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals_stack: &mut LocalsStackLocal<'a>,
     ) -> crate::diagnostics::DiagnosticResult<bool> {
         // Lower the thrown expression
         let _thrown_val = self
-            .lower_expr(&throw_stmt.arg, function, param_map, locals_stack)
+            .lower_expr(&throw_stmt.argument, function, param_map, locals_stack)
             .map_err(|_| {
                 Diagnostic::simple_boxed(
                     crate::diagnostics::Severity::Error,
@@ -244,7 +247,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
         // In a full implementation, we would also store the exception object
         let exception_flag_name = format!(
             "__exception_flag_{}",
-            function.get_name().to_str().unwrap_or("unknown")
+            match function.get_name().to_str() {
+                Ok(name) => name,
+                Err(_) => "unknown",
+            }
         );
         let exception_flag_global =
             if let Some(existing) = self.module.get_global(&exception_flag_name) {

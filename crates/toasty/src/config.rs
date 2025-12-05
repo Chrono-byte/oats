@@ -25,7 +25,10 @@ pub struct Config {
 impl Config {
     /// Load configuration from ~/.oats/config.toml and environment variables
     pub fn load() -> Result<Self> {
-        let mut config = Self::load_from_file().unwrap_or_default();
+        let mut config = match Self::load_from_file() {
+            Ok(cfg) => cfg,
+            Err(_) => Self::default(),
+        };
 
         // Override with environment variables if set
         if let Ok(path) = std::env::var("OATS_OATSC_PATH") {
@@ -70,7 +73,10 @@ impl Config {
 
     /// Get the path to the configuration file
     fn config_path() -> PathBuf {
-        let mut path = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+        let mut path = match dirs::home_dir() {
+            Some(p) => p,
+            None => PathBuf::from("."),
+        };
         path.push(".oats");
         path.push("config.toml");
         path

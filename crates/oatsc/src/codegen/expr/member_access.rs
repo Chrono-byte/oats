@@ -68,7 +68,10 @@ impl<'a> CodeGen<'a> {
                             && let Some(param_types) = self
                                 .fn_param_types
                                 .borrow()
-                                .get(function.get_name().to_str().unwrap_or(""))
+                                .get(match function.get_name().to_str() {
+                                    Some(name) => name,
+                                    None => "",
+                                })
                         {
                             let idx = *param_idx as usize;
                             if idx < param_types.len()
@@ -78,7 +81,10 @@ impl<'a> CodeGen<'a> {
                             }
                         }
                     } else if matches!(&computed.object, Expression::ThisExpression(_)) {
-                        let fname = function.get_name().to_str().unwrap_or("");
+                        let fname = match function.get_name().to_str() {
+                            Some(name) => name,
+                            None => "",
+                        };
                         if let Some(param_types) = self.fn_param_types.borrow().get(fname)
                             && !param_types.is_empty()
                             && let crate::types::OatsType::NominalStruct(n) = &param_types[0]
@@ -206,7 +212,9 @@ impl<'a> CodeGen<'a> {
                                             match cs.try_as_basic_value() {
                                                 either::Either::Left(bv) => return Ok(bv),
                                                 _ => {
-                                                    return Err(Diagnostic::error("operation failed"));
+                                                    return Err(Diagnostic::error(
+                                                        "operation failed",
+                                                    ));
                                                 }
                                             }
                                         }
@@ -226,7 +234,9 @@ impl<'a> CodeGen<'a> {
                                             match cs2.try_as_basic_value() {
                                                 either::Either::Left(bv2) => return Ok(bv2),
                                                 _ => {
-                                                    return Err(Diagnostic::error("operation failed"));
+                                                    return Err(Diagnostic::error(
+                                                        "operation failed",
+                                                    ));
                                                 }
                                             }
                                         }
@@ -276,7 +286,11 @@ impl<'a> CodeGen<'a> {
                         // Try to determine the array's element type from available metadata.
                         let mut prefer_f64 = false;
                         // If the array expression was an identifier, check locals/params
-                        if matches!(&computed.object, Expression::StaticMemberExpression(_) | Expression::ComputedMemberExpression(_)) {
+                        if matches!(
+                            &computed.object,
+                            Expression::StaticMemberExpression(_)
+                                | Expression::ComputedMemberExpression(_)
+                        ) {
                             // Member access; we can't easily infer here. Fall through to ptr case.
                         } else if let Expression::Identifier(ident) = &computed.object {
                             let arr_name = ident.as_ref().name.to_string();
@@ -298,7 +312,10 @@ impl<'a> CodeGen<'a> {
                             }
                             // Check function params if not found in locals
                             if !prefer_f64 && let Some(idx_p) = param_map.get(&arr_name) {
-                                let fname = function.get_name().to_str().unwrap_or("");
+                                let fname = match function.get_name().to_str() {
+                            Some(name) => name,
+                            None => "",
+                        };
                                 if let Some(param_types) = self.fn_param_types.borrow().get(fname) {
                                     let pidx = *idx_p as usize;
                                     if pidx < param_types.len()
@@ -313,17 +330,20 @@ impl<'a> CodeGen<'a> {
                         }
                         if prefer_f64 {
                             let array_get = self.get_array_get_f64();
-                            let cs = self.builder.build_call(
-                                array_get,
-                                &[arr_ptr.into(), idx_i64.into()],
-                                "array_get_f64_call",
-                            ).map_err(|_| {
-                                Diagnostic::simple_with_span_boxed(
-                                    Severity::Error,
-                                    "operation failed",
-                                    computed.span.start as usize,
+                            let cs = self
+                                .builder
+                                .build_call(
+                                    array_get,
+                                    &[arr_ptr.into(), idx_i64.into()],
+                                    "array_get_f64_call",
                                 )
-                            })?;
+                                .map_err(|_| {
+                                    Diagnostic::simple_with_span_boxed(
+                                        Severity::Error,
+                                        "operation failed",
+                                        computed.span.start as usize,
+                                    )
+                                })?;
                             match cs.try_as_basic_value() {
                                 either::Either::Left(bv) => return Ok(bv),
                                 _ => {
@@ -339,17 +359,20 @@ impl<'a> CodeGen<'a> {
 
                     // Fallback: call runtime helper that returns a pointer and rc_inc's it
                     let array_get_ptr_fn = self.get_array_get_ptr();
-                    let cs = self.builder.build_call(
-                        array_get_ptr_fn,
-                        &[arr_ptr.into(), idx_i64.into()],
-                        "array_get_ptr_call",
-                    ).map_err(|_| {
-                        Diagnostic::simple_with_span_boxed(
-                            Severity::Error,
-                            "operation failed",
-                            computed.span.start as usize,
+                    let cs = self
+                        .builder
+                        .build_call(
+                            array_get_ptr_fn,
+                            &[arr_ptr.into(), idx_i64.into()],
+                            "array_get_ptr_call",
                         )
-                    })?;
+                        .map_err(|_| {
+                            Diagnostic::simple_with_span_boxed(
+                                Severity::Error,
+                                "operation failed",
+                                computed.span.start as usize,
+                            )
+                        })?;
                     match cs.try_as_basic_value() {
                         either::Either::Left(bv) => return Ok(bv),
                         _ => {
@@ -412,12 +435,14 @@ impl<'a> CodeGen<'a> {
                 // Special-case: `arr.length` for array-like receivers. Load i64 length from array header (+8)
                 if field_name == "length" {
                     // Attempt to lower receiver and read length from header for pointer-like values
-                    if let Ok(bv) = self.lower_expr(&static_member.object, function, param_map, locals)
+                    if let Ok(bv) =
+                        self.lower_expr(&static_member.object, function, param_map, locals)
                         && let BasicValueEnum::PointerValue(pv) = bv
                     {
                         // length is stored as i64 at offset +8 from base
                         let offset = self.i64_t.const_int(8, false);
-                        let gep_ptr = self.i8_ptr_from_offset_i64(pv, offset, "arr_len_i8")
+                        let gep_ptr = self
+                            .i8_ptr_from_offset_i64(pv, offset, "arr_len_i8")
                             .map_err(|_| {
                                 Diagnostic::simple_with_span_boxed(
                                     Severity::Error,
@@ -438,7 +463,9 @@ impl<'a> CodeGen<'a> {
                                     static_member.span.start as usize,
                                 )
                             })?;
-                        let loaded = self.builder.build_load(self.i64_t, len_ptr, "arr_len_load")
+                        let loaded = self
+                            .builder
+                            .build_load(self.i64_t, len_ptr, "arr_len_load")
                             .map_err(|_| {
                                 Diagnostic::simple_with_span_boxed(
                                     Severity::Error,
@@ -470,7 +497,10 @@ impl<'a> CodeGen<'a> {
                             if let Some(param_types) = self
                                 .fn_param_types
                                 .borrow()
-                                .get(function.get_name().to_str().unwrap_or(""))
+                                .get(match function.get_name().to_str() {
+                                    Some(name) => name,
+                                    None => "",
+                                })
                                 && !param_types.is_empty()
                                 && let crate::types::OatsType::NominalStruct(n) = &param_types[0]
                             {
@@ -481,7 +511,10 @@ impl<'a> CodeGen<'a> {
                             if let Some(param_types) = self
                                 .fn_param_types
                                 .borrow()
-                                .get(function.get_name().to_str().unwrap_or(""))
+                                .get(match function.get_name().to_str() {
+                                    Some(name) => name,
+                                    None => "",
+                                })
                             {
                                 let idx = *param_idx as usize;
                                 if idx < param_types.len()
@@ -510,17 +543,28 @@ impl<'a> CodeGen<'a> {
                         && let Some(param_types) = self
                             .fn_param_types
                             .borrow()
-                            .get(function.get_name().to_str().unwrap_or(""))
+                            .get(match function.get_name().to_str() {
+                                Some(name) => name,
+                                None => "",
+                            })
                         && !param_types.is_empty()
                         && let crate::types::OatsType::NominalStruct(n) = &param_types[0]
                     {
                         class_name_opt = Some(n.clone());
-                    } else if matches!(&static_member.object, Expression::StaticMemberExpression(_) | Expression::ComputedMemberExpression(_)) {
+                    } else if matches!(
+                        &static_member.object,
+                        Expression::StaticMemberExpression(_)
+                            | Expression::ComputedMemberExpression(_)
+                    ) {
                         // Nested member access: outer.data.value
                         // We need to resolve the type of outer.data to know what fields it has
                         // First, recursively resolve the outer member expression's type
-                        class_name_opt =
-                            self.resolve_member_type(&static_member.object, function, param_map, locals);
+                        class_name_opt = self.resolve_member_type(
+                            &static_member.object,
+                            function,
+                            param_map,
+                            locals,
+                        );
                     }
 
                     if let Some(class_name) = class_name_opt {
@@ -574,16 +618,15 @@ impl<'a> CodeGen<'a> {
                                                 "f64_ptr_cast",
                                             )
                                             .map_err(|_| Diagnostic::error("LLVM builder error"))?;
-                                        let loaded = self.builder.build_load(
-                                            self.f64_t,
-                                            f64_ptr,
-                                            "field_f64_load",
-                                        ).map_err(|_| {
-                                            Diagnostic::simple_boxed(
-                                                Severity::Error,
-                                                "operation failed",
-                                            )
-                                        })?;
+                                        let loaded = self
+                                            .builder
+                                            .build_load(self.f64_t, f64_ptr, "field_f64_load")
+                                            .map_err(|_| {
+                                                Diagnostic::simple_boxed(
+                                                    Severity::Error,
+                                                    "operation failed",
+                                                )
+                                            })?;
                                         return Ok(loaded.as_basic_value_enum());
                                     }
                                     crate::types::OatsType::String
@@ -592,27 +635,29 @@ impl<'a> CodeGen<'a> {
                                         // Cast to pointer type and load
                                         let slot_ptr_ty =
                                             self.context.ptr_type(AddressSpace::default());
-                                        let slot_ptr = self.builder.build_pointer_cast(
-                                            gep_ptr,
-                                            slot_ptr_ty,
-                                            "slot_ptr_cast",
-                                        ).map_err(|_| {
-                                            Diagnostic::simple_boxed(
-                                                Severity::Error,
-                                                "operation failed",
+                                        let slot_ptr = self
+                                            .builder
+                                            .build_pointer_cast(
+                                                gep_ptr,
+                                                slot_ptr_ty,
+                                                "slot_ptr_cast",
                                             )
-                                        })?;
+                                            .map_err(|_| {
+                                                Diagnostic::simple_boxed(
+                                                    Severity::Error,
+                                                    "operation failed",
+                                                )
+                                            })?;
                                         // load slot (an i8*)
-                                        let loaded = self.builder.build_load(
-                                            self.i8ptr_t,
-                                            slot_ptr,
-                                            "field_load",
-                                        ).map_err(|_| {
-                                            Diagnostic::simple_boxed(
-                                                Severity::Error,
-                                                "operation failed",
-                                            )
-                                        })?;
+                                        let loaded = self
+                                            .builder
+                                            .build_load(self.i8ptr_t, slot_ptr, "field_load")
+                                            .map_err(|_| {
+                                                Diagnostic::simple_boxed(
+                                                    Severity::Error,
+                                                    "operation failed",
+                                                )
+                                            })?;
                                         // If the object expression had an origin marker,
                                         // check for a synthetic mapping for this object's field
                                         // and, if present, set last_expr_origin_local so
@@ -637,26 +682,28 @@ impl<'a> CodeGen<'a> {
                                         // Unions are stored boxed as i8*; load boxed pointer and unbox to requested payload.
                                         let slot_ptr_ty =
                                             self.context.ptr_type(AddressSpace::default());
-                                        let slot_ptr = self.builder.build_pointer_cast(
-                                            gep_ptr,
-                                            slot_ptr_ty,
-                                            "slot_ptr_cast",
-                                        ).map_err(|_| {
-                                            Diagnostic::simple_boxed(
-                                                Severity::Error,
-                                                "operation failed",
+                                        let slot_ptr = self
+                                            .builder
+                                            .build_pointer_cast(
+                                                gep_ptr,
+                                                slot_ptr_ty,
+                                                "slot_ptr_cast",
                                             )
-                                        })?;
-                                        let boxed = self.builder.build_load(
-                                            self.i8ptr_t,
-                                            slot_ptr,
-                                            "union_boxed_load",
-                                        ).map_err(|_| {
-                                            Diagnostic::simple_boxed(
-                                                Severity::Error,
-                                                "operation failed",
-                                            )
-                                        })?;
+                                            .map_err(|_| {
+                                                Diagnostic::simple_boxed(
+                                                    Severity::Error,
+                                                    "operation failed",
+                                                )
+                                            })?;
+                                        let boxed = self
+                                            .builder
+                                            .build_load(self.i8ptr_t, slot_ptr, "union_boxed_load")
+                                            .map_err(|_| {
+                                                Diagnostic::simple_boxed(
+                                                    Severity::Error,
+                                                    "operation failed",
+                                                )
+                                            })?;
                                         // Try to unbox as f64 first
                                         if let BasicValueEnum::PointerValue(boxed_ptr) = boxed {
                                             let unbox_f = self.get_union_unbox_f64();
@@ -676,7 +723,9 @@ impl<'a> CodeGen<'a> {
                                             match cs.try_as_basic_value() {
                                                 either::Either::Left(bv) => return Ok(bv),
                                                 _ => {
-                                                    return Err(Diagnostic::error("operation failed"));
+                                                    return Err(Diagnostic::error(
+                                                        "operation failed",
+                                                    ));
                                                 }
                                             }
 
@@ -698,7 +747,9 @@ impl<'a> CodeGen<'a> {
                                             match cs2.try_as_basic_value() {
                                                 either::Either::Left(bv2) => return Ok(bv2),
                                                 _ => {
-                                                    return Err(Diagnostic::error("operation failed"));
+                                                    return Err(Diagnostic::error(
+                                                        "operation failed",
+                                                    ));
                                                 }
                                             }
                                         }
@@ -754,7 +805,7 @@ impl<'a> CodeGen<'a> {
                 ));
             }
         };
-        
+
         // Verify it's a super expression
         if !matches!(obj_expr, Expression::Super(_)) {
             return Err(Diagnostic::simple_boxed(
@@ -766,29 +817,22 @@ impl<'a> CodeGen<'a> {
         // Find parent class name
         let parent_opt = self.current_class_parent.borrow().clone();
         let parent = parent_opt.ok_or_else(|| {
-            Diagnostic::simple_boxed(
-                Severity::Error,
-                "super used but no parent class found",
-            )
+            Diagnostic::simple_boxed(Severity::Error, "super used but no parent class found")
         })?;
 
         // Get 'this' pointer
         let (this_ptr, this_ty, _init, _is_const, _extra, _nominal, _oats_type) =
-            self.find_local(locals, "this")
-                .ok_or_else(|| {
-                    Diagnostic::simple_boxed(
-                        Severity::Error,
-                        "'this' not found in locals for super member access",
-                    )
-                })?;
-
-        let this_loaded = self.builder.build_load(this_ty, this_ptr, "this_loaded")
-            .map_err(|_| {
+            self.find_local(locals, "this").ok_or_else(|| {
                 Diagnostic::simple_boxed(
                     Severity::Error,
-                    "operation failed",
+                    "'this' not found in locals for super member access",
                 )
             })?;
+
+        let this_loaded = self
+            .builder
+            .build_load(this_ty, this_ptr, "this_loaded")
+            .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "operation failed"))?;
 
         // Look up field in parent class
         let fields = self.class_fields.borrow();
@@ -872,12 +916,10 @@ impl<'a> CodeGen<'a> {
                     .map_err(|_| Diagnostic::error("LLVM builder error"))?;
                 Ok(loaded.as_basic_value_enum())
             }
-            _ => {
-                Err(Diagnostic::simple_boxed(
-                    Severity::Error,
-                    "unsupported field type for super member access",
-                ))
-            }
+            _ => Err(Diagnostic::simple_boxed(
+                Severity::Error,
+                "unsupported field type for super member access",
+            )),
         }
     }
 
@@ -893,16 +935,17 @@ impl<'a> CodeGen<'a> {
         match member {
             Expression::StaticMemberExpression(static_member) => {
                 let field_name = static_member.property.name.to_string();
-                let obj_ptr = match self.lower_expr(&static_member.object, function, param_map, locals) {
-                    Ok(BasicValueEnum::PointerValue(pv)) => pv,
-                    _ => {
-                        return Err(Diagnostic::simple_with_span_boxed(
-                            Severity::Error,
-                            "member assignment requires object pointer",
-                            static_member.span.start as usize,
-                        ));
-                    }
-                };
+                let obj_ptr =
+                    match self.lower_expr(&static_member.object, function, param_map, locals) {
+                        Ok(BasicValueEnum::PointerValue(pv)) => pv,
+                        _ => {
+                            return Err(Diagnostic::simple_with_span_boxed(
+                                Severity::Error,
+                                "member assignment requires object pointer",
+                                static_member.span.start as usize,
+                            ));
+                        }
+                    };
 
                 // Determine nominal class name
                 let mut class_name_opt: Option<String> = None;
@@ -917,7 +960,10 @@ impl<'a> CodeGen<'a> {
                         && let Some(param_types) = self
                             .fn_param_types
                             .borrow()
-                            .get(function.get_name().to_str().unwrap_or(""))
+                            .get(match function.get_name().to_str() {
+                                Some(name) => name,
+                                None => "",
+                            })
                     {
                         let idx = *param_idx as usize;
                         if idx < param_types.len()
@@ -927,17 +973,27 @@ impl<'a> CodeGen<'a> {
                         }
                     }
                 } else if matches!(&static_member.object, Expression::ThisExpression(_)) {
-                    let fname = function.get_name().to_str().unwrap_or("");
+                    let fname = match function.get_name().to_str() {
+                        Some(name) => name,
+                        None => "",
+                    };
                     if let Some(param_types) = self.fn_param_types.borrow().get(fname)
                         && !param_types.is_empty()
                         && let crate::types::OatsType::NominalStruct(n) = &param_types[0]
                     {
                         class_name_opt = Some(n.clone());
                     }
-                } else if matches!(&static_member.object, Expression::StaticMemberExpression(_) | Expression::ComputedMemberExpression(_)) {
+                } else if matches!(
+                    &static_member.object,
+                    Expression::StaticMemberExpression(_) | Expression::ComputedMemberExpression(_)
+                ) {
                     // Nested member access
-                    class_name_opt =
-                        self.resolve_member_type(&static_member.object, function, param_map, locals);
+                    class_name_opt = self.resolve_member_type(
+                        &static_member.object,
+                        function,
+                        param_map,
+                        locals,
+                    );
                 }
 
                 if let Some(class_name) = class_name_opt {
@@ -1019,7 +1075,9 @@ impl<'a> CodeGen<'a> {
                                             let rc_dec = self.get_rc_dec();
                                             self.builder
                                                 .build_call(rc_dec, &[old_pv.into()], "rc_dec_old")
-                                                .map_err(|_| Diagnostic::error("operation failed"))?;
+                                                .map_err(|_| {
+                                                    Diagnostic::error("operation failed")
+                                                })?;
                                         }
                                         self.builder
                                             .build_store(slot_ptr, pv)
@@ -1050,18 +1108,14 @@ impl<'a> CodeGen<'a> {
                     static_member.span.start as usize,
                 ))
             }
-            Expression::ComputedMemberExpression(_) => {
-                Err(Diagnostic::simple_boxed(
-                    Severity::Error,
-                    "assignment to computed member expression not yet supported",
-                ))
-            }
-            _ => {
-                Err(Diagnostic::simple_boxed(
-                    Severity::Error,
-                    "unsupported member expression type for assignment",
-                ))
-            }
+            Expression::ComputedMemberExpression(_) => Err(Diagnostic::simple_boxed(
+                Severity::Error,
+                "assignment to computed member expression not yet supported",
+            )),
+            _ => Err(Diagnostic::simple_boxed(
+                Severity::Error,
+                "unsupported member expression type for assignment",
+            )),
         }
     }
 }

@@ -62,7 +62,7 @@ Manual reference counting is used for all heap objects.
 
 **This pattern is non-negotiable.** We must never panic. All fallible functions must return `Result<T, Diagnostic>`.
 
-- **NO `unwrap()` / `expect()`**: These methods are forbidden in our codebase.
+- **NO `unwrap` / `expect`**: These methods are forbidden in our codebase.
 - **Propagation**: Use the `?` operator to propagate errors up the call stack.
 
 ---

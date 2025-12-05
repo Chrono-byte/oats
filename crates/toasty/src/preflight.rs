@@ -8,13 +8,15 @@ use crate::fetch;
 
 /// Check if a command is available in PATH
 pub fn is_command_available(cmd: &str) -> bool {
-    std::process::Command::new(cmd)
+    match std::process::Command::new(cmd)
         .arg("--version")
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+    {
+        Ok(status) => status.success(),
+        Err(_) => false,
+    }
 }
 
 /// Perform preflight checks to ensure required tools are available

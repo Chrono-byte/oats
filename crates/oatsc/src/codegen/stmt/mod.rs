@@ -53,7 +53,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
     /// code for the current basic block.
     pub(crate) fn lower_stmts(
         &self,
-        stmts: &[oats_ast::Stmt],
+        stmts: &[oxc_ast::ast::Statement<'_>],
         function: inkwell::values::FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals_stack: &mut LocalsStackLocal<'a>,
@@ -68,7 +68,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
     pub(crate) fn lower_stmt(
         &self,
-        stmt: &oats_ast::Stmt,
+        stmt: &oxc_ast::ast::Statement<'_>,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals_stack: &mut LocalsStackLocal<'a>,
@@ -78,54 +78,18 @@ impl<'a> crate::codegen::CodeGen<'a> {
         // statements, return statements and blocks. This is intentionally
         // minimal: more statements can be added into `stmt.rs` later.
         match stmt {
-            Stmt::VarDecl(vd) => self.lower_decl_stmt(vd, function, param_map, locals_stack),
-            Stmt::ExprStmt(expr_stmt) => {
-                self.lower_expr_stmt(expr_stmt, function, param_map, locals_stack)
-            }
-            Stmt::Return(ret) => self.lower_return_stmt(ret, function, param_map, locals_stack),
-            Stmt::Break(break_stmt) => self.lower_break_stmt(break_stmt, locals_stack),
-            Stmt::Continue(continue_stmt) => self.lower_continue_stmt(continue_stmt, locals_stack),
-            Stmt::Block(block) => self.lower_block_stmt(block, function, param_map, locals_stack),
-            Stmt::If(ifstmt) => self.lower_if_stmt(ifstmt, function, param_map, locals_stack),
-            Stmt::Labeled(labeled) => {
-                self.lower_labeled_stmt(labeled, function, param_map, locals_stack)
-            }
-            Stmt::ForOf(forof) => self.lower_for_of_stmt(forof, function, param_map, locals_stack),
-            Stmt::ForIn(for_in) => {
-                self.lower_for_in_stmt(for_in, function, param_map, locals_stack)
-            }
-            Stmt::For(forstmt) => self.lower_for_stmt(forstmt, function, param_map, locals_stack),
-            Stmt::While(while_stmt) => {
-                self.lower_while_stmt(while_stmt, function, param_map, locals_stack)
-            }
-            Stmt::DoWhile(dowhile_stmt) => {
-                self.lower_do_while_stmt(dowhile_stmt, function, param_map, locals_stack)
-            }
-            Stmt::Switch(switch_stmt) => {
+            oxc_ast::ast::Statement::VariableDeclaration(vd) => self.lower_decl_stmt(vd, function, param_map, locals_stack),
+            oxc_ast::ast::Statement::SwitchStatement(switch_stmt) => {
                 self.lower_switch_stmt(switch_stmt, function, param_map, locals_stack)
             }
-            Stmt::Try(try_stmt) => self.lower_try_stmt(try_stmt, function, param_map, locals_stack),
-            Stmt::Throw(throw_stmt) => {
+            oxc_ast::ast::Statement::TryStatement(try_stmt) => self.lower_try_stmt(try_stmt, function, param_map, locals_stack),
+            oxc_ast::ast::Statement::ThrowStatement(throw_stmt) => {
                 self.lower_throw_stmt(throw_stmt, function, param_map, locals_stack)
             }
-            Stmt::FnDecl(_) | Stmt::ClassDecl(_) => {
-                // Function and class declarations are handled at module level
-                Ok(false)
-            }
-            Stmt::Debugger(_) => {
-                // Debugger statement is a no-op in codegen
-                // It's a debugging aid that doesn't generate any code
-                Ok(false)
-            }
-            Stmt::Import(_)
-            | Stmt::TypeAlias(_)
-            | Stmt::InterfaceDecl(_)
-            | Stmt::EnumDecl(_)
-            | Stmt::NamespaceDecl(_)
-            | Stmt::DeclareFn(_) => {
+            _ => {
                 // These are handled at module level, not in statement lowering
                 Ok(false)
-            }
+            }   
         }
     }
 }

@@ -252,19 +252,25 @@ pub fn handle_build(cli: &Cli, opts: BuildCommandOptions) -> Result<()> {
             for prev_module in &compilation_order[0..i] {
                 // Determine the import path (relative to current module)
                 // For now, use the module file stem as the import path
-                let import_path = std::path::Path::new(prev_module)
+                let import_path = match std::path::Path::new(prev_module)
                     .file_stem()
                     .and_then(|s| s.to_str())
                     .map(|s| format!("./{}", s))
-                    .unwrap_or_else(|| "./module".to_string());
+                {
+                    Some(path) => path,
+                    None => "./module".to_string(),
+                };
 
                 // Try to find or generate metadata file for this module
                 let meta_path = if let Some(out_dir) = &out_dir {
                     // Check if metadata file exists in output directory
-                    let module_stem = std::path::Path::new(prev_module)
+                    let module_stem = match std::path::Path::new(prev_module)
                         .file_stem()
                         .and_then(|s| s.to_str())
-                        .unwrap_or("module");
+                    {
+                        Some(stem) => stem,
+                        None => "module",
+                    };
                     let potential_meta = std::path::Path::new(out_dir)
                         .join(format!("{}_pkg.oats.meta", module_stem));
 
@@ -342,17 +348,22 @@ pub fn handle_build(cli: &Cli, opts: BuildCommandOptions) -> Result<()> {
     }
 
     // Link all object files together
-    let exe_name = opts.out_name.clone().unwrap_or_else(|| {
-        std::path::Path::new(&src_file)
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("main")
-            .to_string()
-    });
-    let exe_path = out_dir
-        .as_ref()
-        .map(|d| std::path::Path::new(d).join(&exe_name))
-        .unwrap_or_else(|| std::path::Path::new(&exe_name).to_path_buf());
+    let exe_name = match opts.out_name.clone() {
+        Some(name) => name,
+        None => {
+            match std::path::Path::new(&src_file)
+                .file_stem()
+                .and_then(|s| s.to_str())
+            {
+                Some(stem) => stem.to_string(),
+                None => "main".to_string(),
+            }
+        }
+    };
+    let exe_path = match out_dir.as_ref() {
+        Some(d) => std::path::Path::new(d).join(&exe_name),
+        None => std::path::Path::new(&exe_name).to_path_buf(),
+    };
 
     // Link the executable
     linker::link_executable(&compiled_modules, &exe_path, opts.linker.clone(), verbose)?;
@@ -419,11 +430,17 @@ pub fn handle_run(
     let _build_res = compiler::invoke_oatsc(&options)?;
 
     // Determine output exe path
-    let out_dir = std::env::var("OATS_OUT_DIR").unwrap_or_else(|_| ".".to_string());
-    let src_filename = std::path::Path::new(&src_file)
+    let out_dir = match std::env::var("OATS_OUT_DIR") {
+        Ok(dir) => dir,
+        Err(_) => ".".to_string(),
+    };
+    let src_filename = match std::path::Path::new(&src_file)
         .file_stem()
         .and_then(|s| s.to_str())
-        .unwrap_or("out");
+    {
+        Some(name) => name,
+        None => "out",
+    };
     let exe_name = if let Some(name) = out_name {
         name
     } else {
@@ -574,7 +591,10 @@ pub fn handle_package(action: PackageCommands) -> Result<()> {
             quiet,
         } => {
             // Install a specific package
-            let version_to_install = version.unwrap_or_else(|| "latest".to_string());
+            let version_to_install = match version {
+                Some(v) => v,
+                None => "latest".to_string(),
+            };
             fetch::install_package_version(&name, &version_to_install)?;
             if !quiet {
                 println!(
@@ -607,8 +627,10 @@ pub fn handle_package(action: PackageCommands) -> Result<()> {
             println!("Version: {}", info.version);
             println!(
                 "Description: {}",
-                info.description
-                    .unwrap_or_else(|| "No description".to_string())
+                match info.description {
+                    Some(desc) => desc,
+                    None => "No description".to_string(),
+                }
             );
             if let Some(deps) = info.dependencies {
                 println!("Dependencies:");
@@ -742,7 +764,10 @@ fn determine_source_file(src: Option<String>, quiet: bool, verbose: bool) -> Res
             Ok(format!("package:{}", manifest_path.display()))
         }
         Ok(None) => {
-            let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+            let cwd = match std::env::current_dir() {
+                Ok(path) => path,
+                Err(_) => std::path::PathBuf::from("."),
+            };
             Err(ToastyError::other(format!(
                 "No source file provided and no Oats.toml found.\n\nTo build a project:\n  • Create an Oats.toml manifest in your project root\n  • Or specify a source file: toasty build main.oats\n\nCurrent directory: {}",
                 cwd.display()

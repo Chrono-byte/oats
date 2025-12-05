@@ -53,7 +53,10 @@ pub fn compile_to_object(module: &Module, config: &LinkingConfig) -> Result<Stri
     } else {
         vec![String::new(), "native".to_string()]
     };
-    let features = config.target_features.clone().unwrap_or_default();
+    let features = match config.target_features.clone() {
+        Some(f) => f,
+        None => vec![],
+    };
 
     // Get the target from the triple
     let target = Target::from_triple(&triple)
@@ -266,28 +269,11 @@ pub fn link_executable(
         }
 
         // Add LTO flags
-        let lto_mode = config.lto.as_deref().unwrap_or_else(|| {
-            if config.build_profile == "release" {
-                "auto"
-            } else {
-                "none"
-            }
-        });
-        match lto_mode {
-            "none" => {}
-            "thin" => {
-                cmd.arg("-flto=thin");
-            }
-            "fat" | "full" => {
-                cmd.arg("-flto");
-            }
-            "auto" => {
-                if config.build_profile == "release" {
-                    cmd.arg("-flto");
-                }
-            }
-            _ => {}
-        }
+        let lto_mode = match config.lto.as_deref() {
+            Some(mode) => mode,
+            None => "none",
+        };
+        cmd.arg(format!("-flto={}", lto_mode));
 
         if let Some(ref lld) = lld_candidate {
             cmd.arg(format!("-fuse-ld={}", lld));

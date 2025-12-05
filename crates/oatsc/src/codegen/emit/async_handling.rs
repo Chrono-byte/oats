@@ -3,8 +3,10 @@
 //! This module contains code generation logic for async functions, including
 //! live-set computation for await points and async function lowering.
 
+use crate::codegen::helpers::extract_basic_value_from_valuekind;
 use crate::diagnostics::Severity;
 use inkwell::values::{BasicValue, FunctionValue};
+use oxc_ast::ast::*;
 use std::collections::{HashMap, HashSet};
 
 impl<'a> crate::codegen::CodeGen<'a> {
@@ -21,69 +23,93 @@ impl<'a> crate::codegen::CodeGen<'a> {
     /// Notes: we intentionally do NOT traverse into nested function/arrow
     /// bodies so identifiers captured only by inner functions don't count
     /// as live for the outer function. This is a conservative pass that
-    pub fn compute_await_live_sets(&self, func: &Function) -> Vec<HashSet<String>> {
+    pub fn compute_await_live_sets(
+        &self,
+        func: &oxc_ast::ast::Function<'_>,
+    ) -> Vec<HashSet<String>> {
         enum Node {
             Ident(String),
             AwaitMarker,
         }
 
-        fn flatten_expr(e: &Expr, out: &mut Vec<Node>) {
+        fn flatten_expr(e: &oxc_ast::ast::Expression<'_>, out: &mut Vec<Node>) {
             match e {
-                Expr::Ident(id) => out.push(Node::Ident(id.sym.clone())),
-                Expr::Call(c) => {
-                    if let Callee::Expr(ec) = &c.callee {
-                        flatten_expr(ec, out);
-                    }
-                    for a in &c.args {
-                        flatten_expr(a, out);
+                oxc_ast::ast::Expression::Identifier(id) => {
+                    out.push(Node::Ident(id.name.to_string()))
+                }
+                oxc_ast::ast::Expression::CallExpression(c) => {
+                    // Handle callee - it's an Expression, so recurse
+                    flatten_expr(&c.callee, out);
+                    for a in c.arguments.iter() {
+                        if let Some(expr) = a.as_expression() {
+                            flatten_expr(expr, out);
+                        } else if let oxc_ast::ast::Argument::SpreadElement(spread) = a {
+                            flatten_expr(&spread.argument, out);
+                        }
                     }
                 }
-                Expr::Member(m) => {
-                    flatten_expr(&m.obj, out);
-                    if let MemberProp::Computed(cmp) = &m.prop {
-                        flatten_expr(cmp, out);
-                    }
+                oxc_ast::ast::Expression::StaticMemberExpression(m) => {
+                    // Static member access: obj.prop
+                    // property is just an IdentifierName, not an Expression, so no need to recurse
+                    flatten_expr(&m.object, out);
                 }
-                Expr::Bin(b) => {
+                oxc_ast::ast::Expression::ComputedMemberExpression(m) => {
+                    // Computed member access: obj[expr]
+                    flatten_expr(&m.object, out);
+                    flatten_expr(&m.expression, out);
+                }
+                oxc_ast::ast::Expression::BinaryExpression(b) => {
                     flatten_expr(&b.left, out);
                     flatten_expr(&b.right, out);
                 }
-                Expr::Unary(u) => flatten_expr(&u.arg, out),
-                Expr::Await(a) => {
+                oxc_ast::ast::Expression::UnaryExpression(u) => flatten_expr(&u.argument, out),
+                oxc_ast::ast::Expression::AwaitExpression(a) => {
                     // Evaluate the awaited expression first, then mark the
                     // suspension point so idents inside the arg are treated
                     // as occurring before the await (not after).
-                    flatten_expr(&a.arg, out);
+                    flatten_expr(&a.argument, out);
                     out.push(Node::AwaitMarker);
                 }
-                Expr::Paren(p) => flatten_expr(&p.expr, out),
-                Expr::Array(arr) => {
-                    for el in arr.elems.iter().flatten() {
-                        flatten_expr(el, out);
+                oxc_ast::ast::Expression::ParenthesizedExpression(p) => {
+                    flatten_expr(&p.expression, out)
+                }
+                oxc_ast::ast::Expression::ArrayExpression(arr) => {
+                    for el in arr.elements.iter() {
+                        if let Some(expr) = el.as_expression() {
+                            flatten_expr(expr, out);
+                        }
                     }
                 }
-                Expr::New(n) => {
+                oxc_ast::ast::Expression::NewExpression(n) => {
                     flatten_expr(&n.callee, out);
-                    for a in &n.args {
-                        flatten_expr(a, out);
+                    for a in n.arguments.iter() {
+                        if let Some(expr) = a.as_expression() {
+                            flatten_expr(expr, out);
+                        } else if let oxc_ast::ast::Argument::SpreadElement(spread) = a {
+                            flatten_expr(&spread.argument, out);
+                        }
                     }
                 }
-                Expr::Assign(asg) => {
+                oxc_ast::ast::Expression::AssignmentExpression(asg) => {
                     // Conservatively flatten assignment
                     // Note: asg.left is an AssignTarget, not Expr, so we only flatten the RHS
                     flatten_expr(&asg.right, out);
                 }
-                Expr::Cond(c) => {
+                oxc_ast::ast::Expression::ConditionalExpression(c) => {
                     flatten_expr(&c.test, out);
-                    flatten_expr(&c.cons, out);
-                    flatten_expr(&c.alt, out);
+                    flatten_expr(&c.consequent, out);
+                    flatten_expr(&c.alternate, out);
                 }
-                Expr::Tpl(_) | Expr::Lit(_) => {
+                oxc_ast::ast::Expression::TemplateLiteral(_)
+                | oxc_ast::ast::Expression::NumericLiteral(_)
+                | oxc_ast::ast::Expression::StringLiteral(_)
+                | oxc_ast::ast::Expression::BooleanLiteral(_)
+                | oxc_ast::ast::Expression::NullLiteral(_) => {
                     // literals: no idents to record
                 }
-                Expr::Arrow(a) => {
+                oxc_ast::ast::Expression::ArrowFunctionExpression(_a) => {
                     // don't recurse into nested function/arrow bodies
-                    let _ = a;
+                    // Function bodies are not flattened, so we don't need to recurse
                 }
                 _ => {
                     // conservative: don't traverse into patterns we don't care about
@@ -91,83 +117,127 @@ impl<'a> crate::codegen::CodeGen<'a> {
             }
         }
 
-        fn flatten_stmt(s: &Stmt, out: &mut Vec<Node>) {
+        fn flatten_stmt(s: &oxc_ast::ast::Statement<'_>, out: &mut Vec<Node>) {
             match s {
-                Stmt::ExprStmt(es) => flatten_expr(&es.expr, out),
-                Stmt::Return(r) => {
-                    if let Some(arg) = &r.arg {
+                oxc_ast::ast::Statement::ExpressionStatement(es) => {
+                    flatten_expr(&es.expression, out)
+                }
+                oxc_ast::ast::Statement::ReturnStatement(r) => {
+                    if let Some(arg) = r.argument.as_ref() {
                         flatten_expr(arg, out);
                     }
                 }
-                Stmt::VarDecl(vd) => {
-                    for decl in &vd.decls {
-                        if let Some(init) = &decl.init {
+                oxc_ast::ast::Statement::VariableDeclaration(vd) => {
+                    for decl in vd.declarations.iter() {
+                        if let Some(init) = decl.init.as_ref() {
                             flatten_expr(init, out);
                         }
                     }
                 }
-                Stmt::If(ifst) => {
+                oxc_ast::ast::Statement::IfStatement(ifst) => {
                     flatten_expr(&ifst.test, out);
-                    // shallow: if cons/alt are simple expr statements, flatten
-                    match &*ifst.cons {
-                        Stmt::ExprStmt(e) => flatten_expr(&e.expr, out),
-                        Stmt::Block(b) => {
-                            for st in &b.stmts {
-                                flatten_stmt(st, out);
-                            }
-                        }
-                        _ => {}
-                    }
-                    if let Some(alt) = &ifst.alt {
-                        match alt.as_ref() {
-                            Stmt::ExprStmt(e) => flatten_expr(&e.expr, out),
-                            Stmt::Block(b) => {
-                                for st in &b.stmts {
-                                    flatten_stmt(st, out);
-                                }
-                            }
-                            _ => {}
-                        }
+                    flatten_stmt(&ifst.consequent, out);
+                    if let Some(alt) = ifst.alternate.as_ref() {
+                        flatten_stmt(alt, out);
                     }
                 }
-                Stmt::Block(b) => {
-                    for st in &b.stmts {
+                oxc_ast::ast::Statement::BlockStatement(b) => {
+                    for st in b.body.iter() {
                         flatten_stmt(st, out);
                     }
                 }
-                Stmt::While(w) => {
+                oxc_ast::ast::Statement::WhileStatement(w) => {
                     flatten_expr(&w.test, out);
                     flatten_stmt(&w.body, out);
                 }
-                Stmt::For(f) => {
+                oxc_ast::ast::Statement::ForStatement(f) => {
                     if let Some(init) = &f.init {
                         match init {
-                            ForInit::Expr(e) => flatten_expr(e, out),
-                            ForInit::VarDecl(vd) => {
-                                for decl in &vd.decls {
-                                    if let Some(init) = &decl.init {
-                                        flatten_expr(init, out);
+                            oxc_ast::ast::ForStatementInit::VariableDeclaration(vd) => {
+                                for decl in vd.declarations.iter() {
+                                    if let Some(init_expr) = decl.init.as_ref() {
+                                        flatten_expr(init_expr, out);
                                     }
                                 }
                             }
+                            oxc_ast::ast::ForStatementInit::LogicalExpression(e) => {
+                                flatten_expr(&e.left, out);
+                                flatten_expr(&e.right, out);
+                            }
+                            oxc_ast::ast::ForStatementInit::BinaryExpression(e) => {
+                                flatten_expr(&e.left, out);
+                                flatten_expr(&e.right, out);
+                            }
+                            oxc_ast::ast::ForStatementInit::UnaryExpression(e) => {
+                                flatten_expr(&e.argument, out);
+                            }
+                            oxc_ast::ast::ForStatementInit::ParenthesizedExpression(e) => {
+                                flatten_expr(&e.expression, out);
+                            }
+                            oxc_ast::ast::ForStatementInit::ArrayExpression(e) => {
+                                for el in e.elements.iter() {
+                                    if let Some(expr) = el.as_expression() {
+                                        flatten_expr(expr, out);
+                                    }
+                                }
+                            }
+                            oxc_ast::ast::ForStatementInit::NewExpression(e) => {
+                                flatten_expr(&e.callee, out);
+                                for a in e.arguments.iter() {
+                                    if let Some(expr) = a.as_expression() {
+                                        flatten_expr(expr, out);
+                                    }
+                                }
+                            }
+                            oxc_ast::ast::ForStatementInit::AssignmentExpression(e) => {
+                                flatten_expr(&e.right, out);
+                            }
+                            oxc_ast::ast::ForStatementInit::ConditionalExpression(e) => {
+                                flatten_expr(&e.test, out);
+                                flatten_expr(&e.consequent, out);
+                                flatten_expr(&e.alternate, out);
+                            }
+                            oxc_ast::ast::ForStatementInit::TemplateLiteral(_) => {
+                                // Template literals in for init: no idents to record
+                            }
+                            oxc_ast::ast::ForStatementInit::NumericLiteral(_) => {
+                                // no idents to record
+                            }
+                            oxc_ast::ast::ForStatementInit::StringLiteral(_) => {
+                                // no idents to record
+                            }
+                            oxc_ast::ast::ForStatementInit::BooleanLiteral(_) => {
+                                // no idents to record
+                            }
+                            oxc_ast::ast::ForStatementInit::NullLiteral(_) => {
+                                // no idents to record
+                            }
+                            oxc_ast::ast::ForStatementInit::ThisExpression(_) => {
+                                // no idents to record
+                            }
+                            _ => {
+                                // conservative: don't traverse into other statement types
+                            }
                         }
                     }
-                    if let Some(test) = &f.test {
+                    if let Some(test) = f.test.as_ref() {
                         flatten_expr(test, out);
                     }
-                    if let Some(update) = &f.update {
+                    if let Some(update) = f.update.as_ref() {
                         flatten_expr(update, out);
                     }
                     flatten_stmt(&f.body, out);
                 }
-                _ => {}
+                _ => {
+                    // conservative: don't traverse into other statement types
+                }
             }
         }
 
         // Build a single ordered sequence of Nodes for the whole function body
         let mut nodes: Vec<Node> = Vec::new();
         if let Some(body) = &func.body {
-            for s in &body.stmts {
+            for s in &body.statements {
                 flatten_stmt(s, &mut nodes);
             }
         }
@@ -225,10 +295,6 @@ impl<'a> crate::codegen::CodeGen<'a> {
             ));
         };
 
-        // Create a non-async clone of the function AST for processing
-        let mut impl_decl = func_decl.clone();
-        impl_decl.is_async = false;
-
         // Emit a poll function: `fn <name>_poll(state: i8*, out: i8*) -> i32`
         let poll_name = format!("{}_poll", func_name);
         let poll_ft = self
@@ -242,7 +308,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         // layout indices and prepare resume/cont basic blocks before
         // emitting the poll body.
         let param_count = llvm_param_types.len();
-        let await_live_sets = self.compute_await_live_sets(&impl_decl);
+        let await_live_sets = self.compute_await_live_sets(func_decl);
         let mut all_live_names: HashSet<String> = HashSet::new();
         for s in &await_live_sets {
             for n in s.iter() {
@@ -401,7 +467,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
         // Create param allocas for poll_f and load parameters from state slots
         // We need to build a param_map with u32 indices for lower_stmts
-        let mut param_map: HashMap<String, u32> = HashMap::new();
+        let param_map: HashMap<String, u32> = HashMap::new();
 
         type LocalEntry<'a> = (
             inkwell::values::PointerValue<'a>,
@@ -414,159 +480,6 @@ impl<'a> crate::codegen::CodeGen<'a> {
         );
         let mut locals_stack: Vec<HashMap<String, LocalEntry<'a>>> = vec![HashMap::new()];
 
-        // Load each parameter from state and create allocas
-        for (i, param) in func_decl.params.iter().enumerate() {
-            let param_name = match &param.pat {
-                Pat::Ident(id) => id.sym.clone(),
-                _ => {
-                    // Destructuring parameters not yet supported in codegen
-                    format!("_param_{}", i)
-                }
-            };
-
-            let llvm_ty_meta = llvm_param_types[i];
-            let llvm_ty: inkwell::types::BasicTypeEnum = match llvm_ty_meta {
-                inkwell::types::BasicMetadataTypeEnum::FloatType(ft) => ft.into(),
-                inkwell::types::BasicMetadataTypeEnum::IntType(it) => it.into(),
-                inkwell::types::BasicMetadataTypeEnum::PointerType(pt) => pt.into(),
-                inkwell::types::BasicMetadataTypeEnum::ArrayType(at) => at.into(),
-                inkwell::types::BasicMetadataTypeEnum::VectorType(vt) => vt.into(),
-                inkwell::types::BasicMetadataTypeEnum::StructType(st) => st.into(),
-                inkwell::types::BasicMetadataTypeEnum::ScalableVectorType(svt) => svt.into(),
-                inkwell::types::BasicMetadataTypeEnum::MetadataType(_) => {
-                    // Metadata types can't be used for allocas, default to i8*
-                    self.i8ptr_t.into()
-                }
-            };
-
-            // Create alloca for this parameter
-            let alloca = match self.builder.build_alloca(llvm_ty, &param_name) {
-                Ok(a) => a,
-                Err(_) => {
-                    return Err(crate::diagnostics::Diagnostic::simple_boxed(
-                        Severity::Error,
-                        "failed to create parameter alloca in poll",
-                    ));
-                }
-            };
-
-            // Load value from state slot
-            let base_int = match self
-                .builder
-                .build_ptr_to_int(state_ptr, self.i64_t, "state_addr")
-            {
-                Ok(v) => v,
-                Err(_) => {
-                    return Err(crate::diagnostics::Diagnostic::simple_boxed(
-                        Severity::Error,
-                        "ptr_to_int failed loading param",
-                    ));
-                }
-            };
-            let off = self.i64_t.const_int(16 + (i as u64 * 8), false);
-            let slot_addr_int = match self.builder.build_int_add(base_int, off, "slot_addr") {
-                Ok(v) => v,
-                Err(_) => {
-                    return Err(crate::diagnostics::Diagnostic::simple_boxed(
-                        Severity::Error,
-                        "int_add failed loading param",
-                    ));
-                }
-            };
-            let slot_ptr =
-                match self
-                    .builder
-                    .build_int_to_ptr(slot_addr_int, self.i8ptr_t, "slot_ptr")
-                {
-                    Ok(p) => p,
-                    Err(_) => {
-                        return Err(crate::diagnostics::Diagnostic::simple_boxed(
-                            Severity::Error,
-                            "int_to_ptr failed loading param",
-                        ));
-                    }
-                };
-
-            // Load and unbox if needed
-            let loaded_ptr = match self
-                .builder
-                .build_load(self.i8ptr_t, slot_ptr, "param_load")
-            {
-                Ok(v) => v,
-                Err(_) => {
-                    return Err(crate::diagnostics::Diagnostic::simple_boxed(
-                        Severity::Error,
-                        "failed to load param from state",
-                    ));
-                }
-            };
-
-            match llvm_ty {
-                inkwell::types::BasicTypeEnum::FloatType(_) => {
-                    let unbox_fn = self.get_union_unbox_f64();
-                    let cs =
-                        match self
-                            .builder
-                            .build_call(unbox_fn, &[loaded_ptr.into()], "unbox_param")
-                        {
-                            Ok(cs) => cs,
-                            Err(_) => {
-                                return Err(crate::diagnostics::Diagnostic::simple_boxed(
-                                    Severity::Error,
-                                    "union_unbox_f64 call failed",
-                                ));
-                            }
-                        };
-                    let fv = match cs.try_as_basic_value() {
-                        either::Either::Left(bv) => bv.into_float_value(),
-                        _ => {
-                            return Err(crate::diagnostics::Diagnostic::simple_boxed(
-                                Severity::Error,
-                                "unbox returned no value",
-                            ));
-                        }
-                    };
-                    let _ = self.builder.build_store(alloca, fv.as_basic_value_enum());
-                }
-                _ => {
-                    let slot_ptr_val = loaded_ptr.into_pointer_value();
-                    let casted = match self.builder.build_pointer_cast(
-                        slot_ptr_val,
-                        alloca.get_type(),
-                        "cast_param",
-                    ) {
-                        Ok(c) => c,
-                        Err(_) => {
-                            return Err(crate::diagnostics::Diagnostic::simple_boxed(
-                                Severity::Error,
-                                "pointer cast failed loading param",
-                            ));
-                        }
-                    };
-                    let loaded_val = match self.builder.build_load(
-                        llvm_ty,
-                        casted,
-                        &format!("{}_val", param_name),
-                    ) {
-                        Ok(v) => v,
-                        Err(_) => {
-                            return Err(crate::diagnostics::Diagnostic::simple_boxed(
-                                Severity::Error,
-                                "failed to load casted param",
-                            ));
-                        }
-                    };
-                    let _ = self.builder.build_store(alloca, loaded_val);
-                }
-            }
-
-            param_map.insert(param_name.clone(), i as u32);
-            locals_stack[0].insert(
-                param_name,
-                (alloca, llvm_ty, false, true, false, None, None),
-            );
-        }
-
         // Keep a copy of the poll function's locals stack so resume blocks
         // can restore saved values into the same allocas later.
         *self.async_poll_locals.borrow_mut() = Some(locals_stack.clone());
@@ -575,7 +488,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         let mut emitted_terminator = false;
         if let Some(body) = &func_decl.body {
             emitted_terminator =
-                self.lower_stmts(&body.stmts, poll_f, &param_map, &mut locals_stack)?;
+                self.lower_stmts(&body.statements, poll_f, &param_map, &mut locals_stack)?;
         }
 
         // If no explicit return, write result and return Ready (1)
@@ -623,9 +536,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     "boxing failed",
                                 )
                             })?;
-                        match cs.try_as_basic_value() {
-                            either::Either::Left(bv) => bv,
-                            _ => {
+                        match extract_basic_value_from_valuekind(cs.try_as_basic_value()) {
+                            Some(bv) => bv,
+                            None => {
                                 return Err(crate::diagnostics::Diagnostic::simple_boxed(
                                     Severity::Error,
                                     "boxing returned no value",
@@ -669,7 +582,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         // Compute per-await live-sets so we can reserve state slots for
         // locals that must be preserved across suspension points.
         let param_count = llvm_param_types.len();
-        let await_live_sets = self.compute_await_live_sets(&impl_decl);
+        let await_live_sets = self.compute_await_live_sets(func_decl);
         let mut all_live_names: HashSet<String> = HashSet::new();
         for s in &await_live_sets {
             for n in s.iter() {
@@ -697,18 +610,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 ));
             }
         };
-        let state_ptr_wrapper = match cs.try_as_basic_value() {
-            either::Either::Left(bv) => bv.into_pointer_value(),
-            _ => {
-                return Err(crate::diagnostics::Diagnostic::simple_boxed(
-                    Severity::Error,
-                    "malloc failed for state",
-                ));
-            }
-        };
-        let state_ptr_wrapper = match cs.try_as_basic_value() {
-            either::Either::Left(bv) => bv.into_pointer_value(),
-            _ => {
+        let state_ptr_wrapper = match extract_basic_value_from_valuekind(cs.try_as_basic_value()) {
+            Some(bv) => bv.into_pointer_value(),
+            None => {
                 return Err(crate::diagnostics::Diagnostic::simple_boxed(
                     Severity::Error,
                     "malloc failed for state",
@@ -816,15 +720,16 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 ));
                             }
                         };
-                        let boxed_ptr = match cs.try_as_basic_value() {
-                            either::Either::Left(bv) => bv.into_pointer_value(),
-                            _ => {
-                                return Err(crate::diagnostics::Diagnostic::simple_boxed(
-                                    Severity::Error,
-                                    "boxing returned no value",
-                                ));
-                            }
-                        };
+                        let boxed_ptr =
+                            match extract_basic_value_from_valuekind(cs.try_as_basic_value()) {
+                                Some(bv) => bv.into_pointer_value(),
+                                None => {
+                                    return Err(crate::diagnostics::Diagnostic::simple_boxed(
+                                        Severity::Error,
+                                        "boxing returned no value",
+                                    ));
+                                }
+                            };
                         let _ = self
                             .builder
                             .build_store(slot_ptr, boxed_ptr.as_basic_value_enum());
@@ -853,9 +758,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     "promise_new_from_state call failed in wrapper",
                 )
             })?;
-        let pres_val = match pres_cs.try_as_basic_value() {
-            either::Either::Left(bv) => bv,
-            _ => {
+        let pres_val = match extract_basic_value_from_valuekind(pres_cs.try_as_basic_value()) {
+            Some(bv) => bv,
+            None => {
                 return Err(crate::diagnostics::Diagnostic::simple_boxed(
                     Severity::Error,
                     "promise_new_from_state returned no value in wrapper",
@@ -1007,13 +912,17 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                 );
                                             }
                                         };
-                                        let fv = match cs.try_as_basic_value() {
-                                            either::Either::Left(bv) => bv.into_float_value(),
-                                            _ => {
-                                                return Err(crate::diagnostics::Diagnostic::simple_boxed(
-                                                    Severity::Error,
-                                                    "unbox returned no value when resuming locals",
-                                                ));
+                                        let fv = match extract_basic_value_from_valuekind(
+                                            cs.try_as_basic_value(),
+                                        ) {
+                                            Some(bv) => bv.into_float_value(),
+                                            None => {
+                                                return Err(
+                                                    crate::diagnostics::Diagnostic::simple_boxed(
+                                                        Severity::Error,
+                                                        "unbox returned no value when resuming locals",
+                                                    ),
+                                                );
                                             }
                                         };
                                         let _ = self

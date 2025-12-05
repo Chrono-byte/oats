@@ -980,10 +980,10 @@ impl ProcessScheduler {
 
 /// Get current timestamp in milliseconds since Unix epoch
 fn current_timestamp() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64
+    match SystemTime::now().duration_since(UNIX_EPOCH) {
+        Ok(duration) => duration.as_millis() as u64,
+        Err(_) => 0,
+    }
 }
 
 /// Global process scheduler instance

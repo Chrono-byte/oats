@@ -80,7 +80,10 @@ pub unsafe extern "C" fn tuple_to_string(obj: *mut c_void) -> *mut c_char {
     }
     let joined = parts.join(", ");
     let out = format!("({})", joined);
-    let c = std::ffi::CString::new(out).unwrap_or_default();
+    let c = match std::ffi::CString::new(out) {
+        Ok(cstr) => cstr,
+        Err(_) => std::ffi::CString::default(),
+    };
     unsafe { heap_str_from_cstr(c.as_ptr()) }
 }
 

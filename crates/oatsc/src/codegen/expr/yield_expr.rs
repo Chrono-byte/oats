@@ -6,6 +6,7 @@
 use crate::codegen::CodeGen;
 use crate::diagnostics::Diagnostic;
 use inkwell::values::{BasicValue, BasicValueEnum, FunctionValue};
+use oxc_ast::ast::*;
 use std::collections::HashMap;
 
 type LocalEntry<'a> = (
@@ -30,7 +31,7 @@ impl<'a> CodeGen<'a> {
     #[allow(clippy::result_large_err)]
     pub(super) fn lower_yield_expr(
         &self,
-        yield_expr: &YieldExpr,
+        yield_expr: &oxc_ast::ast::YieldExpression<'_>,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals: &mut LocalsStackLocal<'a>,

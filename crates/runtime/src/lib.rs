@@ -144,9 +144,11 @@ fn init_runtime_log() {
     if RUNTIME_LOG.load(Ordering::Relaxed) {
         return;
     }
-    if std::env::var("OATS_RUNTIME_LOG")
-        .map(|v| !v.is_empty() && v != "0")
-        .unwrap_or(false)
+    let runtime_log = match std::env::var("OATS_RUNTIME_LOG") {
+        Ok(v) => !v.is_empty() && v != "0",
+        Err(_) => false,
+    };
+    if runtime_log
     {
         RUNTIME_LOG.store(true, Ordering::Relaxed);
     }
@@ -158,9 +160,11 @@ pub fn init_collector() -> Arc<collector::Collector> {
             let collector = collector::Collector::new();
 
             // Configure collector logging from environment (disabled by default).
-            if std::env::var("OATS_COLLECTOR_LOG")
-                .map(|v| !v.is_empty() && v != "0")
-                .unwrap_or(false)
+            let collector_log = match std::env::var("OATS_COLLECTOR_LOG") {
+                Ok(v) => !v.is_empty() && v != "0",
+                Err(_) => false,
+            };
+            if collector_log
             {
                 COLLECTOR_LOG.store(true, Ordering::Relaxed);
             }

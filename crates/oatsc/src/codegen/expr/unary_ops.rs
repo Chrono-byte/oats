@@ -32,7 +32,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
         // Short-circuit typeof since it returns a string literal based on runtime kind
         if matches!(unary.operator, UnaryOperator::Typeof) {
-            let inner = self.lower_expr(&unary.operand, function, param_map, locals)?;
+            let inner = self.lower_expr(&unary.argument, function, param_map, locals)?;
             // If we can coerce to f64 (including union-unboxed numbers), it's a number
             if self.coerce_to_f64(inner).is_some() {
                 let ptr = self.intern_string_literal("number");
@@ -117,7 +117,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             return Ok(ptr.as_basic_value_enum());
         }
 
-        let arg_val = self.lower_expr(&unary.operand, function, param_map, locals)?;
+        let arg_val = self.lower_expr(&unary.argument, function, param_map, locals)?;
 
         match unary.operator {
             UnaryOperator::UnaryNegation => {
@@ -187,7 +187,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             UnaryOperator::Void => {
                 // Void operator: evaluate expression, return undefined (null pointer)
                 // Evaluate the expression for side effects
-                let _ = self.lower_expr(&unary.operand, function, param_map, locals)?;
+                let _ = self.lower_expr(&unary.argument, function, param_map, locals)?;
                 // Return undefined (null pointer)
                 Ok(self.i8ptr_t.const_null().as_basic_value_enum())
             }
@@ -196,7 +196,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 // This requires runtime support for object property deletion
                 // For now, evaluate the expression and return true (success)
                 // TODO: Implement proper property deletion when runtime support is available
-                let _ = self.lower_expr(&unary.operand, function, param_map, locals)?;
+                let _ = self.lower_expr(&unary.argument, function, param_map, locals)?;
                 // Return true (1) to indicate successful deletion
                 // Note: In JavaScript, delete returns a boolean
                 Ok(self

@@ -131,7 +131,10 @@ pub fn invoke_oatsc(options: &CompileOptions) -> Result<Option<PathBuf>> {
         Ok(None)
     } else {
         // oatsc prints the output file path on stdout (last line)
-        let path_str = stdout.lines().last().unwrap_or(&stdout);
+        let path_str = match stdout.lines().last() {
+            Some(line) => line,
+            None => &stdout,
+        };
         Ok(Some(PathBuf::from(path_str)))
     }
 }

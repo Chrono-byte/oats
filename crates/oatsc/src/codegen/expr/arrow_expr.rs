@@ -3,6 +3,7 @@ use crate::diagnostics::{Diagnostic, Severity};
 use crate::types::OatsType;
 use inkwell::types::{BasicType, BasicTypeEnum};
 use inkwell::values::{BasicValue, BasicValueEnum, FunctionValue};
+use oxc_ast::ast::*;
 use std::collections::HashMap;
 
 // LocalEntry now includes an Option<String> for an optional nominal type name
@@ -22,7 +23,7 @@ impl<'a> CodeGen<'a> {
     #[allow(clippy::result_large_err)]
     pub(super) fn lower_arrow_expr(
         &self,
-        arrow: &ArrowExpr,
+        arrow: &ArrowFunctionExpression,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals: &mut LocalsStackLocal<'a>,
@@ -34,7 +35,7 @@ impl<'a> CodeGen<'a> {
         // lowering will be implemented separately.
         // (boxed environments + trampolines) is planned in Phase 2.
         fn collect_idents_in_expr_with_depth(
-            expr: &Expr,
+            expr: &Expression,
             out: &mut std::collections::HashSet<String>,
             depth: usize,
         ) {
@@ -45,103 +46,102 @@ impl<'a> CodeGen<'a> {
             }
 
             match expr {
-                Expr::Ident(id) => {
-                    out.insert(id.sym.clone());
+                Expression::Identifier(id) => {
+                    out.insert(id.name.to_string());
                 }
-                Expr::Bin(b) => {
+                Expression::BinaryExpression(b) => {
                     collect_idents_in_expr_with_depth(&b.left, out, depth + 1);
                     collect_idents_in_expr_with_depth(&b.right, out, depth + 1);
                 }
-                Expr::Unary(u) => {
-                    collect_idents_in_expr_with_depth(&u.arg, out, depth + 1);
+                Expression::UnaryExpression(u) => {
+                    collect_idents_in_expr_with_depth(&u.argument, out, depth + 1);
                 }
-                Expr::Call(c) => {
+                Expression::CallExpression(c) => {
                     match &c.callee {
-                        Callee::Expr(e) => collect_idents_in_expr_with_depth(e, out, depth + 1),
+                        Callee::Expression(e) => {
+                            collect_idents_in_expr_with_depth(e, out, depth + 1)
+                        }
                         Callee::Super(_) => {} // Callee::Import doesn't exist in oats_ast
+                        Callee::Import(_) => {}
                     }
-                    for a in &c.args {
+                    for a in &c.arguments {
                         collect_idents_in_expr_with_depth(a, out, depth + 1);
                     }
                 }
-                Expr::Member(m) => {
-                    collect_idents_in_expr_with_depth(&m.obj, out, depth + 1);
-                    if let MemberProp::Computed(expr) = &m.prop {
-                        collect_idents_in_expr_with_depth(expr, out, depth + 1);
+                Expression::MemberExpression(m) => {
+                    collect_idents_in_expr_with_depth(&m.object, out, depth + 1);
+                    if let MemberProperty::ComputedPropertyName(comp) = &m.property {
+                        collect_idents_in_expr_with_depth(&comp.expression, out, depth + 1);
                     }
                 }
-                Expr::Arrow(a) => {
+                Expression::ArrowFunctionExpression(a) => {
                     // nested arrow: scan body
-                    match &a.body {
-                        ArrowBody::Block(b) => {
-                            for s in &b.stmts {
-                                if let Stmt::ExprStmt(es) = s {
-                                    collect_idents_in_expr_with_depth(&es.expr, out, depth + 1);
-                                }
+                    if a.expression {
+                        if let Some(expr) = &a.body.expression {
+                            collect_idents_in_expr_with_depth(expr, out, depth + 1);
+                        }
+                    } else {
+                        for s in &a.body.statements {
+                            if let Statement::ExpressionStatement(es) = s {
+                                collect_idents_in_expr_with_depth(&es.expression, out, depth + 1);
                             }
                         }
-                        ArrowBody::Expr(e) => {
-                            collect_idents_in_expr_with_depth(e, out, depth + 1);
+                    }
+                }
+                Expression::ObjectExpression(o) => {
+                    for prop in &o.properties {
+                        if let ObjectPropertyKind::ObjectProperty(prop) = prop {
+                            collect_idents_in_expr_with_depth(&prop.value, out, depth + 1);
                         }
                     }
-
                 }
-                Expr::Object(o) => {
-                    for prop in &o.props {
-                        if let PropOrSpread::Prop(p) = prop
-                            && let Prop::KeyValue(kv) = p
-                        {
-                            collect_idents_in_expr_with_depth(&kv.value, out, depth + 1);
+                Expression::ArrayExpression(a) => {
+                    for elem in a.elements.iter().flatten() {
+                        if let Some(elem) = elem {
+                            collect_idents_in_expr_with_depth(elem, out, depth + 1);
                         }
                     }
-
                 }
-                Expr::Array(a) => {
-                    for elem in a.elems.iter().flatten() {
-                        collect_idents_in_expr_with_depth(elem, out, depth + 1);
-                    }
-                }
-                Expr::Assign(asg) => {
+                Expression::AssignmentExpression(asg) => {
                     collect_idents_in_expr_with_depth(&asg.right, out, depth + 1);
                 }
-                Expr::Cond(cnd) => {
+                Expression::ConditionalExpression(cnd) => {
                     collect_idents_in_expr_with_depth(&cnd.test, out, depth + 1);
-                    collect_idents_in_expr_with_depth(&cnd.cons, out, depth + 1);
-                    collect_idents_in_expr_with_depth(&cnd.alt, out, depth + 1);
+                    collect_idents_in_expr_with_depth(&cnd.consequent, out, depth + 1);
+                    collect_idents_in_expr_with_depth(&cnd.alternate, out, depth + 1);
                 }
-                Expr::Tpl(tpl) => {
+                Expression::TemplateLiteral(tpl) => {
                     // Template literals have interpolated expressions that may contain identifiers
-                    for expr in &tpl.exprs {
+                    for expr in &tpl.expressions {
                         collect_idents_in_expr_with_depth(expr, out, depth + 1);
                     }
                 }
-                Expr::Paren(p) => {
-                    collect_idents_in_expr_with_depth(&p.expr, out, depth + 1);
+                Expression::ParenthesizedExpression(p) => {
+                    collect_idents_in_expr_with_depth(&p.expression, out, depth + 1);
                 }
-                Expr::New(new_expr) => {
+                Expression::NewExpression(new_expr) => {
                     collect_idents_in_expr_with_depth(&new_expr.callee, out, depth + 1);
-                    for arg in &new_expr.args {
+                    for arg in &new_expr.arguments {
                         collect_idents_in_expr_with_depth(arg, out, depth + 1);
                     }
-
                 }
-                Expr::Update(update) => {
-                    collect_idents_in_expr_with_depth(&update.arg, out, depth + 1);
+                Expression::UpdateExpression(update) => {
+                    collect_idents_in_expr_with_depth(&update.argument, out, depth + 1);
                 }
-                Expr::Await(await_expr) => {
-                    collect_idents_in_expr_with_depth(&await_expr.arg, out, depth + 1);
+                Expression::AwaitExpression(await_expr) => {
+                    collect_idents_in_expr_with_depth(&await_expr.argument, out, depth + 1);
                 }
-                Expr::OptionalMember(om) => {
-                    collect_idents_in_expr_with_depth(&om.obj, out, depth + 1);
-                    if let MemberProp::Computed(expr) = &om.prop {
-                        collect_idents_in_expr_with_depth(expr, out, depth + 1);
+                Expression::OptionalMemberExpression(om) => {
+                    collect_idents_in_expr_with_depth(&om.object, out, depth + 1);
+                    if let MemberProperty::ComputedPropertyName(comp) = &om.property {
+                        collect_idents_in_expr_with_depth(&comp.expression, out, depth + 1);
                     }
                 }
                 _ => {}
             }
         }
 
-        fn collect_idents_in_expr(expr: &Expr, out: &mut std::collections::HashSet<String>) {
+        fn collect_idents_in_expr(expr: &Expression, out: &mut std::collections::HashSet<String>) {
             collect_idents_in_expr_with_depth(expr, out, 0);
         }
 
@@ -155,24 +155,23 @@ impl<'a> CodeGen<'a> {
 
         // Collect idents used in the arrow body
         let mut used: std::collections::HashSet<String> = std::collections::HashSet::new();
-        match &arrow.body {
-            ArrowBody::Block(block) => {
-                for stmt in &block.stmts {
-                    if let Stmt::ExprStmt(es) = stmt {
-                        collect_idents_in_expr(&es.expr, &mut used);
-                    }
-                }
-            }
-            ArrowBody::Expr(expr) => {
+        if arrow.expression {
+            if let Some(expr) = &arrow.body.expression {
                 collect_idents_in_expr(expr, &mut used);
+            }
+        } else {
+            for stmt in &arrow.body.statements {
+                if let Statement::ExpressionStatement(es) = stmt {
+                    collect_idents_in_expr(&es.expression, &mut used);
+                }
             }
         }
 
         // Remove arrow params from used
-        for param in &arrow.params {
-            match &param.pat {
-                oats_ast::Pat::Ident(ident) => {
-                    used.remove(&ident.sym);
+        for param in &arrow.params.items {
+            match &param.pattern.kind {
+                BindingPatternKind::BindingIdentifier(ident) => {
+                    used.remove(&ident.name.to_string());
                 }
                 _ => {
                     // Destructuring parameters not yet supported in capture analysis
@@ -193,12 +192,12 @@ impl<'a> CodeGen<'a> {
         self.next_str_id.set(self.next_str_id.get() + 1);
 
         // Extract parameter types from arrow.params
-        // ArrowExpr.params is now Vec<Param>, so we can extract type annotations
+        // ArrowFunctionExpression.params is now FormalParameters, so we can extract type annotations
         let mut param_types = Vec::new();
-        for param in &arrow.params {
+        for param in &arrow.params.items {
             // Extract type from parameter annotation, or default to Number
-            let param_type = if let Some(type_ann) = &param.ty {
-                if let Some(mapped) = crate::types::map_ts_type(type_ann) {
+            let param_type = if let Some(type_ann) = &param.pattern.type_annotation {
+                if let Some(mapped) = crate::types::map_ts_type(&type_ann.type_annotation) {
                     mapped
                 } else {
                     crate::types::OatsType::Number
@@ -256,15 +255,15 @@ impl<'a> CodeGen<'a> {
         // Create parameter map for arrow function. If env param exists,
         // shift user parameters by +1.
         let mut arrow_param_map = HashMap::new();
-        for (idx, param) in arrow.params.iter().enumerate() {
-            match &param.pat {
-                oats_ast::Pat::Ident(ident) => {
+        for (idx, param) in arrow.params.items.iter().enumerate() {
+            match &param.pattern.kind {
+                BindingPatternKind::BindingIdentifier(ident) => {
                     let mapped_idx = if !captures.is_empty() {
                         (idx as u32) + 1
                     } else {
                         idx as u32
                     };
-                    arrow_param_map.insert(ident.sym.clone(), mapped_idx);
+                    arrow_param_map.insert(ident.name.to_string(), mapped_idx);
                 }
                 _ => {
                     // Destructuring parameters not yet supported in arrow function parameter mapping
@@ -363,7 +362,10 @@ impl<'a> CodeGen<'a> {
                     if let Some(param_types) = self
                         .fn_param_types
                         .borrow()
-                        .get(function.get_name().to_str().unwrap_or(""))
+                        .get(match function.get_name().to_str() {
+                            Ok(name) => name,
+                            Err(_) => "",
+                        })
                     {
                         let idx_usize = *idx as usize;
                         if idx_usize < param_types.len()
@@ -648,7 +650,7 @@ impl<'a> CodeGen<'a> {
         match &arrow.body {
             ArrowBody::Block(block) => {
                 let terminated =
-                    self.lower_stmts(&block.stmts, arrow_fn, &arrow_param_map, &mut arrow_locals)?;
+                    self.lower_stmts(&block.body, arrow_fn, &arrow_param_map, &mut arrow_locals)?;
 
                 // If not terminated, add default return
                 if !terminated {
@@ -725,4 +727,3 @@ impl<'a> CodeGen<'a> {
             .as_basic_value_enum())
     }
 }
-

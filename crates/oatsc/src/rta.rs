@@ -18,6 +18,7 @@
 //! The analysis results are consumed by the code generator to perform optimizations.
 
 use crate::parser::ParsedModule;
+use oxc_ast::ast::*;
 use std::collections::{HashMap, HashSet, VecDeque};
 
 /// Represents the class hierarchy as a directed graph.
@@ -61,10 +62,10 @@ impl RTAResults {
     /// # Returns
     /// `true` if the method is live, `false` otherwise
     pub fn is_method_live(&self, class_name: &str, method_name: &str) -> bool {
-        self.live_methods
-            .get(class_name)
-            .map(|methods| methods.contains(method_name))
-            .unwrap_or(false)
+        match self.live_methods.get(class_name) {
+            Some(methods) => methods.contains(method_name),
+            None => false,
+        }
     }
 
     /// Check if a function is live (reachable at runtime).
@@ -270,25 +271,27 @@ fn build_class_hierarchy(modules: &HashMap<String, ParsedModule>) -> (ClassHiera
 
     for module in modules.values() {
         for stmt in &module.parsed.body {
-            if let Stmt::ClassDecl(class_decl) = stmt {
-                let class_name = class_decl.ident.sym.clone();
+            if let Statement::ClassDeclaration(class_decl) = stmt {
+                if let Some(id) = &class_decl.id {
+                    let class_name = id.name.to_string();
 
-                // Check for extends clause
-                if let Some(super_class) = &class_decl.super_class {
-                    if let Expr::Ident(super_ident) = super_class {
-                        let super_name = super_ident.sym.clone();
-                        hierarchy
-                            .entry(super_name.clone())
-                            .or_default()
-                            .push(class_name.clone());
-                        parent_map.insert(class_name.clone(), Some(super_name));
+                    // Check for extends clause
+                    if let Some(super_class) = &class_decl.super_class {
+                        if let Expression::Identifier(super_ident) = &*super_class {
+                            let super_name = super_ident.name.to_string();
+                            hierarchy
+                                .entry(super_name.clone())
+                                .or_default()
+                                .push(class_name.clone());
+                            parent_map.insert(class_name.clone(), Some(super_name));
+                        } else {
+                            parent_map.insert(class_name.clone(), None);
+                        }
                     } else {
-                        parent_map.insert(class_name.clone(), None);
+                        // Root class, ensure it's in the map
+                        hierarchy.entry(class_name.clone()).or_default();
+                        parent_map.insert(class_name, None);
                     }
-                } else {
-                    // Root class, ensure it's in the map
-                    hierarchy.entry(class_name.clone()).or_default();
-                    parent_map.insert(class_name, None);
                 }
             }
         }
@@ -310,30 +313,30 @@ fn find_instantiations(modules: &HashMap<String, ParsedModule>) -> LiveClasses {
     live_classes
 }
 
-fn visit_stmt_for_instantiations(stmt: &Stmt, live_classes: &mut LiveClasses) {
+fn visit_stmt_for_instantiations(stmt: &Statement, live_classes: &mut LiveClasses) {
     match stmt {
-        Stmt::ExprStmt(expr_stmt) => visit_expr_for_instantiations(&expr_stmt.expr, live_classes),
-        Stmt::VarDecl(vd) => {
-            for decl in &vd.decls {
+        Statement::ExpressionStatement(expr_stmt) => visit_expr_for_instantiations(&expr_stmt.expression, live_classes),
+        Statement::VariableDeclaration(vd) => {
+            for decl in &vd.declarations {
                 if let Some(init) = &decl.init {
                     visit_expr_for_instantiations(init, live_classes);
                 }
             }
         }
-        Stmt::FnDecl(fn_decl) => {
+        Statement::FunctionDeclaration(fn_decl) => {
             if let Some(body) = &fn_decl.body {
-                for stmt in &body.stmts {
+                for stmt in &body.statements {
                     visit_stmt_for_instantiations(stmt, live_classes);
                 }
             }
         }
-        Stmt::ClassDecl(class_decl) => {
+        Statement::ClassDeclaration(class_decl) => {
             // Visit class body for instantiations
-            for member in &class_decl.body {
-                if let ClassMember::Method(method) = member
-                    && let Some(body) = &method.body
+            for member in &class_decl.body.body {
+                if let ClassElement::MethodDefinition(method) = member
+                    && let Some(body) = &method.value.body
                 {
-                    for stmt in &body.stmts {
+                    for stmt in &body.statements {
                         visit_stmt_for_instantiations(stmt, live_classes);
                     }
                 }
@@ -343,17 +346,21 @@ fn visit_stmt_for_instantiations(stmt: &Stmt, live_classes: &mut LiveClasses) {
     }
 }
 
-fn visit_expr_for_instantiations(expr: &Expr, live_classes: &mut LiveClasses) {
-    if let Expr::New(new_expr) = expr
-        && let Expr::Ident(ident) = &*new_expr.callee
+fn visit_expr_for_instantiations(expr: &Expression, live_classes: &mut LiveClasses) {
+    if let Expression::NewExpression(new_expr) = expr
+        && let Expression::Identifier(ident) = &new_expr.callee
     {
-        live_classes.insert(ident.sym.clone());
+        live_classes.insert(ident.name.to_string());
     }
     // Recursively visit children
-    if let Expr::New(new_expr) = expr {
+    if let Expression::NewExpression(new_expr) = expr {
         visit_expr_for_instantiations(&new_expr.callee, live_classes);
-        for arg in &new_expr.args {
-            visit_expr_for_instantiations(arg, live_classes);
+        for arg in &new_expr.arguments {
+            if let Some(expr) = arg.as_expression() {
+                visit_expr_for_instantiations(expr, live_classes);
+            } else if let Argument::SpreadElement(spread) = arg {
+                visit_expr_for_instantiations(&spread.argument, live_classes);
+            }
         }
     }
 }
@@ -364,14 +371,18 @@ fn collect_methods(modules: &HashMap<String, ParsedModule>) -> HashMap<String, H
 
     for module in modules.values() {
         for stmt in &module.parsed.body {
-            if let Stmt::ClassDecl(class_decl) = stmt {
-                let class_name = class_decl.ident.sym.clone();
-                let class_methods = methods.entry(class_name).or_default();
+            if let Statement::ClassDeclaration(class_decl) = stmt {
+                if let Some(id) = &class_decl.id {
+                    let class_name = id.name.to_string();
+                    let class_methods = methods.entry(class_name).or_default();
 
-                for member in &class_decl.body {
-                    if let ClassMember::Method(method) = member {
-                        // Get method name
-                        class_methods.insert(method.ident.sym.clone());
+                    for member in &class_decl.body.body {
+                        if let ClassElement::MethodDefinition(method) = member {
+                            // Get method name
+                            if let PropertyKey::Identifier(ident) = &method.key {
+                                class_methods.insert(ident.name.to_string());
+                            }
+                        }
                     }
                 }
             }
@@ -409,7 +420,7 @@ fn build_call_graph(
         }
 
         if !callees.is_empty() {
-            call_graph.insert(caller_name.clone(), callees);
+            call_graph.insert(caller_name.to_string(), callees);
         }
     }
 
@@ -417,22 +428,17 @@ fn build_call_graph(
 }
 
 /// Collects all function and method ASTs for worklist processing
-fn collect_function_asts(modules: &HashMap<String, ParsedModule>) -> HashMap<String, Function> {
+fn collect_function_asts(modules: &HashMap<String, ParsedModule>) -> HashMap<String, &Function<'static>> {
     let mut functions = HashMap::new();
 
     for module in modules.values() {
         for stmt in &module.parsed.body {
-            if let Stmt::FnDecl(fn_decl) = stmt {
-                let name = fn_decl.ident.sym.clone();
-                let func = Function {
-                    params: fn_decl.params.clone(),
-                    body: fn_decl.body.clone(),
-                    return_type: fn_decl.return_type.clone(),
-                    span: fn_decl.span.clone(),
-                    is_async: fn_decl.is_async,
-                    is_generator: fn_decl.is_generator,
-                };
-                functions.insert(name, func);
+            if let Statement::FunctionDeclaration(fn_decl) = stmt {
+                if let Some(id) = &fn_decl.id {
+                    let name = id.name.to_string();
+                    // fn_decl is &Box<Function>, use as_ref() to get &Function
+                    functions.insert(name, fn_decl.as_ref());
+                }
             }
         }
     }
@@ -440,20 +446,17 @@ fn collect_function_asts(modules: &HashMap<String, ParsedModule>) -> HashMap<Str
     // Also collect class methods
     for module in modules.values() {
         for stmt in &module.parsed.body {
-            if let Stmt::ClassDecl(class_decl) = stmt {
-                let class_name = class_decl.ident.sym.clone();
-                for member in &class_decl.body {
-                    if let ClassMember::Method(method) = member {
-                        let method_name = format!("{}_{}", class_name, method.ident.sym);
-                        let func = Function {
-                            params: method.params.clone(),
-                            body: method.body.clone(),
-                            return_type: method.return_type.clone(),
-                            span: method.span.clone(),
-                            is_async: false,
-                            is_generator: false,
-                        };
-                        functions.insert(method_name, func);
+            if let Statement::ClassDeclaration(class_decl) = stmt {
+                if let Some(id) = &class_decl.id {
+                    let class_name = id.name.to_string();
+                    for member in &class_decl.body.body {
+                        if let ClassElement::MethodDefinition(method) = member {
+                            if let PropertyKey::Identifier(ident) = &method.key {
+                                let method_name = format!("{}_{}", class_name, ident.name.to_string());
+                                // method.value is &Box<Function>, use as_ref() to get &Function
+                                functions.insert(method_name, method.value.as_ref());
+                            }
+                        }
                     }
                 }
             }
@@ -464,10 +467,10 @@ fn collect_function_asts(modules: &HashMap<String, ParsedModule>) -> HashMap<Str
 }
 
 /// Runs the RTA worklist algorithm to find precisely live methods
-fn run_worklist(
+fn run_worklist<'a>(
     live_classes: &LiveClasses,
     methods: &HashMap<String, HashSet<String>>,
-    functions: &HashMap<String, Function>,
+    functions: &HashMap<String, &'a Function<'a>>,
 ) -> LiveMethods {
     let mut live_methods: LiveMethods = HashMap::new();
     let mut worklist: VecDeque<String> = VecDeque::new();
@@ -505,10 +508,10 @@ fn run_worklist(
 }
 
 /// Finds method calls in a function AST
-fn find_method_calls(func: &Function) -> Vec<(String, String)> {
+fn find_method_calls<'a>(func: &'a Function<'a>) -> Vec<(String, String)> {
     let mut calls = Vec::new();
     if let Some(body) = &func.body {
-        for stmt in &body.stmts {
+        for stmt in &body.statements {
             find_method_calls_in_stmt_with_depth(stmt, &mut calls, 0);
         }
     }
@@ -516,7 +519,7 @@ fn find_method_calls(func: &Function) -> Vec<(String, String)> {
 }
 
 fn find_method_calls_in_stmt_with_depth(
-    stmt: &Stmt,
+    stmt: &Statement,
     calls: &mut Vec<(String, String)>,
     depth: usize,
 ) {
@@ -527,43 +530,41 @@ fn find_method_calls_in_stmt_with_depth(
     }
 
     match stmt {
-        Stmt::ExprStmt(expr_stmt) => {
-            find_method_calls_in_expr_with_depth(&expr_stmt.expr, calls, depth + 1)
+        Statement::ExpressionStatement(expr_stmt) => {
+            find_method_calls_in_expr_with_depth(&expr_stmt.expression, calls, depth + 1)
         }
-        Stmt::VarDecl(var_decl) => {
-            for decl in &var_decl.decls {
+        Statement::VariableDeclaration(var_decl) => {
+            for decl in &var_decl.declarations {
                 if let Some(init) = &decl.init {
                     find_method_calls_in_expr_with_depth(init, calls, depth + 1);
                 }
             }
         }
-        Stmt::Return(ret) => {
-            if let Some(arg) = &ret.arg {
+        Statement::ReturnStatement(ret) => {
+            if let Some(arg) = &ret.argument {
                 find_method_calls_in_expr_with_depth(arg, calls, depth + 1);
             }
         }
-        Stmt::If(if_stmt) => {
+        Statement::IfStatement(if_stmt) => {
             find_method_calls_in_expr_with_depth(&if_stmt.test, calls, depth + 1);
-            find_method_calls_in_stmt_with_depth(&if_stmt.cons, calls, depth + 1);
-            if let Some(alt) = &if_stmt.alt {
+            find_method_calls_in_stmt_with_depth(&if_stmt.consequent, calls, depth + 1);
+            if let Some(alt) = &if_stmt.alternate {
                 find_method_calls_in_stmt_with_depth(alt, calls, depth + 1);
             }
         }
-        Stmt::While(while_stmt) => {
+        Statement::WhileStatement(while_stmt) => {
             find_method_calls_in_expr_with_depth(&while_stmt.test, calls, depth + 1);
             find_method_calls_in_stmt_with_depth(&while_stmt.body, calls, depth + 1);
         }
-        Stmt::For(for_stmt) => {
+        Statement::ForStatement(for_stmt) => {
             if let Some(init) = &for_stmt.init {
-                match init {
-                    ForInit::Expr(expr) => {
-                        find_method_calls_in_expr_with_depth(expr, calls, depth + 1)
-                    }
-                    ForInit::VarDecl(var_decl) => {
-                        for decl in &var_decl.decls {
-                            if let Some(init_expr) = &decl.init {
-                                find_method_calls_in_expr_with_depth(init_expr, calls, depth + 1);
-                            }
+                // Use as_expression() to get the expression if it's an expression variant
+                if let Some(expr) = init.as_expression() {
+                    find_method_calls_in_expr_with_depth(expr, calls, depth + 1);
+                } else if let ForStatementInit::VariableDeclaration(var_decl) = init {
+                    for decl in &var_decl.declarations {
+                        if let Some(init_expr) = &decl.init {
+                            find_method_calls_in_expr_with_depth(init_expr, calls, depth + 1);
                         }
                     }
                 }
@@ -576,8 +577,8 @@ fn find_method_calls_in_stmt_with_depth(
             }
             find_method_calls_in_stmt_with_depth(&for_stmt.body, calls, depth + 1);
         }
-        Stmt::Block(block) => {
-            for stmt in &block.stmts {
+        Statement::BlockStatement(block) => {
+            for stmt in &block.body {
                 find_method_calls_in_stmt_with_depth(stmt, calls, depth + 1);
             }
         }
@@ -586,7 +587,7 @@ fn find_method_calls_in_stmt_with_depth(
 }
 
 fn find_method_calls_in_expr_with_depth(
-    expr: &Expr,
+    expr: &Expression,
     calls: &mut Vec<(String, String)>,
     depth: usize,
 ) {
@@ -597,55 +598,64 @@ fn find_method_calls_in_expr_with_depth(
     }
 
     match expr {
-        Expr::Call(call_expr) => {
+        Expression::CallExpression(call_expr) => {
             // Handle method calls: obj.method()
-            if let Callee::Expr(callee_expr) = &call_expr.callee
-                && let Expr::Member(member) = &**callee_expr
-                && let MemberProp::Ident(prop_ident) = &member.prop
-            {
+            // In oxc_ast, CallExpression.callee is directly an Expression
+            // Check if callee is a static member expression (obj.method)
+            if let Expression::StaticMemberExpression(static_member) = &call_expr.callee {
                 // Try to resolve the object to a class name
                 // For now, we'll try to extract from 'this' or variable names
                 // This is a simplification; full RTA would need type inference
-                if let Expr::Ident(obj_ident) = &*member.obj {
+                if let Expression::Identifier(obj_ident) = &static_member.object {
                     // If it's 'this', we'd need context to know the class
                     // For now, we'll record the call and let the caller resolve it
                     // For non-'this' identifiers, we can't easily resolve the class
                     // This is a limitation of the current implementation
-                    if obj_ident.sym == "this" {
+                    if obj_ident.name == "this" {
                         // We can't resolve 'this' without context, so skip for now
                         // In a full implementation, we'd track the current class context
                     } else {
                         // Assume the identifier might be a class instance
                         // This is a heuristic and may not always be correct
-                        calls.push((obj_ident.sym.clone(), prop_ident.sym.clone()));
+                        // StaticMemberExpression.property is IdentifierName, not PropertyKey
+                        calls.push((obj_ident.name.to_string(), static_member.property.name.to_string()));
                     }
                 }
             }
             // Recursively visit arguments
-            for arg in &call_expr.args {
-                find_method_calls_in_expr_with_depth(arg, calls, depth + 1);
+            for arg in &call_expr.arguments {
+                if let Some(expr) = arg.as_expression() {
+                    find_method_calls_in_expr_with_depth(expr, calls, depth + 1);
+                } else if let Argument::SpreadElement(spread) = arg {
+                    find_method_calls_in_expr_with_depth(&spread.argument, calls, depth + 1);
+                }
             }
         }
-        Expr::Bin(bin) => {
+        Expression::BinaryExpression(bin) => {
             find_method_calls_in_expr_with_depth(&bin.left, calls, depth + 1);
             find_method_calls_in_expr_with_depth(&bin.right, calls, depth + 1);
         }
-        Expr::Unary(unary) => {
-            find_method_calls_in_expr_with_depth(&unary.arg, calls, depth + 1);
+        Expression::UnaryExpression(unary) => {
+            find_method_calls_in_expr_with_depth(&unary.argument, calls, depth + 1);
         }
-        Expr::Member(member) => {
-            find_method_calls_in_expr_with_depth(&member.obj, calls, depth + 1);
-            if let MemberProp::Computed(comp) = &member.prop {
-                find_method_calls_in_expr_with_depth(comp, calls, depth + 1);
-            }
+        Expression::StaticMemberExpression(static_member) => {
+            find_method_calls_in_expr_with_depth(&static_member.object, calls, depth + 1);
         }
-        Expr::Assign(assign) => {
+        Expression::ComputedMemberExpression(computed_member) => {
+            find_method_calls_in_expr_with_depth(&computed_member.object, calls, depth + 1);
+            find_method_calls_in_expr_with_depth(&computed_member.expression, calls, depth + 1);
+        }
+        Expression::AssignmentExpression(assign) => {
             find_method_calls_in_expr_with_depth(&assign.right, calls, depth + 1);
         }
-        Expr::New(new_expr) => {
+        Expression::NewExpression(new_expr) => {
             find_method_calls_in_expr_with_depth(&new_expr.callee, calls, depth + 1);
-            for arg in &new_expr.args {
-                find_method_calls_in_expr_with_depth(arg, calls, depth + 1);
+            for arg in &new_expr.arguments {
+                if let Some(expr) = arg.as_expression() {
+                    find_method_calls_in_expr_with_depth(expr, calls, depth + 1);
+                } else if let Argument::SpreadElement(spread) = arg {
+                    find_method_calls_in_expr_with_depth(&spread.argument, calls, depth + 1);
+                }
             }
         }
         _ => {}

@@ -21,12 +21,11 @@ type LocalsStackLocal<'a> = Vec<HashMap<String, LocalEntry<'a>>>;
 impl<'a> crate::codegen::CodeGen<'a> {
     pub(crate) fn lower_for_in_stmt(
         &self,
-        for_in: &oats_ast::ForInStmt,
+        for_in: &oxc_ast::ast::ForInStatement,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals_stack: &mut LocalsStackLocal<'a>,
     ) -> crate::diagnostics::DiagnosticResult<bool> {
-
         // For-in loops iterate over object property keys
         // Only handle the case where the left-hand side is a var declaration (e.g., `for (let key in obj)`)
         if let ForHead::VarDecl(var_decl) = &for_in.left
@@ -76,7 +75,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     && let Some(param_types) = self
                         .fn_param_types
                         .borrow()
-                        .get(function.get_name().to_str().unwrap_or(""))
+                        .get(match function.get_name().to_str() {
+                            Some(name) => name,
+                            None => "",
+                        })
                 {
                     let idx = *param_idx as usize;
                     if idx < param_types.len()
@@ -233,7 +235,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             // Lower loop body
             let body_terminated = match &*for_in.body {
                 Stmt::Block(block) => {
-                    self.lower_stmts(&block.stmts, function, param_map, locals_stack)?
+                    self.lower_stmts(&block.body, function, param_map, locals_stack)?
                 }
                 _ => self.lower_stmt(&for_in.body, function, param_map, locals_stack)?,
             };

@@ -4,7 +4,11 @@ use crate::types::OatsType;
 use inkwell::AddressSpace;
 use inkwell::types::BasicTypeEnum;
 use inkwell::values::{BasicValue, BasicValueEnum, PointerValue};
+use oxc_ast::ast::*;
 use std::collections::HashMap;
+
+type CallExpr<'a> = CallExpression<'a>;
+type MemberExpr<'a> = MemberExpression<'a>;
 
 type LocalEntry<'a> = (
     PointerValue<'a>,
@@ -137,16 +141,13 @@ impl<'a> CodeGen<'a> {
                                     ));
                                 }
                                 MemberProp::Computed(computed_expr) => {
-                                    // Try to evaluate the computed property as a compile-time constant
-                                    // Support string literals: obj["methodName"]()
+                                    // const_eval removed - only support direct string literals
                                     let span_start = member.span.start;
-                                    match crate::codegen::const_eval::eval_const_expr(
-                                        computed_expr,
-                                        span_start,
-                                        &std::collections::HashMap::new(),
-                                    ) {
-                                        Ok(crate::codegen::const_eval::ConstValue::Str(s)) => s,
-                                        Ok(_) => {
+                                    match computed_expr {
+                                        oxc_ast::ast::Expression::StringLiteral(lit) => {
+                                            lit.value.to_string()
+                                        }
+                                        _ => {
                                             return Err(Box::new(
                                                 Diagnostic::simple_with_span(
                                                     Severity::Error,
@@ -155,17 +156,6 @@ impl<'a> CodeGen<'a> {
                                                 )
                                                 .with_note("Only string literal computed properties are supported (e.g., obj[\"method\"]())")
                                                 .with_help("Use a string literal: obj[\"methodName\"]() instead of obj[prop]()")
-                                            ));
-                                        }
-                                        Err(_) => {
-                                            return Err(Box::new(
-                                                Diagnostic::simple_with_span(
-                                                    Severity::Error,
-                                                    "computed property must be a compile-time constant string",
-                                                    span_start,
-                                                )
-                                                .with_note("Only string literal computed properties are supported (e.g., obj[\"method\"]())")
-                                                .with_help("Use a string literal: obj[\"methodName\"]() instead of a variable")
                                             ));
                                         }
                                     }
@@ -326,25 +316,15 @@ impl<'a> CodeGen<'a> {
                                 ));
                             }
                             MemberProp::Computed(computed_expr) => {
-                                // Try to evaluate the computed property as a compile-time constant
-                                // Support string literals: Math["max"]()
-                                match crate::codegen::const_eval::eval_const_expr(
-                                    computed_expr,
-                                    member.span.start,
-                                    &std::collections::HashMap::new(),
-                                ) {
-                                    Ok(crate::codegen::const_eval::ConstValue::Str(s)) => s,
-                                    Ok(_) => {
+                                // const_eval removed - only support direct string literals
+                                match computed_expr {
+                                    oxc_ast::ast::Expression::StringLiteral(lit) => {
+                                        lit.value.to_string()
+                                    }
+                                    _ => {
                                         return Err(Diagnostic::simple_with_span_boxed(
                                             Severity::Error,
                                             "computed property must be a string literal",
-                                            member.span.start,
-                                        ));
-                                    }
-                                    Err(_) => {
-                                        return Err(Diagnostic::simple_with_span_boxed(
-                                            Severity::Error,
-                                            "computed property must be a compile-time constant string",
                                             member.span.start,
                                         ));
                                     }
@@ -627,9 +607,8 @@ impl<'a> CodeGen<'a> {
 
                                 for a in &call.args {
                                     // Infer type from expression before lowering
-                                    let inferred = crate::types::infer_type_from_expr(a);
-                                    inferred_arg_types
-                                        .push(inferred.unwrap_or(crate::types::OatsType::Number));
+                                    let inferred = self.infer_type_from_expr(a)?;
+                                    inferred_arg_types.push(inferred);
                                 }
 
                                 // Lower all args
@@ -1106,7 +1085,10 @@ impl<'a> CodeGen<'a> {
         // Determine which class this method belongs to
         // Method functions are named as {Class}_{method}
         // Constructor functions might be named as {Class}_ctor, {Class}_ctor_impl, or {Class}_init
-        let function_name = function.get_name().to_str().unwrap_or("");
+        let function_name = match function.get_name().to_str() {
+            Some(name) => name,
+            None => "",
+        };
         let current_class = if let Some(underscore_pos) = function_name.rfind('_') {
             let prefix = &function_name[..underscore_pos];
             let suffix = &function_name[underscore_pos + 1..];

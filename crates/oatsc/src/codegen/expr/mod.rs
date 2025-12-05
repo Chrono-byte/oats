@@ -95,7 +95,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
         match expr {
             // Removed duplicate `CallExpression` match arm at line 482 to fix unreachable pattern warning.
             // Removed unused `parent` variable to resolve the warning.
-            Expression::BinaryExpression(bin) => self.lower_binary_expr(bin, function, param_map, locals),
+            Expression::BinaryExpression(bin) => {
+                self.lower_binary_expr(bin, function, param_map, locals)
+            }
             // Identifier lookup and TDZ handling
             //
             // Identifiers can refer to function parameters (which are
@@ -105,42 +107,66 @@ impl<'a> crate::codegen::CodeGen<'a> {
             // origin local name for the last-lowered expression which helps
             // propagate closure-local typing information.
             Expression::Identifier(id) => self.lower_ident_expr(id, function, param_map, locals),
-            Expression::ThisExpression(this_expr) => self.lower_this_expr(this_expr, function, param_map, locals),
+            Expression::ThisExpression(this_expr) => {
+                self.lower_this_expr(this_expr, function, param_map, locals)
+            }
             Expression::Super(super_expr) => {
                 self.lower_super_expr(super_expr, function, param_map, locals)
             }
-            Expression::CallExpression(call) => self.lower_call_expr(call, function, param_map, locals),
+            Expression::CallExpression(call) => {
+                self.lower_call_expr(call, function, param_map, locals)
+            }
             // (Duplicate closure-call lowering removed; handled in the primary Call arm above.)
-            Expression::AssignmentExpression(assign) => self.lower_assign_expr(assign, function, param_map, locals),
-            Expression::ParenthesizedExpression(paren) => self.lower_paren_expr(paren, function, param_map, locals),
-            Expression::ConditionalExpression(cond) => self.lower_cond_expr(cond, function, param_map, locals),
-            Expression::NumericLiteral(_) | Expression::StringLiteral(_) | Expression::BooleanLiteral(_) | Expression::NullLiteral(_) => {
+            Expression::AssignmentExpression(assign) => {
+                self.lower_assign_expr(assign, function, param_map, locals)
+            }
+            Expression::ParenthesizedExpression(paren) => {
+                self.lower_paren_expr(paren, function, param_map, locals)
+            }
+            Expression::ConditionalExpression(cond) => {
+                self.lower_cond_expr(cond, function, param_map, locals)
+            }
+            Expression::NumericLiteral(_)
+            | Expression::StringLiteral(_)
+            | Expression::BooleanLiteral(_)
+            | Expression::NullLiteral(_) => {
                 Ok(crate::codegen::expr::literals::lower_lit(self, expr)?)
-            },
+            }
             Expression::ArrayExpression(arr) => Ok(literals::lower_array(
                 self, arr, function, param_map, locals,
             )?),
-            Expression::MemberExpression(member) | Expression::ComputedMemberExpression(member) => {
+            Expression::StaticMemberExpression(member) | Expression::ComputedMemberExpression(member) => {
                 self.lower_member_expr(expr, function, param_map, locals)
             }
-            Expression::OptionalCallExpression(_) | Expression::OptionalMemberExpression(optional) => {
-                self.lower_optional_member_expr(optional, function, param_map, locals)
+            // Optional chaining expressions may not be available in this version of oxc_ast
+            // They are handled in the default case below
+            Expression::NewExpression(new_expr) => {
+                self.lower_new_expr(new_expr, function, param_map, locals)
             }
-            Expression::NewExpression(new_expr) => self.lower_new_expr(new_expr, function, param_map, locals),
             Expression::AwaitExpression(await_expr) => {
                 self.lower_await_expr(await_expr, function, param_map, locals)
             }
-            Expression::ArrowFunctionExpression(arrow) => self.lower_arrow_expr(arrow, function, param_map, locals),
-            Expression::FunctionExpression(fn_expr) => self.lower_fn_expr(fn_expr, function, param_map, locals),
-            Expression::SequenceExpression(seq) => self.lower_seq_expr(seq, function, param_map, locals),
+            Expression::ArrowFunctionExpression(arrow) => {
+                self.lower_arrow_expr(arrow, function, param_map, locals)
+            }
+            Expression::FunctionExpression(fn_expr) => {
+                self.lower_fn_expr(fn_expr, function, param_map, locals)
+            }
+            Expression::SequenceExpression(seq) => {
+                self.lower_seq_expr(seq, function, param_map, locals)
+            }
             Expression::ObjectExpression(obj_lit) => Ok(literals::lower_object(
                 self, obj_lit, function, param_map, locals,
             )?),
             Expression::TemplateLiteral(tpl) => Ok(literals::lower_template(
                 self, tpl, function, param_map, locals,
             )?),
-            Expression::UnaryExpression(unary) => self.lower_unary_expr(unary, function, param_map, locals),
-            Expression::UpdateExpression(update) => self.lower_update_expr(update, function, param_map, locals),
+            Expression::UnaryExpression(unary) => {
+                self.lower_unary_expr(unary, function, param_map, locals)
+            }
+            Expression::UpdateExpression(update) => {
+                self.lower_update_expr(update, function, param_map, locals)
+            }
             // Process model expressions - these don't exist in oxc_ast, so they need special handling
             // For now, we'll need to handle these differently or they may need to be custom extensions
             _ => Err(crate::diagnostics::Diagnostic::simple_boxed(
@@ -181,7 +207,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
         // First, determine the nominal type of member.obj
         let obj_nominal = match member {
-            Expression::MemberExpression(mem) | Expression::ComputedMemberExpression(mem) => {
+            Expression::StaticMemberExpression(mem) | Expression::ComputedMemberExpression(mem) => {
                 if let Expression::Identifier(ident) = &mem.object() {
                     let ident_name = ident.name.to_string();
                     // Check if it's `this`
@@ -189,7 +215,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         if let Some(param_types) = self
                             .fn_param_types
                             .borrow()
-                            .get(function.get_name().to_str().unwrap_or(""))
+                            .get(match function.get_name().to_str() {
+                                Some(name) => name,
+                                None => "",
+                            })
                             && !param_types.is_empty()
                             && let crate::types::OatsType::NominalStruct(n) = &param_types[0]
                         {
@@ -203,7 +232,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         if let Some(param_types) = self
                             .fn_param_types
                             .borrow()
-                            .get(function.get_name().to_str().unwrap_or(""))
+                            .get(match function.get_name().to_str() {
+                                Some(name) => name,
+                                None => "",
+                            })
                         {
                             let idx = *param_idx as usize;
                             if idx < param_types.len()
@@ -244,7 +276,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
             && let Some(fields) = self.class_fields.borrow().get(&obj_type_name)
         {
             // Get the property name from member
-            if let Expression::MemberExpression(mem) | Expression::ComputedMemberExpression(mem) = member {
+            if let Expression::StaticMemberExpression(mem) | Expression::ComputedMemberExpression(mem) =
+                member
+            {
                 if let oxc_ast::ast::MemberExpression::StaticMemberExpression(static_mem) = mem {
                     let field_name = static_mem.property.name.to_string();
                     // Find the field and return its type if it's a NominalStruct

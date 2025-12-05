@@ -1,3 +1,4 @@
+use crate::codegen::helpers::extract_basic_value_from_valuekind;
 use crate::diagnostics::Severity;
 use inkwell::values::FunctionValue;
 use std::collections::HashMap;
@@ -24,7 +25,7 @@ type LocalsStackLocal<'a> = Vec<HashMap<String, LocalEntry<'a>>>;
 impl<'a> crate::codegen::CodeGen<'a> {
     pub(crate) fn lower_return_stmt(
         &self,
-        ret: &oats_ast::ReturnStmt,
+        ret: &oxc_ast::ast::ReturnStatement,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals_stack: &mut LocalsStackLocal<'a>,
@@ -49,7 +50,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             BasicValueEnum::FloatValue(fv) => {
                                 let box_fn = self.get_union_box_f64();
 
-                                let union_box_call = self.builder
+                                let union_box_call = self
+                                    .builder
                                     .build_call(box_fn, &[fv.into()], "union_box")
                                     .map_err(|_| {
                                         crate::diagnostics::Diagnostic::simple_boxed(
@@ -57,9 +59,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             "Failed to box f64 as union in return",
                                         )
                                     })?;
-                                match union_box_call.try_as_basic_value() {
-                                    either::Either::Left(bv) => bv,
-                                    _ => {
+                                match extract_basic_value_from_valuekind(union_box_call.try_as_basic_value()) {
+                                    Some(bv) => bv,
+                                    None => {
                                         return Err(crate::diagnostics::Diagnostic::simple_boxed(
                                             Severity::Error,
                                             "union_box_f64 did not return value",
@@ -70,7 +72,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             BasicValueEnum::PointerValue(pv) => {
                                 let box_fn = self.get_union_box_ptr();
 
-                                let union_box_ptr_call = self.builder
+                                let union_box_ptr_call = self
+                                    .builder
                                     .build_call(box_fn, &[pv.into()], "union_box")
                                     .map_err(|_| {
                                         crate::diagnostics::Diagnostic::simple_boxed(
@@ -78,9 +81,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             "Failed to box ptr as union in return",
                                         )
                                     })?;
-                                match union_box_ptr_call.try_as_basic_value() {
-                                    either::Either::Left(bv) => bv,
-                                    _ => {
+                                match extract_basic_value_from_valuekind(union_box_ptr_call.try_as_basic_value()) {
+                                    Some(bv) => bv,
+                                    None => {
                                         return Err(crate::diagnostics::Diagnostic::simple_boxed(
                                             Severity::Error,
                                             "union_box_ptr did not return value",
@@ -101,7 +104,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     })?;
                                 let box_fn = self.get_union_box_f64();
 
-                                let union_box_bool_call = self.builder
+                                let union_box_bool_call = self
+                                    .builder
                                     .build_call(box_fn, &[as_f64.into()], "union_box")
                                     .map_err(|_| {
                                         crate::diagnostics::Diagnostic::simple_boxed(
@@ -109,9 +113,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             "Failed to box bool as union in return",
                                         )
                                     })?;
-                                match union_box_bool_call.try_as_basic_value() {
-                                    either::Either::Left(bv) => bv,
-                                    _ => {
+                                match extract_basic_value_from_valuekind(union_box_bool_call.try_as_basic_value()) {
+                                    Some(bv) => bv,
+                                    None => {
                                         return Err(crate::diagnostics::Diagnostic::simple_boxed(
                                             Severity::Error,
                                             "union_box_f64 did not return value",

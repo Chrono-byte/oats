@@ -160,7 +160,10 @@ fn compile_package(
     }
 
     // Configure output
-    let out_dir = config.out_dir.as_deref().unwrap_or("target");
+    let out_dir = match config.out_dir.as_deref() {
+        Some(dir) => dir,
+        None => "target",
+    };
     let obj_filename = format!("{}_pkg.o", pkg_name.replace('-', "_"));
     let obj_path = PathBuf::from(out_dir).join(&obj_filename);
 
@@ -175,9 +178,10 @@ fn compile_package(
 
     // Check for incremental build opportunity
     if let Ok(obj_metadata) = std::fs::metadata(&obj_path) {
-        let obj_mtime = obj_metadata
-            .modified()
-            .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+        let obj_mtime = match obj_metadata.modified() {
+            Ok(time) => time,
+            Err(_) => std::time::SystemTime::UNIX_EPOCH,
+        };
 
         // Check if source files are older than object file
         let mut needs_rebuild = false;
@@ -257,8 +261,14 @@ fn compile_package(
 
             return Ok(PackageBuildResult {
                 name: pkg_name.clone(),
-                object_file: obj_path.canonicalize().unwrap_or(obj_path),
-                meta_file: meta_file.canonicalize().unwrap_or(meta_file),
+                object_file: match obj_path.canonicalize() {
+                    Ok(path) => path,
+                    Err(_) => obj_path,
+                },
+                meta_file: match meta_file.canonicalize() {
+                    Ok(path) => path,
+                    Err(_) => meta_file,
+                },
             });
         }
     }
@@ -297,8 +307,14 @@ fn compile_package(
 
     Ok(PackageBuildResult {
         name: pkg_name.clone(),
-        object_file: obj_path.canonicalize().unwrap_or(obj_path),
-        meta_file: meta_file.canonicalize().unwrap_or(meta_file),
+        object_file: match obj_path.canonicalize() {
+            Ok(path) => path,
+            Err(_) => obj_path,
+        },
+        meta_file: match meta_file.canonicalize() {
+            Ok(path) => path,
+            Err(_) => meta_file,
+        },
     })
 }
 
@@ -338,10 +354,12 @@ fn compile_package_modules(
         for (dep_name, dep_result) in built_deps {
             // Make meta file path relative to current package root
             let current_pkg_root = pkg_node.root_dir.as_path();
-            let meta_path = pathdiff::diff_paths(&dep_result.meta_file, current_pkg_root)
-                .unwrap_or_else(|| dep_result.meta_file.clone())
-                .to_string_lossy()
-                .to_string();
+            let meta_path = match pathdiff::diff_paths(&dep_result.meta_file, current_pkg_root) {
+                Some(path) => path,
+                None => dep_result.meta_file.clone(),
+            }
+            .to_string_lossy()
+            .to_string();
             options.extern_pkg.insert(dep_name.clone(), meta_path);
         }
 
@@ -358,17 +376,20 @@ fn compile_package_modules(
                 let symbol_list = exported_symbols.join(",");
                 let module_name = format!(
                     "./{}",
-                    std::path::Path::new(prev_module_path)
-                        .file_stem()
-                        .unwrap_or_default()
-                        .to_string_lossy()
+                    match std::path::Path::new(prev_module_path).file_stem() {
+                        Some(stem) => stem.to_string_lossy(),
+                        None => std::ffi::OsStr::new("").into(),
+                    }
                 );
                 options.extern_oats.insert(module_name, symbol_list);
             }
         }
 
         // Configure output for this module
-        let out_dir = config.out_dir.as_deref().unwrap_or("target");
+        let out_dir = match config.out_dir.as_deref() {
+            Some(dir) => dir,
+            None => "target",
+        };
         std::fs::create_dir_all(out_dir).map_err(|e| ToastyError::io(out_dir, e))?;
 
         // Create CACHEDIR.TAG to mark this as a cache directory
@@ -395,11 +416,10 @@ fn compile_package_modules(
         let compile_result = crate::compiler::invoke_oatsc(&options)?;
         if compile_result.is_some() {
             // Move generated files to target directory
-            let source_stem = std::path::Path::new(module_path)
-                .file_stem()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_string();
+            let source_stem = match std::path::Path::new(module_path).file_stem() {
+                Some(stem) => stem.to_string_lossy().to_string(),
+                None => String::new(),
+            };
 
             let ll_file = std::path::Path::new(&source_stem).with_extension("ll");
             let o_file = std::path::Path::new(&source_stem).with_extension("o");
@@ -446,7 +466,10 @@ fn link_package_modules(
     }
 
     // Link multiple modules together
-    let linker_cmd = config.linker.as_deref().unwrap_or("clang");
+    let linker_cmd = match config.linker.as_deref() {
+        Some(cmd) => cmd,
+        None => "clang",
+    };
     let mut link_cmd = std::process::Command::new(linker_cmd);
 
     // Ensure output directory exists
@@ -487,11 +510,14 @@ fn link_packages(
     build_results: &HashMap<String, PackageBuildResult>,
     config: &BuildConfig,
 ) -> Result<PathBuf> {
-    let out_dir = config.out_dir.as_deref().unwrap_or(".");
-    let exe_name = config
-        .out_name
-        .as_deref()
-        .unwrap_or(&build_results[root_pkg_name].name);
+    let out_dir = match config.out_dir.as_deref() {
+        Some(dir) => dir,
+        None => ".",
+    };
+    let exe_name = match config.out_name.as_deref() {
+        Some(name) => name,
+        None => &build_results[root_pkg_name].name,
+    };
     let exe_path = PathBuf::from(out_dir).join(exe_name);
 
     // Ensure runtime is available

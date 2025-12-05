@@ -1,6 +1,7 @@
 use crate::diagnostics::Severity;
 use inkwell::types::BasicType;
 use inkwell::values::{BasicValueEnum, FunctionValue};
+use oxc_ast::ast::*;
 use std::collections::HashMap;
 
 type LocalEntry<'a> = (
@@ -25,7 +26,7 @@ type LocalsStackLocal<'a> = Vec<HashMap<String, LocalEntry<'a>>>;
 impl<'a> crate::codegen::CodeGen<'a> {
     pub(crate) fn lower_for_of_stmt(
         &self,
-        forof: &oats_ast::ForOfStmt,
+        forof: &ForOfStatement<'_>,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals_stack: &mut LocalsStackLocal<'a>,
@@ -237,8 +238,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
                     // Lower the loop body: handle a Block or single statement
                     let terminated = match &*forof.body {
-                        oats_ast::Stmt::Block(block) => {
-                            self.lower_stmts(&block.stmts, function, param_map, locals_stack)?
+                        Statement::BlockStatement(block) => {
+                            self.lower_stmts(&block.body, function, param_map, locals_stack)?
                         }
                         other => self.lower_stmt(other, function, param_map, locals_stack)?,
                     };

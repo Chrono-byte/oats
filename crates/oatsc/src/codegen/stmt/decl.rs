@@ -3,6 +3,7 @@ use inkwell::AddressSpace;
 use inkwell::types::BasicType;
 use inkwell::values::{BasicValue, BasicValueEnum, FunctionValue};
 use std::collections::HashMap;
+use oxc_ast::ast::*;
 
 type LocalEntry<'a> = (
     inkwell::values::PointerValue<'a>,
@@ -39,7 +40,7 @@ struct DeclTypeInfo {
 /// Context information for variable declaration processing
 struct VarDeclContext<'b> {
     name: String,
-    var_decl: &'b oats_ast::VarDecl,
+    var_decl: &'b VariableDeclaration<'b>,
     is_mut_decl: bool,
     declared_is_weak: bool,
     declared_union: Option<crate::types::OatsType>,
@@ -53,7 +54,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
     /// and determines the effective type and related flags (union, weak, nominal).
     fn resolve_decl_type(
         &self,
-        decl: &oats_ast::VarDeclarator,
+        decl: &VariableDeclarator<'_>,
     ) -> crate::diagnostics::DiagnosticResult<DeclTypeInfo> {
         let mut declared_mapped: Option<crate::types::OatsType> = None;
         let mut declared_union: Option<crate::types::OatsType> = None;
@@ -145,41 +146,15 @@ impl<'a> crate::codegen::CodeGen<'a> {
     /// the const should fall through to normal lowering (e.g., arrays/objects).
     fn handle_const_decl(
         &self,
-        init: &oats_ast::Expr,
-        var_decl: &oats_ast::VarDecl,
+        init: &Expression<'_>,
+        var_decl: &VariableDeclaration<'_>,
         name: &str,
     ) -> crate::diagnostics::DiagnosticResult<bool> {
-        if !matches!(var_decl.kind, oats_ast::VarDeclKind::Const) {
+        if !matches!(var_decl.kind, VariableDeclarationKind::Const) {
             return Ok(false);
         }
 
-        let span_start = var_decl.span.start;
-        let const_map = self.const_items.borrow();
-        match crate::codegen::const_eval::eval_const_expr(init, span_start, &const_map) {
-            Ok(cv) => {
-                // Only treat primitives as const; arrays and objects need runtime allocation
-                if matches!(
-                    cv,
-                    crate::codegen::const_eval::ConstValue::Number(_)
-                        | crate::codegen::const_eval::ConstValue::Bool(_)
-                        | crate::codegen::const_eval::ConstValue::Str(_)
-                ) {
-                    drop(const_map);
-                    // Insert into compile-time const map keyed by name
-                    self.const_items.borrow_mut().insert(name.to_string(), cv);
-                    // For consts we do not lower the initializer further; the
-                    // lowered uses will be replaced by LLVM constants later.
-                    return Ok(true);
-                } else {
-                    drop(const_map);
-                    // For arrays/objects, fall through to normal lowering
-                }
-            }
-            Err(_diag) => {
-                // If const evaluation fails, fall through to normal lowering
-                drop(const_map);
-            }
-        }
+        // const_eval removed - const declarations now fall through to normal lowering
         Ok(false)
     }
 
@@ -190,17 +165,16 @@ impl<'a> crate::codegen::CodeGen<'a> {
     /// `self.class_fields` keyed by the nominal name.
     fn handle_object_literal_init(
         &self,
-        init: &oats_ast::Expr,
+        init: &Expression<'_>,
         declared_nominal: &Option<String>,
     ) -> crate::diagnostics::DiagnosticResult<()> {
-        if let oats_ast::Expr::Object(obj_lit) = init
+        if let Expression::ObjectExpression(obj_lit) = init
             && let Some(nominal_name) = declared_nominal.clone()
         {
             let mut fields: Vec<(String, crate::types::OatsType)> = Vec::new();
-            for prop in &obj_lit.props {
-                if let oats_ast::PropOrSpread::Prop(prop) = prop
-                    && let oats_ast::Prop::KeyValue(kv) = prop
-                    && let oats_ast::PropName::Ident(id) = &kv.key
+            for prop in &obj_lit.properties {
+                if let ObjectPropertyKind::ObjectProperty(kv) = prop
+                    && let PropertyKey::Identifier(id) = &kv.key
                 {
                     let fname = id.sym.clone();
                     // Try to infer the field type from the initializer expression.
@@ -222,17 +196,17 @@ impl<'a> crate::codegen::CodeGen<'a> {
     /// if initializer lowering emits diagnostics.
     fn handle_new_expr_init(
         &self,
-        init: &oats_ast::Expr,
+        init: &Expression<'_>,
         name: &str,
         declared_is_weak: bool,
         declared_nominal: &mut Option<String>,
         declared_union: &Option<crate::types::OatsType>,
         locals_stack: &mut LocalsStackLocal<'a>,
     ) -> crate::diagnostics::DiagnosticResult<bool> {
-        if let oats_ast::Expr::New(new_expr) = init
-            && let oats_ast::Expr::Ident(ident) = &*new_expr.callee
+        if let Expression::NewExpression(new_expr) = init
+            && let Expression::Identifier(ident) = &*new_expr.callee
         {
-            *declared_nominal = Some(ident.sym.clone());
+            *declared_nominal = Some(ident.name.to_string());
 
             // Pre-allocate an i8* slot and insert the local into
             // the current scope marked as uninitialized. This
@@ -279,7 +253,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
     /// Returns `Ok(true)` if tuple initialization was handled, `Ok(false)` otherwise.
     fn handle_tuple_init<'b>(
         &self,
-        init: &oats_ast::Expr,
+        init: &Expression<'_>,
         declared_mapped: &Option<crate::types::OatsType>,
         var_ctx: &VarDeclContext<'b>,
         function: FunctionValue<'a>,
@@ -289,12 +263,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
         let Some(crate::types::OatsType::Tuple(elem_types)) = declared_mapped else {
             return Ok(false);
         };
-        let oats_ast::Expr::Array(arr_lit) = init else {
+        let Expression::ArrayExpression(arr_lit) = init else {
             return Ok(false);
         };
 
         // number of elements
-        let elem_count = arr_lit.elems.len();
+        let elem_count = arr_lit.elements.len();
         // Generate a nominal name for this tuple shape
         let fname = function.get_name().to_str().unwrap_or("<fn>");
         let gen_name = format!("tuple_{}_{}", fname, var_ctx.name);
@@ -342,7 +316,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         let _ = self.builder.build_store(header_ptr, header_val);
 
         // For each element in the array literal, lower and store
-        for (i, opt) in arr_lit.elems.iter().enumerate() {
+        for (i, opt) in arr_lit.elements.iter().enumerate() {
             let Some(expr) = opt else {
                 return Err(crate::diagnostics::Diagnostic::simple_boxed(
                     Severity::Error,
@@ -421,7 +395,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 ty: allocated_ty,
                 initialized: true,
                 // If this was a `let` without `mut`, treat as const/immutable
-                is_const: matches!(var_ctx.var_decl.kind, oats_ast::VarDeclKind::Const)
+                is_const: matches!(var_ctx.var_decl.kind, VariableDeclarationKind::Const)
                     || !var_ctx.is_mut_decl,
                 is_weak: var_ctx.declared_is_weak,
                 nominal: Some(gen_name),
@@ -623,14 +597,13 @@ impl<'a> crate::codegen::CodeGen<'a> {
     /// Lower array destructuring: let [a, b, c] = arr
     fn lower_array_destructuring(
         &self,
-        arr_pat: &oats_ast::ArrayPat,
-        init: &oats_ast::Expr,
-        var_decl: &oats_ast::VarDecl,
+        arr_pat: &ArrayPattern<'_>,
+        init: &Expression<'_>,
+        var_decl: &VariableDeclaration<'_>,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals_stack: &mut LocalsStackLocal<'a>,
     ) -> crate::diagnostics::DiagnosticResult<()> {
-
         // Lower the initializer (should be an array)
         let arr_val = self.lower_expr(init, function, param_map, locals_stack)?;
         let arr_ptr = if let BasicValueEnum::PointerValue(pv) = arr_val {
@@ -662,7 +635,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         let is_mut_decl = matches!(var_decl.kind, VarDeclKind::Let { mutable: true });
 
         // Find rest pattern position (if any)
-        let rest_pos = arr_pat.elems.iter().position(|opt| {
+        let rest_pos = arr_pat.elements.iter().position(|opt| {
             if let Some(Pat::Rest(_)) = opt {
                 true
             } else {
@@ -671,7 +644,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         });
 
         // Extract each element
-        for (idx, opt_elem_pat) in arr_pat.elems.iter().enumerate() {
+        for (idx, opt_elem_pat) in arr_pat.elements.iter().enumerate() {
             // Skip elements after rest pattern
             if let Some(rest_pos) = rest_pos
                 && idx > rest_pos
@@ -786,10 +759,13 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             );
 
                             // Create a synthetic identifier expression for the temporary
-                            let temp_ident = oats_ast::Expr::Ident(oats_ast::Ident {
-                                sym: temp_name.clone(),
+                            use oxc_ast::ast::{Expression, IdentifierReference};
+                            use oxc_syntax::reference::ReferenceId;
+                            let temp_ident = Expression::Identifier(Box::new(IdentifierReference {
                                 span: nested_arr_pat.span.clone(),
-                            });
+                                name: oxc_span::Atom::from(temp_name.clone()),
+                                reference_id: ReferenceId::from_u32(0),
+                            }));
 
                             // Recursively destructure the nested array
                             self.lower_array_destructuring(
@@ -856,10 +832,13 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             );
 
                             // Create a synthetic identifier expression for the temporary
-                            let temp_ident = oats_ast::Expr::Ident(oats_ast::Ident {
-                                sym: temp_name.clone(),
-                                span: nested_obj_pat.span.clone(),
-                            });
+                            use oxc_ast::ast::{Expression, IdentifierReference};
+                            use oxc_syntax::reference::ReferenceId;
+                            let temp_ident = Expression::Identifier(Box::new(IdentifierReference {
+                                span: nested_obj_pat.span,
+                                name: oxc_span::Atom::from(temp_name.clone()),
+                                reference_id: ReferenceId::from_u32(0),
+                            }));
 
                             // Recursively destructure the nested object
                             self.lower_object_destructuring(
@@ -1132,14 +1111,13 @@ impl<'a> crate::codegen::CodeGen<'a> {
     /// Lower object destructuring: let {a, b: c} = obj
     fn lower_object_destructuring(
         &self,
-        obj_pat: &oats_ast::ObjectPat,
-        init: &oats_ast::Expr,
-        var_decl: &oats_ast::VarDecl,
+        obj_pat: &ObjectPattern<'_>,
+        init: &Expression<'_>,
+        var_decl: &VariableDeclaration<'_>,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals_stack: &mut LocalsStackLocal<'a>,
     ) -> crate::diagnostics::DiagnosticResult<()> {
-
         // Lower the initializer (should be an object)
         let obj_val = self.lower_expr(init, function, param_map, locals_stack)?;
         let obj_ptr = if let BasicValueEnum::PointerValue(pv) = obj_val {
@@ -1209,7 +1187,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             std::collections::HashSet::new();
 
         // First pass: identify rest pattern and track destructured fields
-        for prop in &obj_pat.props {
+        for prop in &obj_pat.properties {
             match prop {
                 ObjectPatProp::KeyValue { key, .. } => {
                     let prop_name = match key {
@@ -1226,7 +1204,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         }
 
         // Extract each property from the destructuring pattern
-        for prop in &obj_pat.props {
+        for prop in &obj_pat.properties {
             match prop {
                 ObjectPatProp::KeyValue { key, value, .. } => {
                     // Get property name from key
@@ -1392,10 +1370,13 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
                                 // Create a synthetic identifier expression for the temporary
                                 // Use the nested pattern's span
-                                let temp_ident = oats_ast::Expr::Ident(oats_ast::Ident {
-                                    sym: temp_name.clone(),
-                                    span: nested_obj_pat.span.clone(),
-                                });
+                                use oxc_ast::ast::{Expression, IdentifierReference};
+                                use oxc_syntax::reference::ReferenceId;
+                                let temp_ident = Expression::Identifier(Box::new(IdentifierReference {
+                                    span: nested_obj_pat.span,
+                                    name: oxc_span::Atom::from(temp_name.clone()),
+                                    reference_id: ReferenceId::from_u32(0),
+                                }));
 
                                 // Recursively destructure the nested object
                                 self.lower_object_destructuring(
@@ -1463,10 +1444,13 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
                                 // Create a synthetic identifier expression for the temporary
                                 // Use the nested pattern's span
-                                let temp_ident = oats_ast::Expr::Ident(oats_ast::Ident {
-                                    sym: temp_name.clone(),
-                                    span: nested_arr_pat.span.clone(),
-                                });
+                                use oxc_ast::ast::{Expression, IdentifierReference};
+                                use oxc_syntax::reference::ReferenceId;
+                                let temp_ident = Expression::Identifier(Box::new(IdentifierReference {
+                                    span: nested_arr_pat.span,
+                                    name: oxc_span::Atom::from(temp_name.clone()),
+                                    reference_id: ReferenceId::from_u32(0),
+                                }));
 
                                 // Recursively destructure the nested array
                                 self.lower_array_destructuring(
@@ -1689,15 +1673,15 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
     pub(crate) fn lower_decl_stmt(
         &self,
-        var_decl: &oats_ast::VarDecl,
+        var_decl: &VariableDeclaration<'_>,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals_stack: &mut LocalsStackLocal<'a>,
     ) -> crate::diagnostics::DiagnosticResult<bool> {
-        for decl in &var_decl.decls {
+        for decl in &var_decl.declarations {
             // Handle destructuring patterns
             match &decl.name {
-                oats_ast::Pat::Array(arr_pat) => {
+                BindingPattern::ArrayPattern(arr_pat) => {
                     // Array destructuring: let [a, b, c] = arr
                     if let Some(init) = &decl.init {
                         self.lower_array_destructuring(
@@ -1724,7 +1708,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     }
                     continue;
                 }
-                oats_ast::Pat::Object(obj_pat) => {
+                BindingPattern::ObjectPattern(obj_pat) => {
                     // Object destructuring: let {a, b: c} = obj
                     if let Some(init) = &decl.init {
                         self.lower_object_destructuring(
@@ -1751,7 +1735,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     }
                     continue;
                 }
-                oats_ast::Pat::Rest(_) => {
+                BindingPattern::BindingIdentifier(_) => {
                     return Err(crate::diagnostics::Diagnostic::error(
                         "Rest patterns in variable declarations not yet supported",
                     )
@@ -1770,7 +1754,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
             // Simple identifier pattern
             let name = match &decl.name {
-                oats_ast::Pat::Ident(ident) => ident.sym.clone(),
+                BindingPattern::BindingIdentifier(ident) => ident.name.to_string(),
                 _ => {
                     return Err(crate::diagnostics::Diagnostic::error(
                         "Unsupported pattern in variable declaration",
@@ -1790,7 +1774,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 // Language Spec v2: `let` is immutable by default. Support
                 // `let mut` by checking the mutable flag in VarDeclKind::Let.
                 let is_mut_decl =
-                    matches!(var_decl.kind, oats_ast::VarDeclKind::Let { mutable: true });
+                    matches!(var_decl.kind, VariableDeclarationKind::Let);
 
                 // Resolve type information
                 let type_info = self.resolve_decl_type(decl)?;
@@ -1915,7 +1899,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     ty: allocated_ty,
                                     initialized: true,
                                     // If this was a `let` without `mut`, treat as const/immutable
-                                    is_const: matches!(var_decl.kind, oats_ast::VarDeclKind::Const)
+                                    is_const: matches!(var_decl.kind, VariableDeclarationKind::Const)
                                         || !is_mut_decl,
                                     is_weak: declared_is_weak,
                                     nominal: declared_nominal.clone(),
@@ -1991,7 +1975,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 ptr: alloca,
                 ty,
                 initialized: false,
-                is_const: matches!(var_ctx.var_decl.kind, oats_ast::VarDeclKind::Const)
+                is_const: matches!(var_ctx.var_decl.kind, VariableDeclarationKind::Const)
                     || !var_ctx.is_mut_decl,
                 is_weak: var_ctx.declared_is_weak,
                 nominal: var_ctx.declared_nominal.clone(),

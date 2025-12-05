@@ -542,7 +542,10 @@ pub fn lower_object<'a>(
                         && let Some(param_types) = codegen
                             .fn_param_types
                             .borrow()
-                            .get(function.get_name().to_str().unwrap_or(""))
+                            .get(match function.get_name().to_str() {
+                                Some(name) => name,
+                                None => "",
+                            })
                     {
                         let idx = *param_idx as usize;
                         if idx < param_types.len()
@@ -910,14 +913,12 @@ pub fn lower_template<'a>(
                     "tpl_concat_quasi",
                 )
                 .map_err(|_| Diagnostic::error("failed to build call"))?;
-            Some(
-                match call_site.try_as_basic_value() {
-                    either::Either::Left(bv) => bv.into_pointer_value(),
-                    _ => {
-                        return Err(Diagnostic::error("concat call returned no value"));
-                    }
+            Some(match call_site.try_as_basic_value() {
+                either::Either::Left(bv) => bv.into_pointer_value(),
+                _ => {
+                    return Err(Diagnostic::error("concat call returned no value"));
                 }
-            )
+            })
         } else {
             // Using the quasi literal as the initial result. Quasi
             // literals are static (interned globals) so mark as not tmp.

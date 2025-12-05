@@ -2,11 +2,83 @@
 //!
 //! This module provides codegen for process-related expressions:
 //! spawn, send, receive, link, monitor, exit, self, whereis, register, unregister
+//!
+//! NOTE: Process expressions are custom Oats language features. These types are
+//! temporary stubs until proper AST support is added.
 
+use crate::codegen::helpers::extract_basic_value_from_valuekind;
 use crate::diagnostics::{Diagnostic, Severity};
 use crate::runtime_functions;
 use inkwell::values::{BasicValue, BasicValueEnum, FunctionValue, PointerValue};
 use std::collections::HashMap;
+use oxc_ast::ast::Expression;
+use oxc_span::Span;
+
+// Temporary type definitions for process expressions until proper AST support is added
+// These are custom Oats language features not present in standard JavaScript/TypeScript
+use oxc_allocator::Box;
+
+pub struct SpawnExpr<'a> {
+    pub span: Span,
+    pub name: Option<Box<'a, Expression<'a>>>,
+    pub priority: Option<Box<'a, Expression<'a>>>,
+}
+
+pub struct SendExpr<'a> {
+    pub span: Span,
+    pub to: Box<'a, Expression<'a>>,
+    pub message: Box<'a, Expression<'a>>,
+}
+
+pub struct ReceiveExpr<'a> {
+    pub span: Span,
+    pub type_id: Option<Box<'a, Expression<'a>>>,
+}
+
+pub struct ProcessSelfExpr {
+    pub span: Span,
+}
+
+pub struct ProcessExitExpr<'a> {
+    pub span: Span,
+    pub reason: Option<Box<'a, Expression<'a>>>,
+}
+
+pub struct ProcessLinkExpr<'a> {
+    pub span: Span,
+    pub pid: Box<'a, Expression<'a>>,
+}
+
+pub struct ProcessUnlinkExpr<'a> {
+    pub span: Span,
+    pub pid: Box<'a, Expression<'a>>,
+}
+
+pub struct ProcessMonitorExpr<'a> {
+    pub span: Span,
+    pub pid: Box<'a, Expression<'a>>,
+}
+
+pub struct ProcessDemonitorExpr<'a> {
+    pub span: Span,
+    pub monitor_ref: Box<'a, Expression<'a>>,
+}
+
+pub struct ProcessWhereisExpr<'a> {
+    pub span: Span,
+    pub name: Box<'a, Expression<'a>>,
+}
+
+pub struct ProcessRegisterExpr<'a> {
+    pub span: Span,
+    pub name: Box<'a, Expression<'a>>,
+    pub pid: Box<'a, Expression<'a>>,
+}
+
+pub struct ProcessUnregisterExpr<'a> {
+    pub span: Span,
+    pub name: Box<'a, Expression<'a>>,
+}
 
 type LocalEntry<'a> = (
     PointerValue<'a>,
@@ -23,7 +95,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
     /// Lower spawn expression: spawn() or spawn(name, priority)
     pub(super) fn lower_spawn_expr(
         &self,
-        spawn_expr: &oats_ast::SpawnExpr,
+        spawn_expr: &SpawnExpr,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals: &mut LocalsStackLocal<'a>,
@@ -43,18 +115,18 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             Diagnostic::simple_with_span_boxed(
                                 Severity::Error,
                                 "spawn priority must be a number",
-                                spawn_expr.span.start,
+                                spawn_expr.span.start as usize,
                             )
                         })?,
                         self.i32_t,
                         "priority_cast",
                     )
                     .map_err(|_| {
-                        Diagnostic::simple_with_span_boxed(
-                            Severity::Error,
-                            "failed to cast spawn priority",
-                            spawn_expr.span.start,
-                        )
+                    Diagnostic::simple_with_span_boxed(
+                        Severity::Error,
+                        "failed to cast spawn priority",
+                        spawn_expr.span.start as usize,
+                    )
                     })?
             }
         } else {
@@ -70,7 +142,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 return Err(Diagnostic::simple_with_span_boxed(
                     Severity::Error,
                     "spawn name must be a string",
-                    spawn_expr.span.start,
+                    spawn_expr.span.start as usize,
                 ));
             };
 
@@ -81,7 +153,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     Diagnostic::simple_with_span_boxed(
                         Severity::Error,
                         "process_spawn_named not found",
-                        spawn_expr.span.start,
+                        spawn_expr.span.start as usize,
                     )
                 })?;
             (fn_val, Some(name_ptr))
@@ -94,7 +166,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     Diagnostic::simple_with_span_boxed(
                         Severity::Error,
                         "process_spawn not found",
-                        spawn_expr.span.start,
+                        spawn_expr.span.start as usize,
                     )
                 })?;
             (fn_val, None)
@@ -111,7 +183,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     Diagnostic::simple_with_span_boxed(
                         Severity::Error,
                         "failed to call process_spawn_named",
-                        spawn_expr.span.start,
+                        spawn_expr.span.start as usize,
                     )
                 })?
         } else {
@@ -121,18 +193,18 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     Diagnostic::simple_with_span_boxed(
                         Severity::Error,
                         "failed to call process_spawn",
-                        spawn_expr.span.start,
+                        spawn_expr.span.start as usize,
                     )
                 })?
         };
 
         // Result is i8* (pointer to heap-allocated u64 containing ProcessId)
-        match result.try_as_basic_value() {
-            either::Either::Left(bv) => Ok(bv),
+        match extract_basic_value_from_valuekind(result.try_as_basic_value()) {
+            Some(bv) => Ok(bv),
             _ => Err(Diagnostic::simple_with_span_boxed(
                 Severity::Error,
                 "process_spawn did not return a value",
-                spawn_expr.span.start,
+                spawn_expr.span.start as usize,
             )),
         }
     }
@@ -140,7 +212,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
     /// Lower send expression: send(to, message)
     pub(super) fn lower_send_expr(
         &self,
-        send_expr: &oats_ast::SendExpr,
+        send_expr: &SendExpr,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals: &mut LocalsStackLocal<'a>,
@@ -158,26 +230,26 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 Diagnostic::simple_with_span_boxed(
                     Severity::Error,
                     "process_self not found",
-                    send_expr.span.start,
+                    send_expr.span.start as usize,
                 )
             })?;
-        let self_pid_ptr_call = self
-            .builder
-            .build_call(self_fn, &[], "self_pid")
-            .map_err(|_| {
-                Diagnostic::simple_with_span_boxed(
-                    Severity::Error,
-                    "failed to call process_self",
-                    send_expr.span.start,
-                )
-            })?;
-        let self_pid_ptr_val = match self_pid_ptr_call.try_as_basic_value() {
-            either::Either::Left(bv) => bv,
+        let self_pid_ptr_call =
+            self.builder
+                .build_call(self_fn, &[], "self_pid")
+                .map_err(|_| {
+                    Diagnostic::simple_with_span_boxed(
+                        Severity::Error,
+                        "failed to call process_self",
+                        send_expr.span.start as usize,
+                    )
+                })?;
+        let self_pid_ptr_val = match extract_basic_value_from_valuekind(self_pid_ptr_call.try_as_basic_value()) {
+            Some(bv) => bv,
             _ => {
                 return Err(Diagnostic::simple_with_span_boxed(
                     Severity::Error,
                     "process_self did not return a value",
-                    send_expr.span.start,
+                    send_expr.span.start as usize,
                 ));
             }
         };
@@ -188,7 +260,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             return Err(Diagnostic::simple_with_span_boxed(
                 Severity::Error,
                 "process_self returned invalid type",
-                send_expr.span.start,
+                send_expr.span.start as usize,
             ));
         };
 
@@ -200,7 +272,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             return Err(Diagnostic::simple_with_span_boxed(
                 Severity::Error,
                 "send target must be ProcessId or string",
-                send_expr.span.start,
+                send_expr.span.start as usize,
             ));
         };
 
@@ -210,7 +282,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             return Err(Diagnostic::simple_with_span_boxed(
                 Severity::Error,
                 "send message must be a pointer",
-                send_expr.span.start,
+                send_expr.span.start as usize,
             ));
         };
 
@@ -224,7 +296,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 Diagnostic::simple_with_span_boxed(
                     Severity::Error,
                     "process_send not found",
-                    send_expr.span.start,
+                    send_expr.span.start as usize,
                 )
             })?;
 
@@ -240,7 +312,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 Diagnostic::simple_with_span_boxed(
                     Severity::Error,
                     "failed to cast to_pid pointer",
-                    send_expr.span.start,
+                    send_expr.span.start as usize,
                 )
             })?;
         let self_pid_i64ptr: PointerValue<'a> = self
@@ -254,7 +326,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 Diagnostic::simple_with_span_boxed(
                     Severity::Error,
                     "failed to cast self_pid pointer",
-                    send_expr.span.start,
+                    send_expr.span.start as usize,
                 )
             })?;
 
@@ -274,17 +346,17 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 Diagnostic::simple_with_span_boxed(
                     Severity::Error,
                     "failed to call process_send",
-                    send_expr.span.start,
+                    send_expr.span.start as usize,
                 )
             })?;
 
         // Result is i32 (0 = success, non-zero = error)
-        match result.try_as_basic_value() {
-            either::Either::Left(bv) => Ok(bv),
+        match extract_basic_value_from_valuekind(result.try_as_basic_value()) {
+            Some(bv) => Ok(bv),
             _ => Err(Diagnostic::simple_with_span_boxed(
                 Severity::Error,
                 "process operation did not return a value",
-                send_expr.span.start,
+                send_expr.span.start as usize,
             )),
         }
     }
@@ -292,7 +364,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
     /// Lower receive expression: receive() or receive(type_id)
     pub(super) fn lower_receive_expr(
         &self,
-        receive_expr: &oats_ast::ReceiveExpr,
+        receive_expr: &ReceiveExpr,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals: &mut LocalsStackLocal<'a>,
@@ -307,7 +379,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 Diagnostic::simple_with_span_boxed(
                     Severity::Error,
                     "process_self not found",
-                    receive_expr.span.start,
+                    receive_expr.span.start as usize,
                 )
             })?;
         let self_pid_ptr_val = self
@@ -317,16 +389,16 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 Diagnostic::simple_with_span_boxed(
                     Severity::Error,
                     "failed to call process_self",
-                    receive_expr.span.start,
+                    receive_expr.span.start as usize,
                 )
             })?;
-        let self_pid_ptr_val = match self_pid_ptr_val.try_as_basic_value() {
-            either::Either::Left(bv) => bv,
+        let self_pid_ptr_val = match extract_basic_value_from_valuekind(self_pid_ptr_val.try_as_basic_value()) {
+            Some(bv) => bv,
             _ => {
                 return Err(Diagnostic::simple_with_span_boxed(
                     Severity::Error,
                     "process_self did not return a value",
-                    send_expr.span.start,
+                    receive_expr.span.start as usize,
                 ));
             }
         };
@@ -337,7 +409,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             return Err(Diagnostic::simple_with_span_boxed(
                 Severity::Error,
                 "process_self returned invalid type",
-                receive_expr.span.start,
+                receive_expr.span.start as usize,
             ));
         };
 
@@ -352,7 +424,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             Diagnostic::simple_with_span_boxed(
                                 Severity::Error,
                                 "receive type_id must be a number",
-                                receive_expr.span.start,
+                                receive_expr.span.start as usize,
                             )
                         })?,
                         self.i64_t,
@@ -362,7 +434,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         Diagnostic::simple_with_span_boxed(
                             Severity::Error,
                             "failed to cast receive type_id",
-                            receive_expr.span.start,
+                            receive_expr.span.start as usize,
                         )
                     })?
             }
@@ -377,7 +449,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 Diagnostic::simple_with_span_boxed(
                     Severity::Error,
                     "process_receive not found",
-                    receive_expr.span.start,
+                    receive_expr.span.start as usize,
                 )
             })?;
 
@@ -392,7 +464,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 Diagnostic::simple_with_span_boxed(
                     Severity::Error,
                     "failed to cast self_pid pointer",
-                    receive_expr.span.start,
+                    receive_expr.span.start as usize,
                 )
             })?;
 
@@ -407,17 +479,17 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 Diagnostic::simple_with_span_boxed(
                     Severity::Error,
                     "failed to call process_receive",
-                    receive_expr.span.start,
+                    receive_expr.span.start as usize,
                 )
             })?;
 
         // Result is i8* (message payload or null)
-        match result.try_as_basic_value() {
-            either::Either::Left(bv) => Ok(bv),
+        match extract_basic_value_from_valuekind(result.try_as_basic_value()) {
+            Some(bv) => Ok(bv),
             _ => Err(Diagnostic::simple_with_span_boxed(
                 Severity::Error,
                 "process_receive did not return a value",
-                receive_expr.span.start,
+                receive_expr.span.start as usize,
             )),
         }
     }
@@ -425,7 +497,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
     /// Lower process self expression: self()
     pub(super) fn lower_process_self_expr(
         &self,
-        _self_expr: &oats_ast::ProcessSelfExpr,
+        _self_expr: &ProcessSelfExpr,
     ) -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
         self.declare_libc();
 
@@ -442,12 +514,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
             })?;
 
         // Result is i8* (pointer to heap-allocated u64 containing ProcessId)
-        match result.try_as_basic_value() {
-            either::Either::Left(bv) => Ok(bv),
+        match extract_basic_value_from_valuekind(result.try_as_basic_value()) {
+            Some(bv) => Ok(bv),
             _ => Err(Diagnostic::simple_with_span_boxed(
                 Severity::Error,
-                "process_spawn did not return a value",
-                spawn_expr.span.start,
+                "process_self did not return a value",
+                _self_expr.span.start as usize,
             )),
         }
     }
@@ -458,7 +530,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
     pub(super) fn lower_process_exit_expr(
         &self,
-        exit_expr: &oats_ast::ProcessExitExpr,
+        exit_expr: &ProcessExitExpr,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals: &mut LocalsStackLocal<'a>,
@@ -466,7 +538,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         self.declare_libc();
 
         // Get process ID (default to self if not provided)
-        let pid_ptr = if let Some(pid_expr) = &exit_expr.pid {
+        let pid_ptr = if let Some(pid_expr) = &exit_expr.reason {
             let pid_val = self.lower_expr(pid_expr, function, param_map, locals)?;
             if let BasicValueEnum::PointerValue(pv) = pid_val {
                 pv
@@ -474,7 +546,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 return Err(Diagnostic::simple_with_span_boxed(
                     Severity::Error,
                     "exit pid must be a ProcessId",
-                    exit_expr.span.start,
+                    exit_expr.span.start as usize,
                 ));
             }
         } else {
@@ -486,7 +558,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     Diagnostic::simple_with_span_boxed(
                         Severity::Error,
                         "process_self not found",
-                        exit_expr.span.start,
+                        exit_expr.span.start as usize,
                     )
                 })?;
             let self_val = self
@@ -496,16 +568,16 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     Diagnostic::simple_with_span_boxed(
                         Severity::Error,
                         "failed to call process_self",
-                        exit_expr.span.start,
+                        exit_expr.span.start as usize,
                     )
                 })?;
-            let self_val_bv = match self_val.try_as_basic_value() {
-                either::Either::Left(bv) => bv,
+            let self_val_bv = match extract_basic_value_from_valuekind(self_val.try_as_basic_value()) {
+                Some(bv) => bv,
                 _ => {
                     return Err(Diagnostic::simple_with_span_boxed(
                         Severity::Error,
                         "process_self did not return a value",
-                        link_expr.span.start,
+                        exit_expr.span.start as usize,
                     ));
                 }
             };
@@ -515,7 +587,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 return Err(Diagnostic::simple_with_span_boxed(
                     Severity::Error,
                     "process_self returned invalid type",
-                    exit_expr.span.start,
+                    exit_expr.span.start as usize,
                 ));
             }
         };
@@ -548,7 +620,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 Diagnostic::simple_with_span_boxed(
                     Severity::Error,
                     "failed to cast pid pointer",
-                    exit_expr.span.start,
+                    exit_expr.span.start as usize,
                 )
             })?;
 
@@ -559,7 +631,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 Diagnostic::simple_with_span_boxed(
                     Severity::Error,
                     "process_exit not found",
-                    exit_expr.span.start,
+                    exit_expr.span.start as usize,
                 )
             })?;
 
@@ -573,7 +645,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 Diagnostic::simple_with_span_boxed(
                     Severity::Error,
                     "failed to call process_exit",
-                    exit_expr.span.start,
+                    exit_expr.span.start as usize,
                 )
             })?;
 
@@ -583,15 +655,17 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
     pub(super) fn lower_process_link_expr(
         &self,
-        link_expr: &oats_ast::ProcessLinkExpr,
+        link_expr: &ProcessLinkExpr,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals: &mut LocalsStackLocal<'a>,
     ) -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
         self.declare_libc();
 
-        let pid1_val = self.lower_expr(&link_expr.pid1, function, param_map, locals)?;
-        let pid2_val = self.lower_expr(&link_expr.pid2, function, param_map, locals)?;
+        let pid_val = self.lower_expr(&link_expr.pid, function, param_map, locals)?;
+        // ProcessLinkExpr only has one pid field, use it for both
+        let pid1_val = pid_val;
+        let pid2_val = pid_val;
 
         let pid1_ptr = if let BasicValueEnum::PointerValue(pv) = pid1_val {
             pv
@@ -599,7 +673,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             return Err(Diagnostic::simple_with_span_boxed(
                 Severity::Error,
                 "link pid1 must be a ProcessId",
-                link_expr.span.start,
+                link_expr.span.start as usize,
             ));
         };
 
@@ -609,7 +683,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             return Err(Diagnostic::simple_with_span_boxed(
                 Severity::Error,
                 "link pid2 must be a ProcessId",
-                link_expr.span.start,
+                link_expr.span.start as usize,
             ));
         };
 
@@ -625,7 +699,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 Diagnostic::simple_with_span_boxed(
                     Severity::Error,
                     "failed to cast pid1 pointer",
-                    link_expr.span.start,
+                    link_expr.span.start as usize,
                 )
             })?;
 
@@ -640,7 +714,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 Diagnostic::simple_with_span_boxed(
                     Severity::Error,
                     "failed to cast pid2 pointer",
-                    link_expr.span.start,
+                    link_expr.span.start as usize,
                 )
             })?;
 
@@ -651,7 +725,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 Diagnostic::simple_with_span_boxed(
                     Severity::Error,
                     "process_link not found",
-                    link_expr.span.start,
+                    link_expr.span.start as usize,
                 )
             })?;
 
@@ -666,32 +740,34 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 Diagnostic::simple_with_span_boxed(
                     Severity::Error,
                     "failed to call process_link",
-                    link_expr.span.start,
+                    link_expr.span.start as usize,
                 )
             })?;
 
         // Result is i32 (0 = success, non-zero = error)
-        match result.try_as_basic_value() {
-            either::Either::Left(bv) => Ok(bv),
+        match extract_basic_value_from_valuekind(result.try_as_basic_value()) {
+            Some(bv) => Ok(bv),
             _ => Err(Diagnostic::simple_with_span_boxed(
                 Severity::Error,
                 "process operation did not return a value",
-                send_expr.span.start,
+                link_expr.span.start as usize,
             )),
         }
     }
 
     pub(super) fn lower_process_unlink_expr(
         &self,
-        unlink_expr: &oats_ast::ProcessUnlinkExpr,
+        unlink_expr: &ProcessUnlinkExpr,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals: &mut LocalsStackLocal<'a>,
     ) -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
         self.declare_libc();
 
-        let pid1_val = self.lower_expr(&unlink_expr.pid1, function, param_map, locals)?;
-        let pid2_val = self.lower_expr(&unlink_expr.pid2, function, param_map, locals)?;
+        let pid_val = self.lower_expr(&unlink_expr.pid, function, param_map, locals)?;
+        // ProcessUnlinkExpr only has one pid field, use it for both
+        let pid1_val = pid_val;
+        let pid2_val = pid_val;
 
         let pid1_ptr = if let BasicValueEnum::PointerValue(pv) = pid1_val {
             pv
@@ -699,7 +775,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             return Err(Diagnostic::simple_with_span_boxed(
                 Severity::Error,
                 "unlink pid1 must be a ProcessId",
-                unlink_expr.span.start,
+                unlink_expr.span.start as usize,
             ));
         };
 
@@ -709,7 +785,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             return Err(Diagnostic::simple_with_span_boxed(
                 Severity::Error,
                 "unlink pid2 must be a ProcessId",
-                unlink_expr.span.start,
+                unlink_expr.span.start as usize,
             ));
         };
 
@@ -725,7 +801,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 Diagnostic::simple_with_span_boxed(
                     Severity::Error,
                     "failed to cast pid1 pointer",
-                    unlink_expr.span.start,
+                    unlink_expr.span.start as usize,
                 )
             })?;
 
@@ -740,7 +816,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 Diagnostic::simple_with_span_boxed(
                     Severity::Error,
                     "failed to cast pid2 pointer",
-                    unlink_expr.span.start,
+                    unlink_expr.span.start as usize,
                 )
             })?;
 
@@ -751,7 +827,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 Diagnostic::simple_with_span_boxed(
                     Severity::Error,
                     "process_unlink not found",
-                    unlink_expr.span.start,
+                    unlink_expr.span.start as usize,
                 )
             })?;
 
@@ -765,7 +841,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 Diagnostic::simple_with_span_boxed(
                     Severity::Error,
                     "failed to call process_unlink",
-                    unlink_expr.span.start,
+                    unlink_expr.span.start as usize,
                 )
             })?;
 
@@ -775,21 +851,21 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
     pub(super) fn lower_process_monitor_expr(
         &self,
-        monitor_expr: &oats_ast::ProcessMonitorExpr,
+        monitor_expr: &ProcessMonitorExpr,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals: &mut LocalsStackLocal<'a>,
     ) -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
         self.declare_libc();
 
-        let target_val = self.lower_expr(&monitor_expr.target, function, param_map, locals)?;
+        let target_val = self.lower_expr(&monitor_expr.pid, function, param_map, locals)?;
         let target_ptr = if let BasicValueEnum::PointerValue(pv) = target_val {
             pv
         } else {
             return Err(Diagnostic::simple_with_span_boxed(
                 Severity::Error,
                 "monitor target must be a ProcessId",
-                monitor_expr.span.start,
+                monitor_expr.span.start as usize,
             ));
         };
 
@@ -801,7 +877,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 Diagnostic::simple_with_span_boxed(
                     Severity::Error,
                     "process_self not found",
-                    monitor_expr.span.start,
+                    monitor_expr.span.start as usize,
                 )
             })?;
         let self_pid_ptr_val = self
@@ -811,16 +887,16 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 Diagnostic::simple_with_span_boxed(
                     Severity::Error,
                     "failed to call process_self",
-                    monitor_expr.span.start,
+                    monitor_expr.span.start as usize,
                 )
             })?;
-        let self_pid_ptr_val_bv = match self_pid_ptr_val.try_as_basic_value() {
-            either::Either::Left(bv) => bv,
+        let self_pid_ptr_val_bv = match extract_basic_value_from_valuekind(self_pid_ptr_val.try_as_basic_value()) {
+            Some(bv) => bv,
             _ => {
                 return Err(Diagnostic::simple_with_span_boxed(
                     Severity::Error,
                     "process_self did not return a value",
-                    monitor_expr.span.start,
+                    monitor_expr.span.start as usize,
                 ));
             }
         };
@@ -830,7 +906,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             return Err(Diagnostic::simple_with_span_boxed(
                 Severity::Error,
                 "process_self returned invalid type",
-                monitor_expr.span.start,
+                monitor_expr.span.start as usize,
             ));
         };
 
@@ -846,7 +922,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 Diagnostic::simple_with_span_boxed(
                     Severity::Error,
                     "failed to cast monitor_pid pointer",
-                    monitor_expr.span.start,
+                    monitor_expr.span.start as usize,
                 )
             })?;
 
@@ -861,7 +937,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 Diagnostic::simple_with_span_boxed(
                     Severity::Error,
                     "failed to cast target_pid pointer",
-                    monitor_expr.span.start,
+                    monitor_expr.span.start as usize,
                 )
             })?;
 
@@ -872,7 +948,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 Diagnostic::simple_with_span_boxed(
                     Severity::Error,
                     "process_monitor not found",
-                    monitor_expr.span.start,
+                    monitor_expr.span.start as usize,
                 )
             })?;
 
@@ -887,24 +963,24 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 Diagnostic::simple_with_span_boxed(
                     Severity::Error,
                     "failed to call process_monitor",
-                    monitor_expr.span.start,
+                    monitor_expr.span.start as usize,
                 )
             })?;
 
         // Result is i8* (pointer to heap-allocated u64 containing MonitorRef)
-        match result.try_as_basic_value() {
-            either::Either::Left(bv) => Ok(bv),
+        match extract_basic_value_from_valuekind(result.try_as_basic_value()) {
+            Some(bv) => Ok(bv),
             _ => Err(Diagnostic::simple_with_span_boxed(
                 Severity::Error,
                 "process_monitor did not return a value",
-                monitor_expr.span.start,
+                monitor_expr.span.start as usize,
             )),
         }
     }
 
     pub(super) fn lower_process_demonitor_expr(
         &self,
-        demonitor_expr: &oats_ast::ProcessDemonitorExpr,
+        demonitor_expr: &ProcessDemonitorExpr,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals: &mut LocalsStackLocal<'a>,
@@ -919,7 +995,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             return Err(Diagnostic::simple_with_span_boxed(
                 Severity::Error,
                 "demonitor monitor_ref must be a MonitorRef",
-                demonitor_expr.span.start,
+                demonitor_expr.span.start as usize,
             ));
         };
 
@@ -931,7 +1007,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 Diagnostic::simple_with_span_boxed(
                     Severity::Error,
                     "process_self not found",
-                    demonitor_expr.span.start,
+                    demonitor_expr.span.start as usize,
                 )
             })?;
         let self_pid_ptr_val = self
@@ -941,16 +1017,16 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 Diagnostic::simple_with_span_boxed(
                     Severity::Error,
                     "failed to call process_self",
-                    demonitor_expr.span.start,
+                    demonitor_expr.span.start as usize,
                 )
             })?;
-        let self_pid_ptr_val_bv = match self_pid_ptr_val.try_as_basic_value() {
-            either::Either::Left(bv) => bv,
+        let self_pid_ptr_val_bv = match extract_basic_value_from_valuekind(self_pid_ptr_val.try_as_basic_value()) {
+            Some(bv) => bv,
             _ => {
                 return Err(Diagnostic::simple_with_span_boxed(
                     Severity::Error,
                     "process_self did not return a value",
-                    monitor_expr.span.start,
+                    demonitor_expr.span.start as usize,
                 ));
             }
         };
@@ -960,7 +1036,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             return Err(Diagnostic::simple_with_span_boxed(
                 Severity::Error,
                 "process_self returned invalid type",
-                demonitor_expr.span.start,
+                demonitor_expr.span.start as usize,
             ));
         };
 
@@ -976,7 +1052,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 Diagnostic::simple_with_span_boxed(
                     Severity::Error,
                     "failed to cast monitor_pid pointer",
-                    demonitor_expr.span.start,
+                    demonitor_expr.span.start as usize,
                 )
             })?;
 
@@ -991,7 +1067,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 Diagnostic::simple_with_span_boxed(
                     Severity::Error,
                     "failed to cast monitor_ref pointer",
-                    demonitor_expr.span.start,
+                    demonitor_expr.span.start as usize,
                 )
             })?;
 
@@ -1002,7 +1078,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 Diagnostic::simple_with_span_boxed(
                     Severity::Error,
                     "process_demonitor not found",
-                    demonitor_expr.span.start,
+                    demonitor_expr.span.start as usize,
                 )
             })?;
 
@@ -1017,24 +1093,24 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 Diagnostic::simple_with_span_boxed(
                     Severity::Error,
                     "failed to call process_demonitor",
-                    demonitor_expr.span.start,
+                    demonitor_expr.span.start as usize,
                 )
             })?;
 
         // Result is i32 (0 = success, non-zero = error)
-        match result.try_as_basic_value() {
-            either::Either::Left(bv) => Ok(bv),
+        match extract_basic_value_from_valuekind(result.try_as_basic_value()) {
+            Some(bv) => Ok(bv),
             _ => Err(Diagnostic::simple_with_span_boxed(
                 Severity::Error,
                 "process operation did not return a value",
-                send_expr.span.start,
+                demonitor_expr.span.start as usize,
             )),
         }
     }
 
     pub(super) fn lower_process_whereis_expr(
         &self,
-        whereis_expr: &oats_ast::ProcessWhereisExpr,
+        whereis_expr: &ProcessWhereisExpr,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals: &mut LocalsStackLocal<'a>,
@@ -1048,7 +1124,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             return Err(Diagnostic::simple_with_span_boxed(
                 Severity::Error,
                 "whereis name must be a string",
-                whereis_expr.span.start,
+                whereis_expr.span.start as usize,
             ));
         };
 
@@ -1059,7 +1135,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 Diagnostic::simple_with_span_boxed(
                     Severity::Error,
                     "process_whereis not found",
-                    whereis_expr.span.start,
+                    whereis_expr.span.start as usize,
                 )
             })?;
 
@@ -1070,24 +1146,24 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 Diagnostic::simple_with_span_boxed(
                     Severity::Error,
                     "failed to call process_whereis",
-                    whereis_expr.span.start,
+                    whereis_expr.span.start as usize,
                 )
             })?;
 
         // Result is i8* (pointer to heap-allocated u64 containing ProcessId, or null)
-        match result.try_as_basic_value() {
-            either::Either::Left(bv) => Ok(bv),
+        match extract_basic_value_from_valuekind(result.try_as_basic_value()) {
+            Some(bv) => Ok(bv),
             _ => Err(Diagnostic::simple_with_span_boxed(
                 Severity::Error,
                 "process_whereis did not return a value",
-                whereis_expr.span.start,
+                whereis_expr.span.start as usize,
             )),
         }
     }
 
     pub(super) fn lower_process_register_expr(
         &self,
-        register_expr: &oats_ast::ProcessRegisterExpr,
+        register_expr: &ProcessRegisterExpr,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals: &mut LocalsStackLocal<'a>,
@@ -1103,7 +1179,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             return Err(Diagnostic::simple_with_span_boxed(
                 Severity::Error,
                 "register pid must be a ProcessId",
-                register_expr.span.start,
+                register_expr.span.start as usize,
             ));
         };
 
@@ -1113,7 +1189,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             return Err(Diagnostic::simple_with_span_boxed(
                 Severity::Error,
                 "register name must be a string",
-                register_expr.span.start,
+                register_expr.span.start as usize,
             ));
         };
 
@@ -1129,7 +1205,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 Diagnostic::simple_with_span_boxed(
                     Severity::Error,
                     "failed to cast pid pointer",
-                    register_expr.span.start,
+                    register_expr.span.start as usize,
                 )
             })?;
 
@@ -1140,7 +1216,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 Diagnostic::simple_with_span_boxed(
                     Severity::Error,
                     "process_register not found",
-                    register_expr.span.start,
+                    register_expr.span.start as usize,
                 )
             })?;
 
@@ -1155,24 +1231,24 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 Diagnostic::simple_with_span_boxed(
                     Severity::Error,
                     "failed to call process_register",
-                    register_expr.span.start,
+                    register_expr.span.start as usize,
                 )
             })?;
 
         // Result is i32 (0 = success, non-zero = error)
-        match result.try_as_basic_value() {
-            either::Either::Left(bv) => Ok(bv),
+        match extract_basic_value_from_valuekind(result.try_as_basic_value()) {
+            Some(bv) => Ok(bv),
             _ => Err(Diagnostic::simple_with_span_boxed(
                 Severity::Error,
                 "process operation did not return a value",
-                send_expr.span.start,
+                register_expr.span.start as usize,
             )),
         }
     }
 
     pub(super) fn lower_process_unregister_expr(
         &self,
-        unregister_expr: &oats_ast::ProcessUnregisterExpr,
+        unregister_expr: &ProcessUnregisterExpr,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals: &mut LocalsStackLocal<'a>,
@@ -1186,7 +1262,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             return Err(Diagnostic::simple_with_span_boxed(
                 Severity::Error,
                 "unregister name must be a string",
-                unregister_expr.span.start,
+                unregister_expr.span.start as usize,
             ));
         };
 
@@ -1197,7 +1273,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 Diagnostic::simple_with_span_boxed(
                     Severity::Error,
                     "process_unregister not found",
-                    unregister_expr.span.start,
+                    unregister_expr.span.start as usize,
                 )
             })?;
 
@@ -1207,7 +1283,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 Diagnostic::simple_with_span_boxed(
                     Severity::Error,
                     "failed to call process_unregister",
-                    unregister_expr.span.start,
+                    unregister_expr.span.start as usize,
                 )
             })?;
 

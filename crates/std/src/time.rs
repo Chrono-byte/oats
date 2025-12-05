@@ -6,10 +6,10 @@ use libc::c_longlong;
 /// #[oats_export]
 #[no_mangle]
 pub extern "C" fn oats_std_time_now() -> c_longlong {
-    std::time::SystemTime::now()
-        .duration_since(std::time::SystemTime::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs() as c_longlong
+    match std::time::SystemTime::now().duration_since(std::time::SystemTime::UNIX_EPOCH) {
+        Ok(duration) => duration.as_secs() as c_longlong,
+        Err(_) => 0,
+    }
 }
 
 /// Sleep for specified milliseconds
@@ -25,20 +25,20 @@ pub extern "C" fn oats_std_time_sleep_ms(ms: c_longlong) {
 /// #[oats_export]
 #[no_mangle]
 pub extern "C" fn oats_std_time_now_nanos() -> c_longlong {
-    std::time::SystemTime::now()
-        .duration_since(std::time::SystemTime::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos() as c_longlong
+    match std::time::SystemTime::now().duration_since(std::time::SystemTime::UNIX_EPOCH) {
+        Ok(duration) => duration.as_nanos() as c_longlong,
+        Err(_) => 0,
+    }
 }
 
 /// Get current Unix timestamp in milliseconds
 /// #[oats_export]
 #[no_mangle]
 pub extern "C" fn oats_std_time_now_millis() -> c_longlong {
-    std::time::SystemTime::now()
-        .duration_since(std::time::SystemTime::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as c_longlong
+    match std::time::SystemTime::now().duration_since(std::time::SystemTime::UNIX_EPOCH) {
+        Ok(duration) => duration.as_millis() as c_longlong,
+        Err(_) => 0,
+    }
 }
 
 /// Sleep for specified seconds

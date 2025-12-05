@@ -2,7 +2,9 @@
 //!
 //! This module contains code generation logic for Rust-like enums.
 
+use crate::codegen::helpers::extract_basic_value_from_valuekind;
 use crate::diagnostics::Severity;
+use oxc_ast::ast::TSEnumDeclaration;
 
 impl<'a> crate::codegen::CodeGen<'a> {
     /// Generate IR for a Rust-like enum declaration.
@@ -21,27 +23,35 @@ impl<'a> crate::codegen::CodeGen<'a> {
     pub fn gen_enum_ir(
         &self,
         enum_name: &str,
-        enum_decl: &EnumDecl,
+        enum_decl: &TSEnumDeclaration<'_>,
     ) -> crate::diagnostics::DiagnosticResult<()> {
         use crate::types::OatsType;
 
         // Map variant field types to OatsType
         let mut variant_types: Vec<(String, Vec<OatsType>)> = Vec::new();
-        for member in &enum_decl.members {
-            let variant_name = member.ident.sym.clone();
-            let field_types: Vec<OatsType> = if let Some(fields) = &member.fields {
-                fields
-                    .iter()
-                    .filter_map(|ts_type| {
-                        crate::types::map_ts_type_with_aliases(
-                            ts_type,
-                            Some(&*self.type_aliases.borrow()),
+        for member in &enum_decl.body.members {
+            let variant_name = match &member.id {
+                oxc_ast::ast::TSEnumMemberName::Identifier(id) => id.name.to_string(),
+                oxc_ast::ast::TSEnumMemberName::ComputedString(s) => s.value.to_string(),
+                oxc_ast::ast::TSEnumMemberName::ComputedTemplateString(tpl) => {
+                    // Use the first quasi of the template literal as the string value, as a fallback
+                    if let Some(first_quasi) = tpl.quasis.first() {
+                        first_quasi.value.cooked.as_ref().map_or_else(
+                            || "<invalid template>".to_string(),
+                            |v| v.to_string(),
                         )
-                    })
-                    .collect()
-            } else {
-                Vec::new() // Unit variant, no fields
+                    } else {
+                        return Err(crate::diagnostics::Diagnostic::simple_boxed(
+                            Severity::Error,
+                            "invalid computed template string for enum member",
+                        ));
+                    }
+                },
+                oxc_ast::ast::TSEnumMemberName::String(s) => s.value.to_string(),
             };
+            // TSEnumMember doesn't have fields - enums in TypeScript don't have variant data
+            // For now, treat all enum members as unit variants
+            let field_types: Vec<OatsType> = Vec::new();
             variant_types.push((variant_name, field_types));
         }
 
@@ -163,13 +173,14 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     )
                 })?;
 
-            let enum_ptr = if let either::Either::Left(bv) = malloc_call.try_as_basic_value() {
-                bv.into_pointer_value()
-            } else {
-                return Err(crate::diagnostics::Diagnostic::simple_boxed(
-                    Severity::Error,
-                    "malloc returned unexpected type",
-                ));
+            let enum_ptr = match extract_basic_value_from_valuekind(malloc_call.try_as_basic_value()) {
+                Some(bv) => bv.into_pointer_value(),
+                None => {
+                    return Err(crate::diagnostics::Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "malloc returned unexpected type",
+                    ));
+                }
             };
 
             // Cast enum pointer to i8* for byte-level access

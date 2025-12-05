@@ -8,13 +8,19 @@ use std::path::Path;
 
 fn main() {
     // Create dist directory
-    fs::create_dir_all("dist").expect("Failed to create dist directory");
+    if let Err(e) = fs::create_dir_all("dist") {
+        eprintln!("Failed to create dist directory: {}", e);
+        std::process::exit(1);
+    }
 
     // Parse the source files and generate type definitions
     let type_defs = generate_type_definitions();
 
     // Write the type definitions to dist/lib.d.oats
-    fs::write("dist/lib.d.oats", type_defs).expect("Failed to write type definitions");
+    if let Err(e) = fs::write("dist/lib.d.oats", type_defs) {
+        eprintln!("Failed to write type definitions: {}", e);
+        std::process::exit(1);
+    }
 
     // Tell cargo to rerun this script if any source files change
     println!("cargo:rerun-if-changed=src/");

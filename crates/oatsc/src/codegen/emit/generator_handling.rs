@@ -3,8 +3,10 @@
 //! This module contains code generation logic for generator functions, including
 //! live-set computation for yield points and generator function lowering.
 
+use crate::codegen::helpers::extract_basic_value_from_valuekind;
 use crate::diagnostics::Severity;
 use inkwell::values::{BasicValue, FunctionValue};
+use oxc_ast::ast::*;
 use std::collections::{HashMap, HashSet};
 
 impl<'a> crate::codegen::CodeGen<'a> {
@@ -12,67 +14,85 @@ impl<'a> crate::codegen::CodeGen<'a> {
     ///
     /// This walks through statements and identifies which statements contain yield expressions.
     /// Returns a vector of statement indices where yields occur.
-    fn find_yield_positions_in_stmts(&self, stmts: &[Stmt]) -> Vec<usize> {
-
-        fn contains_yield_expr(expr: &Expr) -> bool {
+    fn find_yield_positions_in_stmts(&self, stmts: &[oxc_ast::ast::Statement]) -> Vec<usize> {
+        fn contains_yield_expr(expr: &oxc_ast::ast::Expression) -> bool {
             match expr {
-                Expr::Yield(_) => true,
-                Expr::Bin(b) => contains_yield_expr(&b.left) || contains_yield_expr(&b.right),
-                Expr::Unary(u) => contains_yield_expr(&u.arg),
-                Expr::Call(c) => {
-                    if let Callee::Expr(e) = &c.callee
-                        && contains_yield_expr(e)
-                    {
+                oxc_ast::ast::Expression::YieldExpression(_) => true,
+                oxc_ast::ast::Expression::BinaryExpression(b) => contains_yield_expr(&b.left) || contains_yield_expr(&b.right),
+                oxc_ast::ast::Expression::UnaryExpression(u) => contains_yield_expr(&u.argument),
+                oxc_ast::ast::Expression::CallExpression(c) => {
+                    // Handle callee - it's an Expression, so recurse
+                    if contains_yield_expr(&c.callee) {
                         return true;
                     }
-                    c.args.iter().any(contains_yield_expr)
+                    c.arguments.iter().any(|arg| {
+                        if let Some(expr) = arg.as_expression() {
+                            contains_yield_expr(expr)
+                        } else {
+                            false
+                        }
+                    })
                 }
-                Expr::Member(m) => {
-                    contains_yield_expr(&m.obj)
-                        || matches!(&m.prop, MemberProp::Computed(c) if contains_yield_expr(c))
+                oxc_ast::ast::Expression::StaticMemberExpression(m) => {
+                    contains_yield_expr(&m.object)
                 }
-                Expr::Cond(c) => {
+                oxc_ast::ast::Expression::ComputedMemberExpression(m) => {
+                    contains_yield_expr(&m.object) || contains_yield_expr(&m.expression)
+                }
+                oxc_ast::ast::Expression::ConditionalExpression(c) => {
                     contains_yield_expr(&c.test)
-                        || contains_yield_expr(&c.cons)
-                        || contains_yield_expr(&c.alt)
+                        || contains_yield_expr(&c.consequent)
+                        || contains_yield_expr(&c.alternate)
                 }
-                Expr::Assign(a) => contains_yield_expr(&a.right),
-                Expr::Paren(p) => contains_yield_expr(&p.expr),
-                Expr::Array(arr) => arr.elems.iter().flatten().any(contains_yield_expr),
-                Expr::New(n) => {
-                    contains_yield_expr(&n.callee) || n.args.iter().any(contains_yield_expr)
+                oxc_ast::ast::Expression::AssignmentExpression(a) => contains_yield_expr(&a.right),
+                oxc_ast::ast::Expression::ParenthesizedExpression(p) => contains_yield_expr(&p.expression),
+                oxc_ast::ast::Expression::ArrayExpression(arr) => arr.elements.iter().any(|el| {
+                    if let Some(expr) = el.as_expression() {
+                        contains_yield_expr(expr)
+                    } else {
+                        false
+                    }
+                }),
+                oxc_ast::ast::Expression::NewExpression(n) => {
+                    contains_yield_expr(&n.callee) || n.arguments.iter().any(|arg| {
+                        if let Some(expr) = arg.as_expression() {
+                            contains_yield_expr(expr)
+                        } else {
+                            false
+                        }
+                    })
                 }
-                Expr::Seq(s) => s.exprs.iter().any(contains_yield_expr),
+                oxc_ast::ast::Expression::SequenceExpression(s) => s.expressions.iter().any(contains_yield_expr),
                 _ => false,
             }
         }
 
-        fn contains_yield_stmt(stmt: &Stmt) -> bool {
+        fn contains_yield_stmt(stmt: &oxc_ast::ast::Statement) -> bool {
             match stmt {
-                Stmt::ExprStmt(es) => contains_yield_expr(&es.expr),
-                Stmt::Return(r) => r.arg.as_ref().is_some_and(contains_yield_expr),
-                Stmt::VarDecl(vd) => vd
-                    .decls
+                oxc_ast::ast::Statement::ExpressionStatement(es) => contains_yield_expr(&es.expression),
+                oxc_ast::ast::Statement::ReturnStatement(r) => r.argument.as_ref().is_some_and(|arg| contains_yield_expr(arg)),
+                oxc_ast::ast::Statement::VariableDeclaration(vd) => vd
+                    .declarations
                     .iter()
-                    .any(|d| d.init.as_ref().is_some_and(contains_yield_expr)),
-                Stmt::If(if_stmt) => {
+                    .any(|d| d.init.as_ref().is_some_and(|init| contains_yield_expr(init))),
+                oxc_ast::ast::Statement::IfStatement(if_stmt) => {
                     contains_yield_expr(&if_stmt.test)
-                        || contains_yield_stmt(&if_stmt.cons)
-                        || if_stmt.alt.as_ref().is_some_and(|a| contains_yield_stmt(a))
+                        || contains_yield_stmt(&if_stmt.consequent)
+                        || if_stmt.alternate.as_ref().is_some_and(|a| contains_yield_stmt(a))
                 }
-                Stmt::While(w) => contains_yield_expr(&w.test) || contains_yield_stmt(&w.body),
-                Stmt::For(f) => {
+                oxc_ast::ast::Statement::WhileStatement(w) => contains_yield_expr(&w.test) || contains_yield_stmt(&w.body),
+                oxc_ast::ast::Statement::ForStatement(f) => {
                     (f.init.as_ref().is_some_and(|i| match i {
-                        ForInit::Expr(e) => contains_yield_expr(e),
-                        ForInit::VarDecl(vd) => vd
-                            .decls
+                        oxc_ast::ast::ForStatementInit::VariableDeclaration(vd) => vd
+                            .declarations
                             .iter()
-                            .any(|d| d.init.as_ref().is_some_and(contains_yield_expr)),
-                    })) || f.test.as_ref().is_some_and(contains_yield_expr)
-                        || f.update.as_ref().is_some_and(contains_yield_expr)
+                            .any(|d| d.init.as_ref().is_some_and(|init| contains_yield_expr(init))),
+                        _ => false,
+                    })) || f.test.as_ref().is_some_and(|test| contains_yield_expr(test))
+                        || f.update.as_ref().is_some_and(|update| contains_yield_expr(update))
                         || contains_yield_stmt(&f.body)
                 }
-                Stmt::Block(b) => b.stmts.iter().any(contains_yield_stmt),
+                oxc_ast::ast::Statement::BlockStatement(b) => b.body.iter().any(contains_yield_stmt),
                 _ => false,
             }
         }
@@ -101,63 +121,76 @@ impl<'a> crate::codegen::CodeGen<'a> {
             YieldMarker,
         }
 
-        fn flatten_expr(e: &Expr, out: &mut Vec<Node>) {
+        fn flatten_expr(e: &oxc_ast::ast::Expression, out: &mut Vec<Node>) {
             match e {
-                Expr::Ident(id) => out.push(Node::Ident(id.sym.clone())),
-                Expr::Call(c) => {
-                    if let Callee::Expr(ec) = &c.callee {
-                        flatten_expr(ec, out);
-                    }
-                    for a in &c.args {
-                        flatten_expr(a, out);
-                    }
-                }
-                Expr::Member(m) => {
-                    flatten_expr(&m.obj, out);
-                    if let MemberProp::Computed(cmp) = &m.prop {
-                        flatten_expr(cmp, out);
+                oxc_ast::ast::Expression::Identifier(id) => out.push(Node::Ident(id.name.to_string())),
+                oxc_ast::ast::Expression::CallExpression(c) => {
+                    // Handle callee - it's an Expression, so recurse
+                    flatten_expr(&c.callee, out);
+                    for a in &c.arguments {
+                        if let Some(expr) = a.as_expression() {
+                            flatten_expr(expr, out);
+                        } else if let oxc_ast::ast::Argument::SpreadElement(spread) = a {
+                            flatten_expr(&spread.argument, out);
                     }
                 }
-                Expr::Bin(b) => {
+                }
+                oxc_ast::ast::Expression::StaticMemberExpression(m) => {
+                    flatten_expr(&m.object, out);
+                }
+                oxc_ast::ast::Expression::ComputedMemberExpression(m) => {
+                    flatten_expr(&m.object, out);
+                    flatten_expr(&m.expression, out);
+                    }
+                oxc_ast::ast::Expression::BinaryExpression(b) => {
                     flatten_expr(&b.left, out);
                     flatten_expr(&b.right, out);
                 }
-                Expr::Unary(u) => flatten_expr(&u.arg, out),
-                Expr::Yield(y) => {
+                oxc_ast::ast::Expression::UnaryExpression(u) => flatten_expr(&u.argument, out),
+                oxc_ast::ast::Expression::YieldExpression(y) => {
                     // Evaluate the yielded expression first, then mark the
                     // suspension point so idents inside the arg are treated
                     // as occurring before the yield (not after).
-                    if let Some(arg) = &y.arg {
+                    if let Some(arg) = &y.argument {
                         flatten_expr(arg, out);
                     }
                     out.push(Node::YieldMarker);
                 }
-                Expr::Paren(p) => flatten_expr(&p.expr, out),
-                Expr::Array(arr) => {
-                    for el in arr.elems.iter().flatten() {
-                        flatten_expr(el, out);
+                oxc_ast::ast::Expression::ParenthesizedExpression(p) => flatten_expr(&p.expression, out),
+                oxc_ast::ast::Expression::ArrayExpression(arr) => {
+                    for el in arr.elements.iter() {
+                        if let Some(expr) = el.as_expression() {
+                            flatten_expr(expr, out);
                     }
                 }
-                Expr::New(n) => {
+                }
+                oxc_ast::ast::Expression::NewExpression(n) => {
                     flatten_expr(&n.callee, out);
-                    for a in &n.args {
-                        flatten_expr(a, out);
+                    for a in &n.arguments {
+                        if let Some(expr) = a.as_expression() {
+                            flatten_expr(expr, out);
+                        } else if let oxc_ast::ast::Argument::SpreadElement(spread) = a {
+                            flatten_expr(&spread.argument, out);
                     }
                 }
-                Expr::Assign(asg) => {
+                }
+                oxc_ast::ast::Expression::AssignmentExpression(asg) => {
                     flatten_expr(&asg.right, out);
                 }
-                Expr::Cond(c) => {
+                oxc_ast::ast::Expression::ConditionalExpression(c) => {
                     flatten_expr(&c.test, out);
-                    flatten_expr(&c.cons, out);
-                    flatten_expr(&c.alt, out);
+                    flatten_expr(&c.consequent, out);
+                    flatten_expr(&c.alternate, out);
                 }
-                Expr::Tpl(_) | Expr::Lit(_) => {
+                oxc_ast::ast::Expression::TemplateLiteral(_)
+                | oxc_ast::ast::Expression::NumericLiteral(_)
+                | oxc_ast::ast::Expression::StringLiteral(_)
+                | oxc_ast::ast::Expression::BooleanLiteral(_)
+                | oxc_ast::ast::Expression::NullLiteral(_) => {
                     // literals: no idents to record
                 }
-                Expr::Arrow(a) => {
+                oxc_ast::ast::Expression::ArrowFunctionExpression(_a) => {
                     // don't recurse into nested function/arrow bodies
-                    let _ = a;
                 }
                 _ => {
                     // conservative: don't traverse into patterns we don't care about
@@ -165,43 +198,43 @@ impl<'a> crate::codegen::CodeGen<'a> {
             }
         }
 
-        fn flatten_stmt(s: &Stmt, out: &mut Vec<Node>) {
+        fn flatten_stmt(s: &oxc_ast::ast::Statement, out: &mut Vec<Node>) {
             match s {
-                Stmt::ExprStmt(es) => flatten_expr(&es.expr, out),
-                Stmt::Return(r) => {
-                    if let Some(arg) = &r.arg {
+                oxc_ast::ast::Statement::ExpressionStatement(es) => flatten_expr(&es.expression, out),
+                oxc_ast::ast::Statement::ReturnStatement(r) => {
+                    if let Some(arg) = &r.argument {
                         flatten_expr(arg, out);
                     }
                 }
-                Stmt::VarDecl(vd) => {
-                    for decl in &vd.decls {
+                oxc_ast::ast::Statement::VariableDeclaration(vd) => {
+                    for decl in &vd.declarations {
                         if let Some(init) = &decl.init {
                             flatten_expr(init, out);
                         }
                     }
                 }
-                Stmt::If(if_stmt) => {
+                oxc_ast::ast::Statement::IfStatement(if_stmt) => {
                     flatten_expr(&if_stmt.test, out);
-                    flatten_stmt(&if_stmt.cons, out);
-                    if let Some(alt) = &if_stmt.alt {
+                    flatten_stmt(&if_stmt.consequent, out);
+                    if let Some(alt) = &if_stmt.alternate {
                         flatten_stmt(alt, out);
                     }
                 }
-                Stmt::While(w) => {
+                oxc_ast::ast::Statement::WhileStatement(w) => {
                     flatten_expr(&w.test, out);
                     flatten_stmt(&w.body, out);
                 }
-                Stmt::For(f) => {
+                oxc_ast::ast::Statement::ForStatement(f) => {
                     if let Some(init) = &f.init {
                         match init {
-                            ForInit::Expr(e) => flatten_expr(e, out),
-                            ForInit::VarDecl(vd) => {
-                                for decl in &vd.decls {
+                            oxc_ast::ast::ForStatementInit::VariableDeclaration(vd) => {
+                                for decl in &vd.declarations {
                                     if let Some(init_expr) = &decl.init {
                                         flatten_expr(init_expr, out);
                                     }
                                 }
                             }
+                            _ => {}
                         }
                     }
                     if let Some(test) = &f.test {
@@ -212,8 +245,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     }
                     flatten_stmt(&f.body, out);
                 }
-                Stmt::Block(b) => {
-                    for s in &b.stmts {
+                oxc_ast::ast::Statement::BlockStatement(b) => {
+                    for s in &b.body {
                         flatten_stmt(s, out);
                     }
                 }
@@ -225,7 +258,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
         let mut nodes: Vec<Node> = Vec::new();
         if let Some(body) = &func.body {
-            for s in &body.stmts {
+            for s in &body.statements {
                 flatten_stmt(s, &mut nodes);
             }
         }
@@ -273,10 +306,6 @@ impl<'a> crate::codegen::CodeGen<'a> {
         // Generators return a generator object (i8* pointer to generator state)
         // The generator state contains the function's state machine
 
-        // Create a non-generator clone of the function AST for processing
-        let mut impl_decl = func_decl.clone();
-        impl_decl.is_generator = false;
-
         // Emit a next function: `fn <name>_next(state: i8*, out: i8*) -> i32`
         // Returns: 0 = done, 1 = yielded value available in out
         let next_name = format!("{}_next", func_name);
@@ -291,7 +320,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         // layout indices and prepare resume/cont basic blocks before
         // emitting the next body.
         let param_count = llvm_param_types.len();
-        let yield_live_sets = self.compute_yield_live_sets(&impl_decl);
+        let yield_live_sets = self.compute_yield_live_sets(func_decl);
         let mut all_live_names: HashSet<String> = HashSet::new();
         for s in &yield_live_sets {
             for n in s.iter() {
@@ -492,9 +521,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
         let mut locals_stack: Vec<HashMap<String, LocalEntry<'a>>> = vec![HashMap::new()];
 
         // Load each parameter from state and create allocas
-        for (i, param) in func_decl.params.iter().enumerate() {
-            let param_name = match &param.pat {
-                Pat::Ident(id) => id.sym.clone(),
+        for (i, param) in func_decl.params.items.iter().enumerate() {
+            let param_name = match &param.pattern.kind {
+                oxc_ast::ast::BindingPatternKind::BindingIdentifier(id) => id.name.to_string(),
                 _ => {
                     // Destructuring parameters not yet supported in codegen
                     format!("_param_{}", i)
@@ -635,20 +664,20 @@ impl<'a> crate::codegen::CodeGen<'a> {
         *self.generator_next_locals.borrow_mut() = Some(locals_stack.clone());
 
         // Find all yield points in the body (needed for continuation blocks)
-        let yield_positions: Vec<usize> = if let Some(body) = &impl_decl.body {
-            self.find_yield_positions_in_stmts(&body.stmts)
+        let yield_positions: Vec<usize> = if let Some(body) = &func_decl.body {
+            self.find_yield_positions_in_stmts(&body.statements)
         } else {
             Vec::new()
         };
 
         // Split function body at yield points and lower each segment
-        if let Some(body) = &impl_decl.body {
+        if let Some(body) = &func_decl.body {
             // Lower body segments: from start to first yield, between yields, and after last yield
             let mut stmt_idx = 0;
             let yield_idx = 0;
 
             // Lower initial segment (before first yield)
-            while stmt_idx < body.stmts.len() {
+            while stmt_idx < body.statements.len() {
                 if yield_idx < yield_positions.len() && stmt_idx == yield_positions[yield_idx] {
                     // We've reached a yield point - lower up to (but not including) this statement
                     // The yield will be handled by lower_expr when we lower the statement
@@ -656,7 +685,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 }
 
                 // Lower this statement
-                if self.lower_stmt(&body.stmts[stmt_idx], next_f, &param_map, &mut locals_stack)? {
+                if self.lower_stmt(&body.statements[stmt_idx], next_f, &param_map, &mut locals_stack)? {
                     // Terminator found (return, break, etc.)
                     break;
                 }
@@ -668,7 +697,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 // Lower the statement containing the yield
                 // The yield expression will save state and return
                 let _ =
-                    self.lower_stmt(&body.stmts[stmt_idx], next_f, &param_map, &mut locals_stack);
+                    self.lower_stmt(&body.statements[stmt_idx], next_f, &param_map, &mut locals_stack);
             }
         }
 
@@ -830,7 +859,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 let mut cont_locals_stack = stored_locals.clone();
 
                 // Lower remaining statements after this yield point
-                if let Some(body) = &impl_decl.body {
+                if let Some(body) = &func_decl.body {
                     // Find the next yield position (if any)
                     let next_yield_pos = if resume_idx + 1 < yield_positions.len() {
                         Some(yield_positions[resume_idx + 1])
@@ -840,13 +869,16 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
                     // Find where to start (after the yield statement)
                     let start_pos = yield_positions[resume_idx] + 1;
-                    let end_pos = next_yield_pos.unwrap_or(body.stmts.len());
+                    let end_pos = match next_yield_pos {
+                        Some(pos) => pos,
+                        None => body.statements.len(),
+                    };
 
                     // Lower statements in this segment
                     let mut hit_terminator = false;
                     for i in start_pos..end_pos {
                         if self.lower_stmt(
-                            &body.stmts[i],
+                            &body.statements[i],
                             next_f,
                             &param_map,
                             &mut cont_locals_stack,
@@ -901,9 +933,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
             }
         };
 
-        let state_ptr_wrapper = match cs.try_as_basic_value() {
-            either::Either::Left(bv) => bv.into_pointer_value(),
-            _ => {
+        let state_ptr_wrapper = match extract_basic_value_from_valuekind(cs.try_as_basic_value()) {
+            Some(bv) => bv.into_pointer_value(),
+            None => {
                 return Err(crate::diagnostics::Diagnostic::simple_boxed(
                     Severity::Error,
                     "malloc returned no value",
@@ -978,7 +1010,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             .build_store(state_field_ptr, zero_state.as_basic_value_enum());
 
         // Store parameters in state slots (starting at offset 16)
-        for (i, _param) in func_decl.params.iter().enumerate() {
+        for (i, _param) in func_decl.params.items.iter().enumerate() {
             let param_val = function.get_nth_param(i as u32).ok_or_else(|| {
                 crate::diagnostics::Diagnostic::simple_boxed(
                     Severity::Error,
@@ -1031,9 +1063,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 "union_box_f64 call failed",
                             )
                         })?;
-                    let boxed_ptr = match cs.try_as_basic_value() {
-                        either::Either::Left(bv) => bv.into_pointer_value(),
-                        _ => {
+                    let boxed_ptr = match extract_basic_value_from_valuekind(cs.try_as_basic_value()) {
+                        Some(bv) => bv.into_pointer_value(),
+                        None => {
                             return Err(crate::diagnostics::Diagnostic::simple_boxed(
                                 Severity::Error,
                                 "boxing returned no value",

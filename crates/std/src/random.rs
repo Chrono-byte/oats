@@ -11,12 +11,18 @@ thread_local! {
 }
 
 fn init_rng() -> u64 {
-    let seed = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos() as u64;
+    let seed = match SystemTime::now().duration_since(UNIX_EPOCH) {
+        Ok(duration) => duration.as_nanos() as u64,
+        Err(_) => 0,
+    };
     RNG_STATE.with(|state| {
-        let mut s = state.lock().unwrap();
+        let mut s = match state.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                // If mutex is poisoned, use the poisoned guard to recover
+                poisoned.into_inner()
+            }
+        };
         if *s == 0 {
             *s = seed;
         }
@@ -26,12 +32,18 @@ fn init_rng() -> u64 {
 
 fn next_random() -> u64 {
     RNG_STATE.with(|state| {
-        let mut s = state.lock().unwrap();
+        let mut s = match state.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                // If mutex is poisoned, use the poisoned guard to recover
+                poisoned.into_inner()
+            }
+        };
         if *s == 0 {
-            *s = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_nanos() as u64;
+            *s = match SystemTime::now().duration_since(UNIX_EPOCH) {
+                Ok(duration) => duration.as_nanos() as u64,
+                Err(_) => 0,
+            };
         }
         // LCG parameters (same as used in glibc)
         *s = s.wrapping_mul(1103515245).wrapping_add(12345) & 0x7fffffff;
@@ -44,7 +56,13 @@ fn next_random() -> u64 {
 #[no_mangle]
 pub extern "C" fn oats_std_random_seed(seed: u64) {
     RNG_STATE.with(|state| {
-        let mut s = state.lock().unwrap();
+        let mut s = match state.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                // If mutex is poisoned, use the poisoned guard to recover
+                poisoned.into_inner()
+            }
+        };
         *s = if seed == 0 { 1 } else { seed };
     });
 }

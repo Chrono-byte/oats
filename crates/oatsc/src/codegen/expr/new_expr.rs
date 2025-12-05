@@ -4,6 +4,7 @@ use crate::types::OatsType;
 use inkwell::types::BasicTypeEnum;
 use inkwell::values::{BasicValue, BasicValueEnum, FunctionValue};
 use std::collections::HashMap;
+use oxc_ast::ast::*;
 
 // LocalEntry now includes an Option<String> for an optional nominal type name
 // LocalEntry now includes an Option<OatsType> for union tracking
@@ -22,13 +23,13 @@ impl<'a> CodeGen<'a> {
     #[allow(clippy::result_large_err)]
     pub(super) fn lower_new_expr(
         &self,
-        new_expr: &oats_ast::NewExpr,
+        new_expr: &NewExpression<'_>,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals: &mut LocalsStackLocal<'a>,
     ) -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
-        if let oats_ast::Expr::Ident(ident) = &*new_expr.callee {
-            let ctor_name = format!("{}_ctor", ident.sym);
+        if let Expression::Identifier(ident) = &*new_expr.callee {
+            let ctor_name = format!("{}_ctor", ident.name);
             if let Some(fv) = self.module.get_function(&ctor_name) {
                 let mut lowered_args: Vec<inkwell::values::BasicMetadataValueEnum> = Vec::new();
                 for arg in &new_expr.args {

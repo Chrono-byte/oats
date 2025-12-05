@@ -63,10 +63,10 @@ impl Drop for TemporalInstant {
 #[no_mangle]
 pub extern "C" fn oats_std_temporal_now_instant() -> *mut c_void {
     let now = std::time::SystemTime::now();
-    let timestamp_ns = now
-        .duration_since(std::time::SystemTime::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos() as i64;
+    let timestamp_ns = match now.duration_since(std::time::SystemTime::UNIX_EPOCH) {
+        Ok(duration) => duration.as_nanos() as i64,
+        Err(_) => 0,
+    };
 
     match TemporalInstant::new(timestamp_ns) {
         Some(instant) => {

@@ -32,11 +32,15 @@ pub fn resolve_relative_import(
     project_root: &std::path::Path,
 ) -> Option<String> {
     // Canonicalize the project root to ensure consistent path comparison
-    let canonical_root = std::fs::canonicalize(project_root).unwrap_or_else(|_| project_root.to_path_buf());
+    let canonical_root = match std::fs::canonicalize(project_root) {
+        Ok(path) => path,
+        Err(_) => project_root.to_path_buf(),
+    };
 
-    let base = std::path::Path::new(from)
-        .parent()
-        .unwrap_or_else(|| std::path::Path::new("."));
+    let base = match std::path::Path::new(from).parent() {
+        Some(p) => p,
+        None => std::path::Path::new("."),
+    };
     let candidate = base.join(spec);
 
     // SECURITY: Canonicalize the candidate path to resolve any .. sequences
@@ -124,7 +128,10 @@ pub fn load_modules_with_verbosity(
     let entry_abs = std::fs::canonicalize(entry_path)
         .with_context(|| format!("Failed to canonicalize entry path: {}", entry_path))?;
     let entry_str = entry_abs.to_string_lossy().to_string();
-    let project_root = entry_abs.parent().unwrap_or(&entry_abs);
+    let project_root = match entry_abs.parent() {
+        Some(p) => p,
+        None => &entry_abs,
+    };
     queue.push_back(entry_str.clone());
 
     // PHASE 1: Transitive module loading and dependency resolution
@@ -193,7 +200,10 @@ pub fn build_dependency_graph(
     let entry_abs = std::fs::canonicalize(entry_path)
         .with_context(|| format!("Failed to canonicalize entry path: {}", entry_path))?;
     let entry_str = entry_abs.to_string_lossy().to_string();
-    let project_root = entry_abs.parent().unwrap_or(&entry_abs);
+    let project_root = match entry_abs.parent() {
+        Some(p) => p,
+        None => &entry_abs,
+    };
 
     // Add entry node
     let entry_node = graph.add_node(entry_str.clone());

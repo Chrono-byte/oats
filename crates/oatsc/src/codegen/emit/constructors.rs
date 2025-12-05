@@ -3,8 +3,10 @@
 //! This module contains code generation logic for class constructors.
 
 use crate::codegen::emit::LocalsStackLocal;
+use crate::codegen::helpers::extract_basic_value_from_valuekind;
 use crate::diagnostics::Severity;
 use inkwell::values::BasicValue;
+use oxc_ast::ast::BindingPatternKind;
 use std::collections::HashMap;
 
 impl<'a> crate::codegen::CodeGen<'a> {
@@ -38,7 +40,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
     pub fn gen_constructor_ir(
         &self,
         class_name: &str,
-        ctor: &ConstructorDecl,
+        ctor: &oxc_ast::ast::MethodDefinition<'_>,
         fields: &[(String, crate::types::OatsType)],
         decorators: Option<Vec<String>>,
     ) -> crate::diagnostics::DiagnosticResult<()> {
@@ -62,20 +64,25 @@ impl<'a> crate::codegen::CodeGen<'a> {
         let mut param_types_vec = Vec::new();
         let mut param_names = Vec::new();
 
-        for param in &ctor.params {
-            let pname = match &param.pat {
-                Pat::Ident(ident) => ident.sym.clone(),
+        for param in &ctor.value.params.items {
+            let pname = match &param.pattern.kind {
+                BindingPatternKind::BindingIdentifier(ident) => ident.name.to_string(),
                 _ => {
                     // Destructuring parameters not yet supported in constructors
                     format!("_param_{}", param.span.start)
                 }
             };
             {
-                let pty = param
-                    .ty
+                let pty = match param
+                    .pattern
+                    .type_annotation
                     .as_ref()
+                    .map(|ta| &ta.type_annotation)
                     .and_then(crate::types::map_ts_type)
-                    .unwrap_or(OatsType::Number);
+                {
+                    Some(ty) => ty,
+                    None => OatsType::Number,
+                };
                 param_types_vec.push(pty);
                 param_names.push(pname);
             }
@@ -207,9 +214,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
             .map_err(|_| {
                 crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "build_call failed")
             })?;
-        let malloc_ret = match call_site.try_as_basic_value() {
-            either::Either::Left(bv) => bv.into_pointer_value(),
-            _ => {
+        let malloc_ret = match extract_basic_value_from_valuekind(call_site.try_as_basic_value()) {
+            Some(bv) => bv.into_pointer_value(),
+            None => {
                 return Err(crate::diagnostics::Diagnostic::simple_boxed(
                     Severity::Error,
                     "malloc call did not return a value",
@@ -409,7 +416,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 "union_box_f64_ctor",
                             );
                             if let Ok(cs) = cs
-                                && let either::Either::Left(bv) = cs.try_as_basic_value()
+                                && let Some(bv) = extract_basic_value_from_valuekind(cs.try_as_basic_value())
                             {
                                 let boxed_ptr = bv.into_pointer_value();
                                 let boxed_bv =
@@ -436,7 +443,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 "union_box_ptr_ctor",
                             );
                             if let Ok(cs) = cs
-                                && let either::Either::Left(bv) = cs.try_as_basic_value()
+                                && let Some(bv) = extract_basic_value_from_valuekind(cs.try_as_basic_value())
                             {
                                 let boxed_ptr = bv.into_pointer_value();
                                 let boxed_bv =
@@ -540,7 +547,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     .into_iter()
                     .map(|iv| {
                         // Try to extract a constant; fall back to zero if not available.
-                        let v = iv.get_zero_extended_constant().unwrap_or(0);
+                        let v = match iv.get_zero_extended_constant() {
+                            Some(val) => val,
+                            None => 0,
+                        };
                         self.i32_t.const_int(v & 0xffffffffu64, false)
                     })
                     .collect();
@@ -602,8 +612,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
         }
 
         // Lower ctor body inside init function context (so `super(...)` can call parent init)
-        if let Some(body) = &ctor.body {
-            for stmt in &body.stmts {
+        if let Some(body) = &ctor.value.body {
+            for stmt in &body.statements {
                 self.lower_stmt(stmt, init_f, &param_map, &mut locals)?;
             }
         }
@@ -637,9 +647,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
             .map_err(|_| {
                 crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "build_call failed")
             })?;
-        let malloc_ret2 = match call_site2.try_as_basic_value() {
-            either::Either::Left(bv) => bv.into_pointer_value(),
-            _ => {
+        let malloc_ret2 = match extract_basic_value_from_valuekind(call_site2.try_as_basic_value()) {
+            Some(bv) => bv.into_pointer_value(),
+            None => {
                 return Err(crate::diagnostics::Diagnostic::simple_boxed(
                     Severity::Error,
                     "malloc call did not return a value",
@@ -676,9 +686,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
             .map_err(|_| {
                 crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "build_call failed")
             })?;
-        let init_result = match call_init.try_as_basic_value() {
-            either::Either::Left(bv) => bv,
-            _ => {
+        let init_result = match extract_basic_value_from_valuekind(call_init.try_as_basic_value()) {
+            Some(bv) => bv,
+            None => {
                 return Err(crate::diagnostics::Diagnostic::simple_boxed(
                     Severity::Error,
                     "init call did not return a value",
@@ -716,7 +726,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     self.builder
                         .build_call(deco_fn, &[current_ctor_ptr.into()], "apply_decorator");
                 if let Ok(cs) = call_site
-                    && let either::Either::Left(bv) = cs.try_as_basic_value()
+                    && let Some(bv) = extract_basic_value_from_valuekind(cs.try_as_basic_value())
                 {
                     current_ctor_ptr = bv.into_pointer_value();
                 }
@@ -745,7 +755,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         // get the returned basic value (ctor returns an i8*). Return null on
         // any failure to be conservative.
         if let Ok(cs) = call_res {
-            if let either::Either::Left(bv) = cs.try_as_basic_value() {
+            if let Some(bv) = extract_basic_value_from_valuekind(cs.try_as_basic_value()) {
                 let ret_val = bv;
                 let _ = self.builder.build_return(Some(&ret_val));
             } else {

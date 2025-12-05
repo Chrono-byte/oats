@@ -140,12 +140,13 @@ pub(crate) unsafe fn get_object_base(p: *mut c_void) -> *mut c_void {
 
         // Try offset -16 (string data pointer case)
         // Validate that subtracting 16 doesn't result in invalid memory
-        let obj_ptr_addr = p_addr.checked_sub(16);
-        if obj_ptr_addr.is_none() {
-            // Underflow - can't be a valid string data pointer
-            return p; // Assume it's already the base
-        }
-        let obj_ptr_addr = obj_ptr_addr.unwrap();
+        let obj_ptr_addr = match p_addr.checked_sub(16) {
+            Some(addr) => addr,
+            None => {
+                // Underflow - can't be a valid string data pointer
+                return p; // Assume it's already the base
+            }
+        };
         if !crate::is_plausible_addr(obj_ptr_addr) {
             return p; // Offset pointer is not plausible, assume original is base
         }

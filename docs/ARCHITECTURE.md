@@ -54,7 +54,7 @@ Oats is an ahead-of-time compiler that compiles the Oats language to native exec
 - `crates/oats` – Ahead-of-time compiler (parser, type checker, codegen).
   - `parser.rs` – Oats language parsing via `deno_ast`.
   - `types.rs` – `OatsType` representation and type inference helpers.
-  - `codegen/` – LLVM IR lowering (`emit.rs`, `expr.rs`, `stmt.rs`, `helpers.rs`, `const_eval.rs`, `escape.rs`).
+  - `codegen/` – LLVM IR lowering (`emit.rs`, `expr.rs`, `stmt.rs`, `helpers.rs`, `escape.rs`).
   - `builder.rs` – Entry point that wires parsing, type checking, and codegen.
 - `crates/runtime` – C-callable runtime linked into user binaries (ARC helpers, allocators, string/array primitives, logging, and the cycle collector).
 - `examples/` – Representative `.oats` programs that compile under the current language surface.
@@ -68,7 +68,7 @@ Oats source (.oats)
 Abstract Syntax Tree (AST)
   ↓  types.rs (type checking / OatsType mapping)
 Typed AST
-  ↓  codegen/* (inkwell) + escape.rs + const_eval.rs
+  ↓  codegen/* (inkwell) + escape.rs
 LLVM IR module (.ll)
   ↓  LLVM (opt/bc emission handled by inkwell)
 Object file (.o)
@@ -82,7 +82,6 @@ Native executable
 - `emit.rs` lowers top-level items (functions, constructors, globals).
 - `expr.rs` lowers expressions and enforces `Result<T, Diagnostic>` error propagation.
 - `stmt.rs` handles block/loop lowering and scope-driven RC cleanup.
-- `const_eval.rs` materializes compile-time constants into LLVM globals and reuses them via stable interning keys.
 - `escape.rs` computes intra-procedural escape analysis so locals that do not escape can skip redundant ARC operations.
 
 ### Async and Generics

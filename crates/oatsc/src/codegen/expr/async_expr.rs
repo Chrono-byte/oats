@@ -23,7 +23,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
     #[allow(clippy::result_large_err)]
     pub(super) fn lower_await_expr(
         &self,
-        await_expr: &oats_ast::AwaitExpr,
+        await_expr: &oxc_ast::ast::AwaitExpression<'_>,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals: &mut LocalsStackLocal<'a>,
@@ -48,14 +48,13 @@ impl<'a> crate::codegen::CodeGen<'a> {
             self.async_await_counter.set(prev.wrapping_add(1));
             prev.wrapping_add(1)
         } else {
-            return Err(Diagnostic::simple_with_span_boxed(
+            return Err(Diagnostic::simple_boxed(
                 Severity::Error,
                 "`await` used outside of async lowering context",
-                await_expr.span.start,
             ));
         };
 
-        let v = self.lower_expr(&await_expr.arg, function, param_map, locals)?;
+        let v = self.lower_expr(&await_expr.argument, function, param_map, locals)?;
         if let BasicValueEnum::PointerValue(pv) = v {
             // allocate an i8* out slot
             let out_alloca = match self
@@ -90,7 +89,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
             let ret_iv = match cs.try_as_basic_value() {
                 either::Either::Left(bv) => bv.into_int_value(),
                 _ => {
-                    return Err(Diagnostic::error("promise_poll_into returned no value"));
+                    return Err(Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "promise_poll_into returned no value",
+                    ));
                 }
             };
 
@@ -279,7 +281,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         let boxed_ptr = match cs.try_as_basic_value() {
                                             either::Either::Left(bv) => bv.into_pointer_value(),
                                             _ => {
-                                                return Err(Diagnostic::error(
+                                                return Err(Diagnostic::simple_boxed(
+                                                    Severity::Error,
                                                     "boxing returned no value when saving locals",
                                                 ));
                                             }

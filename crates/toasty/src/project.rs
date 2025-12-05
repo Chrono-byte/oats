@@ -106,9 +106,12 @@ fn default_debug() -> bool {
 /// Basic semver validation (major.minor.patch with optional pre-release and build)
 fn is_valid_semver(version: &str) -> bool {
     // Split into core version and optional pre-release/build
-    // splitn always returns at least one element, so unwrap_or_default is safe
+    // splitn always returns at least one element, so we can safely get the first
     let mut parts = version.splitn(2, ['-', '+']);
-    let core = parts.next().unwrap_or_default();
+    let core = match parts.next() {
+        Some(c) => c,
+        None => "",
+    };
     if core.is_empty() {
         return false;
     }
@@ -286,12 +289,15 @@ impl Manifest {
 /// 4. **Security check**: Ensures resolved path is within project root
 pub fn resolve_relative_import(from: &str, spec: &str, project_root: &Path) -> Option<String> {
     // Canonicalize the project root to ensure consistent path comparison
-    let canonical_root =
-        std::fs::canonicalize(project_root).unwrap_or_else(|_| project_root.to_path_buf());
+    let canonical_root = match std::fs::canonicalize(project_root) {
+        Ok(path) => path,
+        Err(_) => project_root.to_path_buf(),
+    };
 
-    let base = std::path::Path::new(from)
-        .parent()
-        .unwrap_or_else(|| std::path::Path::new("."));
+    let base = match std::path::Path::new(from).parent() {
+        Some(p) => p,
+        None => std::path::Path::new("."),
+    };
     let candidate = base.join(spec);
     let exts = [".oats", ""]; // Prioritize .oats, then raw
 
@@ -379,7 +385,10 @@ pub fn load_modules_with_verbosity(
     // Initialize module loading with the entry point file
     let entry_abs = std::fs::canonicalize(entry_path)?;
     let entry_str = entry_abs.to_string_lossy().to_string();
-    let project_root = entry_abs.parent().unwrap_or(&entry_abs);
+    let project_root = match entry_abs.parent() {
+        Some(p) => p,
+        None => &entry_abs,
+    };
     queue.push_back(entry_str.clone());
 
     // PHASE 1: Transitive module loading and dependency resolution
@@ -465,7 +474,10 @@ pub fn build_dependency_graph(
     // Canonicalize entry path
     let entry_abs = std::fs::canonicalize(entry_path)?;
     let entry_str = entry_abs.to_string_lossy().to_string();
-    let project_root = entry_abs.parent().unwrap_or(&entry_abs);
+    let project_root = match entry_abs.parent() {
+        Some(p) => p,
+        None => &entry_abs,
+    };
 
     // Add entry node
     let entry_node = graph.add_node(entry_str.clone());

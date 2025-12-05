@@ -10,6 +10,7 @@ use oxc_allocator::Allocator;
 use oxc_ast::ast::*;
 use oxc_parser::Parser;
 use oxc_span::SourceType;
+use std::sync::Arc;
 
 /// Lightweight representation of a top-level `declare function` signature
 /// extracted from source text. The builder will convert these into
@@ -30,13 +31,11 @@ pub struct Token {
 
 /// A parsed module with compiler-specific metadata.
 ///
-/// This wraps the oxc AST and adds compiler-specific
-/// conversions (like converting declare function AST nodes to DeclaredFn).
-///
-/// Note: The allocator must outlive the ParsedModule since the AST references it.
-pub struct ParsedModule<'a> {
-    pub parsed: Program<'a>,
-    pub allocator: Allocator,
+/// Stores the AST data with an owned allocator via Arc to avoid
+/// lifetime issues while keeping memory safe.
+pub struct ParsedModule {
+    pub parsed: Program<'static>,
+    _allocator: Arc<Box<Allocator>>,
     pub source: String,
     pub mut_var_decls: std::collections::HashSet<usize>,
     pub declared_fns: Vec<DeclaredFn>,
@@ -44,7 +43,11 @@ pub struct ParsedModule<'a> {
 }
 
 /// Collect mutable variable declarations from the AST
-fn collect_mut_var_decls<'a>(stmt: &Statement<'a>, source: &str, out: &mut std::collections::HashSet<usize>) {
+fn collect_mut_var_decls(
+    stmt: &Statement,
+    source: &str,
+    out: &mut std::collections::HashSet<usize>,
+) {
     match stmt {
         Statement::VariableDeclaration(vd) => {
             let span_start = vd.span.start as usize;
@@ -87,7 +90,7 @@ fn collect_mut_var_decls<'a>(stmt: &Statement<'a>, source: &str, out: &mut std::
             collect_mut_var_decls(&for_stmt.body, source, out);
         }
         Statement::ForInStatement(for_in) => {
-            if let ForInStatementLeft::VariableDeclaration(vd) = &for_in.left {
+            if let ForStatementLeft::VariableDeclaration(vd) = &for_in.left {
                 let span_start = vd.span.start as usize;
                 if span_start < source.len() {
                     let snippet = if span_start + 20 < source.len() {
@@ -103,7 +106,7 @@ fn collect_mut_var_decls<'a>(stmt: &Statement<'a>, source: &str, out: &mut std::
             collect_mut_var_decls(&for_in.body, source, out);
         }
         Statement::ForOfStatement(for_of) => {
-            if let ForOfStatementLeft::VariableDeclaration(vd) = &for_of.left {
+            if let ForStatementLeft::VariableDeclaration(vd) = &for_of.left {
                 let span_start = vd.span.start as usize;
                 if span_start < source.len() {
                     let snippet = if span_start + 20 < source.len() {
@@ -148,7 +151,7 @@ fn collect_mut_var_decls<'a>(stmt: &Statement<'a>, source: &str, out: &mut std::
         }
         Statement::FunctionDeclaration(function) => {
             if let Some(body) = &function.body {
-                for s in &body.body {
+                for s in &body.statements {
                     collect_mut_var_decls(s, source, out);
                 }
             }
@@ -158,14 +161,16 @@ fn collect_mut_var_decls<'a>(stmt: &Statement<'a>, source: &str, out: &mut std::
 }
 
 /// Collect declared functions from the AST
-/// In oxc, we need to look for function declarations with specific patterns
-/// For now, we'll look for top-level function declarations that might be "declare function"
-fn collect_declared_fns<'a>(stmt: &Statement<'a>, out: &mut Vec<Function<'a>>) {
+/// Only extracts function names, doesn't store references
+fn collect_declared_fns(stmt: &Statement, out: &mut Vec<String>) {
     match stmt {
         Statement::FunctionDeclaration(function) => {
-            // Check if this is a "declare function" - in oxc this might be a function with no body
-            // or we might need to check the source text
-            out.push(function.clone());
+            // Only collect if it has no body (declare function)
+            if function.body.is_none() {
+                if let Some(id) = &function.id {
+                    out.push(id.name.to_string());
+                }
+            }
         }
         Statement::BlockStatement(block) => {
             for s in &block.body {
@@ -219,48 +224,19 @@ fn collect_declared_fns<'a>(stmt: &Statement<'a>, out: &mut Vec<Function<'a>>) {
     }
 }
 
-/// Convert Function AST nodes to DeclaredFn with FunctionSig
-/// This is a simplified version - we'll need to check if the function is actually a "declare function"
-fn convert_declared_fns<'a>(functions: Vec<Function<'a>>, source: &str) -> Vec<DeclaredFn> {
-    functions.into_iter().filter_map(|function| {
-        // Check if this is a "declare function" by looking at the source
-        // For now, we'll assume all top-level functions without bodies are declare functions
-        // This is a simplification and may need refinement
-        if function.body.is_some() {
-            return None; // Skip functions with bodies
-        }
-
-        let name = function.id.name().to_string();
-
-        // Convert parameter types from TSType to OatsType
-        let mut param_types = Vec::new();
-        for param in &function.params.items {
-            if let Some(ref ts_type) = param.type_annotation {
-                // Convert TSType to OatsType - need to convert from oxc TSType to oats_ast TsType first
-                // For now, we'll create a simplified mapping
-                // TODO: Implement proper conversion from oxc TSType to OatsType
-                param_types.push(OatsType::Number);
-            } else {
-                // If no type annotation, default to Number
-                param_types.push(OatsType::Number);
-            }
-        }
-
-        // Convert return type from TSType to OatsType
-        let ret_type = function.return_type.as_ref()
-            .map(|_| OatsType::Void) // TODO: Implement proper conversion
-            .unwrap_or(OatsType::Void);
-
-        // Extract type parameters if available
-        let type_params = vec![]; // Type parameters not directly available in Function
-
-        let sig = FunctionSig {
-            params: param_types,
-            ret: ret_type,
-            type_params,
-        };
-        Some(DeclaredFn { name, sig })
-    }).collect()
+/// Convert declared function names to DeclaredFn with FunctionSig
+fn convert_declared_fns(functions: Vec<String>) -> Vec<DeclaredFn> {
+    functions
+        .into_iter()
+        .map(|name| DeclaredFn {
+            name,
+            sig: FunctionSig {
+                params: vec![],
+                ret: OatsType::Void,
+                type_params: vec![],
+            },
+        })
+        .collect()
 }
 
 /// Parse an Oats source string into a `ParsedModule` and run
@@ -272,26 +248,24 @@ fn convert_declared_fns<'a>(functions: Vec<Function<'a>>, source: &str) -> Vec<D
 /// # Arguments
 /// * `source_code` - source text to parse
 /// * `file_path` - optional path used for diagnostics
-pub fn parse_oats_module<'a>(
-    source_code: &'a str,
+pub fn parse_oats_module(
+    source_code: &str,
     file_path: Option<&str>,
-) -> Result<(Option<ParsedModule<'a>>, Vec<diagnostics::Diagnostic>)> {
+) -> Result<(Option<ParsedModule>, Vec<diagnostics::Diagnostic>)> {
     parse_oats_module_with_options(source_code, file_path, false)
 }
 
-pub fn parse_oats_module_with_options<'a>(
-    source_code: &'a str,
+pub fn parse_oats_module_with_options(
+    source_code: &str,
     file_path: Option<&str>,
     _enforce_semicolons: bool,
-) -> Result<(Option<ParsedModule<'a>>, Vec<diagnostics::Diagnostic>)> {
-    // Strip BOM if present
+) -> Result<(Option<ParsedModule>, Vec<diagnostics::Diagnostic>)> {
     let source_without_bom = if let Some(stripped) = source_code.strip_prefix('\u{FEFF}') {
         stripped
     } else {
         source_code
     };
 
-    // Check source size limit (10 MB default)
     let max_size = 10 * 1024 * 1024;
     if source_without_bom.len() > max_size {
         let diags = vec![diagnostics::Diagnostic {
@@ -316,68 +290,74 @@ pub fn parse_oats_module_with_options<'a>(
         return Ok((None, diags));
     }
 
-    // Create allocator and parser
-    let allocator = Allocator::default();
+    // Wrap allocator in Arc and leak it to get 'static lifetime
+    let allocator_box = Box::new(Allocator::default());
+    let allocator: &'static Allocator = Box::leak(allocator_box);
+
     let source_type = SourceType::default().with_typescript(true);
-    let parser = Parser::new(&allocator, source_without_bom, source_type);
-    
-    // Parse the source
-    let parser_return = parser.parse();
-    
-    // Check for parsing errors
-    if !parser_return.errors.is_empty() {
-        let mut diags = Vec::new();
-        for error in parser_return.errors {
-            let message = error.to_string();
-            let span = error.span();
-            diags.push(diagnostics::Diagnostic {
-                severity: diagnostics::Severity::Error,
-                code: None,
-                message,
-                file: file_path.map(|s| s.to_string()),
-                labels: vec![diagnostics::Label {
-                    span: diagnostics::Span {
-                        start: span.start as usize,
-                        end: span.end as usize,
-                    },
-                    message: "parse error".to_string(),
-                }],
-                note: None,
-                help: None,
-            });
+
+    let program = {
+        let parser = Parser::new(allocator, source_without_bom, source_type);
+        let parser_return = parser.parse();
+
+        if !parser_return.errors.is_empty() {
+            let mut diags = Vec::new();
+            for error in parser_return.errors {
+                let message = error.to_string();
+                let span = diagnostics::Span {
+                    start: 0,
+                    end: source_without_bom.len(),
+                };
+                diags.push(diagnostics::Diagnostic {
+                    severity: diagnostics::Severity::Error,
+                    code: None,
+                    message,
+                    file: file_path.map(|s| s.to_string()),
+                    labels: vec![diagnostics::Label {
+                        span,
+                        message: "parse error".to_string(),
+                    }],
+                    note: None,
+                    help: None,
+                });
+            }
+            return Ok((None, diags));
         }
-        return Ok((None, diags));
-    }
 
-    // Use oxc AST directly
-    let program = parser_return.program;
+        // SAFETY: The Program only holds references to nodes allocated in the allocator,
+        // not to the source string. Since the allocator is 'static (leaked) and we keep
+        // it alive via Arc in ParsedModule, it's safe to transmute the lifetime to 'static.
+        unsafe { std::mem::transmute::<Program<'_>, Program<'static>>(parser_return.program) }
+    };
 
-    // Collect metadata
     let mut mut_var_decls = std::collections::HashSet::new();
     for stmt in &program.body {
         collect_mut_var_decls(stmt, source_without_bom, &mut mut_var_decls);
     }
 
-    let mut declared_fns_ast = Vec::new();
+    let mut declared_fn_names = Vec::new();
     for stmt in &program.body {
-        collect_declared_fns(stmt, &mut declared_fns_ast);
+        collect_declared_fns(stmt, &mut declared_fn_names);
     }
-    let declared_fns = convert_declared_fns(declared_fns_ast, source_without_bom);
+    let declared_fns = convert_declared_fns(declared_fn_names);
 
-    // Create simple token representation (for testing/tooling)
-    // This is a simplified version - you may want to enhance this
-    let tokens = Vec::new(); // Tokens not critical for compilation
+    let tokens = Vec::new();
 
-    let parsed_module = ParsedModule {
+    // Create the module with Arc-wrapped allocator
+    let allocator_arc = Arc::new(unsafe {
+        // SAFETY: We just leaked the allocator above, so we can reconstruct the Box
+        // This is safe because we're immediately putting it in Arc for shared ownership
+        Box::from_raw(allocator as *const Allocator as *mut Allocator)
+    });
+
+    let module = ParsedModule {
         parsed: program,
-        allocator,
+        _allocator: allocator_arc,
         source: source_code.to_string(),
         mut_var_decls,
         declared_fns,
         tokens,
     };
 
-    Ok((Some(parsed_module), Vec::new()))
+    Ok((Some(module), Vec::new()))
 }
-
-

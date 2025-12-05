@@ -11,7 +11,7 @@ oxc_parser = "0.101.0"
 oxc_allocator = "0.101.0"
 oxc_ast = "0.101.0"
 oxc_span = "0.101.0"
-oats_ast = { path = "../oats_ast" }
+oxc_syntax = "0.101.0"
 inkwell = { version = "0.7.1", features = ["llvm18-1", "llvm18-1-prefer-dynamic"] }
 either = "1.15.0"
 anyhow = "1.0"

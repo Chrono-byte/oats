@@ -142,11 +142,14 @@ pub fn gen_ir_for_source(src: &str) -> Result<String> {
                         if let Pat::Ident(binding_ident) = &param.pat {
                             let fname = binding_ident.sym.clone();
                             if fields.iter().all(|(n, _)| n != &fname) {
-                                let ty = param
+                                let ty = match param
                                     .ty
                                     .as_ref()
                                     .and_then(|ann| oatsc::types::map_ts_type(ann))
-                                    .unwrap_or(oatsc::types::OatsType::Number);
+                                {
+                                    Some(ty) => ty,
+                                    None => oatsc::types::OatsType::Number,
+                                };
                                 fields.push((fname, ty));
                             }
                         }
@@ -238,12 +241,15 @@ pub fn gen_ir_for_source(src: &str) -> Result<String> {
                     }
                     ClassMember::Constructor(cons) => {
                         // Use empty fields list if none were recorded to avoid borrow-panics
-                        let fields_vec = codegen
+                        let fields_vec = match codegen
                             .class_fields
                             .borrow()
                             .get(&class_name)
                             .cloned()
-                            .unwrap_or_else(Vec::new);
+                        {
+                            Some(fields) => fields,
+                            None => Vec::new(),
+                        };
                         codegen
                             .gen_constructor_ir(&class_name, cons, &fields_vec, None)
                             .map_err(|d| anyhow::anyhow!(d.message))?;

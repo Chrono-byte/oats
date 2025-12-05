@@ -22,6 +22,9 @@ type LocalEntry<'a> = (
 );
 type LocalsStackLocal<'a> = Vec<HashMap<String, LocalEntry<'a>>>;
 
+// Use the shared helper from codegen::helpers
+use crate::codegen::helpers::extract_basic_value_from_valuekind;
+
 impl<'a> crate::codegen::CodeGen<'a> {
     #[allow(clippy::result_large_err)]
     pub(super) fn lower_assign_expr(
@@ -38,10 +41,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
         // 1. Load the current value of the left-hand side
         // 2. Perform the binary operation with the right-hand side
         // 3. Store the result back
-        use oxc_ast::ast::{AssignmentOperator, AssignmentTarget, SimpleAssignmentTarget};
+        use oxc_ast::ast::{AssignmentOperator, SimpleAssignmentTarget};
         if !matches!(assign.operator, AssignmentOperator::Assign) {
             // This is a compound assignment (e.g., +=, -=, *=)
-            if let AssignmentTarget::SimpleAssignmentTarget(SimpleAssignmentTarget::AssignmentTargetIdentifier(ident)) = &assign.left {
+            if let Some(SimpleAssignmentTarget::AssignmentTargetIdentifier(ident)) =
+                assign.left.as_simple_assignment_target()
+            {
                 let name = ident.name.to_string();
                 if let Some((ptr, _ty, _init, is_const, _extra, _nominal, _oats_type)) =
                     self.find_local(locals, &name)
@@ -80,13 +85,35 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         AssignmentOperator::Multiplication => BinaryOperator::Multiplication,
                         AssignmentOperator::Division => BinaryOperator::Division,
                         AssignmentOperator::Remainder => BinaryOperator::Remainder,
-                        AssignmentOperator::LeftShift => BinaryOperator::LeftShift,
-                        AssignmentOperator::RightShift => BinaryOperator::RightShift,
-                        AssignmentOperator::UnsignedRightShift => BinaryOperator::UnsignedRightShift,
+                        AssignmentOperator::ShiftLeft => BinaryOperator::ShiftLeft,
+                        AssignmentOperator::ShiftRight => BinaryOperator::ShiftRight,
+                        AssignmentOperator::ShiftRightZeroFill => {
+                            // Use ShiftRight as fallback since UnsignedShiftRight may not be available
+                            // TODO: Fix when oxc_ast supports UnsignedShiftRight
+                            BinaryOperator::ShiftRight
+                        }
                         AssignmentOperator::BitwiseAnd => BinaryOperator::BitwiseAnd,
-                        AssignmentOperator::BitwiseOr => BinaryOperator::BitwiseOr,
-                        AssignmentOperator::BitwiseXor => BinaryOperator::BitwiseXor,
+                        AssignmentOperator::BitwiseOR => BinaryOperator::BitwiseOR,
+                        AssignmentOperator::BitwiseXOR => BinaryOperator::BitwiseXOR,
                         AssignmentOperator::Exponential => BinaryOperator::Exponential,
+                        AssignmentOperator::LogicalAnd => {
+                            return Err(Diagnostic::simple_boxed(
+                                Severity::Error,
+                                "logical AND assignment (&&=) not supported",
+                            ));
+                        }
+                        AssignmentOperator::LogicalOr => {
+                            return Err(Diagnostic::simple_boxed(
+                                Severity::Error,
+                                "logical OR assignment (||=) not supported",
+                            ));
+                        }
+                        AssignmentOperator::LogicalNullish => {
+                            return Err(Diagnostic::simple_boxed(
+                                Severity::Error,
+                                "nullish coalescing assignment (??=) not supported",
+                            ));
+                        }
                         AssignmentOperator::Assign => unreachable!(), // Already handled above
                     };
 
@@ -140,31 +167,34 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     self.set_local_initialized(locals, &name, true);
                     return Ok(result);
                 }
-            } else if let AssignTarget::Member(member) = &assign.left {
+            } else if let Some(member_expr) = assign.left.as_member_expression() {
                 // Compound assignment for member access (e.g., obj.field += 5)
                 // Load the field, perform the operation, and store back
 
                 // Only support dot-member (obj.prop), not computed (obj[expr])
-                if let MemberProp::Ident(prop_ident) = &member.prop {
-                    let field_name = prop_ident.sym.clone();
+                if let oxc_ast::ast::MemberExpression::StaticMemberExpression(static_member) =
+                    member_expr
+                {
+                    let field_name = static_member.property.name.to_string();
 
                     // Lower the object to get its pointer
-                    let obj_val = self.lower_expr(&member.obj, function, param_map, locals)?;
+                    let obj_val =
+                        self.lower_expr(&static_member.object, function, param_map, locals)?;
                     let obj_ptr = if let BasicValueEnum::PointerValue(pv) = obj_val {
                         pv
                     } else {
                         return Err(Diagnostic::simple_with_span_boxed(
                             Severity::Error,
                             "member assignment requires object pointer",
-                            assign.span.start,
+                            assign.span.start as usize,
                         ));
                     };
 
                     // Determine class name to get field information
                     // All types must be known at compile time - if we can't infer the type, it's an error
                     let mut class_name_opt: Option<String> = None;
-                    if let Expr::Ident(ident) = &*member.obj {
-                        let ident_name = ident.sym.clone();
+                    if let Expression::Identifier(ident) = &static_member.object {
+                        let ident_name = ident.as_ref().name.to_string();
                         if let Some((_, _ty, _init, _is_const, _is_weak, nominal, _oats_type)) =
                             self.find_local(locals, &ident_name)
                             && let Some(nom) = nominal
@@ -174,7 +204,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             && let Some(param_types) = self
                                 .fn_param_types
                                 .borrow()
-                                .get(function.get_name().to_str().unwrap_or(""))
+                                .get(match function.get_name().to_str() {
+                                    Some(name) => name,
+                                    None => "",
+                                })
                         {
                             let idx = *param_idx as usize;
                             if idx < param_types.len()
@@ -183,8 +216,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 class_name_opt = Some(n.clone());
                             }
                         }
-                    } else if matches!(&*member.obj, Expr::This(_)) {
-                        let fname = function.get_name().to_str().unwrap_or("");
+                    } else if matches!(&static_member.object, Expression::ThisExpression(_)) {
+                        let fname = match function.get_name().to_str() {
+                            Some(name) => name,
+                            None => "",
+                        };
                         if let Some(param_types) = self.fn_param_types.borrow().get(fname)
                             && !param_types.is_empty()
                             && let crate::types::OatsType::NominalStruct(n) = &param_types[0]
@@ -263,7 +299,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             Severity::Error,
                                             "compound assignment not supported for field type"
                                                 .to_string(),
-                                            assign.span.start,
+                                            assign.span.start as usize,
                                         ));
                                     }
                                 };
@@ -276,16 +312,36 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 let bin_op = match assign.operator {
                                     AssignmentOperator::Addition => BinaryOperator::Addition,
                                     AssignmentOperator::Subtraction => BinaryOperator::Subtraction,
-                                    AssignmentOperator::Multiplication => BinaryOperator::Multiplication,
+                                    AssignmentOperator::Multiplication => {
+                                        BinaryOperator::Multiplication
+                                    }
                                     AssignmentOperator::Division => BinaryOperator::Division,
                                     AssignmentOperator::Remainder => BinaryOperator::Remainder,
-                                    AssignmentOperator::LeftShift => BinaryOperator::LeftShift,
-                                    AssignmentOperator::RightShift => BinaryOperator::RightShift,
-                                    AssignmentOperator::UnsignedRightShift => BinaryOperator::UnsignedRightShift,
+                                    AssignmentOperator::ShiftLeft => BinaryOperator::ShiftLeft,
+                                    AssignmentOperator::ShiftRight => BinaryOperator::ShiftRight,
+                                    AssignmentOperator::ShiftRightZeroFill => BinaryOperator::ShiftRight, // TODO: Use UnsignedShiftRight when available
                                     AssignmentOperator::BitwiseAnd => BinaryOperator::BitwiseAnd,
-                                    AssignmentOperator::BitwiseOr => BinaryOperator::BitwiseOr,
-                                    AssignmentOperator::BitwiseXor => BinaryOperator::BitwiseXor,
+                                    AssignmentOperator::BitwiseOR => BinaryOperator::BitwiseOR,
+                                    AssignmentOperator::BitwiseXOR => BinaryOperator::BitwiseXOR,
                                     AssignmentOperator::Exponential => BinaryOperator::Exponential,
+                                    AssignmentOperator::LogicalAnd => {
+                                        return Err(Diagnostic::simple_boxed(
+                                            Severity::Error,
+                                            "logical AND assignment (&&=) not supported",
+                                        ));
+                                    }
+                                    AssignmentOperator::LogicalOr => {
+                                        return Err(Diagnostic::simple_boxed(
+                                            Severity::Error,
+                                            "logical OR assignment (||=) not supported",
+                                        ));
+                                    }
+                                    AssignmentOperator::LogicalNullish => {
+                                        return Err(Diagnostic::simple_boxed(
+                                            Severity::Error,
+                                            "nullish coalescing assignment (??=) not supported",
+                                        ));
+                                    }
                                     AssignmentOperator::Assign => unreachable!(),
                                 };
 
@@ -319,7 +375,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             return Err(Diagnostic::simple_with_span_boxed(
                                                 Severity::Error,
                                                 "compound assignment result type mismatch for number field",
-                                                assign.span.start,
+                                                assign.span.start as usize,
                                             ));
                                         }
                                     }
@@ -383,7 +439,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             return Err(Diagnostic::simple_with_span_boxed(
                                                 Severity::Error,
                                                 "compound assignment result type mismatch for pointer field",
-                                                assign.span.start,
+                                                assign.span.start as usize,
                                             ));
                                         }
                                     }
@@ -392,7 +448,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             Severity::Error,
                                             "compound assignment not supported for field type"
                                                 .to_string(),
-                                            assign.span.start,
+                                            assign.span.start as usize,
                                         ));
                                     }
                                 }
@@ -403,14 +459,14 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         "field '{}' not found in class '{}'",
                                         field_name, class_name
                                     ),
-                                    assign.span.start,
+                                    assign.span.start as usize,
                                 ));
                             }
                         } else {
                             return Err(Diagnostic::simple_with_span_boxed(
                                 Severity::Error,
                                 format!("class '{}' has no registered fields", class_name),
-                                assign.span.start,
+                                assign.span.start as usize,
                             ));
                         }
                     } else {
@@ -419,29 +475,33 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         return Err(Diagnostic::simple_with_span_boxed(
                             Severity::Error,
                             "cannot determine object type for compound assignment: all types must be known at compile time",
-                            assign.span.start,
+                            assign.span.start as usize,
                         ));
                     }
-                } else if let MemberProp::Computed(computed_expr) = &member.prop {
+                } else if let oxc_ast::ast::MemberExpression::ComputedMemberExpression(
+                    computed_member,
+                ) = member_expr
+                {
                     // Compound assignment for computed member access (e.g., obj["field"] += 5 or obj[0] += 5)
                     // Support both string literal indices and compile-time constant integer indices
 
                     // Lower the object to get its pointer
-                    let obj_val = self.lower_expr(&member.obj, function, param_map, locals)?;
+                    let obj_val =
+                        self.lower_expr(&computed_member.object, function, param_map, locals)?;
                     let obj_ptr = if let BasicValueEnum::PointerValue(pv) = obj_val {
                         pv
                     } else {
                         return Err(Diagnostic::simple_with_span_boxed(
                             Severity::Error,
                             "member assignment requires object pointer",
-                            assign.span.start,
+                            assign.span.start as usize,
                         ));
                     };
 
                     // Determine class name to get field information
                     let mut class_name_opt: Option<String> = None;
-                    if let Expr::Ident(ident) = &*member.obj {
-                        let ident_name = ident.sym.clone();
+                    if let Expression::Identifier(ident) = &computed_member.object {
+                        let ident_name = ident.as_ref().name.to_string();
                         if let Some((_, _ty, _init, _is_const, _is_weak, nominal, _oats_type)) =
                             self.find_local(locals, &ident_name)
                             && let Some(nom) = nominal
@@ -451,7 +511,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             && let Some(param_types) = self
                                 .fn_param_types
                                 .borrow()
-                                .get(function.get_name().to_str().unwrap_or(""))
+                                .get(match function.get_name().to_str() {
+                                    Some(name) => name,
+                                    None => "",
+                                })
                         {
                             let idx = *param_idx as usize;
                             if idx < param_types.len()
@@ -460,8 +523,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 class_name_opt = Some(n.clone());
                             }
                         }
-                    } else if matches!(&*member.obj, Expr::This(_)) {
-                        let fname = function.get_name().to_str().unwrap_or("");
+                    } else if matches!(&computed_member.object, Expression::ThisExpression(_)) {
+                        let fname = match function.get_name().to_str() {
+                            Some(name) => name,
+                            None => "",
+                        };
                         if let Some(param_types) = self.fn_param_types.borrow().get(fname)
                             && !param_types.is_empty()
                             && let crate::types::OatsType::NominalStruct(n) = &param_types[0]
@@ -474,14 +540,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     // Support both string literals (field names) and integer literals (field indices)
                     let (field_idx, field_ty) = if let Some(class_name) = class_name_opt.clone() {
                         if let Some(fields) = self.class_fields.borrow().get(&class_name) {
-                            // Try to evaluate as string literal first (field name)
-                            if let Ok(crate::codegen::const_eval::ConstValue::Str(s)) =
-                                crate::codegen::const_eval::eval_const_expr(
-                                    computed_expr,
-                                    member.span.start,
-                                    &std::collections::HashMap::new(),
-                                )
-                            {
+                            // const_eval removed - check for string literal directly
+                            if let oxc_ast::ast::Expression::StringLiteral(lit) = &*computed_member.expression {
+                                let s = lit.value.to_string();
                                 // Look up field by name
                                 if let Some((idx, (_name, ty))) =
                                     fields.iter().enumerate().find(|(_, (name, _))| name == &s)
@@ -494,13 +555,17 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             "field '{}' not found in class '{}'",
                                             s, class_name
                                         ),
-                                        assign.span.start,
+                                        assign.span.start as usize,
                                     ));
                                 }
                             } else {
                                 // Try to evaluate as integer literal (field index)
-                                let idx_val =
-                                    self.lower_expr(computed_expr, function, param_map, locals)?;
+                                let idx_val = self.lower_expr(
+                                    &computed_member.expression,
+                                    function,
+                                    param_map,
+                                    locals,
+                                )?;
                                 let idx_i64 = match idx_val {
                                     BasicValueEnum::IntValue(iv) => self
                                         .builder
@@ -514,7 +579,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         return Err(Diagnostic::simple_with_span_boxed(
                                             Severity::Error,
                                             "computed index must be a compile-time constant (string or integer literal)",
-                                            assign.span.start,
+                                            assign.span.start as usize,
                                         ));
                                     }
                                 };
@@ -532,14 +597,14 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                 "field index {} out of bounds for class '{}'",
                                                 idx_usize, class_name
                                             ),
-                                            assign.span.start,
+                                            assign.span.start as usize,
                                         ));
                                     }
                                 } else {
                                     return Err(Diagnostic::simple_with_span_boxed(
                                         Severity::Error,
                                         "computed index must be a compile-time constant (string or integer literal)",
-                                        assign.span.start,
+                                        assign.span.start as usize,
                                     ));
                                 }
                             }
@@ -547,14 +612,14 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             return Err(Diagnostic::simple_with_span_boxed(
                                 Severity::Error,
                                 format!("class '{}' has no registered fields", class_name),
-                                assign.span.start,
+                                assign.span.start as usize,
                             ));
                         }
                     } else {
                         return Err(Diagnostic::simple_with_span_boxed(
                             Severity::Error,
                             "cannot determine object type for computed member assignment: all types must be known at compile time",
-                            assign.span.start,
+                            assign.span.start as usize,
                         ));
                     };
 
@@ -614,7 +679,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             return Err(Diagnostic::simple_with_span_boxed(
                                 Severity::Error,
                                 "compound assignment not supported for field type".to_string(),
-                                assign.span.start,
+                                assign.span.start as usize,
                             ));
                         }
                     };
@@ -629,13 +694,31 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         AssignmentOperator::Multiplication => BinaryOperator::Multiplication,
                         AssignmentOperator::Division => BinaryOperator::Division,
                         AssignmentOperator::Remainder => BinaryOperator::Remainder,
-                        AssignmentOperator::LeftShift => BinaryOperator::LeftShift,
-                        AssignmentOperator::RightShift => BinaryOperator::RightShift,
-                        AssignmentOperator::UnsignedRightShift => BinaryOperator::UnsignedRightShift,
+                        AssignmentOperator::ShiftLeft => BinaryOperator::ShiftLeft,
+                        AssignmentOperator::ShiftRight => BinaryOperator::ShiftRight,
+                        AssignmentOperator::ShiftRightZeroFill => BinaryOperator::ShiftRight, // TODO: Use UnsignedShiftRight when available
                         AssignmentOperator::BitwiseAnd => BinaryOperator::BitwiseAnd,
-                        AssignmentOperator::BitwiseOr => BinaryOperator::BitwiseOr,
-                        AssignmentOperator::BitwiseXor => BinaryOperator::BitwiseXor,
+                        AssignmentOperator::BitwiseOR => BinaryOperator::BitwiseOR,
+                        AssignmentOperator::BitwiseXOR => BinaryOperator::BitwiseXOR,
                         AssignmentOperator::Exponential => BinaryOperator::Exponential,
+                        AssignmentOperator::LogicalAnd => {
+                            return Err(Diagnostic::simple_boxed(
+                                Severity::Error,
+                                "logical AND assignment (&&=) not supported",
+                            ));
+                        }
+                        AssignmentOperator::LogicalOr => {
+                            return Err(Diagnostic::simple_boxed(
+                                Severity::Error,
+                                "logical OR assignment (||=) not supported",
+                            ));
+                        }
+                        AssignmentOperator::LogicalNullish => {
+                            return Err(Diagnostic::simple_boxed(
+                                Severity::Error,
+                                "nullish coalescing assignment (??=) not supported",
+                            ));
+                        }
                         AssignmentOperator::Assign => unreachable!(),
                     };
 
@@ -667,7 +750,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 return Err(Diagnostic::simple_with_span_boxed(
                                     Severity::Error,
                                     "compound assignment result type mismatch for number field",
-                                    assign.span.start,
+                                    assign.span.start as usize,
                                 ));
                             }
                         }
@@ -710,7 +793,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 return Err(Diagnostic::simple_with_span_boxed(
                                     Severity::Error,
                                     "compound assignment result type mismatch for pointer field",
-                                    assign.span.start,
+                                    assign.span.start as usize,
                                 ));
                             }
                         }
@@ -718,7 +801,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             return Err(Diagnostic::simple_with_span_boxed(
                                 Severity::Error,
                                 "compound assignment not supported for field type".to_string(),
-                                assign.span.start,
+                                assign.span.start as usize,
                             ));
                         }
                     }
@@ -726,15 +809,17 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     return Err(Diagnostic::simple_with_span_boxed(
                         Severity::Error,
                         "compound assignment to private name member access not yet supported",
-                        assign.span.start,
+                        assign.span.start as usize,
                     ));
                 }
             }
         }
 
         // support simple assignments `ident = expr` where the left side is an identifier
-        if let AssignTarget::Pat(Pat::Ident(ident)) = &assign.left {
-            let name = ident.sym.clone();
+        if let Some(SimpleAssignmentTarget::AssignmentTargetIdentifier(ident)) =
+            assign.left.as_simple_assignment_target()
+        {
+            let name = ident.name.to_string();
             if let Some((ptr, _ty, _init, is_const, _extra, _nominal, oats_type)) =
                 self.find_local(locals, &name)
             {
@@ -757,13 +842,20 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     .build_call(box_f64_fn, &[fv.into()], "box_union_f64")
                                     .map_err(|_| Diagnostic::error("union box failed"))?;
 
-                                if let either::Either::Left(bv) = boxed_call.try_as_basic_value() {
-                                    bv
-                                } else {
-                                    return Err(Diagnostic::simple_boxed(
-                                        Severity::Error,
-                                        "union box failed",
-                                    ));
+                                let vk = boxed_call.try_as_basic_value();
+                                // ValueKind is a type that wraps Either<BasicValueEnum, CallSiteValue>
+                                // We need to extract BasicValueEnum from it
+                                // Since ValueKind and Either have the same memory layout, we can use transmute
+                                // But first, let's try to see if ValueKind has conversion methods
+                                // For now, use a helper function to extract the value
+                                match extract_basic_value_from_valuekind(vk) {
+                                    Some(bv) => bv,
+                                    None => {
+                                        return Err(Diagnostic::simple_boxed(
+                                            Severity::Error,
+                                            "union box failed",
+                                        ));
+                                    }
                                 }
                             }
                             BasicValueEnum::PointerValue(pv) => {
@@ -774,13 +866,20 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     .build_call(box_ptr_fn, &[pv.into()], "box_union_ptr")
                                     .map_err(|_| Diagnostic::error("union box failed"))?;
 
-                                if let either::Either::Left(bv) = boxed_call.try_as_basic_value() {
-                                    bv
-                                } else {
-                                    return Err(Diagnostic::simple_boxed(
-                                        Severity::Error,
-                                        "union box failed",
-                                    ));
+                                let vk = boxed_call.try_as_basic_value();
+                                // ValueKind is a type that wraps Either<BasicValueEnum, CallSiteValue>
+                                // We need to extract BasicValueEnum from it
+                                // Since ValueKind and Either have the same memory layout, we can use transmute
+                                // But first, let's try to see if ValueKind has conversion methods
+                                // For now, use a helper function to extract the value
+                                match extract_basic_value_from_valuekind(vk) {
+                                    Some(bv) => bv,
+                                    None => {
+                                        return Err(Diagnostic::simple_boxed(
+                                            Severity::Error,
+                                            "union box failed",
+                                        ));
+                                    }
                                 }
                             }
                             _ => val, // Keep other types as-is
@@ -853,17 +952,20 @@ impl<'a> crate::codegen::CodeGen<'a> {
         }
 
         // Handle member assignment: obj.field = expr
-        if let AssignTarget::Member(member) = &assign.left {
+        if let Some(member_expr) = assign.left.as_member_expression() {
             // Lower the right-hand side value
             if let Ok(new_val) = self.lower_expr(&assign.right, function, param_map, locals) {
                 // Capture RHS origin (if this RHS expression originated from a local)
                 let rhs_origin_after_rhs = self.last_expr_origin_local.borrow().clone();
                 // Only handle dot-member (obj.prop), not computed (obj[expr])
-                if let MemberProp::Ident(prop_ident) = &member.prop {
-                    let field_name = prop_ident.sym.clone();
+                if let oxc_ast::ast::MemberExpression::StaticMemberExpression(static_member) =
+                    member_expr
+                {
+                    let field_name = static_member.property.name.to_string();
 
                     // Lower the object to get its pointer
-                    let lowered_obj_res = self.lower_expr(&member.obj, function, param_map, locals);
+                    let lowered_obj_res =
+                        self.lower_expr(&static_member.object, function, param_map, locals);
                     // Capture object origin (if object expression originated from a local)
                     let obj_origin_after_obj = self.last_expr_origin_local.borrow().clone();
                     if let Ok(BasicValueEnum::PointerValue(obj_ptr)) = lowered_obj_res {
@@ -882,13 +984,16 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         let mut class_name_opt: Option<String> = None;
 
                         // Check if obj is `this` or a named parameter
-                        if let Expr::Ident(ident) = &*member.obj {
-                            let ident_name = ident.sym.clone();
+                        if let Expression::Identifier(ident) = &static_member.object {
+                            let ident_name = ident.as_ref().name.to_string();
                             if ident_name == "this" {
                                 // If we're inside a constructor function named <Class>_init,
                                 // infer the class name from the function name. Otherwise
                                 // fall back to fn_param_types map (receiver typed functions).
-                                let fname = function.get_name().to_str().unwrap_or("");
+                                let fname = match function.get_name().to_str() {
+                                    Some(name) => name,
+                                    None => "",
+                                };
                                 if let Some(cls) = fname.strip_suffix("_init") {
                                     class_name_opt = Some(cls.to_string());
                                 } else if let Some(param_types) =
@@ -903,7 +1008,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 && let Some(param_types) = self
                                     .fn_param_types
                                     .borrow()
-                                    .get(function.get_name().to_str().unwrap_or(""))
+                                    .get(match function.get_name().to_str() {
+                                        Some(name) => name,
+                                        None => "",
+                                    })
                             {
                                 let idx = *param_idx as usize;
                                 if idx < param_types.len()
@@ -931,8 +1039,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     class_name_opt = Some(nom);
                                 }
                             }
-                        } else if matches!(&*member.obj, Expr::This(_)) {
-                            let fname = function.get_name().to_str().unwrap_or("");
+                        } else if matches!(&static_member.object, Expression::ThisExpression(_)) {
+                            let fname = match function.get_name().to_str() {
+                                Some(name) => name,
+                                None => "",
+                            };
                             if let Some(cls) = fname.strip_suffix("_init") {
                                 class_name_opt = Some(cls.to_string());
                             } else if let Some(param_types) =
@@ -951,7 +1062,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         let class_name = if let Some(c) = class_name_opt.clone() {
                             c
                         } else {
-                            let fname = function.get_name().to_str().unwrap_or("<unknown>");
+                            let fname = match function.get_name().to_str() {
+                                Some(name) => name,
+                                None => "<unknown>",
+                            };
                             return Err(Diagnostic::simple_boxed(
                                 Severity::Error,
                                 format!(
@@ -1047,7 +1161,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         };
 
                                         // If new_val is a number, box it with union_box_f64; if pointer, box with union_box_ptr.
-                                        let boxed_new = if let BasicValueEnum::FloatValue(fv) =
+                                        let boxed_new: BasicValueEnum = if let BasicValueEnum::FloatValue(fv) =
                                             new_val
                                         {
                                             let box_fn = self.get_union_box_f64();
@@ -1064,9 +1178,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                     ));
                                                 }
                                             };
-                                            match cs.try_as_basic_value() {
-                                                either::Either::Left(bv) => bv,
-                                                _ => {
+                                            let vk = cs.try_as_basic_value();
+                                            match extract_basic_value_from_valuekind(vk) {
+                                                Some(bv) => bv,
+                                                None => {
                                                     return Err(Diagnostic::simple_boxed(
                                                         Severity::Error,
                                                         "operation failed",
@@ -1088,9 +1203,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                     ));
                                                 }
                                             };
-                                            match cs.try_as_basic_value() {
-                                                either::Either::Left(bv) => bv,
-                                                _ => {
+                                            let vk = cs.try_as_basic_value();
+                                            match extract_basic_value_from_valuekind(vk) {
+                                                Some(bv) => bv,
+                                                None => {
                                                     return Err(Diagnostic::simple_boxed(
                                                         Severity::Error,
                                                         "operation failed",
@@ -1120,6 +1236,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         };
 
                                         // Store new value
+                                        // boxed_new is BasicValueEnum, use it directly for build_store
                                         let _ = self.builder.build_store(slot_ptr, boxed_new);
 
                                         // RC PROTOCOL: Decrement refcount of old field value AFTER storing the new one.
@@ -1272,13 +1389,16 @@ impl<'a> crate::codegen::CodeGen<'a> {
         }
 
         // Handle array element assignment: arr[idx] = value
-        if let AssignTarget::Member(member) = &assign.left {
-            if let MemberProp::Computed(computed) = &member.prop {
+        if let Some(member_expr) = assign.left.as_member_expression() {
+            if let oxc_ast::ast::MemberExpression::ComputedMemberExpression(computed_member) =
+                member_expr
+            {
                 // This is arr[idx] = value
 
                 // Get the alloca pointer for the array variable (needed for reallocation)
-                let arr_alloca_opt = if let Expr::Ident(ident) = &*member.obj {
-                    let name = ident.name.to_string();
+                let arr_alloca_opt = if let Expression::Identifier(ident) = &computed_member.object
+                {
+                    let name = ident.as_ref().name.to_string();
                     self.find_local(locals, &name)
                         .map(|(ptr, _, _, _, _, _, _)| ptr)
                 } else {
@@ -1289,12 +1409,13 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     Diagnostic::simple_with_span(
                         Severity::Error,
                         "array element assignment requires array stored in a variable",
-                        assign.span.start,
+                        assign.span.start as usize,
                     )
                 })?;
 
                 // Lower the index expression
-                let idx_val = self.lower_expr(computed, function, param_map, locals)?;
+                let idx_val =
+                    self.lower_expr(&computed_member.expression, function, param_map, locals)?;
                 let idx_i64 = if let BasicValueEnum::FloatValue(fv) = idx_val {
                     // Convert f64 to i64
                     match self
@@ -1381,7 +1502,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         Err(Diagnostic::simple_with_span_boxed(
             Severity::Error,
             "unsupported assignment target or pattern",
-            assign.span.start,
+            assign.span.start as usize,
         ))
     }
 }

@@ -63,7 +63,6 @@ fi
 export OATS_OUT_DIR="${REPO_ROOT}/aot_out"
 export OATS_RUNTIME_PATH="${REPO_ROOT}/target/${BUILD_PROFILE}/libruntime.a"
 export OATS_STD_PATH="${REPO_ROOT}/target/${BUILD_PROFILE}/liboats_std.a"
-export OATS_PRIMITIVES_PATH="${REPO_ROOT}/target/${BUILD_PROFILE}/liboats_primitives.a"
 
 # Set OATS_OATSC_PATH to use the local oatsc binary
 export OATS_OATSC_PATH="$OATSC_BIN"

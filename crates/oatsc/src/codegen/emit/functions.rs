@@ -4,6 +4,7 @@
 
 use crate::diagnostics::Severity;
 use inkwell::values::{BasicValue, FunctionValue};
+use oxc_ast::ast::Function;
 
 impl<'a> crate::codegen::CodeGen<'a> {
     /// Generates LLVM IR for a function declaration.
@@ -73,7 +74,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         self.current_escape_info.borrow_mut().replace(escape_info);
 
         // If this is an `async` function, delegate to async handling
-        if func_decl.is_async {
+        if func_decl.r#async {
             return self.gen_async_function_ir(
                 func_name,
                 func_decl,
@@ -85,7 +86,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         }
 
         // If this is a `generator` function, delegate to generator handling
-        if func_decl.is_generator {
+        if func_decl.generator {
             return self.gen_generator_function_ir(
                 func_name,
                 func_decl,
@@ -132,7 +133,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         let mut emitted_terminator = false;
         if let Some(body) = &func_decl.body {
             emitted_terminator =
-                self.lower_stmts(&body.stmts, function, &param_map, &mut locals_stack)?;
+                self.lower_stmts(&body.statements, function, &param_map, &mut locals_stack)?;
         }
 
         // Debug: if the function had a body but no terminator was emitted,

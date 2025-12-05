@@ -8,7 +8,6 @@
 //! - `expr` : expression lowering
 //! - `stmt` : statement lowering
 //! - `helpers` : small re-usable utilities
-//! - `const_eval` : compile-time constant evaluation
 //! - `escape` : escape analysis for RC optimization
 //!
 //! `CodeGen` also exposes getters for runtime helper functions (for
@@ -41,8 +40,6 @@ use inkwell::values::PointerValue;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
-pub mod const_eval;
-pub mod const_globals;
 pub mod emit;
 pub mod escape;
 pub mod expr;
@@ -52,8 +49,6 @@ pub mod host_main;
 pub mod runtime_decls;
 pub mod stmt;
 pub mod utils;
-
-use crate::codegen::const_eval::ConstValue;
 
 // Locals are represented as a tuple (ptr, ty, initialized, is_const) in many
 // helper modules. Use the same alias here so different files agree on the
@@ -157,7 +152,7 @@ pub struct CodeGen<'a> {
     /// Class name -> parent class name (None if no parent)
     pub class_parents: RefCell<HashMap<String, Option<String>>>,
     /// Type alias name -> (type parameters, aliased type). None type_params for non-generic aliases
-    pub type_aliases: RefCell<HashMap<String, (Option<Vec<String>>, oats_ast::TsType)>>,
+    pub type_aliases: RefCell<HashMap<String, (Option<Vec<String>>, oxc_ast::ast::TSType<'a>)>>,
     /// Function name -> parameter types
     pub fn_param_types: RefCell<HashMap<String, Vec<crate::types::OatsType>>>,
     /// Stack of active loop contexts for break/continue
@@ -222,7 +217,6 @@ pub struct CodeGen<'a> {
     /// Cache of declared external std functions
     pub external_std_fns: RefCell<HashMap<String, FunctionValue<'a>>>,
     /// Compile-time const items: name -> ConstValue
-    pub const_items: RefCell<HashMap<String, ConstValue>>,
     /// Emitted LLVM globals for const heap objects
     pub const_globals: RefCell<HashMap<String, PointerValue<'a>>>,
     /// Interned const values: stable key -> global pointer
@@ -231,7 +225,7 @@ pub struct CodeGen<'a> {
     pub current_escape_info: RefCell<Option<crate::codegen::escape::EscapeInfo>>,
     /// Nested generic functions: name -> (AST, signature)
     pub nested_generic_fns:
-        RefCell<HashMap<String, (oats_ast::Function, crate::types::FunctionSig)>>,
+        RefCell<HashMap<String, (oxc_ast::ast::Function<'a>, crate::types::FunctionSig)>>,
     /// Monomorphization cache: key -> specialized function name
     pub monomorphized_map: RefCell<HashMap<String, String>>,
     /// Rapid Type Analysis results for optimization
@@ -302,9 +296,10 @@ impl<'a> CodeGen<'a> {
     fn get_promise_resolve(&self) -> FunctionValue<'a> {
         // promise_resolve(i8*) -> i8*
         let fn_type = self.i8ptr_t.fn_type(&[self.i8ptr_t.into()], false);
-        self.module
-            .get_function("promise_resolve")
-            .unwrap_or_else(|| self.module.add_function("promise_resolve", fn_type, None))
+        match self.module.get_function("promise_resolve") {
+            Some(f) => f,
+            None => self.module.add_function("promise_resolve", fn_type, None),
+        }
     }
 
     fn get_promise_poll_into(&self) -> FunctionValue<'a> {
@@ -312,20 +307,19 @@ impl<'a> CodeGen<'a> {
         let fn_type = self
             .i32_t
             .fn_type(&[self.i8ptr_t.into(), self.i8ptr_t.into()], false);
-        self.module
-            .get_function("promise_poll_into")
-            .unwrap_or_else(|| self.module.add_function("promise_poll_into", fn_type, None))
+        match self.module.get_function("promise_poll_into") {
+            Some(f) => f,
+            None => self.module.add_function("promise_poll_into", fn_type, None),
+        }
     }
 
     fn get_promise_new_from_state(&self) -> FunctionValue<'a> {
         // promise_new_from_state(i8*) -> i8*
         let fn_type = self.i8ptr_t.fn_type(&[self.i8ptr_t.into()], false);
-        self.module
-            .get_function("promise_new_from_state")
-            .unwrap_or_else(|| {
-                self.module
-                    .add_function("promise_new_from_state", fn_type, None)
-            })
+        match self.module.get_function("promise_new_from_state") {
+            Some(f) => f,
+            None => self.module.add_function("promise_new_from_state", fn_type, None),
+        }
     }
 
     fn get_executor_enqueue(&self) -> FunctionValue<'a> {
@@ -334,17 +328,19 @@ impl<'a> CodeGen<'a> {
             .context
             .void_type()
             .fn_type(&[self.i8ptr_t.into()], false);
-        self.module
-            .get_function("executor_enqueue")
-            .unwrap_or_else(|| self.module.add_function("executor_enqueue", fn_type, None))
+        match self.module.get_function("executor_enqueue") {
+            Some(f) => f,
+            None => self.module.add_function("executor_enqueue", fn_type, None),
+        }
     }
 
     fn get_executor_run(&self) -> FunctionValue<'a> {
         // executor_run() -> void
         let fn_type = self.context.void_type().fn_type(&[], false);
-        self.module
-            .get_function("executor_run")
-            .unwrap_or_else(|| self.module.add_function("executor_run", fn_type, None))
+        match self.module.get_function("executor_run") {
+            Some(f) => f,
+            None => self.module.add_function("executor_run", fn_type, None),
+        }
     }
 
     fn get_rc_dec(&self) -> FunctionValue<'a> {
@@ -496,41 +492,44 @@ impl<'a> CodeGen<'a> {
     }
 
     fn get_array_get_f64(&self) -> FunctionValue<'a> {
-        self.module
-            .get_function("array_get_f64")
-            .unwrap_or_else(|| {
+        match self.module.get_function("array_get_f64") {
+            Some(f) => f,
+            None => {
                 let fn_type = self
                     .f64_t
                     .fn_type(&[self.i8ptr_t.into(), self.i64_t.into()], false);
                 self.module.add_function("array_get_f64", fn_type, None)
-            })
+            }
+        }
     }
 
     fn get_array_get_ptr(&self) -> FunctionValue<'a> {
-        self.module
-            .get_function("array_get_ptr")
-            .unwrap_or_else(|| {
+        match self.module.get_function("array_get_ptr") {
+            Some(f) => f,
+            None => {
                 let fn_type = self
                     .i8ptr_t
                     .fn_type(&[self.i8ptr_t.into(), self.i64_t.into()], false);
                 self.module.add_function("array_get_ptr", fn_type, None)
-            })
+            }
+        }
     }
 
     fn get_array_get_length(&self) -> FunctionValue<'a> {
-        self.module
-            .get_function("array_get_length")
-            .unwrap_or_else(|| {
+        match self.module.get_function("array_get_length") {
+            Some(f) => f,
+            None => {
                 // array_get_length(arr_ptr: i8*) -> i64
                 let fn_type = self.i64_t.fn_type(&[self.i8ptr_t.into()], false);
                 self.module.add_function("array_get_length", fn_type, None)
-            })
+            }
+        }
     }
 
     fn get_array_set_f64(&self) -> FunctionValue<'a> {
-        self.module
-            .get_function("array_set_f64")
-            .unwrap_or_else(|| {
+        match self.module.get_function("array_set_f64") {
+            Some(f) => f,
+            None => {
                 // array_set_f64(arr_ptr: i8**, idx: i64, v: f64) -> void
                 // Takes pointer-to-pointer to allow reallocation
                 // Represent i8** as pointer-to (i8*) type
@@ -541,13 +540,14 @@ impl<'a> CodeGen<'a> {
                     false,
                 );
                 self.module.add_function("array_set_f64", fn_type, None)
-            })
+            }
+        }
     }
 
     fn get_array_set_ptr(&self) -> FunctionValue<'a> {
-        self.module
-            .get_function("array_set_ptr")
-            .unwrap_or_else(|| {
+        match self.module.get_function("array_set_ptr") {
+            Some(f) => f,
+            None => {
                 // array_set_ptr(arr_ptr: i8**, idx: i64, p: i8*) -> void
                 // Takes pointer-to-pointer to allow reallocation
                 // Represent i8** as pointer-to (i8*) type
@@ -558,7 +558,8 @@ impl<'a> CodeGen<'a> {
                     false,
                 );
                 self.module.add_function("array_set_ptr", fn_type, None)
-            })
+            }
+        }
     }
 
     // --- Main Function Generation ---
@@ -645,7 +646,7 @@ impl<'a> CodeGen<'a> {
     fn create_param_allocas(
         &self,
         function: FunctionValue<'a>,
-        func_decl: &oats_ast::Function,
+        func_decl: &oxc_ast::ast::Function,
         llvm_param_types: &[BasicTypeEnum<'a>],
         receiver_name: Option<&str>,
     ) -> crate::diagnostics::DiagnosticResult<(HashMap<String, u32>, LocalsStackLocal<'a>)> {
@@ -676,10 +677,14 @@ impl<'a> CodeGen<'a> {
         // function (if present).
         for idx_ref in param_map.values() {
             let idx = *idx_ref;
+            let function_name = match function.get_name().to_str() {
+                Some(name) => name,
+                None => "",
+            };
             if let Some(param_types) = self
                 .fn_param_types
                 .borrow()
-                .get(function.get_name().to_str().unwrap_or(""))
+                .get(function_name)
             {
                 let idx_usize = idx as usize;
                 if idx_usize < param_types.len() {

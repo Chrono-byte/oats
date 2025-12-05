@@ -47,6 +47,11 @@ impl<'a> CodeGen<'a> {
         }
 
         // Return the value of the last expression
-        self.lower_expr(&seq.expressions[seq.expressions.len() - 1], function, param_map, locals)
+        self.lower_expr(
+            &seq.expressions[seq.expressions.len() - 1],
+            function,
+            param_map,
+            locals,
+        )
     }
 }

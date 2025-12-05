@@ -22,7 +22,7 @@ type LocalsStackLocal<'a> = Vec<HashMap<String, LocalEntry<'a>>>;
 impl<'a> crate::codegen::CodeGen<'a> {
     pub(crate) fn lower_switch_stmt(
         &self,
-        switch_stmt: &oats_ast::SwitchStmt,
+        switch_stmt: &oxc_ast::ast::SwitchStatement,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals_stack: &mut LocalsStackLocal<'a>,
@@ -78,69 +78,33 @@ impl<'a> crate::codegen::CodeGen<'a> {
             inkwell::values::IntValue<'a>,
             inkwell::basic_block::BasicBlock<'a>,
         )> = Vec::new();
-        let mut non_constant_cases: Vec<(usize, &oats_ast::SwitchCase)> = Vec::new();
-        let const_map = self.const_items.borrow();
-        let const_map_ref = &*const_map;
+        let mut non_constant_cases: Vec<(usize, &oxc_ast::ast::SwitchCase)> = Vec::new();
 
         // Process each case to build switch cases
+        // const_eval removed - only handle direct numeric literals
         for (case_idx, case) in switch_stmt.cases.iter().enumerate() {
             if let Some(test_expr) = &case.test {
-                // Try to evaluate as a constant first
-                match crate::codegen::const_eval::eval_const_expr(
-                    test_expr,
-                    case.span.start,
-                    const_map_ref,
-                ) {
-                    Ok(const_val) => {
-                        // Convert constant value to i64
-                        let int_val = match const_val {
-                            crate::codegen::const_eval::ConstValue::Number(n) => {
-                                self.i64_t.const_int(n as i64 as u64, true)
-                            }
-                            crate::codegen::const_eval::ConstValue::I64(n) => {
-                                self.i64_t.const_int(n as u64, true)
-                            }
-                            crate::codegen::const_eval::ConstValue::I32(n) => {
-                                self.i64_t.const_int(n as u64, true)
-                            }
-                            crate::codegen::const_eval::ConstValue::I16(n) => {
-                                self.i64_t.const_int(n as u64, true)
-                            }
-                            crate::codegen::const_eval::ConstValue::I8(n) => {
-                                self.i64_t.const_int(n as u64, true)
-                            }
-                            crate::codegen::const_eval::ConstValue::U64(n) => {
-                                self.i64_t.const_int(n, false)
-                            }
-                            crate::codegen::const_eval::ConstValue::U32(n) => {
-                                self.i64_t.const_int(n as u64, false)
-                            }
-                            crate::codegen::const_eval::ConstValue::U16(n) => {
-                                self.i64_t.const_int(n as u64, false)
-                            }
-                            crate::codegen::const_eval::ConstValue::U8(n) => {
-                                self.i64_t.const_int(n as u64, false)
-                            }
-                            _ => {
-                                // Non-numeric constant, treat as non-constant
-                                non_constant_cases.push((case_idx, case));
-                                continue;
-                            }
-                        };
+                // Try to handle numeric literals directly
+                let int_val_opt = match test_expr {
+                    oxc_ast::ast::Expression::NumericLiteral(n) => {
+                        // NumericLiteral.value is f64, convert to i64
+                        Some(self.i64_t.const_int(n.value as i64 as u64, true))
+                    }
+                    _ => None,
+                };
 
-                        // Find the corresponding case block
-                        if let Some(case_block) = case_blocks
-                            .iter()
-                            .find(|(idx, _)| *idx == case_idx)
-                            .map(|(_, bb)| *bb)
-                        {
-                            switch_cases.push((int_val, case_block));
-                        }
+                if let Some(int_val) = int_val_opt {
+                    // Find the corresponding case block
+                    if let Some(case_block) = case_blocks
+                        .iter()
+                        .find(|(idx, _)| *idx == case_idx)
+                        .map(|(_, bb)| *bb)
+                    {
+                        switch_cases.push((int_val, case_block));
                     }
-                    Err(_) => {
-                        // Not a constant - will use if-else chain
-                        non_constant_cases.push((case_idx, case));
-                    }
+                } else {
+                    // Not a numeric literal - will use if-else chain
+                    non_constant_cases.push((case_idx, case));
                 }
             }
         }
@@ -149,7 +113,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
         // Start with the switch instruction for constant cases, then chain if-else for non-constants
         let current_block = if non_constant_cases.is_empty() {
             // All cases are constant - use pure switch
-            let default_target = default_block.unwrap_or(merge_block);
+            let default_target = match default_block {
+                Some(block) => block,
+                None => merge_block,
+            };
             let _switch_inst = self
                 .builder
                 .build_switch(disc_i64, default_target, switch_cases.as_slice())
@@ -163,18 +130,24 @@ impl<'a> crate::codegen::CodeGen<'a> {
         } else {
             // We have non-constant cases - need if-else chain
             // First, handle constant cases with switch, defaulting to first non-constant check
-            let first_non_const_bb = case_blocks
+            let first_non_const_bb = match case_blocks
                 .iter()
                 .find(|(idx, _)| non_constant_cases.iter().any(|&(nc_idx, _)| nc_idx == *idx))
                 .map(|(_, bb)| *bb)
-                .unwrap_or_else(|| {
+            {
+                Some(bb) => bb,
+                None => {
                     // No matching case block found, create a new one for the if-else chain
                     self.context
                         .append_basic_block(function, "switch.ifelse.start")
-                });
+                }
+            };
 
             let default_target = if non_constant_cases.is_empty() {
-                default_block.unwrap_or(merge_block)
+                match default_block {
+                    Some(block) => block,
+                    None => merge_block,
+                }
             } else {
                 first_non_const_bb
             };
@@ -232,18 +205,24 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         })?;
 
                     // Find case block
-                    let case_bb = case_blocks
+                    let case_bb = match case_blocks
                         .iter()
                         .find(|(idx, _)| *idx == case_idx)
                         .map(|(_, bb)| *bb)
-                        .unwrap_or(merge_block);
+                    {
+                        Some(bb) => bb,
+                        None => merge_block,
+                    };
 
                     // Create next block for remaining cases
                     let next_bb = if nc_idx + 1 < non_constant_cases.len() {
                         self.context
                             .append_basic_block(function, &format!("switch.ifelse.{}", nc_idx + 1))
                     } else {
-                        default_block.unwrap_or(merge_block)
+                        match default_block {
+                            Some(block) => block,
+                            None => merge_block,
+                        }
                     };
 
                     // Branch: if equal, go to case block; otherwise, check next case
@@ -258,20 +237,26 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
         for (case_idx, case) in switch_stmt.cases.iter().enumerate() {
             let case_block = if case.test.is_some() {
-                case_blocks
+                match case_blocks
                     .iter()
                     .find(|(idx, _)| *idx == case_idx)
                     .map(|(_, bb)| *bb)
-                    .unwrap_or(merge_block)
+                {
+                    Some(bb) => bb,
+                    None => merge_block,
+                }
             } else {
-                default_block.unwrap_or(merge_block)
+                match default_block {
+                    Some(block) => block,
+                    None => merge_block,
+                }
             };
 
             self.builder.position_at_end(case_block);
 
             // Lower the case body statements
             let case_terminated =
-                self.lower_stmts(&case.cons, function, param_map, locals_stack)?;
+                self.lower_stmts(&case.consequent, function, param_map, locals_stack)?;
 
             // If this case didn't terminate, we need to branch to the next case or merge
             if !case_terminated {
@@ -281,13 +266,19 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     // Fall through to next case
                     let next_case = &switch_stmt.cases[next_case_idx];
                     let next_block = if next_case.test.is_some() {
-                        case_blocks
+                        match case_blocks
                             .iter()
                             .find(|(idx, _)| *idx == next_case_idx)
                             .map(|(_, bb)| *bb)
-                            .unwrap_or(merge_block)
+                        {
+                            Some(bb) => bb,
+                            None => merge_block,
+                        }
                     } else {
-                        default_block.unwrap_or(merge_block)
+                        match default_block {
+                            Some(block) => block,
+                            None => merge_block,
+                        }
                     };
                     let _ = self.builder.build_unconditional_branch(next_block);
                 } else {

@@ -49,7 +49,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     oxc_ast::ast::Statement::BlockStatement(block) => {
                         self.lower_stmts(&block.body, function, param_map, locals_stack)?
                     }
-                    _ => self.lower_stmt(ifstmt.consequent, function, param_map, locals_stack)?,
+                    _ => self.lower_stmt(&ifstmt.consequent, function, param_map, locals_stack)?,
                 };
                 if !then_terminated {
                     let _ = self.builder.build_unconditional_branch(merge_bb);
@@ -58,10 +58,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 // Build else block
                 self.builder.position_at_end(else_bb);
                 let else_terminated: bool = match &ifstmt.alternate {
-                    oxc_ast::ast::Statement::Block(block) => {
-                        self.lower_stmts(&block.body, function, param_map, locals_stack)?
-                    }
-                    _ => self.lower_stmt(ifstmt.alternate, function, param_map, locals_stack)?,
+                    Some(alt) => self.lower_stmt(alt, function, param_map, locals_stack)?,
+                    None => false,
                 };
                 if !else_terminated {
                     let _ = self.builder.build_unconditional_branch(merge_bb);
@@ -99,13 +97,15 @@ impl<'a> crate::codegen::CodeGen<'a> {
         // Lower init (can be VarDecl or Expr)
         if let Some(init) = &forstmt.init {
             match init {
-                ForInit::VarDecl(var_decl) => {
-                    // Handle variable declaration in for loop init (e.g., let i = 0)
+                ForStatementInit::VariableDeclaration(var_decl) => {
                     self.lower_decl_stmt(var_decl, function, param_map, locals_stack)?;
                 }
-                ForInit::Expr(expr) => {
-                    // Handle expression (e.g., i = 0)
-                    let _ = self.lower_expr(expr, function, param_map, locals_stack);
+                _ => {
+                    // ForStatementInit can be various expression types
+                    // Use as_expression() to get the expression if available
+                    if let Some(expr) = init.as_expression() {
+                        let _ = self.lower_expr(expr, function, param_map, locals_stack);
+                    }
                 }
             }
         }
@@ -158,7 +158,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
         // Build body block
         self.builder.position_at_end(loop_body_bb);
-        let body_terminated: bool = match &*forstmt.body {
+        let body_terminated: bool = match &forstmt.body {
             Statement::BlockStatement(block) => {
                 self.lower_stmts(&block.body, function, param_map, locals_stack)?
             }
@@ -234,9 +234,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
         // Build body block
         self.builder.position_at_end(loop_body_bb);
-        let body_terminated: bool = match &*while_stmt.body {
-            Stmt::Block(block) => {
-                self.lower_stmts(&block.stmts, function, param_map, locals_stack)?
+        let body_terminated: bool = match &while_stmt.body {
+            Statement::BlockStatement(block) => {
+                self.lower_stmts(&block.body, function, param_map, locals_stack)?
             }
             _ => self.lower_stmt(&while_stmt.body, function, param_map, locals_stack)?,
         };
@@ -282,9 +282,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
         // Build body block
         self.builder.position_at_end(loop_body_bb);
-        let body_terminated: bool = match &*dowhile_stmt.body {
-            Stmt::Block(block) => {
-                self.lower_stmts(&block.stmts, function, param_map, locals_stack)?
+        let body_terminated: bool = match &dowhile_stmt.body {
+            Statement::BlockStatement(block) => {
+                self.lower_stmts(&block.body, function, param_map, locals_stack)?
             }
             _ => self.lower_stmt(&dowhile_stmt.body, function, param_map, locals_stack)?,
         };

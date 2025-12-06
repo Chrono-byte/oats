@@ -15,6 +15,7 @@
 
 pub mod assignments;
 
+use crate::diagnostics::{Diagnostic, Severity};
 use inkwell::values::BasicValueEnum;
 use inkwell::values::FunctionValue;
 use std::collections::HashMap;
@@ -135,8 +136,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             Expression::ArrayExpression(arr) => Ok(literals::lower_array(
                 self, arr, function, param_map, locals,
             )?),
-            Expression::StaticMemberExpression(member)
-            | Expression::ComputedMemberExpression(member) => {
+            Expression::StaticMemberExpression(_) | Expression::ComputedMemberExpression(_) => {
                 self.lower_member_expr(expr, function, param_map, locals)
             }
             // Optional chaining expressions may not be available in this version of oxc_ast
@@ -150,8 +150,13 @@ impl<'a> crate::codegen::CodeGen<'a> {
             Expression::ArrowFunctionExpression(arrow) => {
                 self.lower_arrow_expr(arrow, function, param_map, locals)
             }
-            Expression::FunctionExpression(fn_expr) => {
-                self.lower_fn_expr(fn_expr, function, param_map, locals)
+            Expression::FunctionExpression(_fn_expr) => {
+                // FunctionExpression contains Box<Function>, not ArrowFunctionExpression
+                // For now, return an error - this needs proper implementation
+                Err(Diagnostic::simple_boxed(
+                    Severity::Error,
+                    "FunctionExpression not yet fully supported",
+                ))
             }
             Expression::SequenceExpression(seq) => {
                 self.lower_seq_expr(seq, function, param_map, locals)
@@ -208,18 +213,17 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
         // First, determine the nominal type of member.obj
         let obj_nominal = match member {
-            Expression::StaticMemberExpression(mem) | Expression::ComputedMemberExpression(mem) => {
-                if let Expression::Identifier(ident) = &mem.object() {
+            Expression::StaticMemberExpression(mem) => {
+                if let Expression::Identifier(ident) = &mem.object {
                     let ident_name = ident.name.to_string();
                     // Check if it's `this`
                     if ident_name == "this" {
-                        if let Some(param_types) = self.fn_param_types.borrow().get(match function
+                        if let Some(param_types) = self.fn_param_types.borrow().get(function
                             .get_name()
                             .to_str()
-                        {
-                            Some(name) => name,
-                            None => "",
-                        }) && !param_types.is_empty()
+                            .ok()
+                            .unwrap_or("")
+                        ) && !param_types.is_empty()
                             && let crate::types::OatsType::NominalStruct(n) = &param_types[0]
                         {
                             Some(n.clone())
@@ -229,13 +233,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     }
                     // Check params
                     else if let Some(param_idx) = param_map.get(&ident_name) {
-                        if let Some(param_types) = self.fn_param_types.borrow().get(match function
+                        if let Some(param_types) = self.fn_param_types.borrow().get(function
                             .get_name()
                             .to_str()
-                        {
-                            Some(name) => name,
-                            None => "",
-                        }) {
+                            .ok()
+                            .unwrap_or("")
+                        ) {
                             let idx = *param_idx as usize;
                             if idx < param_types.len()
                                 && let crate::types::OatsType::NominalStruct(n) = &param_types[idx]
@@ -259,7 +262,64 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 } else {
                     // Recursively resolve nested member expressions with depth tracking
                     self.resolve_member_type_with_depth(
-                        &mem.object(),
+                        &mem.object,
+                        function,
+                        param_map,
+                        locals,
+                        depth + 1,
+                    )
+                }
+            }
+            Expression::ComputedMemberExpression(mem) => {
+                if let Expression::Identifier(ident) = &mem.object {
+                    let ident_name = ident.name.to_string();
+                    // Check if it's `this`
+                    if ident_name == "this" {
+                        if let Some(param_types) = self.fn_param_types.borrow().get(function
+                            .get_name()
+                            .to_str()
+                            .ok()
+                            .unwrap_or("")
+                        ) && !param_types.is_empty()
+                            && let crate::types::OatsType::NominalStruct(n) = &param_types[0]
+                        {
+                            Some(n.clone())
+                        } else {
+                            None
+                        }
+                    }
+                    // Check params
+                    else if let Some(param_idx) = param_map.get(&ident_name) {
+                        if let Some(param_types) = self.fn_param_types.borrow().get(function
+                            .get_name()
+                            .to_str()
+                            .ok()
+                            .unwrap_or("")
+                        ) {
+                            let idx = *param_idx as usize;
+                            if idx < param_types.len()
+                                && let crate::types::OatsType::NominalStruct(n) = &param_types[idx]
+                            {
+                                Some(n.clone())
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    }
+                    // Check locals
+                    else if let Some((_, _, _, _, _, nominal, _oats_type)) =
+                        self.find_local(locals, &ident_name)
+                    {
+                        nominal
+                    } else {
+                        None
+                    }
+                } else {
+                    // Recursively resolve nested member expressions with depth tracking
+                    self.resolve_member_type_with_depth(
+                        &mem.object,
                         function,
                         param_map,
                         locals,
@@ -275,10 +335,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
             && let Some(fields) = self.class_fields.borrow().get(&obj_type_name)
         {
             // Get the property name from member
-            if let Expression::StaticMemberExpression(mem)
-            | Expression::ComputedMemberExpression(mem) = member
-            {
-                if let oxc_ast::ast::MemberExpression::StaticMemberExpression(static_mem) = mem {
+            match member {
+                Expression::StaticMemberExpression(static_mem) => {
                     let field_name = static_mem.property.name.to_string();
                     // Find the field and return its type if it's a NominalStruct
                     for (fname, ftype) in fields {
@@ -292,6 +350,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         }
                     }
                 }
+                Expression::ComputedMemberExpression(_) => {
+                    // Computed member expressions (obj[expr]) not supported for field lookup
+                }
+                _ => {}
             }
         }
 

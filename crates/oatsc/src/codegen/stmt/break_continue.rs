@@ -30,7 +30,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         // Find the target loop context
         let target_ctx = if let Some(label) = break_stmt.label.as_ref() {
             // Labeled break: find the loop with matching label
-            let label_str = label.sym.as_str();
+            let label_str = label.name.as_str();
             self.loop_context_stack
                 .borrow()
                 .iter()
@@ -67,7 +67,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         // Find the target loop context
         let target_ctx = if let Some(label) = continue_stmt.label.as_ref() {
             // Labeled continue: find the loop with matching label
-            let label_str = label.sym.as_str();
+            let label_str = label.name.as_str();
             self.loop_context_stack
                 .borrow()
                 .iter()

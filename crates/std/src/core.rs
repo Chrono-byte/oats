@@ -33,10 +33,7 @@ impl OatsString {
             // self.ptr points to the data (offset +16 from object base)
             // The data is null-terminated, so we can use CStr directly
             let cstr = std::ffi::CStr::from_ptr(self.ptr.as_ptr());
-            match cstr.to_str() {
-                Ok(s) => s,
-                Err(_) => "",
-            }
+            cstr.to_str().unwrap_or_default()
         }
     }
 }

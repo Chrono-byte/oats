@@ -5,6 +5,7 @@
 
 use crate::diagnostics::{Diagnostic, Severity};
 use inkwell::values::{BasicValueEnum, FunctionValue};
+use oxc_ast::ast::*;
 use std::collections::HashMap;
 
 type LocalEntry<'a> = (
@@ -21,19 +22,19 @@ type LocalsStackLocal<'a> = Vec<HashMap<String, LocalEntry<'a>>>;
 impl<'a> crate::codegen::CodeGen<'a> {
     pub(crate) fn lower_for_in_stmt(
         &self,
-        for_in: &oxc_ast::ast::ForInStatement,
+        for_in: &ForInStatement<'_>,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals_stack: &mut LocalsStackLocal<'a>,
     ) -> crate::diagnostics::DiagnosticResult<bool> {
         // For-in loops iterate over object property keys
         // Only handle the case where the left-hand side is a var declaration (e.g., `for (let key in obj)`)
-        if let ForHead::VarDecl(var_decl) = &for_in.left
-            && var_decl.decls.len() == 1
+        if let ForStatementLeft::VariableDeclaration(var_decl) = &for_in.left
+            && var_decl.declarations.len() == 1
         {
-            let decl = &var_decl.decls[0];
-            let loop_var_name = match &decl.name {
-                Pat::Ident(ident) => ident.sym.clone(),
+            let decl = &var_decl.declarations[0];
+            let loop_var_name = match &decl.id.kind {
+                BindingPatternKind::BindingIdentifier(ident) => ident.name.to_string(),
                 _ => {
                     return Err(Diagnostic::error(
                         "Destructuring patterns not yet supported in for-in loops",
@@ -41,8 +42,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     .with_code("E1006")
                     .with_label(crate::diagnostics::Label {
                         span: crate::diagnostics::Span {
-                            start: decl.span.start,
-                            end: decl.span.end,
+                            start: decl.span.start as usize,
+                            end: decl.span.end as usize,
                         },
                         message: "Only simple identifier patterns are supported".into(),
                     })
@@ -56,53 +57,58 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 return Err(Diagnostic::simple_with_span_boxed(
                     Severity::Error,
                     "for-in loop requires an object (pointer type)",
-                    for_in.span.start,
+                    for_in.span.start as usize,
                 ));
             }
 
             // Try to infer the class name from the RHS expression
             // All types must be known at compile time - if we can't infer the type, it's an error
             let mut class_name_opt: Option<String> = None;
-            if let Expr::Ident(ident) = &for_in.right {
-                let ident_name = ident.sym.clone();
-                // Check locals for nominal annotation
+            let mut infer_from_ident = |ident_name: &str| {
+                if class_name_opt.is_some() {
+                    return;
+                }
                 if let Some((_, _ty, _init, _is_const, _is_weak, nominal, _oats_type)) =
-                    self.find_local(locals_stack, &ident_name)
+                    self.find_local(locals_stack, ident_name)
                     && let Some(nom) = nominal
                 {
-                    class_name_opt = Some(nom);
-                } else if let Some(param_idx) = param_map.get(&ident_name)
-                    && let Some(param_types) =
-                        self.fn_param_types
-                            .borrow()
-                            .get(match function.get_name().to_str() {
-                                Some(name) => name,
-                                None => "",
-                            })
-                {
-                    let idx = *param_idx as usize;
-                    if idx < param_types.len()
-                        && let crate::types::OatsType::NominalStruct(n) = &param_types[idx]
-                    {
-                        class_name_opt = Some(n.clone());
+                    class_name_opt = Some(nom.clone());
+                    return;
+                }
+                if let Some(param_idx) = param_map.get(ident_name) {
+                    let fname = match function.get_name().to_str() {
+                        Ok(s) => s,
+                        Err(_) => "",
+                    };
+                    if let Some(param_types) = self.fn_param_types.borrow().get(fname) {
+                        let idx = *param_idx as usize;
+                        if let Some(crate::types::OatsType::NominalStruct(n)) = param_types.get(idx)
+                        {
+                            class_name_opt = Some(n.clone());
+                        }
                     }
                 }
-            } else if let Expr::New(new_expr) = &for_in.right
-                && let Expr::Ident(ident) = &*new_expr.callee
-            {
-                // new ClassName() - get class name from callee
-                class_name_opt = Some(ident.sym.clone());
-            } else if let Expr::Member(member) = &for_in.right
-                && let Expr::Ident(ident) = &*member.obj
-            {
-                // obj.field - try to infer from obj
-                let ident_name = ident.sym.clone();
-                if let Some((_, _ty, _init, _is_const, _is_weak, nominal, _oats_type)) =
-                    self.find_local(locals_stack, &ident_name)
-                    && let Some(nom) = nominal
-                {
-                    class_name_opt = Some(nom);
+            };
+            match &for_in.right {
+                Expression::Identifier(ident) => {
+                    infer_from_ident(&ident.as_ref().name.to_string());
                 }
+                Expression::NewExpression(new_expr) => {
+                    if let Expression::Identifier(ident) = &new_expr.callee {
+                        class_name_opt = Some(ident.name.to_string());
+                    }
+                }
+                Expression::StaticMemberExpression(member) => {
+                    if let Expression::Identifier(obj_ident) = &member.object {
+                        infer_from_ident(&obj_ident.as_ref().name.to_string());
+                    }
+                }
+                Expression::ComputedMemberExpression(member) => {
+                    if let Expression::Identifier(obj_ident) = &member.object {
+                        infer_from_ident(&obj_ident.as_ref().name.to_string());
+                    }
+                }
+                _ => {}
             }
 
             // Get field names from class metadata
@@ -113,7 +119,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     return Err(Diagnostic::simple_with_span_boxed(
                         Severity::Error,
                         format!("class '{}' has no registered fields", class_name),
-                        for_in.span.start,
+                        for_in.span.start as usize,
                     ));
                 }
             } else {
@@ -122,7 +128,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 return Err(Diagnostic::simple_with_span_boxed(
                     Severity::Error,
                     "cannot determine object type for for-in loop: all types must be known at compile time",
-                    for_in.span.start,
+                    for_in.span.start as usize,
                 ));
             };
 
@@ -198,20 +204,23 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     "get_key",
                 )
                 .map_err(|_| Diagnostic::error("failed to get key"))?;
-            let key_ptr = if let either::Either::Left(bv) = key_val.try_as_basic_value() {
-                if let BasicValueEnum::PointerValue(pv) = bv {
-                    pv
-                } else {
+            let key_ptr = match key_val.try_as_basic_value() {
+                inkwell::values::ValueKind::Basic(bv) => {
+                    if let BasicValueEnum::PointerValue(pv) = bv {
+                        pv
+                    } else {
+                        return Err(Diagnostic::simple_boxed(
+                            crate::diagnostics::Severity::Error,
+                            "array_get_ptr returned non-pointer",
+                        ));
+                    }
+                }
+                _ => {
                     return Err(Diagnostic::simple_boxed(
                         crate::diagnostics::Severity::Error,
-                        "array_get_ptr returned non-pointer",
+                        "array_get_ptr returned void",
                     ));
                 }
-            } else {
-                return Err(Diagnostic::simple_boxed(
-                    crate::diagnostics::Severity::Error,
-                    "array_get_ptr returned void",
-                ));
             };
 
             // Store key in loop variable
@@ -233,11 +242,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 .insert(loop_var_name.clone(), loop_var_entry);
 
             // Lower loop body
-            let body_terminated = match &*for_in.body {
-                Stmt::Block(block) => {
+            let body_terminated = match &for_in.body {
+                Statement::BlockStatement(block) => {
                     self.lower_stmts(&block.body, function, param_map, locals_stack)?
                 }
-                _ => self.lower_stmt(&for_in.body, function, param_map, locals_stack)?,
+                other => self.lower_stmt(other, function, param_map, locals_stack)?,
             };
 
             // Remove loop variable from locals after body
@@ -269,8 +278,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     .with_code("E1008")
                     .with_label(crate::diagnostics::Label {
                         span: crate::diagnostics::Span {
-                            start: for_in.span.start,
-                            end: for_in.span.end,
+                            start: for_in.span.start as usize,
+                            end: for_in.span.end as usize,
                         },
                         message: "Expected: for (let key in obj)".into(),
                     })
@@ -315,20 +324,23 @@ impl<'a> crate::codegen::CodeGen<'a> {
             )
             .map_err(|_| Diagnostic::error("failed to allocate keys array"))?;
 
-        let array_ptr_val = if let either::Either::Left(bv) = array_ptr.try_as_basic_value() {
-            if let BasicValueEnum::PointerValue(pv) = bv {
-                pv
-            } else {
+        let array_ptr_val = match array_ptr.try_as_basic_value() {
+            inkwell::values::ValueKind::Basic(bv) => {
+                if let BasicValueEnum::PointerValue(pv) = bv {
+                    pv
+                } else {
+                    return Err(Diagnostic::simple_boxed(
+                        crate::diagnostics::Severity::Error,
+                        "array_alloc returned non-pointer",
+                    ));
+                }
+            }
+            _ => {
                 return Err(Diagnostic::simple_boxed(
                     crate::diagnostics::Severity::Error,
-                    "array_alloc returned non-pointer",
+                    "array_alloc returned void",
                 ));
             }
-        } else {
-            return Err(Diagnostic::simple_boxed(
-                crate::diagnostics::Severity::Error,
-                "array_alloc returned void",
-            ));
         };
 
         // Create alloca to store array pointer (array_set_ptr needs i8** for potential reallocation)

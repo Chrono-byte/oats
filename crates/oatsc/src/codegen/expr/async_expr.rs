@@ -87,7 +87,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             };
 
             let ret_iv = match cs.try_as_basic_value() {
-                either::Either::Left(bv) => bv.into_int_value(),
+                inkwell::values::ValueKind::Basic(bv) => bv.into_int_value(),
                 _ => {
                     return Err(Diagnostic::simple_boxed(
                         Severity::Error,
@@ -279,7 +279,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             }
                                         };
                                         let boxed_ptr = match cs.try_as_basic_value() {
-                                            either::Either::Left(bv) => bv.into_pointer_value(),
+                                            inkwell::values::ValueKind::Basic(bv) => {
+                                                bv.into_pointer_value()
+                                            }
                                             _ => {
                                                 return Err(Diagnostic::simple_boxed(
                                                     Severity::Error,

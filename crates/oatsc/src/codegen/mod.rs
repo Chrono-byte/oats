@@ -152,7 +152,7 @@ pub struct CodeGen<'a> {
     /// Class name -> parent class name (None if no parent)
     pub class_parents: RefCell<HashMap<String, Option<String>>>,
     /// Type alias name -> (type parameters, aliased type). None type_params for non-generic aliases
-    pub type_aliases: RefCell<HashMap<String, (Option<Vec<String>>, oxc_ast::ast::TSType<'a>)>>,
+    pub type_aliases: RefCell<HashMap<String, (Option<Vec<String>>, &'a oxc_ast::ast::TSType<'a>)>>,
     /// Function name -> parameter types
     pub fn_param_types: RefCell<HashMap<String, Vec<crate::types::OatsType>>>,
     /// Stack of active loop contexts for break/continue
@@ -662,10 +662,10 @@ impl<'a> CodeGen<'a> {
         if let Some(rname) = receiver_name {
             param_map.insert(rname.to_string(), 0u32);
         }
-        for (i, p) in func_decl.params.iter().enumerate() {
-            match &p.pat {
-                Pat::Ident(ident) => {
-                    let name = ident.sym.clone();
+        for (i, p) in func_decl.params.items.iter().enumerate() {
+            match &p.pattern.kind {
+                oxc_ast::ast::BindingPatternKind::BindingIdentifier(ident) => {
+                    let name = ident.name.to_string();
                     let idx = (i + receiver_name.map_or(0, |_| 1)) as u32;
                     param_map.insert(name, idx);
                 }
@@ -685,10 +685,7 @@ impl<'a> CodeGen<'a> {
         // function (if present).
         for idx_ref in param_map.values() {
             let idx = *idx_ref;
-            let function_name = match function.get_name().to_str() {
-                Some(name) => name,
-                None => "",
-            };
+            let function_name = function.get_name().to_str().unwrap_or("");
             if let Some(param_types) = self.fn_param_types.borrow().get(function_name) {
                 let idx_usize = idx as usize;
                 if idx_usize < param_types.len() {
@@ -724,7 +721,8 @@ impl<'a> CodeGen<'a> {
                                         "union_box_f64_param",
                                     );
                                     if let Ok(cs) = cs
-                                        && let either::Either::Left(bv) = cs.try_as_basic_value()
+                                        && let inkwell::values::ValueKind::Basic(bv) =
+                                            cs.try_as_basic_value()
                                         && let inkwell::values::BasicValueEnum::PointerValue(pv) =
                                             bv
                                     {
@@ -744,7 +742,8 @@ impl<'a> CodeGen<'a> {
                                         "union_box_ptr_param",
                                     );
                                     if let Ok(cs) = cs
-                                        && let either::Either::Left(bv) = cs.try_as_basic_value()
+                                        && let inkwell::values::ValueKind::Basic(bv) =
+                                            cs.try_as_basic_value()
                                         && let inkwell::values::BasicValueEnum::PointerValue(pv) =
                                             bv
                                     {

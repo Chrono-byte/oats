@@ -85,13 +85,14 @@ impl<'a> CodeGen<'a> {
                     .builder
                     .build_call(box_fn, &[fv.into()], "box_yield_f64")
                     .map_err(|_| Diagnostic::error("box call failed"))?;
-                if let either::Either::Left(bv) = cs.try_as_basic_value() {
-                    bv
-                } else {
-                    return Err(Diagnostic::simple_boxed(
-                        crate::diagnostics::Severity::Error,
-                        "box returned void",
-                    ));
+                match cs.try_as_basic_value() {
+                    inkwell::values::ValueKind::Basic(bv) => bv,
+                    _ => {
+                        return Err(Diagnostic::simple_boxed(
+                            crate::diagnostics::Severity::Error,
+                            "box returned void",
+                        ));
+                    }
                 }
             }
             BasicValueEnum::PointerValue(pv) => {
@@ -261,7 +262,7 @@ impl<'a> CodeGen<'a> {
     #[allow(clippy::result_large_err)]
     fn lower_yield_star_expr(
         &self,
-        yield_expr: &YieldExpr,
+        yield_expr: &oxc_ast::ast::YieldExpression<'_>,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals: &mut LocalsStackLocal<'a>,
@@ -386,20 +387,23 @@ impl<'a> CodeGen<'a> {
                 )
             })?;
 
-        let result_val = if let either::Either::Left(bv) = call_result.try_as_basic_value() {
-            if let BasicValueEnum::IntValue(iv) = bv {
-                iv
-            } else {
+        let result_val = match call_result.try_as_basic_value() {
+            inkwell::values::ValueKind::Basic(bv) => {
+                if let BasicValueEnum::IntValue(iv) = bv {
+                    iv
+                } else {
+                    return Err(Diagnostic::simple_boxed(
+                        crate::diagnostics::Severity::Error,
+                        "next returned non-integer",
+                    ));
+                }
+            }
+            _ => {
                 return Err(Diagnostic::simple_boxed(
                     crate::diagnostics::Severity::Error,
-                    "next returned non-integer",
+                    "next returned void",
                 ));
             }
-        } else {
-            return Err(Diagnostic::simple_boxed(
-                crate::diagnostics::Severity::Error,
-                "next returned void",
-            ));
         };
 
         // Check result: 0 = done, 1 = yielded value

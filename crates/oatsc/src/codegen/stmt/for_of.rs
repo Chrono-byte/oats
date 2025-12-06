@@ -33,13 +33,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
     ) -> crate::diagnostics::DiagnosticResult<bool> {
         // Only handle the case where the left-hand side is a var
         // declaration (e.g., `for (let v of rhs)`).
-        // forof.left can be either a VarDecl or a Pat; we match on VarDecl
-        if let ForHead::VarDecl(var_decl) = &forof.left
-            && var_decl.decls.len() == 1
+        if let ForStatementLeft::VariableDeclaration(var_decl) = &forof.left
+            && var_decl.declarations.len() == 1
         {
-            let decl = &var_decl.decls[0];
-            let loop_var_name = match &decl.name {
-                Pat::Ident(ident) => ident.sym.clone(),
+            let decl = &var_decl.declarations[0];
+            let loop_var_name = match &decl.id.kind {
+                BindingPatternKind::BindingIdentifier(ident) => ident.name.to_string(),
                 _ => {
                     return Err(crate::diagnostics::Diagnostic::error(
                         "Destructuring patterns not yet supported in for-of loops",
@@ -47,8 +46,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     .with_code("E1005")
                     .with_label(crate::diagnostics::Label {
                         span: crate::diagnostics::Span {
-                            start: decl.span.start,
-                            end: decl.span.end,
+                            start: decl.span.start as usize,
+                            end: decl.span.end as usize,
                         },
                         message: "Only simple identifier patterns are supported".into(),
                     })
@@ -58,8 +57,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
             {
                 // capture nominal type for the loop variable if annotated
                 let mut declared_nominal: Option<String> = None;
-                if let Some(ty) = &decl.ty
-                    && let Some(mapped) = crate::types::map_ts_type(ty)
+                if let Some(ty) = decl
+                    .init
+                    .as_ref()
+                    .and_then(|_| decl.id.type_annotation.as_ref())
+                    .or(decl.id.type_annotation.as_ref())
+                    && let Some(mapped) = crate::types::map_ts_type(&ty.type_annotation)
                     && let crate::types::OatsType::NominalStruct(n) = &mapped
                 {
                     declared_nominal = Some(n.clone());
@@ -114,7 +117,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             Ok(cs) => cs,
                             Err(_) => return Ok(false),
                         };
-                        if let either::Either::Left(bv) = cs.try_as_basic_value() {
+                        if let inkwell::values::ValueKind::Basic(bv) = cs.try_as_basic_value() {
                             let len = bv.into_int_value();
                             let cur_idx =
                                 match self.builder.build_load(self.i64_t, idx_alloca, "idx_load") {
@@ -168,7 +171,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             Ok(cs) => cs,
                             Err(_) => return Ok(false),
                         };
-                        if let either::Either::Left(bv) = cs.try_as_basic_value() {
+                        if let inkwell::values::ValueKind::Basic(bv) = cs.try_as_basic_value() {
                             let ty = bv.get_type().as_basic_type_enum();
                             let alloca = match self.builder.build_alloca(ty, &loop_var_name) {
                                 Ok(a) => a,
@@ -208,7 +211,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             Ok(cs) => cs,
                             Err(_) => return Ok(false),
                         };
-                        if let either::Either::Left(bv) = cs.try_as_basic_value() {
+                        if let inkwell::values::ValueKind::Basic(bv) = cs.try_as_basic_value() {
                             let pv = bv.into_pointer_value();
                             let ty = pv.get_type().as_basic_type_enum();
                             let alloca = match self.builder.build_alloca(ty, &loop_var_name) {
@@ -237,7 +240,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     }
 
                     // Lower the loop body: handle a Block or single statement
-                    let terminated = match &*forof.body {
+                    let terminated = match &forof.body {
                         Statement::BlockStatement(block) => {
                             self.lower_stmts(&block.body, function, param_map, locals_stack)?
                         }

@@ -112,7 +112,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         }
                     };
                     let either = cs.try_as_basic_value();
-                    if let either::Either::Left(bv) = either {
+                    if let inkwell::values::ValueKind::Basic(bv) = either {
                         let len = bv.into_int_value();
                         let zero64 = self.i64_t.const_int(0, false);
                         let len_nonzero = match self.builder.build_int_compare(
@@ -182,7 +182,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         let else_val = match else_val {
             Ok(v) => Ok(v),
             Err(_) => {
-                if let oxc_ast::ast::Expression::Identifier(id) = &*cond.alternate {
+                if let oxc_ast::ast::Expression::Identifier(id) = &cond.alternate {
                     if id.name == "undefined" {
                         let null_ptr = self.i8ptr_t.const_null();
                         // else arm is `undefined` -> using null pointer fallback
@@ -241,7 +241,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             let box_fn = codegen.get_union_box_f64();
                             let cs = codegen.builder.build_call(box_fn, &[fv.into()], "box_phi");
                             if let Ok(cs) = cs
-                                && let either::Either::Left(bv2) = cs.try_as_basic_value()
+                                && let inkwell::values::ValueKind::Basic(bv2) =
+                                    cs.try_as_basic_value()
                             {
                                 return Ok(bv2);
                             }
@@ -262,7 +263,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     .builder
                                     .build_call(box_fn, &[as_f64.into()], "box_phi");
                             if let Ok(cs) = cs
-                                && let either::Either::Left(bv2) = cs.try_as_basic_value()
+                                && let inkwell::values::ValueKind::Basic(bv2) =
+                                    cs.try_as_basic_value()
                             {
                                 return Ok(bv2);
                             }
@@ -330,7 +332,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         .builder
                         .build_call(unbox_fn, &[boxed_else.into()], "unbox_else");
                     if let Ok(cs) = cs
-                        && let either::Either::Left(bv) = cs.try_as_basic_value()
+                        && let inkwell::values::ValueKind::Basic(bv) = cs.try_as_basic_value()
                     {
                         let else_f64 = bv;
                         self.ensure_unconditional_branch(merge_bb);

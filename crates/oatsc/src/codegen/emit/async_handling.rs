@@ -3,7 +3,7 @@
 //! This module contains code generation logic for async functions, including
 //! live-set computation for await points and async function lowering.
 
-use crate::codegen::helpers::extract_basic_value_from_valuekind;
+use crate::{codegen::helpers::extract_basic_value_from_valuekind, diagnostics::Diagnostic};
 use crate::diagnostics::Severity;
 use inkwell::values::{BasicValue, FunctionValue};
 use oxc_ast::ast::*;
@@ -1055,7 +1055,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     }
                 };
                 // Load the result (assuming it's ready now - executor wouldn't wake us if not)
-                let resumed_value =
+                let _resumed_value =
                     match self
                         .builder
                         .build_load(self.i8ptr_t, out_alloca, "resume_await_loaded")
@@ -1076,10 +1076,15 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 if let Some(inst) = first_inst
                     && inst.get_opcode() == inkwell::values::InstructionOpcode::Phi
                 {
-                    use inkwell::values::AsValueRef;
-                    if let Some(phi_value) = inkwell::values::PhiValue::new(inst.as_value_ref()) {
-                        phi_value.add_incoming(&[(&resumed_value.as_basic_value_enum(), *rb)]);
-                    }
+                    // use inkwell::values::AsValueRef;
+                    // let phi_value = unsafe { inkwell::values::PhiValue::new(inst.as_value_ref()) };
+                    // phi_value.add_incoming(&[(&resumed_value.as_basic_value_enum(), *rb)]);
+
+                    // stubbed out because we prefer not to use unsafe code
+                    return Err(Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "phi node in cont_bb",
+                    ).into());
                 }
             }
         }

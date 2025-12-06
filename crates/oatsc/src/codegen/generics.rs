@@ -72,7 +72,7 @@ impl<'a> CodeGen<'a> {
             }
         };
 
-        Ok(arr_ptr.into_pointer_value().as_basic_value_enum())
+        Ok(arr_ptr.as_basic_value_enum())
     }
 
     /// Monomorphizes a generic function with concrete type arguments.
@@ -103,17 +103,13 @@ impl<'a> CodeGen<'a> {
         }
 
         // Lookup the generic function AST and its signature
-        // Note: Function doesn't implement Clone, so we store references
-        let (func_ast, fsig) =
-            self.nested_generic_fns
-                .borrow()
-                .get(func_name)
-                .ok_or_else(|| {
-                    Diagnostic::simple_boxed(
-                        Severity::Error,
-                        format!("Generic function '{}' not found", func_name),
-                    )
-                })?;
+        // Note: Function doesn't implement Clone, so we work with references
+        // We need to keep the borrow alive for the entire function
+        let nested_fns_borrow = self.nested_generic_fns.borrow();
+        let (func_ast, fsig) = match nested_fns_borrow.get(func_name) {
+            Some((func_ast, fsig)) => (func_ast, fsig.clone()),
+            None => return Err(Diagnostic::simple_boxed(Severity::Error, format!("Generic function '{}' not found", func_name))),
+        };
 
         // Obtain type parameter names: prefer fsig.type_params
         let tp_names = fsig.type_params.clone();

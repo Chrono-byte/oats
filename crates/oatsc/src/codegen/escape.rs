@@ -142,27 +142,23 @@ impl EscapeAnalyzer {
             }
             BindingPatternKind::ArrayPattern(arr) => {
                 for elem_pat in arr.elements.iter().flatten() {
-                    if let Some(elem) = elem_pat {
-                        self.collect_param_names(elem);
-                    }
+                    self.collect_param_names(elem_pat);
+                }
+                if let Some(rest) = &arr.rest {
+                    self.collect_param_names(&rest.argument);
                 }
             }
             BindingPatternKind::ObjectPattern(obj) => {
                 for prop in &obj.properties {
-                    match prop {
-                        ObjectPatternProperty::ObjectProperty(prop) => {
-                            self.collect_param_names(&prop.value);
-                        }
-                        ObjectPatternProperty::RestElement(rest) => {
-                            self.collect_param_names(&rest.argument);
-                        }
-                    }
+                    self.collect_param_names(&prop.value);
+                }
+                if let Some(rest) = &obj.rest {
+                    self.collect_param_names(&rest.argument);
                 }
             }
             BindingPatternKind::AssignmentPattern(assign) => {
                 self.collect_param_names(&assign.left);
             }
-            _ => {}
         }
     }
 
@@ -225,10 +221,13 @@ impl EscapeAnalyzer {
                         ForStatementInit::VariableDeclaration(vd) => {
                             self.analyze_var_decl_with_depth(vd, depth + 1)
                         }
-                        ForStatementInit::Expression(e) => {
-                            self.analyze_expr_with_depth(e, depth + 1)
+                        _ => {
+                            // ForStatementInit can be various expression types
+                            // Use as_expression() to get the expression if available
+                            if let Some(e) = init.as_expression() {
+                                self.analyze_expr_with_depth(e, depth + 1)
+                            }
                         }
-                        ForStatementInit::ForUsingDeclaration(_) => {}
                     }
                 }
                 if let Some(test) = &for_stmt.test {
@@ -242,14 +241,12 @@ impl EscapeAnalyzer {
             }
             Statement::ForInStatement(for_in) => {
                 self.enter_scope();
-                // Simplified: just analyze the expression parts for now
                 self.analyze_expr_with_depth(&for_in.right, depth + 1);
                 self.analyze_stmt_with_depth(&for_in.body, depth + 1);
                 self.exit_scope();
             }
             Statement::ForOfStatement(for_of) => {
                 self.enter_scope();
-                // Simplified: just analyze the expression parts for now
                 self.analyze_expr_with_depth(&for_of.right, depth + 1);
                 self.analyze_stmt_with_depth(&for_of.body, depth + 1);
                 self.exit_scope();
@@ -261,7 +258,8 @@ impl EscapeAnalyzer {
                 if let Some(handler) = &try_stmt.handler {
                     self.enter_scope();
                     if let Some(param) = &handler.param {
-                        self.collect_param_names(param);
+                        // CatchParameter has a pattern field directly
+                        self.collect_param_names(&param.pattern);
                     }
                     self.analyze_block_stmt_with_depth(&handler.body, depth + 1);
                     self.exit_scope();
@@ -304,49 +302,69 @@ impl EscapeAnalyzer {
                 self.info.use_var(&ident.name.to_string());
             }
             Expression::CallExpression(call) => {
-                // Check if this is a call that might cause escapes
-                match &call.callee {
-                    Callee::Expression(callee_expr) => {
-                        if let Expression::Identifier(ident) = &**callee_expr {
-                            let func_name = ident.name.to_string();
-                            // Mark certain functions as escape-causing
-                            if matches!(
-                                func_name.as_str(),
-                                "console.log" | "setTimeout" | "setInterval"
-                            ) {
-                                self.info.mark_escape_call(func_name.clone());
-                                // All arguments to escape calls are considered escaping
-                                for arg in &call.arguments {
-                                    self.analyze_expr_as_escaping_with_depth(&arg, depth + 1);
-                                }
-                                return;
+                // callee is an Expression in OXC; analyze it first
+                self.analyze_expr_with_depth(&call.callee, depth + 1);
+                // If callee is an identifier of known escape-causing functions, mark all args
+                if let Expression::Identifier(ident) = &call.callee {
+                    let func_name = ident.name.to_string();
+                    if matches!(
+                        func_name.as_str(),
+                        "console.log" | "setTimeout" | "setInterval"
+                    ) {
+                        self.info.mark_escape_call(func_name.clone());
+                        for arg in &call.arguments {
+                            if let Argument::SpreadElement(spread) = arg {
+                                self.analyze_expr_as_escaping_with_depth(
+                                    &spread.argument,
+                                    depth + 1,
+                                );
+                            } else if let Some(expr_arg) = arg.as_expression() {
+                                self.analyze_expr_as_escaping_with_depth(expr_arg, depth + 1);
                             }
                         }
-                        self.analyze_expr_with_depth(callee_expr, depth + 1);
+                        return;
                     }
-                    _ => {}
                 }
+                // Otherwise analyze callee deeply and each argument
                 for arg in &call.arguments {
-                    self.analyze_expr_as_escaping_with_depth(arg, depth + 1);
+                    match arg {
+                        Argument::SpreadElement(spread) => {
+                            self.analyze_expr_as_escaping_with_depth(&spread.argument, depth + 1);
+                        }
+                        _ => {
+                            if let Some(expr_arg) = arg.as_expression() {
+                                self.analyze_expr_as_escaping_with_depth(expr_arg, depth + 1);
+                            }
+                        }
+                    }
                 }
             }
-            Expression::MemberExpression(member) => {
+            Expression::ComputedMemberExpression(member) => {
                 self.analyze_expr_with_depth(&member.object, depth + 1);
-                if let MemberProperty::ComputedPropertyName(comp) = &member.property {
-                    self.analyze_expr_with_depth(&comp.expression, depth + 1);
-                }
+                self.analyze_expr_with_depth(&member.expression, depth + 1);
+            }
+            Expression::StaticMemberExpression(member) => {
+                self.analyze_expr_with_depth(&member.object, depth + 1);
+            }
+            Expression::PrivateFieldExpression(member) => {
+                self.analyze_expr_with_depth(&member.object, depth + 1);
             }
             Expression::AssignmentExpression(assign) => {
                 match &assign.left {
-                    AssignmentTarget::SimpleAssignmentTarget(simple) => {
-                        if let SimpleAssignmentTarget::IdentifierReference(ident) = simple {
-                            let name = ident.name.to_string();
-                            if !self.is_defined(&name) {
-                                self.info.define_var(name);
+                    _ => {
+                        if let Some(simple) = assign.left.as_simple_assignment_target() {
+                            if let SimpleAssignmentTarget::AssignmentTargetIdentifier(ident) = simple {
+                                let name = ident.name.to_string();
+                                if !self.is_defined(&name) {
+                                    self.info.define_var(name);
+                                }
                             }
+                            // For other simple assignment targets, analyze the expression being assigned
+                        } else if let Some(_pattern) = assign.left.as_assignment_target_pattern() {
+                            // For pattern assignments, we need to handle AssignmentTargetPattern
+                            // which is different from BindingPattern - for now, skip detailed analysis
                         }
                     }
-                    AssignmentTarget::AssignmentTargetPattern(_) => {}
                 }
                 self.analyze_expr_with_depth(&assign.right, depth + 1);
             }
@@ -363,9 +381,9 @@ impl EscapeAnalyzer {
                 self.analyze_expr_with_depth(&cond.alternate, depth + 1);
             }
             Expression::ArrayExpression(arr) => {
-                for elem in arr.elements.iter().flatten() {
-                    if let Some(elem) = elem {
-                        self.analyze_expr_with_depth(elem, depth + 1);
+                for elem in arr.elements.iter() {
+                    if let Some(expr) = elem.as_expression() {
+                        self.analyze_expr_with_depth(expr, depth + 1);
                     }
                 }
             }
@@ -384,7 +402,9 @@ impl EscapeAnalyzer {
             Expression::NewExpression(new) => {
                 self.analyze_expr_with_depth(&new.callee, depth + 1);
                 for arg in &new.arguments {
-                    self.analyze_expr_as_escaping_with_depth(arg, depth + 1);
+                    if let Some(expr) = arg.as_expression() {
+                        self.analyze_expr_as_escaping_with_depth(expr, depth + 1);
+                    }
                 }
             }
             Expression::AwaitExpression(await_expr) => {
@@ -416,15 +436,13 @@ impl EscapeAnalyzer {
                 }
 
                 // Analyze the body
-                if arrow.expression {
-                    if let Some(expr) = &arrow.body.expression {
-                        self.analyze_expr_with_depth(expr, depth + 1);
-                    }
-                } else {
-                    self.enter_scope();
-                    self.analyze_block_stmt_with_depth(&arrow.body, depth + 1);
-                    self.exit_scope();
+                // FunctionBody always has statements, but for expression bodies,
+                // there's typically a single expression statement
+                self.enter_scope();
+                for stmt in &arrow.body.statements {
+                    self.analyze_stmt_with_depth(stmt, depth + 1);
                 }
+                self.exit_scope();
             }
             _ => {}
         }
@@ -459,18 +477,33 @@ impl EscapeAnalyzer {
                 vars.insert(ident.name.to_string());
             }
             Expression::CallExpression(call) => {
-                if let Callee::Expression(callee_expr) = &call.callee {
-                    Self::collect_vars_from_expr_with_depth(callee_expr, vars, depth + 1);
-                }
+                Self::collect_vars_from_expr_with_depth(&call.callee, vars, depth + 1);
                 for arg in &call.arguments {
-                    Self::collect_vars_from_expr_with_depth(&arg, vars, depth + 1);
+                    match arg {
+                        Argument::SpreadElement(spread) => {
+                            Self::collect_vars_from_expr_with_depth(
+                                &spread.argument,
+                                vars,
+                                depth + 1,
+                            );
+                        }
+                        _ => {
+                            if let Some(expr_arg) = arg.as_expression() {
+                                Self::collect_vars_from_expr_with_depth(expr_arg, vars, depth + 1);
+                            }
+                        }
+                    }
                 }
             }
-            Expression::MemberExpression(member) => {
+            Expression::ComputedMemberExpression(member) => {
                 Self::collect_vars_from_expr_with_depth(&member.object, vars, depth + 1);
-                if let MemberProperty::ComputedPropertyName(comp) = &member.property {
-                    Self::collect_vars_from_expr_with_depth(&comp.expression, vars, depth + 1);
-                }
+                Self::collect_vars_from_expr_with_depth(&member.expression, vars, depth + 1);
+            }
+            Expression::StaticMemberExpression(member) => {
+                Self::collect_vars_from_expr_with_depth(&member.object, vars, depth + 1);
+            }
+            Expression::PrivateFieldExpression(member) => {
+                Self::collect_vars_from_expr_with_depth(&member.object, vars, depth + 1);
             }
             Expression::BinaryExpression(bin) => {
                 Self::collect_vars_from_expr_with_depth(&bin.left, vars, depth + 1);
@@ -485,9 +518,9 @@ impl EscapeAnalyzer {
                 Self::collect_vars_from_expr_with_depth(&cond.alternate, vars, depth + 1);
             }
             Expression::ArrayExpression(arr) => {
-                for elem in arr.elements.iter().flatten() {
-                    if let Some(elem) = elem {
-                        Self::collect_vars_from_expr_with_depth(elem, vars, depth + 1);
+                for elem in arr.elements.iter() {
+                    if let Some(expr) = elem.as_expression() {
+                        Self::collect_vars_from_expr_with_depth(expr, vars, depth + 1);
                     }
                 }
             }
@@ -509,27 +542,21 @@ impl EscapeAnalyzer {
             }
             BindingPatternKind::ArrayPattern(arr) => {
                 for elem_pat in arr.elements.iter().flatten() {
-                    if let Some(elem) = elem_pat {
-                        Self::collect_vars_from_pat(elem, vars);
-                    }
+                    Self::collect_vars_from_pat(elem_pat, vars);
                 }
             }
             BindingPatternKind::ObjectPattern(obj) => {
                 for prop in &obj.properties {
-                    match prop {
-                        ObjectPatternProperty::ObjectProperty(prop) => {
-                            Self::collect_vars_from_pat(&prop.value, vars);
-                        }
-                        ObjectPatternProperty::RestElement(rest) => {
-                            Self::collect_vars_from_pat(&rest.argument, vars);
-                        }
-                    }
+                    // ObjectPattern properties have a value field directly
+                    Self::collect_vars_from_pat(&prop.value, vars);
+                }
+                if let Some(rest) = &obj.rest {
+                    Self::collect_vars_from_pat(&rest.argument, vars);
                 }
             }
             BindingPatternKind::AssignmentPattern(assign) => {
                 Self::collect_vars_from_pat(&assign.left, vars);
             }
-            _ => {}
         }
     }
 
@@ -573,9 +600,9 @@ impl AwaitLiveAnalyzer {
             Statement::BlockStatement(block) => self.analyze_stmts(&block.body),
             Statement::IfStatement(if_stmt) => {
                 self.analyze_expr(&if_stmt.test);
-                self.analyze_stmt(if_stmt.consequent.as_ref());
+                self.analyze_stmt(&if_stmt.consequent);
                 if let Some(alt) = &if_stmt.alternate {
-                    self.analyze_stmt(alt.as_ref());
+                    self.analyze_stmt(alt);
                 }
             }
             _ => {}
@@ -594,18 +621,27 @@ impl AwaitLiveAnalyzer {
                 self.current_vars.clear();
             }
             Expression::CallExpression(call) => {
-                if let Callee::Expression(callee_expr) = &call.callee {
-                    self.analyze_expr(callee_expr);
-                }
+                self.analyze_expr(&call.callee);
                 for arg in &call.arguments {
-                    self.analyze_expr(&arg);
+                    match arg {
+                        Argument::SpreadElement(spread) => self.analyze_expr(&spread.argument),
+                        _ => {
+                            if let Some(expr_arg) = arg.as_expression() {
+                                self.analyze_expr(expr_arg);
+                            }
+                        }
+                    }
                 }
             }
-            Expression::MemberExpression(member) => {
+            Expression::ComputedMemberExpression(member) => {
                 self.analyze_expr(&member.object);
-                if let MemberProperty::ComputedPropertyName(comp) = &member.property {
-                    self.analyze_expr(&comp.expression);
-                }
+                self.analyze_expr(&member.expression);
+            }
+            Expression::StaticMemberExpression(member) => {
+                self.analyze_expr(&member.object);
+            }
+            Expression::PrivateFieldExpression(member) => {
+                self.analyze_expr(&member.object);
             }
             Expression::BinaryExpression(bin) => {
                 self.analyze_expr(&bin.left);

@@ -94,10 +94,7 @@ pub unsafe extern "C" fn oats_std_process_exec_status(
     }
 
     match cmd.status() {
-        Ok(status) => match status.code() {
-            Some(code) => code,
-            None => -1,
-        },
+        Ok(status) => status.code().unwrap_or(-1),
         Err(_) => -1,
     }
 }

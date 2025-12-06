@@ -203,8 +203,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         } else if let Some(param_idx) = param_map.get(&ident_name)
                             && let Some(param_types) = self.fn_param_types.borrow().get(
                                 match function.get_name().to_str() {
-                                    Some(name) => name,
-                                    None => "",
+                                    Ok(name) => name,
+                                    Err(_) => "",
                                 },
                             )
                         {
@@ -217,8 +217,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         }
                     } else if matches!(&static_member.object, Expression::ThisExpression(_)) {
                         let fname = match function.get_name().to_str() {
-                            Some(name) => name,
-                            None => "",
+                            Ok(name) => name,
+                            Err(_) => "",
                         };
                         if let Some(param_types) = self.fn_param_types.borrow().get(fname)
                             && !param_types.is_empty()
@@ -511,8 +511,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         } else if let Some(param_idx) = param_map.get(&ident_name)
                             && let Some(param_types) = self.fn_param_types.borrow().get(
                                 match function.get_name().to_str() {
-                                    Some(name) => name,
-                                    None => "",
+                                    Ok(name) => name,
+                                    Err(_) => "",
                                 },
                             )
                         {
@@ -525,8 +525,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         }
                     } else if matches!(&computed_member.object, Expression::ThisExpression(_)) {
                         let fname = match function.get_name().to_str() {
-                            Some(name) => name,
-                            None => "",
+                            Ok(name) => name,
+                            Err(_) => "",
                         };
                         if let Some(param_types) = self.fn_param_types.borrow().get(fname)
                             && !param_types.is_empty()
@@ -542,7 +542,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         if let Some(fields) = self.class_fields.borrow().get(&class_name) {
                             // const_eval removed - check for string literal directly
                             if let oxc_ast::ast::Expression::StringLiteral(lit) =
-                                &*computed_member.expression
+                                &computed_member.expression
                             {
                                 let s = lit.value.to_string();
                                 // Look up field by name
@@ -993,8 +993,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 // infer the class name from the function name. Otherwise
                                 // fall back to fn_param_types map (receiver typed functions).
                                 let fname = match function.get_name().to_str() {
-                                    Some(name) => name,
-                                    None => "",
+                                    Ok(name) => name,
+                                    Err(_) => "",
                                 };
                                 if let Some(cls) = fname.strip_suffix("_init") {
                                     class_name_opt = Some(cls.to_string());
@@ -1008,7 +1008,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 }
                             } else if let Some(param_idx) = param_map.get(&ident_name)
                                 && let Some(param_types) = self.fn_param_types.borrow().get(
-                                    match function.get_name().to_str() {
+                                    match function.get_name().to_str().ok() {
                                         Some(name) => name,
                                         None => "",
                                     },
@@ -1042,8 +1042,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             }
                         } else if matches!(&static_member.object, Expression::ThisExpression(_)) {
                             let fname = match function.get_name().to_str() {
-                                Some(name) => name,
-                                None => "",
+                                Ok(name) => name,
+                                Err(_) => "",
                             };
                             if let Some(cls) = fname.strip_suffix("_init") {
                                 class_name_opt = Some(cls.to_string());
@@ -1064,8 +1064,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             c
                         } else {
                             let fname = match function.get_name().to_str() {
-                                Some(name) => name,
-                                None => "<unknown>",
+                                Ok(name) => name,
+                                Err(_) => "<unknown>",
                             };
                             return Err(Diagnostic::simple_boxed(
                                 Severity::Error,

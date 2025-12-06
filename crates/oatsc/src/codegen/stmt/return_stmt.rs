@@ -37,7 +37,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         // locals have their RC decremented and destructors (if any)
         // run before the caller resumes. This models deterministic
         // destruction and matches the runtime's RC expectations.
-        if let Some(arg) = &ret.arg {
+        if let Some(arg) = &ret.argument {
             match self.lower_expr(arg, function, param_map, locals_stack) {
                 Ok(mut val) => {
                     // Check if function returns a union type and box if necessary

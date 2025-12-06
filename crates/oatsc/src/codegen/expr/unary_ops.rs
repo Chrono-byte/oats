@@ -52,7 +52,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     .build_call(disc_fn, &[pv.into()], "union_get_disc");
                 let cs = call_site
                     .map_err(|_| Diagnostic::error("failed to call union_get_discriminant"))?;
-                if let either::Either::Left(bv) = cs.try_as_basic_value() {
+                if let inkwell::values::ValueKind::Basic(bv) = cs.try_as_basic_value() {
                     let disc = bv.into_int_value();
                     // Compare disc to constants: 0 -> number, 1 -> string, 2 -> boolean
                     let zero = self.i64_t.const_int(0, false);

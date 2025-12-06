@@ -115,34 +115,32 @@ pub fn lower_array<'a>(
     // Pre-allocate with known capacity (some elements might be None, but this is the max)
     let mut lowered_elems: Vec<BasicValueEnum> = Vec::with_capacity(arr.elements.len());
     for elem in &arr.elements {
-        match elem {
-            oxc_ast::ast::ArrayExpressionElement::Expression(expr) => {
-                if let Ok(ev) = codegen.lower_expr(expr, function, param_map, locals) {
-                    lowered_elems.push(ev);
-                } else {
-                    // unsupported element lowering
-                    return Err(Diagnostic::simple_with_span_boxed(
+        use oxc_ast::ast::ArrayExpressionElement;
+        if let Some(expr) = elem.as_expression() {
+            lowered_elems.push(codegen.lower_expr(expr, function, param_map, locals)?);
+        } else {
+            match elem {
+                ArrayExpressionElement::SpreadElement(_) => {
+                    // Spread elements not yet supported
+                    return Err(Box::new(Diagnostic::simple(
                         Severity::Error,
-                        "expression lowering failed",
-                        arr.span.start as usize,
-                    ));
+                        "spread elements not supported",
+                    )));
                 }
-            }
-            oxc_ast::ast::ArrayExpressionElement::SpreadElement(_) => {
-                // Spread elements not yet supported
-                return Err(Diagnostic::simple_with_span_boxed(
-                    Severity::Error,
-                    "spread elements not supported",
-                    arr.span.start as usize,
-                ));
-            }
-            oxc_ast::ast::ArrayExpressionElement::Elision(_) => {
-                // elided element like [ , ] -> treat as undefined -> unsupported
-                return Err(Diagnostic::simple_with_span_boxed(
-                    Severity::Error,
-                    "elided array elements not supported",
-                    arr.span.start as usize,
-                ));
+                ArrayExpressionElement::Elision(_) => {
+                    // elided element like [ , ] -> treat as undefined -> unsupported
+                    return Err(Box::new(Diagnostic::simple(
+                        Severity::Error,
+                        "elided array elements not supported",
+                    )));
+                }
+                _ => {
+                    // This should not happen if as_expression() is implemented correctly
+                    return Err(Box::new(Diagnostic::simple(
+                        Severity::Error,
+                        "unsupported array element type",
+                    )));
+                }
             }
         }
     }
@@ -187,9 +185,8 @@ pub fn lower_array<'a>(
             ));
         }
     };
-    let either = call_site.try_as_basic_value();
-    let arr_ptr = match either {
-        either::Either::Left(bv) => bv.into_pointer_value(),
+    let arr_ptr = match call_site.try_as_basic_value() {
+        inkwell::values::ValueKind::Basic(bv) => bv.into_pointer_value(),
         _ => {
             return Err(Diagnostic::simple_boxed(
                 Severity::Error,
@@ -355,7 +352,7 @@ pub fn lower_array<'a>(
                             }
                         };
                     let boxed_ptr = match cs.try_as_basic_value() {
-                        either::Either::Left(bv) => bv.into_pointer_value(),
+                        inkwell::values::ValueKind::Basic(bv) => bv.into_pointer_value(),
                         _ => {
                             return Err(Diagnostic::simple_boxed(
                                 Severity::Error,
@@ -430,67 +427,28 @@ pub fn lower_object<'a>(
                     }
                 }
             }
-            oxc_ast::ast::ObjectPropertyKind::ShorthandProperty(ident) => {
-                // ES6 shorthand property { x } which is equivalent to { x: x }
-                let name = ident.name().to_string();
-                // First check parameters
-                if let Some(idx) = param_map.get(&name) {
-                    if let Some(pv) = function.get_nth_param(*idx) {
-                        let bv = pv.as_basic_value_enum();
-                        field_values.push(bv);
-                    } else {
-                        return Err(Diagnostic::simple_boxed(
-                            Severity::Error,
-                            "failed to find shorthand param",
-                        ));
-                    }
-                } else if let Some((ptr, ty, _init, _is_const, _extra, _nominal, _oats_type)) =
-                    codegen.find_local(locals, &name)
-                {
-                    // load local value
-                    let loaded =
-                        match codegen
-                            .builder
-                            .build_load(ty, ptr, &format!("shorthand_{}", name))
-                        {
-                            Ok(v) => v,
-                            Err(_) => {
-                                return Err(Diagnostic::simple_boxed(
-                                    Severity::Error,
-                                    "failed to load shorthand local value",
-                                ));
-                            }
-                        };
-                    field_values.push(loaded);
-                } else {
-                    return Err(Diagnostic::simple_boxed(
-                        Severity::Error,
-                        "shorthand property not found in params or locals",
-                    ));
-                }
-            }
-            PropOrSpread::Spread(spread) => {
+            oxc_ast::ast::ObjectPropertyKind::SpreadProperty(spread) => {
                 // Spread properties: { ...obj } copies all enumerable properties from obj
                 // For statically known class types, we can copy all fields at compile time
 
                 // Lower the spread expression to get the source object
                 let spread_obj_val =
-                    codegen.lower_expr(&spread.expr, function, param_map, locals)?;
+                    codegen.lower_expr(&spread.argument, function, param_map, locals)?;
                 let spread_obj_ptr = if let BasicValueEnum::PointerValue(pv) = spread_obj_val {
                     pv
                 } else {
                     return Err(Diagnostic::simple_with_span_boxed(
                         Severity::Error,
                         "spread operator requires an object (pointer type)",
-                        spread.span.start,
+                        spread.span.start as usize,
                     ));
                 };
 
                 // Try to infer the class name from the spread expression
                 // All types must be known at compile time - if we can't infer the type, it's an error
                 let mut class_name_opt: Option<String> = None;
-                if let Expr::Ident(ident) = &spread.expr {
-                    let ident_name = ident.sym.clone();
+                if let Expression::Identifier(ident) = &spread.argument {
+                    let ident_name = ident.name.to_string();
                     // Check locals for nominal annotation
                     if let Some((_, _ty, _init, _is_const, _is_weak, nominal, _oats_type)) =
                         codegen.find_local(locals, &ident_name)
@@ -500,8 +458,8 @@ pub fn lower_object<'a>(
                     } else if let Some(param_idx) = param_map.get(&ident_name)
                         && let Some(param_types) = codegen.fn_param_types.borrow().get(
                             match function.get_name().to_str() {
-                                Some(name) => name,
-                                None => "",
+                                Ok(name) => name,
+                                Err(_) => "",
                             },
                         )
                     {
@@ -512,16 +470,16 @@ pub fn lower_object<'a>(
                             class_name_opt = Some(n.clone());
                         }
                     }
-                } else if let Expr::New(new_expr) = &spread.expr
-                    && let Expr::Ident(ident) = &*new_expr.callee
+                } else if let Expression::NewExpression(new_expr) = &spread.argument
+                    && let Expression::Identifier(ident) = &new_expr.callee
                 {
                     // new ClassName() - get class name from callee
-                    class_name_opt = Some(ident.sym.clone());
-                } else if let Expr::Member(member) = &spread.expr
-                    && let Expr::Ident(ident) = &*member.obj
+                    class_name_opt = Some(ident.name.to_string());
+                } else if let Expression::StaticMemberExpression(member) = &spread.argument
+                    && let Expression::Identifier(ident) = &member.object
                 {
                     // obj.field - try to infer from obj
-                    let ident_name = ident.sym.clone();
+                    let ident_name = ident.name.to_string();
                     if let Some((_, _ty, _init, _is_const, _is_weak, nominal, _oats_type)) =
                         codegen.find_local(locals, &ident_name)
                         && let Some(nom) = nominal
@@ -651,7 +609,7 @@ pub fn lower_object<'a>(
                                             "unsupported field type in spread for field '{}'",
                                             field_name
                                         ),
-                                        spread.span.start,
+                                        spread.span.start as usize,
                                     ));
                                 }
                             };
@@ -661,7 +619,7 @@ pub fn lower_object<'a>(
                         return Err(Diagnostic::simple_with_span_boxed(
                             Severity::Error,
                             format!("class '{}' has no registered fields", class_name),
-                            spread.span.start,
+                            spread.span.start as usize,
                         ));
                     }
                 } else {
@@ -670,7 +628,7 @@ pub fn lower_object<'a>(
                     return Err(Diagnostic::simple_with_span_boxed(
                         Severity::Error,
                         "cannot determine object type for spread operator: all types must be known at compile time",
-                        spread.span.start,
+                        spread.span.start as usize,
                     ));
                 }
             }
@@ -692,9 +650,12 @@ pub fn lower_object<'a>(
         .build_call(malloc_fn, &[size_const.into()], "obj_malloc")
         .map_err(|_| Diagnostic::error("build_call failed"))?;
     let malloc_ret = match call_site.try_as_basic_value() {
-        either::Either::Left(bv) => bv.into_pointer_value(),
+        inkwell::values::ValueKind::Basic(bv) => bv.into_pointer_value(),
         _ => {
-            return Err(Diagnostic::error("malloc did not return value"));
+            return Err(Diagnostic::simple_boxed(
+                Severity::Error,
+                "malloc did not return value",
+            ));
         }
     };
 
@@ -850,7 +811,9 @@ pub fn lower_template<'a>(
     // quasis.len() = expressions.len() + 1 (there's always one more quasi)
     for (i, quasi) in tpl.quasis.iter().enumerate() {
         // Add the string part
-        let quasi_str = quasi.raw.to_string();
+        let quasi_str = quasi.value.cooked.as_ref()
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| String::new());
         let quasi_ptr = create_string_literal(codegen, &quasi_str)?;
 
         // Concatenate with result so far. If the current `result`
@@ -867,9 +830,12 @@ pub fn lower_template<'a>(
                 )
                 .map_err(|_| Diagnostic::error("failed to build call"))?;
             Some(match call_site.try_as_basic_value() {
-                either::Either::Left(bv) => bv.into_pointer_value(),
+                inkwell::values::ValueKind::Basic(bv) => bv.into_pointer_value(),
                 _ => {
-                    return Err(Diagnostic::error("concat call returned no value"));
+                    return Err(Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "concat call returned no value",
+                    ));
                 }
             })
         } else {
@@ -908,9 +874,9 @@ pub fn lower_template<'a>(
                         )
                     })?;
                 let tmp_ptr = match call_site.try_as_basic_value() {
-                    either::Either::Left(bv) => bv.into_pointer_value(),
+                    inkwell::values::ValueKind::Basic(bv) => bv.into_pointer_value(),
                     _ => {
-                        return Err(Diagnostic::simple_with_span(
+                        return Err(Diagnostic::simple_with_span_boxed(
                             Severity::Error,
                             "num_to_str returned no value",
                             tpl.span.start as usize,
@@ -953,16 +919,16 @@ pub fn lower_template<'a>(
                 return Err(Diagnostic::simple_with_span_boxed(
                     Severity::Error,
                     "unsupported value type in template literal",
-                    tpl.span.start,
+                    tpl.span.start as usize,
                 ));
             };
 
             // Concatenate expression string with result
             let left = result.ok_or_else(|| {
-                Diagnostic::simple_with_span(
+                Diagnostic::simple_with_span_boxed(
                     Severity::Error,
                     "concat left operand missing",
-                    tpl.span.start,
+                    tpl.span.start as usize,
                 )
             })?;
             // We do not currently maintain origin info for the running
@@ -976,19 +942,19 @@ pub fn lower_template<'a>(
                     "tpl_concat_expr",
                 )
                 .map_err(|_| {
-                    Diagnostic::simple_with_span(
+                    Diagnostic::simple_with_span_boxed(
                         Severity::Error,
                         "failed to build call",
-                        tpl.span.start,
+                        tpl.span.start as usize,
                     )
                 })?;
             let new_res = match call_site.try_as_basic_value() {
-                either::Either::Left(bv) => bv.into_pointer_value(),
+                inkwell::values::ValueKind::Basic(bv) => bv.into_pointer_value(),
                 _ => {
-                    return Err(Diagnostic::simple_with_span(
+                    return Err(Diagnostic::simple_with_span_boxed(
                         Severity::Error,
                         "concat call returned no value",
-                        tpl.span.start,
+                        tpl.span.start as usize,
                     ));
                 }
             };

@@ -57,31 +57,32 @@ impl<'a> CodeGen<'a> {
                     collect_idents_in_expr_with_depth(&u.argument, out, depth + 1);
                 }
                 Expression::CallExpression(c) => {
-                    match &c.callee {
-                        Callee::Expression(e) => {
-                            collect_idents_in_expr_with_depth(e, out, depth + 1)
-                        }
-                        Callee::Super(_) => {} // Callee::Import doesn't exist in oats_ast
-                        Callee::Import(_) => {}
-                    }
+                    // Callee is directly an Expression in oxc_ast
+                    collect_idents_in_expr_with_depth(&c.callee, out, depth + 1);
                     for a in &c.arguments {
-                        collect_idents_in_expr_with_depth(a, out, depth + 1);
+                        if let Some(expr) = a.as_expression() {
+                            collect_idents_in_expr_with_depth(expr, out, depth + 1);
+                        }
                     }
                 }
-                Expression::MemberExpression(m) => {
+                Expression::StaticMemberExpression(m) => {
                     collect_idents_in_expr_with_depth(&m.object, out, depth + 1);
-                    if let MemberProperty::ComputedPropertyName(comp) = &m.property {
-                        collect_idents_in_expr_with_depth(&comp.expression, out, depth + 1);
-                    }
+                }
+                Expression::ComputedMemberExpression(m) => {
+                    collect_idents_in_expr_with_depth(&m.object, out, depth + 1);
+                    collect_idents_in_expr_with_depth(&m.expression, out, depth + 1);
                 }
                 Expression::ArrowFunctionExpression(a) => {
                     // nested arrow: scan body
                     if a.expression {
-                        if let Some(expr) = &a.body.expression {
-                            collect_idents_in_expr_with_depth(expr, out, depth + 1);
+                        // Expression body: single expression in statements[0]
+                        if let Some(stmt) = (*a.body).statements.first() {
+                            if let Statement::ExpressionStatement(es) = stmt {
+                                collect_idents_in_expr_with_depth(&es.expression, out, depth + 1);
+                            }
                         }
                     } else {
-                        for s in &a.body.statements {
+                        for s in &(*a.body).statements {
                             if let Statement::ExpressionStatement(es) = s {
                                 collect_idents_in_expr_with_depth(&es.expression, out, depth + 1);
                             }
@@ -96,9 +97,9 @@ impl<'a> CodeGen<'a> {
                     }
                 }
                 Expression::ArrayExpression(a) => {
-                    for elem in a.elements.iter().flatten() {
-                        if let Some(elem) = elem {
-                            collect_idents_in_expr_with_depth(elem, out, depth + 1);
+                    for elem in &a.elements {
+                        if let Some(expr) = elem.as_expression() {
+                            collect_idents_in_expr_with_depth(expr, out, depth + 1);
                         }
                     }
                 }
@@ -122,20 +123,20 @@ impl<'a> CodeGen<'a> {
                 Expression::NewExpression(new_expr) => {
                     collect_idents_in_expr_with_depth(&new_expr.callee, out, depth + 1);
                     for arg in &new_expr.arguments {
-                        collect_idents_in_expr_with_depth(arg, out, depth + 1);
+                        if let Some(expr) = arg.as_expression() {
+                            collect_idents_in_expr_with_depth(expr, out, depth + 1);
+                        }
                     }
                 }
-                Expression::UpdateExpression(update) => {
-                    collect_idents_in_expr_with_depth(&update.argument, out, depth + 1);
+                Expression::UpdateExpression(_update) => {
+                    // UpdateExpression.argument is SimpleAssignmentTarget, skip for now
                 }
                 Expression::AwaitExpression(await_expr) => {
                     collect_idents_in_expr_with_depth(&await_expr.argument, out, depth + 1);
                 }
-                Expression::OptionalMemberExpression(om) => {
-                    collect_idents_in_expr_with_depth(&om.object, out, depth + 1);
-                    if let MemberProperty::ComputedPropertyName(comp) = &om.property {
-                        collect_idents_in_expr_with_depth(&comp.expression, out, depth + 1);
-                    }
+                Expression::ChainExpression(_chain) => {
+                    // ChainExpression (optional chaining) not yet fully implemented
+                    // Skip for now to avoid complex ChainElement handling
                 }
                 _ => {}
             }
@@ -156,11 +157,14 @@ impl<'a> CodeGen<'a> {
         // Collect idents used in the arrow body
         let mut used: std::collections::HashSet<String> = std::collections::HashSet::new();
         if arrow.expression {
-            if let Some(expr) = &arrow.body.expression {
-                collect_idents_in_expr(expr, &mut used);
+            // Expression body: single expression in statements[0]
+            if let Some(stmt) = (*arrow.body).statements.first() {
+                if let Statement::ExpressionStatement(es) = stmt {
+                    collect_idents_in_expr(&es.expression, &mut used);
+                }
             }
         } else {
-            for stmt in &arrow.body.statements {
+            for stmt in &(*arrow.body).statements {
                 if let Statement::ExpressionStatement(es) = stmt {
                     collect_idents_in_expr(&es.expression, &mut used);
                 }
@@ -210,7 +214,7 @@ impl<'a> CodeGen<'a> {
 
         // Determine return type from arrow.return_type or infer from body
         let ret_type = if let Some(return_type) = &arrow.return_type {
-            if let Some(mapped) = crate::types::map_ts_type(return_type) {
+            if let Some(mapped) = crate::types::map_ts_type(&return_type.type_annotation) {
                 mapped
             } else {
                 return Err(Diagnostic::simple_boxed(
@@ -384,7 +388,7 @@ impl<'a> CodeGen<'a> {
                             self.builder
                                 .build_call(box_fn, &[pv.into()], "union_box_f64_ctor");
                         if let Ok(cs) = cs
-                            && let either::Either::Left(bv) = cs.try_as_basic_value()
+                            && let inkwell::values::ValueKind::Basic(bv) = cs.try_as_basic_value()
                         {
                             let boxed_ptr = bv.into_pointer_value();
                             captured_vals.push((boxed_ptr.as_basic_value_enum(), is_weak));
@@ -406,7 +410,7 @@ impl<'a> CodeGen<'a> {
                             self.builder
                                 .build_call(box_fn, &[fconv.into()], "union_box_f64_ctor");
                         if let Ok(cs) = cs
-                            && let either::Either::Left(bv) = cs.try_as_basic_value()
+                            && let inkwell::values::ValueKind::Basic(bv) = cs.try_as_basic_value()
                         {
                             let boxed_ptr = bv.into_pointer_value();
                             captured_vals.push((boxed_ptr.as_basic_value_enum(), is_weak));
@@ -467,7 +471,8 @@ impl<'a> CodeGen<'a> {
                                 self.builder
                                     .build_call(box_fn, &[fv.into()], "union_box_f64_ctor");
                             if let Ok(cs) = cs
-                                && let either::Either::Left(bv) = cs.try_as_basic_value()
+                                && let inkwell::values::ValueKind::Basic(bv) =
+                                    cs.try_as_basic_value()
                             {
                                 let boxed_ptr = bv.into_pointer_value();
                                 captured_vals.push((boxed_ptr.as_basic_value_enum(), is_weak_flag));
@@ -490,7 +495,8 @@ impl<'a> CodeGen<'a> {
                                 "union_box_f64_ctor",
                             );
                             if let Ok(cs) = cs
-                                && let either::Either::Left(bv) = cs.try_as_basic_value()
+                                && let inkwell::values::ValueKind::Basic(bv) =
+                                    cs.try_as_basic_value()
                             {
                                 let boxed_ptr = bv.into_pointer_value();
                                 captured_vals.push((boxed_ptr.as_basic_value_enum(), is_weak_flag));
@@ -647,38 +653,50 @@ impl<'a> CodeGen<'a> {
         }
 
         // Lower the body
-        match &arrow.body {
-            ArrowBody::Block(block) => {
-                let terminated =
-                    self.lower_stmts(&block.body, arrow_fn, &arrow_param_map, &mut arrow_locals)?;
+        let statements = &arrow.body.statements;
+        if arrow.expression {
+            // Expression body: single expression
+            if let Some(stmt) = statements.first() {
+                if let Statement::ExpressionStatement(es) = stmt {
+                    let result = self.lower_expr(&es.expression, arrow_fn, &arrow_param_map, &mut arrow_locals)?;
 
-                // If not terminated, add default return
-                if !terminated {
-                    match ret_type {
-                        crate::types::OatsType::Void => {
-                            let _ = self.builder.build_return(None);
-                        }
-                        crate::types::OatsType::Number => {
-                            let zero = self.f64_t.const_float(0.0);
-                            let _ = self.builder.build_return(Some(&zero));
-                        }
-                        _ => {
-                            return Err(Diagnostic::simple_boxed(
-                                Severity::Error,
-                                "Cannot generate default return for arrow function",
-                            ));
-                        }
+                    // RC cleanup for locals before return
+                    self.emit_rc_dec_for_locals(&arrow_locals);
+
+                    let _ = self.builder.build_return(Some(&result));
+                } else {
+                    return Err(Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "Arrow function expression body must be an expression statement",
+                    ));
+                }
+            } else {
+                return Err(Diagnostic::simple_boxed(
+                    Severity::Error,
+                    "Arrow function expression body cannot be empty",
+                ));
+            }
+        } else {
+            // Block body: multiple statements
+            let terminated = self.lower_stmts(statements, arrow_fn, &arrow_param_map, &mut arrow_locals)?;
+
+            // If not terminated, add default return
+            if !terminated {
+                match ret_type {
+                    crate::types::OatsType::Void => {
+                        let _ = self.builder.build_return(None);
+                    }
+                    crate::types::OatsType::Number => {
+                        let zero = self.f64_t.const_float(0.0);
+                        let _ = self.builder.build_return(Some(&zero));
+                    }
+                    _ => {
+                        return Err(Diagnostic::simple_boxed(
+                            Severity::Error,
+                            "Cannot generate default return for arrow function",
+                        ));
                     }
                 }
-            }
-            ArrowBody::Expr(expr) => {
-                let result =
-                    self.lower_expr(expr, arrow_fn, &arrow_param_map, &mut arrow_locals)?;
-
-                // RC cleanup for locals before return
-                self.emit_rc_dec_for_locals(&arrow_locals);
-
-                let _ = self.builder.build_return(Some(&result));
             }
         }
 

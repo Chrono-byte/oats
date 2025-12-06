@@ -282,7 +282,7 @@ pub fn map_ts_type(ty: &TSType<'_>) -> Option<OatsType> {
 /// For generic type aliases, type arguments are substituted into the aliased type.
 pub fn map_ts_type_with_aliases(
     ty: &TSType<'_>,
-    type_aliases: Option<&HashMap<String, (Option<Vec<String>>, TSType<'_>)>>,
+    type_aliases: Option<&HashMap<String, (Option<Vec<String>>, &TSType<'_>)>>,
 ) -> Option<OatsType> {
     match ty {
         TSType::TSNumberKeyword(_) => Some(OatsType::Number),
@@ -327,7 +327,7 @@ pub fn map_ts_type_with_aliases(
                                 }
                             }
                             // Apply substitution to aliased type, then resolve any nested aliases
-                            if let Some(substituted) = map_ts_type_with_subst(aliased_type, &subst)
+                            if let Some(substituted) = map_ts_type_with_subst(*aliased_type, &subst)
                             {
                                 // The substituted type might still contain other type aliases,
                                 // so we need to resolve them. However, we can't easily do that

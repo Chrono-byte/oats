@@ -33,7 +33,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         // whole compile. This avoids silent empty functions while
         // keeping compilation resilient for constructs like
         // `this.x = ...` during constructor emission.
-        match self.lower_expr(&expr_stmt.expr, function, param_map, locals_stack) {
+        match self.lower_expr(&expr_stmt.expression, function, param_map, locals_stack) {
             Ok(_val) => { /* success, continue */ }
             Err(d) => {
                 crate::diagnostics::emit_diagnostic(&d, Some(self.source));

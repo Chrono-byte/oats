@@ -40,9 +40,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
         // discriminant instead of performing a heavier dynamic check.
         // This keeps the emitted IR small for the common guarded
         // branches used in tests and examples.
-        if let Expression::UnaryExpression(unary) = &*bin.left
+        if let Expression::UnaryExpression(unary) = &bin.left
             && let UnaryOperator::Typeof = unary.operator
-            && let Expression::StringLiteral(s_lit) = &*bin.right
+            && let Expression::StringLiteral(s_lit) = &bin.right
         {
             // Lower inner expression and then check union discriminant if it's a pointer
             let inner = self.lower_expr(&unary.argument, function, param_map, locals)?;
@@ -59,7 +59,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 let get_disc = self.get_union_get_discriminant();
                 let cs = self.builder.build_call(get_disc, &[pv.into()], "get_disc");
                 if let Ok(cs) = cs
-                    && let either::Either::Left(bv) = cs.try_as_basic_value()
+                    && let inkwell::values::ValueKind::Basic(bv) = cs.try_as_basic_value()
                 {
                     let disc = bv.into_int_value();
                     let expected = match s.as_str() {
@@ -107,7 +107,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     };
                 let either = call_site.try_as_basic_value();
                 match either {
-                    either::Either::Left(bv) => {
+                    inkwell::values::ValueKind::Basic(bv) => {
                         // After creating the concatenated string, decrement
                         // temporary operands that didn't originate from locals.
                         if left_origin.is_none()
@@ -232,132 +232,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
             }
         }
 
-        // Logical operators: short-circuiting
-        //
-        // For `&&` and `||` we emit explicit conditional branches and
-        // create a merge block with a phi node. The phi node is built
-        // by `build_phi_merge` which performs basic coercions when the
-        // two sides have differing ABI types (for example f64 vs i64
-        // or pointer). This keeps the lowering correct for expressions
-        // that return one of the operand values (JS-like semantics).
-        //
-        // Implementation detail: to preserve JS semantics where `a && b`
-        // returns either `a` or `b` we evaluate `a` first, check its
-        // truthiness via `to_condition_i1`, and only evaluate `b` when
-        // needed. The merge uses a phi node which may need to coerce the
-        // two incoming values to a common ABI representation; `build_phi_merge`
-        // performs those coercions conservatively (boxing numeric values
-        // if the other arm expects a pointer-like value, etc.).
-        if let BinaryOperator::LogicalAND = bin.operator {
-            // a && b -> if a truthy then b else a
-            let left_val = l;
-            let cond = self
-                .to_condition_i1(left_val)
-                .ok_or_else(|| Diagnostic::error("failed to convert to boolean condition"))?;
-            let then_bb = self.context.append_basic_block(function, "and.then");
-            let else_bb = self.context.append_basic_block(function, "and.else");
-            let merge_bb = self.context.append_basic_block(function, "and.merge");
-            if self
-                .builder
-                .build_conditional_branch(cond, then_bb, else_bb)
-                .is_err()
-            {
-                return Err(Diagnostic::simple_boxed(
-                    Severity::Error,
-                    "expression lowering failed",
-                ))?;
-            }
-            // then: evaluate right. Note: we don't eagerly `rc_inc` here;
-            // any pointer ownership changes are performed by the
-            // callee/array_get/union_box helpers when producing values.
-            self.builder.position_at_end(then_bb);
-            let rv = self.lower_expr(&bin.right, function, param_map, locals);
-            // Ensure we are positioned at the end of the `then` block before
-            // emitting the unconditional branch to the merge block. This
-            // guards against lowering paths that may have switched the
-            // insertion point while lowering nested expressions.
-            if self.builder.get_insert_block().is_some() {
-                self.builder.position_at_end(then_bb);
-                if self.builder.build_unconditional_branch(merge_bb).is_err() {
-                    return Err(Diagnostic::simple_boxed(
-                        Severity::Error,
-                        "expression lowering failed",
-                    ))?;
-                }
-            }
-            // else: keep left (the left expression's value is the
-            // result of the `&&` expression when it's falsy). We branch
-            // to `merge_bb` to join both control-flow paths and use a
-            // phi node to select the correct value.
-            self.builder.position_at_end(else_bb);
-            if self.builder.get_insert_block().is_some() {
-                self.builder.position_at_end(else_bb);
-                let _ = self
-                    .builder
-                    .build_unconditional_branch(merge_bb)
-                    .map_err(|_| Diagnostic::error("LLVM builder error"))?;
-            }
-            self.builder.position_at_end(merge_bb);
-            if let Ok(rval) = rv
-                && let Some(phi) = self.build_phi_merge(then_bb, else_bb, rval, left_val)
-            {
-                return Ok(phi);
-            }
-            return Err(Diagnostic::simple_boxed(
-                Severity::Error,
-                "expression lowering failed",
-            ))?;
-        }
-        if let BinaryOperator::LogicalOR = bin.operator {
-            // `||` mirrors `&&` but keeps the left value when truthy.
-            // a || b -> if a truthy then a else b
-            let left_val = l;
-            let cond = self
-                .to_condition_i1(left_val)
-                .ok_or_else(|| Diagnostic::error("failed to convert to boolean condition"))?;
-            let then_bb = self.context.append_basic_block(function, "or.then");
-            let else_bb = self.context.append_basic_block(function, "or.else");
-            let merge_bb = self.context.append_basic_block(function, "or.merge");
-            if self
-                .builder
-                .build_conditional_branch(cond, then_bb, else_bb)
-                .is_err()
-            {
-                return Err(Diagnostic::simple_boxed(
-                    Severity::Error,
-                    "expression lowering failed",
-                ))?;
-            }
-            // then: keep left
-            self.builder.position_at_end(then_bb);
-            if self.builder.get_insert_block().is_some()
-                && self.builder.build_unconditional_branch(merge_bb).is_err()
-            {
-                return Err(Diagnostic::simple_boxed(
-                    Severity::Error,
-                    "expression lowering failed",
-                ))?;
-            }
-            // else: evaluate right
-            self.builder.position_at_end(else_bb);
-            let rv = self.lower_expr(&bin.right, function, param_map, locals);
-            if self.builder.get_insert_block().is_some() {
-                let _ = self
-                    .builder
-                    .build_unconditional_branch(merge_bb)
-                    .map_err(|_| Diagnostic::error("LLVM builder error"))?;
-            }
-            self.builder.position_at_end(merge_bb);
-            if let Ok(rval) = rv
-                && let Some(phi) = self.build_phi_merge(then_bb, else_bb, left_val, rval)
-            {
-                return Ok(phi);
-            }
-            return Err(Diagnostic::simple_boxed(
-                Severity::Error,
-                "expression lowering failed",
-            ))?;
-        }
+        // Note: Logical operators (&&, ||) are handled as LogicalExpression, not BinaryExpression
+        // These cases are removed since LogicalAnd and LogicalOr variants don't exist in BinaryOperator
 
         // Otherwise, handle pointer concat for Add and pointer equality
         match (l, r) {
@@ -380,7 +256,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             };
                         let either = call_site.try_as_basic_value();
                         match either {
-                            either::Either::Left(bv) => Ok(bv),
+                            inkwell::values::ValueKind::Basic(bv) => Ok(bv),
                             _ => Err(Diagnostic::simple_boxed(
                                 Severity::Error,
                                 "operation not supported (bin strcat result)",
@@ -474,7 +350,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         .build_call(pow_fn, &[lf.into(), rf.into()], "pow_call")
                         .map_err(|_| Diagnostic::error("pow call failed"))?;
 
-                    if let either::Either::Left(bv) = call_site.try_as_basic_value() {
+                    if let inkwell::values::ValueKind::Basic(bv) = call_site.try_as_basic_value() {
                         Ok(bv)
                     } else {
                         Err(Diagnostic::simple_boxed(
@@ -543,28 +419,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         .map_err(|_| Diagnostic::error("right shift failed"))?;
                     Ok(v.as_basic_value_enum())
                 }
-                BinaryOperator::UnsignedShiftRight => {
-                    let li64 = if li.get_type().get_bit_width() < 64 {
-                        self.builder
-                            .build_int_z_extend(li, self.i64_t, "urshift_left")
-                            .map_err(|_| Diagnostic::error("int extend failed"))?
-                    } else {
-                        li
-                    };
-                    let ri64 = if ri.get_type().get_bit_width() < 64 {
-                        self.builder
-                            .build_int_z_extend(ri, self.i64_t, "urshift_right")
-                            .map_err(|_| Diagnostic::error("int extend failed"))?
-                    } else {
-                        ri
-                    };
-                    let v = self
-                        .builder
-                        .build_right_shift(li64, ri64, true, "urshift")
-                        .map_err(|_| Diagnostic::error("unsigned right shift failed"))?;
-                    Ok(v.as_basic_value_enum())
-                }
-                BinaryOperator::BitwiseAND => {
+                // Note: UnsignedShiftRight variant doesn't exist in oxc_ast::ast::BinaryOperator
+                // This case is removed - unsigned right shift is not currently supported
+                // TODO: Re-enable when oxc_ast supports UnsignedShiftRight
+                BinaryOperator::BitwiseAnd => {
                     let li64 = if li.get_type().get_bit_width() < 64 {
                         self.builder
                             .build_int_s_extend(li, self.i64_t, "and_left")

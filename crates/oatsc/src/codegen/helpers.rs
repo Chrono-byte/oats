@@ -18,13 +18,13 @@ use inkwell::values::{BasicValue, BasicValueEnum, ValueKind};
 use std::collections::HashMap;
 
 /// Helper function to extract BasicValueEnum from ValueKind
-/// ValueKind is Either<BasicValueEnum, CallSiteValue> in inkwell
+/// ValueKind is an enum in inkwell that can be Basic or CallSite
 pub(crate) fn extract_basic_value_from_valuekind<'a>(
     vk: ValueKind<'a>,
 ) -> Option<BasicValueEnum<'a>> {
     match vk {
-        either::Either::Left(bv) => Some(bv),
-        either::Either::Right(_) => None,
+        ValueKind::Basic(bv) => Some(bv),
+        _ => None,
     }
 }
 

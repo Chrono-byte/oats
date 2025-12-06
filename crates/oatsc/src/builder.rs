@@ -569,57 +569,18 @@ pub fn run_from_args(
                             }
                         }
                     }
-                    ClassElement::MethodDefinition(ctor)
-                        if ctor.kind == MethodDefinitionKind::Constructor =>
-                    {
-                        // Compute fields for this class from explicit props, constructor
-                        // param properties, and `this.x = ...` assignments inside the ctor.
-                        let mut fields: Vec<(String, crate::types::OatsType)> = Vec::new();
-                        // explicit class properties
-                        for m in c.body.body.iter() {
-                            if let ClassElement::PropertyDefinition(field) = m {
-                                let fname = if let PropertyKey::Identifier(id) = &field.key {
-                                    id.name.to_string()
-                                } else {
-                                    continue;
-                                };
-                                if fields.iter().all(|(n, _)| n != &fname) {
-                                    // If the class property has an Oats type annotation, map it
-                                    // to an OatsType; otherwise default to Number.
-                                    let ftype = if let Some(type_ann) = &field.type_annotation {
-                                        if let Some(mt) = crate::types::map_ts_type_with_aliases(
-                                            &type_ann.type_annotation,
-                                            Some(&*codegen.type_aliases.borrow()),
-                                        ) {
-                                            mt
-                                        } else {
-                                            crate::types::OatsType::Number
-                                        }
-                                    } else {
-                                        crate::types::OatsType::Number
-                                    };
-                                    fields.push((fname, ftype));
-                                }
-                            }
-                        }
-                        // constructor param properties - oats_ast doesn't have param properties
-                        // so we skip this for now
-                        // scan ctor body for `this.x = ...` assignments
-                        // Note: oxc_ast::ast::AssignmentTarget only supports BindingPattern, not member assignments
-                        // So we can't directly detect `this.x = ...` patterns here
-                        // This functionality may need to be handled differently
-                        // Register computed fields so lowering can reference them
-                        codegen
-                            .class_fields
-                            .borrow_mut()
-                            .insert(class_name.clone(), fields.clone());
-                        if let Err(d) = codegen.gen_constructor_ir(&class_name, ctor, &fields, None)
-                        {
-                            diagnostics::emit_diagnostic(&d, Some(parsed_mod.source.as_str()));
-                            return Err(anyhow::anyhow!(d.message));
-                        }
+                    ClassElement::StaticBlock(_) => {
+                        // Static blocks are not currently supported
                     }
-                    _ => {}
+                    ClassElement::PropertyDefinition(_) => {
+                        // Property definitions are not currently supported
+                    }
+                    ClassElement::AccessorProperty(_) => {
+                        // Accessor properties are not currently supported
+                    }
+                    ClassElement::TSIndexSignature(_) => {
+                        // TypeScript index signatures are not currently supported
+                    }
                 }
             }
             // Done emitting this class; clear current parent
@@ -636,9 +597,11 @@ pub fn run_from_args(
         }
 
         // Handle type alias declarations: `type Name<T?> = Type;`
-        if let Statement::TSTypeAliasDeclaration(ta) = stmt {
+        if let oxc_ast::ast::Statement::TSTypeAliasDeclaration(ta) = stmt {
+            // Store the alias: name -> (type_params, aliased_type)
+            // We store a reference to the type annotation since TSType doesn't implement Clone/Copy
+            // The AST nodes live in the allocator for the lifetime of codegen, so this is safe
             let alias_name = ta.id.name.to_string();
-            // Extract type parameter names if present
             let type_params = ta.type_parameters.as_ref().map(|params| {
                 params
                     .params
@@ -646,11 +609,10 @@ pub fn run_from_args(
                     .map(|p| p.name.name.to_string())
                     .collect::<Vec<String>>()
             });
-            // Store the alias: name -> (type_params, aliased_type)
             codegen
                 .type_aliases
                 .borrow_mut()
-                .insert(alias_name, (type_params, ta.type_annotation.clone()));
+                .insert(alias_name, (type_params, &ta.type_annotation));
         }
 
         // Handle interface declarations: `interface Name { ... }`
@@ -861,8 +823,6 @@ pub fn run_from_args(
     }
 
     // Handle non-exported function declarations: `function foo() {}`
-    // Note: oats_ast doesn't have separate export syntax - exports are handled
-    // separately via the arrow_functions collection and main function detection
     for stmt in &parsed.body {
         if let Statement::FunctionDeclaration(fn_decl) = stmt {
             let fname = if let Some(id) = &fn_decl.id {
@@ -895,7 +855,7 @@ pub fn run_from_args(
 
     // Emit arrow functions declared as top-level const/let bindings
     // Example: const foo = (x: number): number => x + 1;
-    for (fname, arrow, is_exported) in &arrow_functions {
+    for (fname, _arrow, is_exported) in &arrow_functions {
         // Skip exported main - it will be handled separately
         if fname == "main" && *is_exported {
             continue;
@@ -915,7 +875,7 @@ pub fn run_from_args(
     // conflicting with the C runtime entrypoint. The script must export
     // `main`, but we generate `oats_main` as the emitted symbol the host
     // runtime will call.
-    if let (Some(func), Some(sig)) = (func_decl, func_sig) {
+    if let (Some(func), Some(sig)) = (func_decl, func_sig.as_ref()) {
         codegen
             .gen_function_ir(
                 crate::runtime_functions::names::OATS_MAIN,
@@ -932,7 +892,7 @@ pub fn run_from_args(
 
     // Try to emit a host `main` into the module so no external shim is
     // required. Recompute IR after emission.
-    let emitted_host_main = if let Some(ref sig) = func_sig {
+    let emitted_host_main = if let Some(sig) = func_sig.clone() {
         codegen.emit_host_main(&sig.params, &sig.ret)
     } else {
         false

@@ -456,12 +456,10 @@ pub fn lower_object<'a>(
                     {
                         class_name_opt = Some(nom);
                     } else if let Some(param_idx) = param_map.get(&ident_name)
-                        && let Some(param_types) = codegen.fn_param_types.borrow().get(
-                            match function.get_name().to_str() {
-                                Ok(name) => name,
-                                Err(_) => "",
-                            },
-                        )
+                        && let Some(param_types) = codegen
+                            .fn_param_types
+                            .borrow()
+                            .get(function.get_name().to_str().unwrap_or_default())
                     {
                         let idx = *param_idx as usize;
                         if idx < param_types.len()
@@ -811,9 +809,10 @@ pub fn lower_template<'a>(
     // quasis.len() = expressions.len() + 1 (there's always one more quasi)
     for (i, quasi) in tpl.quasis.iter().enumerate() {
         // Add the string part
-        let quasi_str = quasi.value.cooked.as_ref()
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| String::new());
+        let quasi_str = match quasi.value.cooked.as_ref() {
+            Some(s) => s.to_string(),
+            None => String::new(),
+        };
         let quasi_ptr = create_string_literal(codegen, &quasi_str)?;
 
         // Concatenate with result so far. If the current `result`

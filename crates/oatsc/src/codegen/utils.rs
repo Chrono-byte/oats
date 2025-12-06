@@ -90,11 +90,16 @@ pub mod memory {
         let call_site = codegen
             .builder
             .build_call(malloc_fn, &[size.into()], name)
-            .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "failed to build malloc call"))?;
+            .map_err(|_| {
+                Diagnostic::simple_boxed(Severity::Error, "failed to build malloc call")
+            })?;
         let ptr = match call_site.try_as_basic_value() {
             inkwell::values::ValueKind::Basic(bv) => bv.into_pointer_value(),
             _ => {
-                return Err(Diagnostic::simple_boxed(Severity::Error, "malloc call returned no value"));
+                return Err(Diagnostic::simple_boxed(
+                    Severity::Error,
+                    "malloc call returned no value",
+                ));
             }
         };
         Ok(ptr)
@@ -110,11 +115,16 @@ pub mod memory {
         let call_site = codegen
             .builder
             .build_call(array_alloc_fn, &[length.into()], name)
-            .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "failed to build array_alloc call"))?;
+            .map_err(|_| {
+                Diagnostic::simple_boxed(Severity::Error, "failed to build array_alloc call")
+            })?;
         let ptr = match call_site.try_as_basic_value() {
             inkwell::values::ValueKind::Basic(bv) => bv.into_pointer_value(),
             _ => {
-                return Err(Diagnostic::simple_boxed(Severity::Error, "array_alloc call returned no value"));
+                return Err(Diagnostic::simple_boxed(
+                    Severity::Error,
+                    "array_alloc call returned no value",
+                ));
             }
         };
         Ok(ptr)

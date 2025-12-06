@@ -218,12 +218,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     let ident_name = ident.name.to_string();
                     // Check if it's `this`
                     if ident_name == "this" {
-                        if let Some(param_types) = self.fn_param_types.borrow().get(function
-                            .get_name()
-                            .to_str()
-                            .ok()
-                            .unwrap_or("")
-                        ) && !param_types.is_empty()
+                        let fname = function.get_name().to_str().unwrap_or_default();
+                        if let Some(param_types) = self.fn_param_types.borrow().get(fname)
+                            && !param_types.is_empty()
                             && let crate::types::OatsType::NominalStruct(n) = &param_types[0]
                         {
                             Some(n.clone())
@@ -233,12 +230,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     }
                     // Check params
                     else if let Some(param_idx) = param_map.get(&ident_name) {
-                        if let Some(param_types) = self.fn_param_types.borrow().get(function
-                            .get_name()
-                            .to_str()
-                            .ok()
-                            .unwrap_or("")
-                        ) {
+                        let fname = function.get_name().to_str().unwrap_or_default();
+                        if let Some(param_types) = self.fn_param_types.borrow().get(fname) {
                             let idx = *param_idx as usize;
                             if idx < param_types.len()
                                 && let crate::types::OatsType::NominalStruct(n) = &param_types[idx]
@@ -275,12 +268,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     let ident_name = ident.name.to_string();
                     // Check if it's `this`
                     if ident_name == "this" {
-                        if let Some(param_types) = self.fn_param_types.borrow().get(function
-                            .get_name()
-                            .to_str()
-                            .ok()
-                            .unwrap_or("")
-                        ) && !param_types.is_empty()
+                        let fname = function.get_name().to_str().unwrap_or_default();
+                        if let Some(param_types) = self.fn_param_types.borrow().get(fname)
+                            && !param_types.is_empty()
                             && let crate::types::OatsType::NominalStruct(n) = &param_types[0]
                         {
                             Some(n.clone())
@@ -290,12 +280,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     }
                     // Check params
                     else if let Some(param_idx) = param_map.get(&ident_name) {
-                        if let Some(param_types) = self.fn_param_types.borrow().get(function
-                            .get_name()
-                            .to_str()
-                            .ok()
-                            .unwrap_or("")
-                        ) {
+                        let fname = function.get_name().to_str().unwrap_or_default();
+                        if let Some(param_types) = self.fn_param_types.borrow().get(fname) {
                             let idx = *param_idx as usize;
                             if idx < param_types.len()
                                 && let crate::types::OatsType::NominalStruct(n) = &param_types[idx]

@@ -274,10 +274,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         // number of elements
         let elem_count = arr_lit.elements.len();
         // Generate a nominal name for this tuple shape
-        let fname = match function.get_name().to_str() {
-            Ok(s) => s,
-            Err(_) => "<fn>",
-        };
+        let fname = function.get_name().to_str().unwrap_or("<fn>");
         let gen_name = format!("tuple_{}_{}", fname, var_ctx.name);
         // Register field list under class_fields as ("0", type0), ...
         let mut fields: Vec<(String, crate::types::OatsType)> = Vec::new();
@@ -859,21 +856,17 @@ impl<'a> crate::codegen::CodeGen<'a> {
         if let Some(rest_elem) = &arr_pat.rest {
             // Create a new array with remaining elements from index rest_pos onwards
             let rest_pos = arr_pat.elements.len();
-            
+
             // Calculate rest array length: length - rest_pos
             let rest_pos_i64 = self.i64_t.const_int(rest_pos as u64, false);
-                        let length_i64 = self
-                            .builder
-                            .build_int_cast(length, self.i64_t, "length_i64")
-                            .map_err(|_| {
-                                Diagnostic::simple_boxed(Severity::Error, "int cast failed")
-                            })?;
+            let length_i64 = self
+                .builder
+                .build_int_cast(length, self.i64_t, "length_i64")
+                .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "int cast failed"))?;
             let rest_len = self
                 .builder
                 .build_int_sub(length_i64, rest_pos_i64, "rest_len")
-                            .map_err(|_| {
-                                Diagnostic::simple_boxed(Severity::Error, "int sub failed")
-                            })?;
+                .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "int sub failed"))?;
 
             // Get the element type from the source array (assume pointer elements for now)
             // TODO: Could infer element type from array metadata if available
@@ -889,20 +882,17 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     &[rest_len.into(), elem_size.into(), is_number.into()],
                     "rest_arr_alloc",
                 )
-                .map_err(|_| {
-                    Diagnostic::simple_boxed(Severity::Error, "array alloc failed")
-                })?;
+                .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "array alloc failed"))?;
 
-            let rest_arr_ptr = if let inkwell::values::ValueKind::Basic(bv) =
-                rest_arr_call.try_as_basic_value()
-            {
-                bv.into_pointer_value()
-            } else {
-                return Err(Diagnostic::simple_boxed(
-                    Severity::Error,
-                    "rest array allocation failed",
-                ));
-            };
+            let rest_arr_ptr =
+                if let inkwell::values::ValueKind::Basic(bv) = rest_arr_call.try_as_basic_value() {
+                    bv.into_pointer_value()
+                } else {
+                    return Err(Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "rest array allocation failed",
+                    ));
+                };
 
             // Copy elements from source array to rest array
             // Loop from rest_pos to length, copying each element
@@ -910,165 +900,135 @@ impl<'a> crate::codegen::CodeGen<'a> {
             let array_set_ptr = self.get_array_set_ptr();
 
             // Create a loop to copy elements
-            let loop_start_bb =
-                self.context.append_basic_block(function, "rest_loop_start");
-            let loop_body_bb =
-                self.context.append_basic_block(function, "rest_loop_body");
-            let loop_end_bb =
-                self.context.append_basic_block(function, "rest_loop_end");
+            let loop_start_bb = self.context.append_basic_block(function, "rest_loop_start");
+            let loop_body_bb = self.context.append_basic_block(function, "rest_loop_body");
+            let loop_end_bb = self.context.append_basic_block(function, "rest_loop_end");
 
             // Initialize loop counter (i = rest_pos)
-            let i_alloca =
-                self.builder
-                    .build_alloca(self.i64_t, "rest_i")
-                    .map_err(|_| {
-                        Diagnostic::simple_boxed(Severity::Error, "alloca failed")
-                    })?;
+            let i_alloca = self
+                .builder
+                .build_alloca(self.i64_t, "rest_i")
+                .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "alloca failed"))?;
             let _ = self.builder.build_store(i_alloca, rest_pos_i64);
 
-                        // Branch to loop start
-                        let _ = self
-                            .builder
-                            .build_unconditional_branch(loop_start_bb)
-                            .map_err(|_| {
-                                Diagnostic::simple_boxed(Severity::Error, "branch failed")
-                            })?;
+            // Branch to loop start
+            let _ = self
+                .builder
+                .build_unconditional_branch(loop_start_bb)
+                .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "branch failed"))?;
 
-                        // Loop start: check if i < length
-                        self.builder.position_at_end(loop_start_bb);
-                        let i_val = self
-                            .builder
-                            .build_load(self.i64_t, i_alloca, "load_i")
-                            .map_err(|_| {
-                                Diagnostic::simple_boxed(Severity::Error, "load failed")
-                            })?;
-                        let i_val_int = if let BasicValueEnum::IntValue(iv) = i_val {
-                            iv
-                        } else {
-                            return Err(Diagnostic::simple_boxed(
-                                Severity::Error,
-                                "loop counter is not an integer",
-                            ));
-                        };
-                        let cond = self
-                            .builder
-                            .build_int_compare(
-                                inkwell::IntPredicate::ULT,
-                                i_val_int,
-                                length_i64,
-                                "i_lt_len",
-                            )
-                            .map_err(|_| {
-                                Diagnostic::simple_boxed(Severity::Error, "compare failed")
-                            })?;
-                        let _ = self
-                            .builder
-                            .build_conditional_branch(cond, loop_body_bb, loop_end_bb)
-                            .map_err(|_| {
-                                Diagnostic::simple_boxed(Severity::Error, "branch failed")
-                            })?;
+            // Loop start: check if i < length
+            self.builder.position_at_end(loop_start_bb);
+            let i_val = self
+                .builder
+                .build_load(self.i64_t, i_alloca, "load_i")
+                .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "load failed"))?;
+            let i_val_int = if let BasicValueEnum::IntValue(iv) = i_val {
+                iv
+            } else {
+                return Err(Diagnostic::simple_boxed(
+                    Severity::Error,
+                    "loop counter is not an integer",
+                ));
+            };
+            let cond = self
+                .builder
+                .build_int_compare(
+                    inkwell::IntPredicate::ULT,
+                    i_val_int,
+                    length_i64,
+                    "i_lt_len",
+                )
+                .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "compare failed"))?;
+            let _ = self
+                .builder
+                .build_conditional_branch(cond, loop_body_bb, loop_end_bb)
+                .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "branch failed"))?;
 
-                        // Loop body: copy element from source[i] to rest[i - idx]
-                        self.builder.position_at_end(loop_body_bb);
+            // Loop body: copy element from source[i] to rest[i - idx]
+            self.builder.position_at_end(loop_body_bb);
 
-                        // Get source element
-                        let src_elem_call = self
-                            .builder
-                            .build_call(
-                                array_get_ptr,
-                                &[arr_ptr.into(), i_val_int.into()],
-                                "src_elem",
-                            )
-                            .map_err(|_| {
-                                Diagnostic::simple_boxed(Severity::Error, "get elem failed")
-                            })?;
-                        let src_elem = if let inkwell::values::ValueKind::Basic(bv) =
-                            src_elem_call.try_as_basic_value()
-                        {
-                            bv
-                        } else {
-                            return Err(Diagnostic::simple_boxed(
-                                Severity::Error,
-                                "get element failed",
-                            ));
-                        };
+            // Get source element
+            let src_elem_call = self
+                .builder
+                .build_call(
+                    array_get_ptr,
+                    &[arr_ptr.into(), i_val_int.into()],
+                    "src_elem",
+                )
+                .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "get elem failed"))?;
+            let src_elem =
+                if let inkwell::values::ValueKind::Basic(bv) = src_elem_call.try_as_basic_value() {
+                    bv
+                } else {
+                    return Err(Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "get element failed",
+                    ));
+                };
 
             // Calculate rest index: i - rest_pos
             let rest_idx = self
                 .builder
                 .build_int_sub(i_val_int, rest_pos_i64, "rest_idx")
-                            .map_err(|_| {
-                            Diagnostic::simple_boxed(Severity::Error, "int sub failed")
-                        })?;
+                .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "int sub failed"))?;
 
-                        // Store in rest array
-                        // Create alloca for rest_arr_ptr (array_set_ptr needs i8**)
-                        let rest_arr_ptr_alloca = self
-                            .builder
-                            .build_alloca(self.i8ptr_t, "rest_arr_ptr_alloca")
-                            .map_err(|_| {
-                                Diagnostic::simple_boxed(Severity::Error, "alloca failed")
-                            })?;
-                        let _ = self.builder.build_store(rest_arr_ptr_alloca, rest_arr_ptr);
+            // Store in rest array
+            // Create alloca for rest_arr_ptr (array_set_ptr needs i8**)
+            let rest_arr_ptr_alloca = self
+                .builder
+                .build_alloca(self.i8ptr_t, "rest_arr_ptr_alloca")
+                .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "alloca failed"))?;
+            let _ = self.builder.build_store(rest_arr_ptr_alloca, rest_arr_ptr);
 
-                        let _ = self
-                            .builder
-                            .build_call(
-                                array_set_ptr,
-                                &[rest_arr_ptr_alloca.into(), rest_idx.into(), src_elem.into()],
-                                "set_rest_elem",
-                            )
-                            .map_err(|_| {
-                                Diagnostic::simple_boxed(Severity::Error, "set elem failed")
-                            })?;
+            let _ = self
+                .builder
+                .build_call(
+                    array_set_ptr,
+                    &[rest_arr_ptr_alloca.into(), rest_idx.into(), src_elem.into()],
+                    "set_rest_elem",
+                )
+                .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "set elem failed"))?;
 
-                        // Increment i
-                        let one = self.i64_t.const_int(1, false);
-                        let i_next = self
-                            .builder
-                            .build_int_add(i_val_int, one, "i_next")
-                            .map_err(|_| {
-                                Diagnostic::simple_boxed(Severity::Error, "int add failed")
-                            })?;
-                        let _ = self.builder.build_store(i_alloca, i_next);
+            // Increment i
+            let one = self.i64_t.const_int(1, false);
+            let i_next = self
+                .builder
+                .build_int_add(i_val_int, one, "i_next")
+                .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "int add failed"))?;
+            let _ = self.builder.build_store(i_alloca, i_next);
 
-                        // Branch back to loop start
-                        let _ = self
-                            .builder
-                            .build_unconditional_branch(loop_start_bb)
-                            .map_err(|_| {
-                                Diagnostic::simple_boxed(Severity::Error, "branch failed")
-                            })?;
+            // Branch back to loop start
+            let _ = self
+                .builder
+                .build_unconditional_branch(loop_start_bb)
+                .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "branch failed"))?;
 
-                        // Loop end: store rest array in binding
-                        self.builder.position_at_end(loop_end_bb);
+            // Loop end: store rest array in binding
+            self.builder.position_at_end(loop_end_bb);
 
             // Extract binding name from rest pattern
             let rest_name = match &rest_elem.argument.kind {
-                            BindingPatternKind::BindingIdentifier(ident) => ident.name.to_string(),
-                            _ => {
-                                return Err(Diagnostic::simple_boxed(
-                                    Severity::Error,
-                                    "Rest pattern must bind to an identifier",
-                                ));
-                            }
-                        };
+                BindingPatternKind::BindingIdentifier(ident) => ident.name.to_string(),
+                _ => {
+                    return Err(Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "Rest pattern must bind to an identifier",
+                    ));
+                }
+            };
 
             // Create alloca for rest binding
             let rest_alloca = self
                 .builder
                 .build_alloca(self.i8ptr_t.as_basic_type_enum(), &rest_name)
-                .map_err(|_| {
-                    Diagnostic::simple_boxed(Severity::Error, "alloca failed")
-                })?;
+                .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "alloca failed"))?;
 
             // Load the final rest array pointer (in case reallocation happened)
             let final_rest_arr_ptr = self
                 .builder
                 .build_load(self.i8ptr_t, rest_arr_ptr_alloca, "final_rest_arr")
-                .map_err(|_| {
-                    Diagnostic::simple_boxed(Severity::Error, "load failed")
-                })?;
+                .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "load failed"))?;
 
             // Increment RC for the rest array
             if let BasicValueEnum::PointerValue(rest_pv) = final_rest_arr_ptr {
@@ -1076,9 +1036,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 let _ = self
                     .builder
                     .build_call(rc_inc, &[rest_pv.into()], "rc_inc_rest")
-                    .map_err(|_| {
-                        Diagnostic::simple_boxed(Severity::Error, "rc_inc failed")
-                    })?;
+                    .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "rc_inc failed"))?;
             }
 
             // Store rest array
@@ -1135,10 +1093,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             let ident_name = ident.name.to_string();
             // Check if it's a parameter
             if let Some(param_idx) = param_map.get(&ident_name) {
-                let fname = match function.get_name().to_str() {
-                    Ok(s) => s,
-                    Err(_) => "",
-                };
+                let fname = function.get_name().to_str().unwrap_or_default();
                 if let Some(param_types) = self.fn_param_types.borrow().get(fname) {
                     let idx = *param_idx as usize;
                     if idx < param_types.len()
@@ -1311,134 +1266,128 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     );
                 }
                 BindingPatternKind::ObjectPattern(_nested_obj_pat) => {
-                            // Nested object destructuring: let {a: {b, c}} = obj
-                            // The loaded value is the nested object, recursively destructure it
-                            if let BasicValueEnum::PointerValue(nested_obj_ptr) = loaded {
-                                // Create a temporary variable to hold the nested object
-                                // This allows us to reuse the existing destructuring logic
-                                let temp_name = format!("__nested_obj_{}", prop_name);
-                                let temp_alloca = self
-                                    .builder
-                                    .build_alloca(self.i8ptr_t.as_basic_type_enum(), &temp_name)
-                                    .map_err(|_| {
-                                        Diagnostic::simple_boxed(
-                                            Severity::Error,
-                                            format!(
-                                                "alloca failed for nested object '{}'",
-                                                prop_name
-                                            ),
-                                        )
-                                    })?;
-
-                                // Increment RC for the nested object
-                                let rc_inc = self.get_rc_inc();
-                                let _ = self.builder.build_call(
-                                    rc_inc,
-                                    &[nested_obj_ptr.into()],
-                                    &format!("rc_inc_nested_{}", prop_name),
-                                );
-
-                                // Store the loaded nested object
-                                let _ = self.builder.build_store(temp_alloca, loaded);
-
-                                // Insert temporary into locals
-                                self.insert_local_current_scope(
-                                    locals_stack,
-                                    crate::codegen::helpers::LocalVarInfo {
-                                        name: temp_name.clone(),
-                                        ptr: temp_alloca,
-                                        ty: self.i8ptr_t.as_basic_type_enum(),
-                                        initialized: true,
-                                        is_const: true, // Temporary, immutable
-                                        is_weak: false,
-                                        nominal: None, // TODO: Could infer from field type
-                                        oats_type: None,
-                                    },
-                                );
-
-                                // Create a synthetic identifier expression for the temporary
-                                // Note: We can't easily create synthetic AST nodes with oxc_allocator
-                                // Instead, we'll pass the temporary name and create the expression differently
-                                // For now, we'll use a workaround by creating an identifier reference manually
-                                // This is a limitation - we may need to refactor to avoid synthetic AST creation
-                                return Err(Diagnostic::simple_boxed(
+                    // Nested object destructuring: let {a: {b, c}} = obj
+                    // The loaded value is the nested object, recursively destructure it
+                    if let BasicValueEnum::PointerValue(nested_obj_ptr) = loaded {
+                        // Create a temporary variable to hold the nested object
+                        // This allows us to reuse the existing destructuring logic
+                        let temp_name = format!("__nested_obj_{}", prop_name);
+                        let temp_alloca = self
+                            .builder
+                            .build_alloca(self.i8ptr_t.as_basic_type_enum(), &temp_name)
+                            .map_err(|_| {
+                                Diagnostic::simple_boxed(
                                     Severity::Error,
-                                    "Nested object destructuring with temporaries not yet supported - needs refactoring",
-                                ));
-                            } else {
-                                return Err(Diagnostic::simple_boxed(
-                                    Severity::Error,
-                                    format!(
-                                        "Nested object destructuring requires object type for field '{}'",
-                                        prop_name
-                                    ),
-                                ));
-                            }
-                        }
+                                    format!("alloca failed for nested object '{}'", prop_name),
+                                )
+                            })?;
+
+                        // Increment RC for the nested object
+                        let rc_inc = self.get_rc_inc();
+                        let _ = self.builder.build_call(
+                            rc_inc,
+                            &[nested_obj_ptr.into()],
+                            &format!("rc_inc_nested_{}", prop_name),
+                        );
+
+                        // Store the loaded nested object
+                        let _ = self.builder.build_store(temp_alloca, loaded);
+
+                        // Insert temporary into locals
+                        self.insert_local_current_scope(
+                            locals_stack,
+                            crate::codegen::helpers::LocalVarInfo {
+                                name: temp_name.clone(),
+                                ptr: temp_alloca,
+                                ty: self.i8ptr_t.as_basic_type_enum(),
+                                initialized: true,
+                                is_const: true, // Temporary, immutable
+                                is_weak: false,
+                                nominal: None, // TODO: Could infer from field type
+                                oats_type: None,
+                            },
+                        );
+
+                        // Create a synthetic identifier expression for the temporary
+                        // Note: We can't easily create synthetic AST nodes with oxc_allocator
+                        // Instead, we'll pass the temporary name and create the expression differently
+                        // For now, we'll use a workaround by creating an identifier reference manually
+                        // This is a limitation - we may need to refactor to avoid synthetic AST creation
+                        return Err(Diagnostic::simple_boxed(
+                            Severity::Error,
+                            "Nested object destructuring with temporaries not yet supported - needs refactoring",
+                        ));
+                    } else {
+                        return Err(Diagnostic::simple_boxed(
+                            Severity::Error,
+                            format!(
+                                "Nested object destructuring requires object type for field '{}'",
+                                prop_name
+                            ),
+                        ));
+                    }
+                }
                 BindingPatternKind::ArrayPattern(_nested_arr_pat) => {
-                            // Nested array destructuring: let {a: [b, c]} = obj
-                            // The loaded value is the nested array, recursively destructure it
-                            if let BasicValueEnum::PointerValue(nested_arr_ptr) = loaded {
-                                // Create a temporary variable to hold the nested array
-                                let temp_name = format!("__nested_arr_{}", prop_name);
-                                let temp_alloca = self
-                                    .builder
-                                    .build_alloca(self.i8ptr_t.as_basic_type_enum(), &temp_name)
-                                    .map_err(|_| {
-                                        Diagnostic::simple_boxed(
-                                            Severity::Error,
-                                            format!(
-                                                "alloca failed for nested array '{}'",
-                                                prop_name
-                                            ),
-                                        )
-                                    })?;
-
-                                // Increment RC for the nested array
-                                let rc_inc = self.get_rc_inc();
-                                let _ = self.builder.build_call(
-                                    rc_inc,
-                                    &[nested_arr_ptr.into()],
-                                    &format!("rc_inc_nested_arr_{}", prop_name),
-                                );
-
-                                // Store the loaded nested array
-                                let _ = self.builder.build_store(temp_alloca, loaded);
-
-                                // Insert temporary into locals
-                                self.insert_local_current_scope(
-                                    locals_stack,
-                                    crate::codegen::helpers::LocalVarInfo {
-                                        name: temp_name.clone(),
-                                        ptr: temp_alloca,
-                                        ty: self.i8ptr_t.as_basic_type_enum(),
-                                        initialized: true,
-                                        is_const: true,
-                                        is_weak: false,
-                                        nominal: None,
-                                        oats_type: None,
-                                    },
-                                );
-
-                                // Create a synthetic identifier expression for the temporary
-                                // Note: We can't easily create synthetic AST nodes with oxc_allocator
-                                // Instead, we'll pass the temporary name and create the expression differently
-                                // For now, we'll use a workaround by creating an identifier reference manually
-                                // This is a limitation - we may need to refactor to avoid synthetic AST creation
-                                return Err(Diagnostic::simple_boxed(
+                    // Nested array destructuring: let {a: [b, c]} = obj
+                    // The loaded value is the nested array, recursively destructure it
+                    if let BasicValueEnum::PointerValue(nested_arr_ptr) = loaded {
+                        // Create a temporary variable to hold the nested array
+                        let temp_name = format!("__nested_arr_{}", prop_name);
+                        let temp_alloca = self
+                            .builder
+                            .build_alloca(self.i8ptr_t.as_basic_type_enum(), &temp_name)
+                            .map_err(|_| {
+                                Diagnostic::simple_boxed(
                                     Severity::Error,
-                                    "Nested array destructuring with temporaries not yet supported - needs refactoring",
-                                ));
-                            } else {
-                                return Err(Diagnostic::simple_boxed(
-                                    Severity::Error,
-                                    format!(
-                                        "Nested array destructuring requires array type for field '{}'",
-                                        prop_name
-                                    ),
-                                ));
-                            }
-                        }
+                                    format!("alloca failed for nested array '{}'", prop_name),
+                                )
+                            })?;
+
+                        // Increment RC for the nested array
+                        let rc_inc = self.get_rc_inc();
+                        let _ = self.builder.build_call(
+                            rc_inc,
+                            &[nested_arr_ptr.into()],
+                            &format!("rc_inc_nested_arr_{}", prop_name),
+                        );
+
+                        // Store the loaded nested array
+                        let _ = self.builder.build_store(temp_alloca, loaded);
+
+                        // Insert temporary into locals
+                        self.insert_local_current_scope(
+                            locals_stack,
+                            crate::codegen::helpers::LocalVarInfo {
+                                name: temp_name.clone(),
+                                ptr: temp_alloca,
+                                ty: self.i8ptr_t.as_basic_type_enum(),
+                                initialized: true,
+                                is_const: true,
+                                is_weak: false,
+                                nominal: None,
+                                oats_type: None,
+                            },
+                        );
+
+                        // Create a synthetic identifier expression for the temporary
+                        // Note: We can't easily create synthetic AST nodes with oxc_allocator
+                        // Instead, we'll pass the temporary name and create the expression differently
+                        // For now, we'll use a workaround by creating an identifier reference manually
+                        // This is a limitation - we may need to refactor to avoid synthetic AST creation
+                        return Err(Diagnostic::simple_boxed(
+                            Severity::Error,
+                            "Nested array destructuring with temporaries not yet supported - needs refactoring",
+                        ));
+                    } else {
+                        return Err(Diagnostic::simple_boxed(
+                            Severity::Error,
+                            format!(
+                                "Nested array destructuring requires array type for field '{}'",
+                                prop_name
+                            ),
+                        ));
+                    }
+                }
                 // Rest patterns in object destructuring are handled at the property level
                 _ => {
                     return Err(Diagnostic::simple_boxed(
@@ -1451,195 +1400,183 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
         // Handle rest element if present
         if let Some(rest_elem) = &obj_pat.rest {
-                    // Rest pattern: let {a, b, ...rest} = obj
-                    // Create a new object with all remaining properties
+            // Rest pattern: let {a, b, ...rest} = obj
+            // Create a new object with all remaining properties
 
-                    // Extract binding name from rest pattern
-                    let rest_name = match &rest_elem.argument.kind {
-                        BindingPatternKind::BindingIdentifier(ident) => ident.name.to_string(),
-                        _ => {
-                            return Err(Diagnostic::simple_boxed(
-                                Severity::Error,
-                                "Rest pattern must bind to an identifier",
-                            ));
-                        }
-                    };
+            // Extract binding name from rest pattern
+            let rest_name = match &rest_elem.argument.kind {
+                BindingPatternKind::BindingIdentifier(ident) => ident.name.to_string(),
+                _ => {
+                    return Err(Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "Rest pattern must bind to an identifier",
+                    ));
+                }
+            };
 
-                    // Calculate how many fields remain (not destructured)
-                    let remaining_fields: Vec<(usize, (String, crate::types::OatsType))> =
-                        field_list
-                            .iter()
-                            .enumerate()
-                            .filter(|(_, (name, _))| !destructured_fields.contains(name))
-                            .map(|(idx, (name, ty))| (idx, (name.clone(), ty.clone())))
-                            .collect();
+            // Calculate how many fields remain (not destructured)
+            let remaining_fields: Vec<(usize, (String, crate::types::OatsType))> = field_list
+                .iter()
+                .enumerate()
+                .filter(|(_, (name, _))| !destructured_fields.contains(name))
+                .map(|(idx, (name, ty))| (idx, (name.clone(), ty.clone())))
+                .collect();
 
-                    let rest_field_count = remaining_fields.len();
+            let rest_field_count = remaining_fields.len();
 
-                    // Allocate memory for rest object: header (8) + meta (8) + fields (8 each)
-                    let header_size = 8u64;
-                    let meta_size = 8u64;
-                    let field_size = 8u64;
-                    let total_size =
-                        header_size + meta_size + (rest_field_count as u64 * field_size);
+            // Allocate memory for rest object: header (8) + meta (8) + fields (8 each)
+            let header_size = 8u64;
+            let meta_size = 8u64;
+            let field_size = 8u64;
+            let total_size = header_size + meta_size + (rest_field_count as u64 * field_size);
 
-                    let malloc_fn = self.get_malloc();
-                    let size_const = self.i64_t.const_int(total_size, false);
-                    let malloc_call = self
-                        .builder
-                        .build_call(malloc_fn, &[size_const.into()], "rest_obj_malloc")
-                        .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "malloc failed"))?;
+            let malloc_fn = self.get_malloc();
+            let size_const = self.i64_t.const_int(total_size, false);
+            let malloc_call = self
+                .builder
+                .build_call(malloc_fn, &[size_const.into()], "rest_obj_malloc")
+                .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "malloc failed"))?;
 
-                    let rest_obj_ptr = if let inkwell::values::ValueKind::Basic(bv) =
-                        malloc_call.try_as_basic_value()
-                    {
-                        bv.into_pointer_value()
-                    } else {
-                        return Err(Diagnostic::simple_boxed(
-                            Severity::Error,
-                            "malloc returned no value",
-                        ));
-                    };
+            let rest_obj_ptr =
+                if let inkwell::values::ValueKind::Basic(bv) = malloc_call.try_as_basic_value() {
+                    bv.into_pointer_value()
+                } else {
+                    return Err(Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "malloc returned no value",
+                    ));
+                };
 
-                    // Initialize header (static bit set)
-                    let header_i8ptr = self
-                        .offset_i8_ptr(rest_obj_ptr, 0, "rest_header_i8ptr")
-                        .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "gep failed"))?;
-                    let header_ptr = self
-                        .builder
-                        .build_pointer_cast(
-                            header_i8ptr,
-                            self.context.ptr_type(inkwell::AddressSpace::default()),
-                            "rest_header_ptr",
-                        )
-                        .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "cast failed"))?;
-                    let static_header = self.i64_t.const_int(1u64 << 32, false);
-                    let _ = self.builder.build_store(header_ptr, static_header);
+            // Initialize header (static bit set)
+            let header_i8ptr = self
+                .offset_i8_ptr(rest_obj_ptr, 0, "rest_header_i8ptr")
+                .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "gep failed"))?;
+            let header_ptr = self
+                .builder
+                .build_pointer_cast(
+                    header_i8ptr,
+                    self.context.ptr_type(inkwell::AddressSpace::default()),
+                    "rest_header_ptr",
+                )
+                .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "cast failed"))?;
+            let static_header = self.i64_t.const_int(1u64 << 32, false);
+            let _ = self.builder.build_store(header_ptr, static_header);
 
-                    // Initialize meta slot (field count)
-                    let meta_i8ptr = self
-                        .offset_i8_ptr(rest_obj_ptr, 8, "rest_meta_i8ptr")
-                        .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "gep failed"))?;
-                    let meta_ptr = self
-                        .builder
-                        .build_pointer_cast(
-                            meta_i8ptr,
-                            self.context.ptr_type(inkwell::AddressSpace::default()),
-                            "rest_meta_ptr",
-                        )
-                        .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "cast failed"))?;
-                    let field_count_val = self.i64_t.const_int(rest_field_count as u64, false);
-                    let _ = self.builder.build_store(meta_ptr, field_count_val);
+            // Initialize meta slot (field count)
+            let meta_i8ptr = self
+                .offset_i8_ptr(rest_obj_ptr, 8, "rest_meta_i8ptr")
+                .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "gep failed"))?;
+            let meta_ptr = self
+                .builder
+                .build_pointer_cast(
+                    meta_i8ptr,
+                    self.context.ptr_type(inkwell::AddressSpace::default()),
+                    "rest_meta_ptr",
+                )
+                .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "cast failed"))?;
+            let field_count_val = self.i64_t.const_int(rest_field_count as u64, false);
+            let _ = self.builder.build_store(meta_ptr, field_count_val);
 
-                    // Copy each remaining field from source to rest object
-                    for (rest_idx, (field_idx, (field_name, _field_ty))) in
-                        remaining_fields.iter().enumerate()
-                    {
-                        // Get source field value
-                        let src_field_offset =
-                            header_size + meta_size + (*field_idx as u64 * field_size);
-                        let src_field_i8ptr = self
-                            .offset_i8_ptr(
-                                obj_ptr,
-                                src_field_offset,
-                                &format!("src_field_{}_i8ptr", field_name),
-                            )
-                            .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "gep failed"))?;
+            // Copy each remaining field from source to rest object
+            for (rest_idx, (field_idx, (field_name, _field_ty))) in
+                remaining_fields.iter().enumerate()
+            {
+                // Get source field value
+                let src_field_offset = header_size + meta_size + (*field_idx as u64 * field_size);
+                let src_field_i8ptr = self
+                    .offset_i8_ptr(
+                        obj_ptr,
+                        src_field_offset,
+                        &format!("src_field_{}_i8ptr", field_name),
+                    )
+                    .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "gep failed"))?;
 
-                        let src_field_ptr = self
-                            .builder
-                            .build_pointer_cast(
-                                src_field_i8ptr,
-                                self.i8ptr_t,
-                                &format!("src_field_{}_ptr", field_name),
-                            )
-                            .map_err(|_| {
-                                Diagnostic::simple_boxed(Severity::Error, "cast failed")
-                            })?;
+                let src_field_ptr = self
+                    .builder
+                    .build_pointer_cast(
+                        src_field_i8ptr,
+                        self.i8ptr_t,
+                        &format!("src_field_{}_ptr", field_name),
+                    )
+                    .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "cast failed"))?;
 
-                        let src_field_val = self
-                            .builder
-                            .build_load(
-                                self.i8ptr_t,
-                                src_field_ptr,
-                                &format!("src_field_{}_load", field_name),
-                            )
-                            .map_err(|_| {
-                                Diagnostic::simple_boxed(Severity::Error, "load failed")
-                            })?;
+                let src_field_val = self
+                    .builder
+                    .build_load(
+                        self.i8ptr_t,
+                        src_field_ptr,
+                        &format!("src_field_{}_load", field_name),
+                    )
+                    .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "load failed"))?;
 
-                        // Increment RC for copied field
-                        if let BasicValueEnum::PointerValue(src_pv) = src_field_val {
-                            let rc_inc = self.get_rc_inc();
-                            let _ = self
-                                .builder
-                                .build_call(
-                                    rc_inc,
-                                    &[src_pv.into()],
-                                    &format!("rc_inc_rest_{}", field_name),
-                                )
-                                .map_err(|_| {
-                                    Diagnostic::simple_boxed(Severity::Error, "rc_inc failed")
-                                })?;
-                        }
-
-                        // Store in rest object
-                        let rest_field_offset =
-                            header_size + meta_size + (rest_idx as u64 * field_size);
-                        let rest_field_i8ptr = self
-                            .offset_i8_ptr(
-                                rest_obj_ptr,
-                                rest_field_offset,
-                                &format!("rest_field_{}_i8ptr", field_name),
-                            )
-                            .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "gep failed"))?;
-
-                        let rest_field_ptr = self
-                            .builder
-                            .build_pointer_cast(
-                                rest_field_i8ptr,
-                                self.i8ptr_t,
-                                &format!("rest_field_{}_ptr", field_name),
-                            )
-                            .map_err(|_| {
-                                Diagnostic::simple_boxed(Severity::Error, "cast failed")
-                            })?;
-
-                        let _ = self.builder.build_store(rest_field_ptr, src_field_val);
-                    }
-
-                    // Create alloca for rest binding
-                    let rest_alloca = self
-                        .builder
-                        .build_alloca(self.i8ptr_t.as_basic_type_enum(), &rest_name)
-                        .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "alloca failed"))?;
-
-                    // Increment RC for the rest object
+                // Increment RC for copied field
+                if let BasicValueEnum::PointerValue(src_pv) = src_field_val {
                     let rc_inc = self.get_rc_inc();
                     let _ = self
                         .builder
-                        .build_call(rc_inc, &[rest_obj_ptr.into()], "rc_inc_rest_obj")
+                        .build_call(
+                            rc_inc,
+                            &[src_pv.into()],
+                            &format!("rc_inc_rest_{}", field_name),
+                        )
                         .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "rc_inc failed"))?;
+                }
 
-                    // Store rest object
-                    let _ = self
-                        .builder
-                        .build_store(rest_alloca, rest_obj_ptr.as_basic_value_enum());
+                // Store in rest object
+                let rest_field_offset = header_size + meta_size + (rest_idx as u64 * field_size);
+                let rest_field_i8ptr = self
+                    .offset_i8_ptr(
+                        rest_obj_ptr,
+                        rest_field_offset,
+                        &format!("rest_field_{}_i8ptr", field_name),
+                    )
+                    .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "gep failed"))?;
 
-                    // Insert into locals
-                    self.insert_local_current_scope(
-                        locals_stack,
-                        crate::codegen::helpers::LocalVarInfo {
-                            name: rest_name,
-                            ptr: rest_alloca,
-                            ty: self.i8ptr_t.as_basic_type_enum(),
-                            initialized: true,
-                            is_const: matches!(var_decl.kind, VariableDeclarationKind::Const) || !is_mut_decl,
-                            is_weak: false,
-                            nominal: Some(class_name.clone()), // Rest object has same type as source
-                            oats_type: None,
-                        },
-                    );
+                let rest_field_ptr = self
+                    .builder
+                    .build_pointer_cast(
+                        rest_field_i8ptr,
+                        self.i8ptr_t,
+                        &format!("rest_field_{}_ptr", field_name),
+                    )
+                    .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "cast failed"))?;
+
+                let _ = self.builder.build_store(rest_field_ptr, src_field_val);
+            }
+
+            // Create alloca for rest binding
+            let rest_alloca = self
+                .builder
+                .build_alloca(self.i8ptr_t.as_basic_type_enum(), &rest_name)
+                .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "alloca failed"))?;
+
+            // Increment RC for the rest object
+            let rc_inc = self.get_rc_inc();
+            let _ = self
+                .builder
+                .build_call(rc_inc, &[rest_obj_ptr.into()], "rc_inc_rest_obj")
+                .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "rc_inc failed"))?;
+
+            // Store rest object
+            let _ = self
+                .builder
+                .build_store(rest_alloca, rest_obj_ptr.as_basic_value_enum());
+
+            // Insert into locals
+            self.insert_local_current_scope(
+                locals_stack,
+                crate::codegen::helpers::LocalVarInfo {
+                    name: rest_name,
+                    ptr: rest_alloca,
+                    ty: self.i8ptr_t.as_basic_type_enum(),
+                    initialized: true,
+                    is_const: matches!(var_decl.kind, VariableDeclarationKind::Const)
+                        || !is_mut_decl,
+                    is_weak: false,
+                    nominal: Some(class_name.clone()), // Rest object has same type as source
+                    oats_type: None,
+                },
+            );
         }
 
         Ok(())
@@ -1734,13 +1671,13 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         "Unsupported pattern in variable declaration",
                     )
                     .with_code("E1004")
-                        .with_label(crate::diagnostics::Label {
-                            span: crate::diagnostics::Span {
-                                start: decl.span.start as usize,
-                                end: decl.span.end as usize,
-                            },
-                            message: "Unsupported pattern type".into(),
-                        })
+                    .with_label(crate::diagnostics::Label {
+                        span: crate::diagnostics::Span {
+                            start: decl.span.start as usize,
+                            end: decl.span.end as usize,
+                        },
+                        message: "Unsupported pattern type".into(),
+                    })
                     .into());
                 }
             };

@@ -261,16 +261,13 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     flatten_stmt(&w.body, out);
                 }
                 oxc_ast::ast::Statement::ForStatement(f) => {
-                    if let Some(init) = &f.init {
-                        match init {
-                            oxc_ast::ast::ForStatementInit::VariableDeclaration(vd) => {
-                                for decl in &vd.declarations {
-                                    if let Some(init_expr) = &decl.init {
-                                        flatten_expr(init_expr, out);
-                                    }
-                                }
+                    if let Some(init) = &f.init
+                        && let oxc_ast::ast::ForStatementInit::VariableDeclaration(vd) = init
+                    {
+                        for decl in &vd.declarations {
+                            if let Some(init_expr) = &decl.init {
+                                flatten_expr(init_expr, out);
                             }
-                            _ => {}
                         }
                     }
                     if let Some(test) = &f.test {

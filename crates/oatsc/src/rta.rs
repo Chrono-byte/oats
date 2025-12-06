@@ -271,27 +271,27 @@ fn build_class_hierarchy(modules: &HashMap<String, ParsedModule>) -> (ClassHiera
 
     for module in modules.values() {
         for stmt in &module.parsed.body {
-            if let Statement::ClassDeclaration(class_decl) = stmt {
-                if let Some(id) = &class_decl.id {
-                    let class_name = id.name.to_string();
+            if let Statement::ClassDeclaration(class_decl) = stmt
+                && let Some(id) = &class_decl.id
+            {
+                let class_name = id.name.to_string();
 
-                    // Check for extends clause
-                    if let Some(super_class) = &class_decl.super_class {
-                        if let Expression::Identifier(super_ident) = &*super_class {
-                            let super_name = super_ident.name.to_string();
-                            hierarchy
-                                .entry(super_name.clone())
-                                .or_default()
-                                .push(class_name.clone());
-                            parent_map.insert(class_name.clone(), Some(super_name));
-                        } else {
-                            parent_map.insert(class_name.clone(), None);
-                        }
+                // Check for extends clause
+                if let Some(super_class) = &class_decl.super_class {
+                    if let Expression::Identifier(super_ident) = super_class {
+                        let super_name = super_ident.name.to_string();
+                        hierarchy
+                            .entry(super_name.clone())
+                            .or_default()
+                            .push(class_name.clone());
+                        parent_map.insert(class_name.clone(), Some(super_name));
                     } else {
-                        // Root class, ensure it's in the map
-                        hierarchy.entry(class_name.clone()).or_default();
-                        parent_map.insert(class_name, None);
+                        parent_map.insert(class_name.clone(), None);
                     }
+                } else {
+                    // Root class, ensure it's in the map
+                    hierarchy.entry(class_name.clone()).or_default();
+                    parent_map.insert(class_name, None);
                 }
             }
         }
@@ -373,17 +373,17 @@ fn collect_methods(modules: &HashMap<String, ParsedModule>) -> HashMap<String, H
 
     for module in modules.values() {
         for stmt in &module.parsed.body {
-            if let Statement::ClassDeclaration(class_decl) = stmt {
-                if let Some(id) = &class_decl.id {
-                    let class_name = id.name.to_string();
-                    let class_methods = methods.entry(class_name).or_default();
+            if let Statement::ClassDeclaration(class_decl) = stmt
+                && let Some(id) = &class_decl.id
+            {
+                let class_name = id.name.to_string();
+                let class_methods = methods.entry(class_name).or_default();
 
-                    for member in &class_decl.body.body {
-                        if let ClassElement::MethodDefinition(method) = member {
-                            // Get method name
-                            if let PropertyKey::Identifier(ident) = &method.key {
-                                class_methods.insert(ident.name.to_string());
-                            }
+                for member in &class_decl.body.body {
+                    if let ClassElement::MethodDefinition(method) = member {
+                        // Get method name
+                        if let PropertyKey::Identifier(ident) = &method.key {
+                            class_methods.insert(ident.name.to_string());
                         }
                     }
                 }
@@ -437,12 +437,12 @@ fn collect_function_asts(
 
     for module in modules.values() {
         for stmt in &module.parsed.body {
-            if let Statement::FunctionDeclaration(fn_decl) = stmt {
-                if let Some(id) = &fn_decl.id {
-                    let name = id.name.to_string();
-                    // fn_decl is &Box<Function>, use as_ref() to get &Function
-                    functions.insert(name, fn_decl.as_ref());
-                }
+            if let Statement::FunctionDeclaration(fn_decl) = stmt
+                && let Some(id) = &fn_decl.id
+            {
+                let name = id.name.to_string();
+                // fn_decl is &Box<Function>, use as_ref() to get &Function
+                functions.insert(name, fn_decl.as_ref());
             }
         }
     }
@@ -450,18 +450,17 @@ fn collect_function_asts(
     // Also collect class methods
     for module in modules.values() {
         for stmt in &module.parsed.body {
-            if let Statement::ClassDeclaration(class_decl) = stmt {
-                if let Some(id) = &class_decl.id {
-                    let class_name = id.name.to_string();
-                    for member in &class_decl.body.body {
-                        if let ClassElement::MethodDefinition(method) = member {
-                            if let PropertyKey::Identifier(ident) = &method.key {
-                                let method_name =
-                                    format!("{}_{}", class_name, ident.name.to_string());
-                                // method.value is &Box<Function>, use as_ref() to get &Function
-                                functions.insert(method_name, method.value.as_ref());
-                            }
-                        }
+            if let Statement::ClassDeclaration(class_decl) = stmt
+                && let Some(id) = &class_decl.id
+            {
+                let class_name = id.name.to_string();
+                for member in &class_decl.body.body {
+                    if let ClassElement::MethodDefinition(method) = member
+                        && let PropertyKey::Identifier(ident) = &method.key
+                    {
+                        let method_name = format!("{}_{}", class_name, ident.name);
+                        // method.value is &Box<Function>, use as_ref() to get &Function
+                        functions.insert(method_name, method.value.as_ref());
                     }
                 }
             }

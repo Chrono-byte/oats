@@ -65,10 +65,7 @@ impl<'a> CodeGen<'a> {
                         {
                             class_name_opt = Some(nom);
                         } else if let Some(param_idx) = param_map.get(&ident_name) {
-                            let fname = match function.get_name().to_str() {
-                                Ok(s) => s,
-                                Err(_) => "",
-                            };
+                            let fname = function.get_name().to_str().unwrap_or_default();
                             if let Some(param_types) = self.fn_param_types.borrow().get(fname) {
                                 let idx = *param_idx as usize;
                                 if idx < param_types.len()
@@ -80,10 +77,7 @@ impl<'a> CodeGen<'a> {
                             }
                         }
                     } else if matches!(&computed.object, Expression::ThisExpression(_)) {
-                        let fname = match function.get_name().to_str() {
-                            Ok(s) => s,
-                            Err(_) => "",
-                        };
+                        let fname = function.get_name().to_str().unwrap_or_default();
                         if let Some(param_types) = self.fn_param_types.borrow().get(fname)
                             && !param_types.is_empty()
                             && let crate::types::OatsType::NominalStruct(n) = &param_types[0]
@@ -313,10 +307,7 @@ impl<'a> CodeGen<'a> {
                             }
                             // Check function params if not found in locals
                             if !prefer_f64 && let Some(idx_p) = param_map.get(&arr_name) {
-                                let fname = match function.get_name().to_str() {
-                                    Ok(s) => s,
-                                    Err(_) => "",
-                                };
+                                let fname = function.get_name().to_str().unwrap_or_default();
                                 if let Some(param_types) = self.fn_param_types.borrow().get(fname) {
                                     let pidx = *idx_p as usize;
                                     if pidx < param_types.len()
@@ -495,10 +486,7 @@ impl<'a> CodeGen<'a> {
                         let ident_name = ident.as_ref().name.to_string();
                         // If ident is `this` and function param types exist
                         if ident_name == "this" {
-                            let fname = match function.get_name().to_str() {
-                                Ok(s) => s,
-                                Err(_) => "",
-                            };
+                            let fname = function.get_name().to_str().unwrap_or_default();
                             if let Some(param_types) = self.fn_param_types.borrow().get(fname)
                                 && !param_types.is_empty()
                                 && let crate::types::OatsType::NominalStruct(n) = &param_types[0]
@@ -507,10 +495,7 @@ impl<'a> CodeGen<'a> {
                             }
                         } else if let Some(param_idx) = param_map.get(&ident_name) {
                             // param_map stores parameter name -> index (u32)
-                            let fname = match function.get_name().to_str() {
-                                Ok(s) => s,
-                                Err(_) => "",
-                            };
+                            let fname = function.get_name().to_str().unwrap_or_default();
                             if let Some(param_types) = self.fn_param_types.borrow().get(fname) {
                                 let idx = *param_idx as usize;
                                 if idx < param_types.len()
@@ -536,10 +521,7 @@ impl<'a> CodeGen<'a> {
                             }
                         }
                     } else if matches!(&static_member.object, Expression::ThisExpression(_)) {
-                        let fname = match function.get_name().to_str() {
-                            Ok(s) => s,
-                            Err(_) => "",
-                        };
+                        let fname = function.get_name().to_str().unwrap_or_default();
                         if let Some(param_types) = self.fn_param_types.borrow().get(fname)
                             && !param_types.is_empty()
                             && let crate::types::OatsType::NominalStruct(n) = &param_types[0]
@@ -929,10 +911,7 @@ impl<'a> CodeGen<'a> {
                     {
                         class_name_opt = Some(nom);
                     } else if let Some(param_idx) = param_map.get(&ident_name) {
-                        let fname = match function.get_name().to_str() {
-                            Ok(s) => s,
-                            Err(_) => "",
-                        };
+                        let fname = function.get_name().to_str().unwrap_or_default();
                         if let Some(param_types) = self.fn_param_types.borrow().get(fname) {
                             let idx = *param_idx as usize;
                             if idx < param_types.len()
@@ -943,10 +922,7 @@ impl<'a> CodeGen<'a> {
                         }
                     }
                 } else if matches!(&static_member.object, Expression::ThisExpression(_)) {
-                    let fname = match function.get_name().to_str() {
-                        Ok(s) => s,
-                        Err(_) => "",
-                    };
+                    let fname = function.get_name().to_str().unwrap_or_default();
                     if let Some(param_types) = self.fn_param_types.borrow().get(fname)
                         && !param_types.is_empty()
                         && let crate::types::OatsType::NominalStruct(n) = &param_types[0]
@@ -966,111 +942,106 @@ impl<'a> CodeGen<'a> {
                     );
                 }
 
-                if let Some(class_name) = class_name_opt {
-                    if let Some(fields) = self.class_fields.borrow().get(&class_name) {
-                        if let Some((field_idx, (_fname, field_ty))) = fields
-                            .iter()
-                            .enumerate()
-                            .find(|(_, (n, _))| n == &field_name)
-                        {
-                            // Compute field offset
-                            let hdr_size = self
-                                .i64_t
-                                .const_int(std::mem::size_of::<u64>() as u64, false);
-                            let ptr_sz = self
-                                .i64_t
-                                .const_int(std::mem::size_of::<usize>() as u64, false);
-                            let idx_const = self.i64_t.const_int(field_idx as u64, false);
-                            let mul = self
-                                .builder
-                                .build_int_mul(idx_const, ptr_sz, "fld_off_mul")
-                                .map_err(|_| Diagnostic::error("LLVM builder error"))?;
-                            let meta_slot = self.i64_t.const_int(8u64, false);
-                            let tmp = self
-                                .builder
-                                .build_int_add(hdr_size, meta_slot, "hdr_plus_meta")
-                                .map_err(|_| Diagnostic::error("LLVM builder error"))?;
-                            let offset = self
-                                .builder
-                                .build_int_add(tmp, mul, "fld_off")
-                                .map_err(|_| Diagnostic::error("LLVM builder error"))?;
-                            let gep_ptr = self
-                                .i8_ptr_from_offset_i64(obj_ptr, offset, "field_i8ptr")
-                                .map_err(|_| Diagnostic::error("operation failed"))?;
+                if let Some(class_name) = class_name_opt
+                    && let Some(fields) = self.class_fields.borrow().get(&class_name)
+                    && let Some((field_idx, (_fname, field_ty))) = fields
+                        .iter()
+                        .enumerate()
+                        .find(|(_, (n, _))| n == &field_name)
+                {
+                    // Compute field offset
+                    let hdr_size = self
+                        .i64_t
+                        .const_int(std::mem::size_of::<u64>() as u64, false);
+                    let ptr_sz = self
+                        .i64_t
+                        .const_int(std::mem::size_of::<usize>() as u64, false);
+                    let idx_const = self.i64_t.const_int(field_idx as u64, false);
+                    let mul = self
+                        .builder
+                        .build_int_mul(idx_const, ptr_sz, "fld_off_mul")
+                        .map_err(|_| Diagnostic::error("LLVM builder error"))?;
+                    let meta_slot = self.i64_t.const_int(8u64, false);
+                    let tmp = self
+                        .builder
+                        .build_int_add(hdr_size, meta_slot, "hdr_plus_meta")
+                        .map_err(|_| Diagnostic::error("LLVM builder error"))?;
+                    let offset = self
+                        .builder
+                        .build_int_add(tmp, mul, "fld_off")
+                        .map_err(|_| Diagnostic::error("LLVM builder error"))?;
+                    let gep_ptr = self
+                        .i8_ptr_from_offset_i64(obj_ptr, offset, "field_i8ptr")
+                        .map_err(|_| Diagnostic::error("operation failed"))?;
 
-                            // Store based on field type
-                            match field_ty {
-                                crate::types::OatsType::Number => {
-                                    let f64_ptr = self
-                                        .builder
-                                        .build_pointer_cast(
-                                            gep_ptr,
-                                            self.context.ptr_type(AddressSpace::default()),
-                                            "f64_ptr_cast",
-                                        )
-                                        .map_err(|_| Diagnostic::error("LLVM builder error"))?;
-                                    if let BasicValueEnum::FloatValue(fv) = value {
-                                        self.builder
-                                            .build_store(f64_ptr, fv)
-                                            .map_err(|_| Diagnostic::error("operation failed"))?;
-                                    } else {
-                                        return Err(Diagnostic::simple_with_span_boxed(
-                                            Severity::Error,
-                                            "type mismatch: expected number for field assignment",
-                                            static_member.span.start as usize,
-                                        ));
-                                    }
-                                }
-                                crate::types::OatsType::String
-                                | crate::types::OatsType::NominalStruct(_)
-                                | crate::types::OatsType::Array(_) => {
-                                    let slot_ptr_ty =
-                                        self.context.ptr_type(AddressSpace::default());
-                                    let slot_ptr = self
-                                        .builder
-                                        .build_pointer_cast(gep_ptr, slot_ptr_ty, "slot_ptr_cast")
-                                        .map_err(|_| Diagnostic::error("operation failed"))?;
-                                    if let BasicValueEnum::PointerValue(pv) = value {
-                                        // RC protocol: increment new value before storing
-                                        let rc_inc = self.get_rc_inc();
-                                        self.builder
-                                            .build_call(rc_inc, &[pv.into()], "rc_inc_new")
-                                            .map_err(|_| Diagnostic::error("operation failed"))?;
-                                        // Load old value and decrement it
-                                        let old_val = self
-                                            .builder
-                                            .build_load(self.i8ptr_t, slot_ptr, "old_field_load")
-                                            .map_err(|_| Diagnostic::error("operation failed"))?;
-                                        if let BasicValueEnum::PointerValue(old_pv) = old_val {
-                                            let rc_dec = self.get_rc_dec();
-                                            self.builder
-                                                .build_call(rc_dec, &[old_pv.into()], "rc_dec_old")
-                                                .map_err(|_| {
-                                                    Diagnostic::error("operation failed")
-                                                })?;
-                                        }
-                                        self.builder
-                                            .build_store(slot_ptr, pv)
-                                            .map_err(|_| Diagnostic::error("operation failed"))?;
-                                    } else {
-                                        return Err(Diagnostic::simple_with_span_boxed(
-                                            Severity::Error,
-                                            "type mismatch: expected pointer for field assignment",
-                                            static_member.span.start as usize,
-                                        ));
-                                    }
-                                }
-                                _ => {
-                                    return Err(Diagnostic::simple_with_span_boxed(
-                                        Severity::Error,
-                                        "unsupported field type for assignment",
-                                        static_member.span.start as usize,
-                                    ));
-                                }
+                    // Store based on field type
+                    match field_ty {
+                        crate::types::OatsType::Number => {
+                            let f64_ptr = self
+                                .builder
+                                .build_pointer_cast(
+                                    gep_ptr,
+                                    self.context.ptr_type(AddressSpace::default()),
+                                    "f64_ptr_cast",
+                                )
+                                .map_err(|_| Diagnostic::error("LLVM builder error"))?;
+                            if let BasicValueEnum::FloatValue(fv) = value {
+                                self.builder
+                                    .build_store(f64_ptr, fv)
+                                    .map_err(|_| Diagnostic::error("operation failed"))?;
+                            } else {
+                                return Err(Diagnostic::simple_with_span_boxed(
+                                    Severity::Error,
+                                    "type mismatch: expected number for field assignment",
+                                    static_member.span.start as usize,
+                                ));
                             }
-                            return Ok(());
+                        }
+                        crate::types::OatsType::String
+                        | crate::types::OatsType::NominalStruct(_)
+                        | crate::types::OatsType::Array(_) => {
+                            let slot_ptr_ty = self.context.ptr_type(AddressSpace::default());
+                            let slot_ptr = self
+                                .builder
+                                .build_pointer_cast(gep_ptr, slot_ptr_ty, "slot_ptr_cast")
+                                .map_err(|_| Diagnostic::error("operation failed"))?;
+                            if let BasicValueEnum::PointerValue(pv) = value {
+                                // RC protocol: increment new value before storing
+                                let rc_inc = self.get_rc_inc();
+                                self.builder
+                                    .build_call(rc_inc, &[pv.into()], "rc_inc_new")
+                                    .map_err(|_| Diagnostic::error("operation failed"))?;
+                                // Load old value and decrement it
+                                let old_val = self
+                                    .builder
+                                    .build_load(self.i8ptr_t, slot_ptr, "old_field_load")
+                                    .map_err(|_| Diagnostic::error("operation failed"))?;
+                                if let BasicValueEnum::PointerValue(old_pv) = old_val {
+                                    let rc_dec = self.get_rc_dec();
+                                    self.builder
+                                        .build_call(rc_dec, &[old_pv.into()], "rc_dec_old")
+                                        .map_err(|_| Diagnostic::error("operation failed"))?;
+                                }
+                                self.builder
+                                    .build_store(slot_ptr, pv)
+                                    .map_err(|_| Diagnostic::error("operation failed"))?;
+                            } else {
+                                return Err(Diagnostic::simple_with_span_boxed(
+                                    Severity::Error,
+                                    "type mismatch: expected pointer for field assignment",
+                                    static_member.span.start as usize,
+                                ));
+                            }
+                        }
+                        _ => {
+                            return Err(Diagnostic::simple_with_span_boxed(
+                                Severity::Error,
+                                "unsupported field type for assignment",
+                                static_member.span.start as usize,
+                            ));
                         }
                     }
+                    return Ok(());
                 }
                 Err(Diagnostic::simple_with_span_boxed(
                     Severity::Error,

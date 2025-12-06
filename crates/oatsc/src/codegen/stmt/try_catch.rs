@@ -35,10 +35,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         // would use proper exception unwinding
         let exception_flag_name = format!(
             "__exception_flag_{}",
-            match function.get_name().to_str() {
-                Ok(name) => name,
-                Err(_) => "unknown",
-            }
+            function.get_name().to_str().unwrap_or("unknown")
         );
         let exception_flag_global =
             if let Some(existing) = self.module.get_global(&exception_flag_name) {
@@ -155,7 +152,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         // For now, we'll use a null pointer as a placeholder
                         let exception_local = self
                             .builder
-                            .build_alloca(self.i8ptr_t, &ident.name.to_string())
+                            .build_alloca(self.i8ptr_t, ident.name.as_ref())
                             .map_err(|_| {
                                 Diagnostic::simple_boxed(
                                     crate::diagnostics::Severity::Error,
@@ -247,10 +244,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         // In a full implementation, we would also store the exception object
         let exception_flag_name = format!(
             "__exception_flag_{}",
-            match function.get_name().to_str() {
-                Ok(name) => name,
-                Err(_) => "unknown",
-            }
+            function.get_name().to_str().unwrap_or("unknown")
         );
         let exception_flag_global =
             if let Some(existing) = self.module.get_global(&exception_flag_name) {

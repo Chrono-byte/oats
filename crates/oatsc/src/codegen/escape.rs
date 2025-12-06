@@ -299,7 +299,7 @@ impl EscapeAnalyzer {
 
         match expr {
             Expression::Identifier(ident) => {
-                self.info.use_var(&ident.name.to_string());
+                self.info.use_var(ident.name.as_ref());
             }
             Expression::CallExpression(call) => {
                 // callee is an Expression in OXC; analyze it first
@@ -350,22 +350,18 @@ impl EscapeAnalyzer {
                 self.analyze_expr_with_depth(&member.object, depth + 1);
             }
             Expression::AssignmentExpression(assign) => {
-                match &assign.left {
-                    _ => {
-                        if let Some(simple) = assign.left.as_simple_assignment_target() {
-                            if let SimpleAssignmentTarget::AssignmentTargetIdentifier(ident) = simple {
-                                let name = ident.name.to_string();
-                                if !self.is_defined(&name) {
-                                    self.info.define_var(name);
-                                }
-                            }
-                            // For other simple assignment targets, analyze the expression being assigned
-                        } else if let Some(_pattern) = assign.left.as_assignment_target_pattern() {
-                            // For pattern assignments, we need to handle AssignmentTargetPattern
-                            // which is different from BindingPattern - for now, skip detailed analysis
+                if let Some(simple) = assign.left.as_simple_assignment_target() {
+                    if let SimpleAssignmentTarget::AssignmentTargetIdentifier(ident) = simple {
+                        let name = ident.name.to_string();
+                        if !self.is_defined(&name) {
+                            self.info.define_var(name);
                         }
                     }
-                }
+                    // For other simple assignment targets, analyze the expression being assigned
+                } else if let Some(_pattern) = assign.left.as_assignment_target_pattern() {
+                    // For pattern assignments, we need to handle AssignmentTargetPattern
+                    // which is different from BindingPattern - for now, skip detailed analysis
+                };
                 self.analyze_expr_with_depth(&assign.right, depth + 1);
             }
             Expression::BinaryExpression(bin) => {

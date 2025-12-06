@@ -76,13 +76,13 @@ impl<'a> CodeGen<'a> {
                     // nested arrow: scan body
                     if a.expression {
                         // Expression body: single expression in statements[0]
-                        if let Some(stmt) = (*a.body).statements.first() {
-                            if let Statement::ExpressionStatement(es) = stmt {
-                                collect_idents_in_expr_with_depth(&es.expression, out, depth + 1);
-                            }
+                        if let Some(stmt) = a.body.statements.first()
+                            && let Statement::ExpressionStatement(es) = stmt
+                        {
+                            collect_idents_in_expr_with_depth(&es.expression, out, depth + 1);
                         }
                     } else {
-                        for s in &(*a.body).statements {
+                        for s in &a.body.statements {
                             if let Statement::ExpressionStatement(es) = s {
                                 collect_idents_in_expr_with_depth(&es.expression, out, depth + 1);
                             }
@@ -158,13 +158,13 @@ impl<'a> CodeGen<'a> {
         let mut used: std::collections::HashSet<String> = std::collections::HashSet::new();
         if arrow.expression {
             // Expression body: single expression in statements[0]
-            if let Some(stmt) = (*arrow.body).statements.first() {
-                if let Statement::ExpressionStatement(es) = stmt {
-                    collect_idents_in_expr(&es.expression, &mut used);
-                }
+            if let Some(stmt) = arrow.body.statements.first()
+                && let Statement::ExpressionStatement(es) = stmt
+            {
+                collect_idents_in_expr(&es.expression, &mut used);
             }
         } else {
-            for stmt in &(*arrow.body).statements {
+            for stmt in &arrow.body.statements {
                 if let Statement::ExpressionStatement(es) = stmt {
                     collect_idents_in_expr(&es.expression, &mut used);
                 }
@@ -363,13 +363,10 @@ impl<'a> CodeGen<'a> {
                 {
                     // Determine whether this parameter was declared Weak<T>
                     let mut is_weak = false;
-                    if let Some(param_types) =
-                        self.fn_param_types
-                            .borrow()
-                            .get(match function.get_name().to_str() {
-                                Ok(name) => name,
-                                Err(_) => "",
-                            })
+                    if let Some(param_types) = self
+                        .fn_param_types
+                        .borrow()
+                        .get(function.get_name().to_str().unwrap_or_default())
                     {
                         let idx_usize = *idx as usize;
                         if idx_usize < param_types.len()
@@ -658,7 +655,12 @@ impl<'a> CodeGen<'a> {
             // Expression body: single expression
             if let Some(stmt) = statements.first() {
                 if let Statement::ExpressionStatement(es) = stmt {
-                    let result = self.lower_expr(&es.expression, arrow_fn, &arrow_param_map, &mut arrow_locals)?;
+                    let result = self.lower_expr(
+                        &es.expression,
+                        arrow_fn,
+                        &arrow_param_map,
+                        &mut arrow_locals,
+                    )?;
 
                     // RC cleanup for locals before return
                     self.emit_rc_dec_for_locals(&arrow_locals);
@@ -678,7 +680,8 @@ impl<'a> CodeGen<'a> {
             }
         } else {
             // Block body: multiple statements
-            let terminated = self.lower_stmts(statements, arrow_fn, &arrow_param_map, &mut arrow_locals)?;
+            let terminated =
+                self.lower_stmts(statements, arrow_fn, &arrow_param_map, &mut arrow_locals)?;
 
             // If not terminated, add default return
             if !terminated {

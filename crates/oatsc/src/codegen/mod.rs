@@ -685,7 +685,7 @@ impl<'a> CodeGen<'a> {
         // function (if present).
         for idx_ref in param_map.values() {
             let idx = *idx_ref;
-            let function_name = function.get_name().to_str().unwrap_or("");
+            let function_name = function.get_name().to_str().unwrap_or_default();
             if let Some(param_types) = self.fn_param_types.borrow().get(function_name) {
                 let idx_usize = idx as usize;
                 if idx_usize < param_types.len() {

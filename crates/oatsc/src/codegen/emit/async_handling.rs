@@ -3,8 +3,8 @@
 //! This module contains code generation logic for async functions, including
 //! live-set computation for await points and async function lowering.
 
-use crate::{codegen::helpers::extract_basic_value_from_valuekind, diagnostics::Diagnostic};
 use crate::diagnostics::Severity;
+use crate::{codegen::helpers::extract_basic_value_from_valuekind, diagnostics::Diagnostic};
 use inkwell::values::{BasicValue, FunctionValue};
 use oxc_ast::ast::*;
 use std::collections::{HashMap, HashSet};
@@ -1084,7 +1084,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     return Err(Diagnostic::simple_boxed(
                         Severity::Error,
                         "phi node in cont_bb",
-                    ).into());
+                    ));
                 }
             }
         }

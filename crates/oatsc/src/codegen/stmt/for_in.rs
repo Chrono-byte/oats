@@ -76,10 +76,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     return;
                 }
                 if let Some(param_idx) = param_map.get(ident_name) {
-                    let fname = match function.get_name().to_str() {
-                        Ok(s) => s,
-                        Err(_) => "",
-                    };
+                    let fname = function.get_name().to_str().unwrap_or_default();
                     if let Some(param_types) = self.fn_param_types.borrow().get(fname) {
                         let idx = *param_idx as usize;
                         if let Some(crate::types::OatsType::NominalStruct(n)) = param_types.get(idx)
@@ -91,7 +88,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             };
             match &for_in.right {
                 Expression::Identifier(ident) => {
-                    infer_from_ident(&ident.as_ref().name.to_string());
+                    infer_from_ident(ident.as_ref().name.as_ref());
                 }
                 Expression::NewExpression(new_expr) => {
                     if let Expression::Identifier(ident) = &new_expr.callee {
@@ -100,12 +97,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 }
                 Expression::StaticMemberExpression(member) => {
                     if let Expression::Identifier(obj_ident) = &member.object {
-                        infer_from_ident(&obj_ident.as_ref().name.to_string());
+                        infer_from_ident(obj_ident.as_ref().name.as_ref());
                     }
                 }
                 Expression::ComputedMemberExpression(member) => {
                     if let Expression::Identifier(obj_ident) = &member.object {
-                        infer_from_ident(&obj_ident.as_ref().name.to_string());
+                        infer_from_ident(obj_ident.as_ref().name.as_ref());
                     }
                 }
                 _ => {}

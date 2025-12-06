@@ -37,45 +37,51 @@ impl<'a> CodeGen<'a> {
         // member method calls (e.g., `obj.method()`). More complex
         // call expressions (computed callees, dynamic property lookups)
         // can be added when needed.
-        
+
         // Handle super(...) calls
         if let Expression::Super(_) = &call.callee {
             return self.lower_super_constructor_call(call, function, param_map, locals);
         }
-        
+
         // Handle super.method() calls
-        if let Expression::StaticMemberExpression(member) = &call.callee {
-            if let Expression::Super(_) = &member.object {
-                // Extract property name and call super method directly
-                let method_name = member.property.name.to_string();
-                return self.lower_super_method_call_direct(&method_name, call, function, param_map, locals);
-            }
+        if let Expression::StaticMemberExpression(member) = &call.callee
+            && let Expression::Super(_) = &member.object
+        {
+            // Extract property name and call super method directly
+            let method_name = member.property.name.to_string();
+            return self.lower_super_method_call_direct(
+                &method_name,
+                call,
+                function,
+                param_map,
+                locals,
+            );
         }
-        
+
         // Handle static member expression calls (obj.method() or std functions)
         if let Expression::StaticMemberExpression(member) = &call.callee {
             return self.lower_static_member_call(member, call, function, param_map, locals);
         }
-        
+
         // Handle plain identifier calls (foo())
         if let Expression::Identifier(ident) = &call.callee {
             return self.lower_identifier_call(ident, call, function, param_map, locals);
         }
-        
+
         // Attempt to lower the callee as a general expression (closure calls)
-        if let Ok(callee_val) = self.lower_expr(&call.callee, function, param_map, locals) {
-            if let BasicValueEnum::PointerValue(callee_ptr) = callee_val {
-                return self.lower_closure_call(callee_ptr, call, function, param_map, locals);
-            }
+        if let Ok(callee_val) = self.lower_expr(&call.callee, function, param_map, locals)
+            && let BasicValueEnum::PointerValue(callee_ptr) = callee_val
+        {
+            return self.lower_closure_call(callee_ptr, call, function, param_map, locals);
         }
-        
+
         Err(Diagnostic::simple_with_span_boxed(
             Severity::Error,
             "unsupported call expression",
             call.span.start as usize,
         ))
     }
-    
+
     /// Lower super constructor calls: super(...)
     fn lower_super_constructor_call(
         &self,
@@ -162,7 +168,7 @@ impl<'a> CodeGen<'a> {
             ))
         }
     }
-    
+
     /// Lower static member expression calls (obj.method() or std functions)
     fn lower_static_member_call(
         &self,
@@ -173,7 +179,7 @@ impl<'a> CodeGen<'a> {
         locals: &mut Vec<HashMap<String, LocalEntry<'a>>>,
     ) -> crate::diagnostics::DiagnosticResult<inkwell::values::BasicValueEnum<'a>> {
         let prop_name = member.property.name.to_string();
-        
+
         // Get object name if it's an identifier
         let obj_name = if let Expression::Identifier(obj_ident) = &member.object {
             obj_ident.name.to_string()
@@ -246,7 +252,10 @@ impl<'a> CodeGen<'a> {
             };
 
             let f = self.get_promise_resolve();
-            let cs = match self.builder.build_call(f, &[payload_ptr.into()], "promise_resolve_call") {
+            let cs = match self
+                .builder
+                .build_call(f, &[payload_ptr.into()], "promise_resolve_call")
+            {
                 Ok(cs) => cs,
                 Err(_) => {
                     return Err(Diagnostic::simple_boxed(
@@ -311,7 +320,7 @@ impl<'a> CodeGen<'a> {
             }
         }
     }
-    
+
     /// Lower instance method calls (obj.method())
     fn lower_instance_method_call(
         &self,
@@ -343,7 +352,7 @@ impl<'a> CodeGen<'a> {
                     ))?;
                 }
             }
-            
+
             if method_name == "upgrade" {
                 if !call.arguments.is_empty() {
                     return Err(Diagnostic::simple_boxed(
@@ -353,16 +362,15 @@ impl<'a> CodeGen<'a> {
                 }
                 if let BasicValueEnum::PointerValue(pv) = obj_val {
                     let f = self.get_rc_weak_upgrade();
-                    let cs = self.builder.build_call(f, &[pv.into()], "rc_weak_upgrade_call");
+                    let cs = self
+                        .builder
+                        .build_call(f, &[pv.into()], "rc_weak_upgrade_call");
                     if let Ok(cs) = cs
                         && let inkwell::values::ValueKind::Basic(bv) = cs.try_as_basic_value()
                     {
                         return Ok(bv);
                     }
-                    return Err(Diagnostic::simple_boxed(
-                        Severity::Error,
-                        "upgrade failed",
-                    ))?;
+                    return Err(Diagnostic::simple_boxed(Severity::Error, "upgrade failed"))?;
                 } else {
                     return Err(Diagnostic::simple_boxed(
                         Severity::Error,
@@ -404,16 +412,26 @@ impl<'a> CodeGen<'a> {
                 };
 
                 if let Some(method_fn) = self.module.get_function(&method_fn_name) {
-                    let cs = match self.builder.build_call(method_fn, &call_args, "class_method_call") {
-                        Ok(cs) => cs,
-                        Err(_) => {
-                            return Err(Box::new(
-                                Diagnostic::simple(Severity::Error, "class method call failed")
-                                    .with_note(format!("Failed to call method '{}' on class '{}'", method_name, nom))
-                                    .with_help(format!("Ensure the method '{}' exists in class '{}'", method_name, nom))
-                            ));
-                        }
-                    };
+                    let cs =
+                        match self
+                            .builder
+                            .build_call(method_fn, &call_args, "class_method_call")
+                        {
+                            Ok(cs) => cs,
+                            Err(_) => {
+                                return Err(Box::new(
+                                    Diagnostic::simple(Severity::Error, "class method call failed")
+                                        .with_note(format!(
+                                            "Failed to call method '{}' on class '{}'",
+                                            method_name, nom
+                                        ))
+                                        .with_help(format!(
+                                            "Ensure the method '{}' exists in class '{}'",
+                                            method_name, nom
+                                        )),
+                                ));
+                            }
+                        };
                     let either = cs.try_as_basic_value();
                     if let inkwell::values::ValueKind::Basic(bv) = either {
                         return Ok(bv);
@@ -427,23 +445,40 @@ impl<'a> CodeGen<'a> {
             Err(Box::new(
                 Diagnostic::simple(
                     Severity::Error,
-                    format!("method '{}' not found on object '{}'", method_name, obj_name),
+                    format!(
+                        "method '{}' not found on object '{}'",
+                        method_name, obj_name
+                    ),
                 )
-                .with_note(format!("The object '{}' does not have a method named '{}'", obj_name, method_name))
-                .with_help(format!("Check that '{}' is a class instance with method '{}'", obj_name, method_name))
+                .with_note(format!(
+                    "The object '{}' does not have a method named '{}'",
+                    obj_name, method_name
+                ))
+                .with_help(format!(
+                    "Check that '{}' is a class instance with method '{}'",
+                    obj_name, method_name
+                )),
             ))
         } else {
             Err(Box::new(
                 Diagnostic::simple(
                     Severity::Error,
-                    format!("failed to lower object expression for method call '{}'", method_name),
+                    format!(
+                        "failed to lower object expression for method call '{}'",
+                        method_name
+                    ),
                 )
-                .with_note(format!("The object expression '{}' could not be evaluated", obj_name))
-                .with_help("Ensure the object is properly initialized before calling methods on it")
+                .with_note(format!(
+                    "The object expression '{}' could not be evaluated",
+                    obj_name
+                ))
+                .with_help(
+                    "Ensure the object is properly initialized before calling methods on it",
+                ),
             ))
         }
     }
-    
+
     /// Lower plain identifier calls (foo())
     fn lower_identifier_call(
         &self,
@@ -454,7 +489,7 @@ impl<'a> CodeGen<'a> {
         locals: &mut Vec<HashMap<String, LocalEntry<'a>>>,
     ) -> crate::diagnostics::DiagnosticResult<inkwell::values::BasicValueEnum<'a>> {
         let fn_name = ident.name.to_string();
-        
+
         // Check if it's a direct function call
         if let Some(fv) = self.module.get_function(&fn_name) {
             let mut call_args: Vec<inkwell::values::BasicMetadataValueEnum> = Vec::new();
@@ -489,63 +524,67 @@ impl<'a> CodeGen<'a> {
                 return Ok(zero.as_basic_value_enum());
             }
         }
-        
+
         // Check for nested generic functions
         let has_nested = self.nested_generic_fns.borrow().contains_key(&fn_name);
-        if has_nested && !call.arguments.is_empty() {
-            if let Some(first_arg_expr) = call.arguments[0].as_expression() {
-                let inferred = crate::types::infer_type(None, Some(first_arg_expr));
-                if let crate::types::OatsType::Array(elem_ty) = inferred {
-                    if let Ok(spec_name) = self.monomorphize_function(&fn_name, &[(*elem_ty).clone()]) {
-                        if self.module.get_function(&spec_name).is_none() {
-                            let fn_ty = self.i8ptr_t.fn_type(&[self.i8ptr_t.into()], false);
-                            let _ = self.module.add_function(&spec_name, fn_ty, None);
+        if has_nested
+            && !call.arguments.is_empty()
+            && let Some(first_arg_expr) = call.arguments[0].as_expression()
+        {
+            let inferred = crate::types::infer_type(None, Some(first_arg_expr));
+            if let crate::types::OatsType::Array(elem_ty) = inferred
+                && let Ok(spec_name) = self.monomorphize_function(&fn_name, &[(*elem_ty).clone()])
+            {
+                if self.module.get_function(&spec_name).is_none() {
+                    let fn_ty = self.i8ptr_t.fn_type(&[self.i8ptr_t.into()], false);
+                    let _ = self.module.add_function(&spec_name, fn_ty, None);
+                }
+                let mut call_args: Vec<inkwell::values::BasicMetadataValueEnum> = Vec::new();
+                for a in &call.arguments {
+                    if let Some(expr) = a.as_expression() {
+                        let val = match self.lower_expr(expr, function, param_map, locals) {
+                            Ok(v) => v,
+                            Err(d) => return Err(d)?,
+                        };
+                        call_args.push(val.into());
+                    } else {
+                        return Err(Diagnostic::simple_boxed(
+                            Severity::Error,
+                            "unsupported argument type",
+                        ))?;
+                    }
+                }
+                if let Some(spec_fv) = self.module.get_function(&spec_name) {
+                    let cs = match self
+                        .builder
+                        .build_call(spec_fv, &call_args, "generic_mono_call")
+                    {
+                        Ok(cs) => cs,
+                        Err(_) => {
+                            return Err(Diagnostic::simple_boxed(
+                                Severity::Error,
+                                "generic monomorphized call failed",
+                            ));
                         }
-                        let mut call_args: Vec<inkwell::values::BasicMetadataValueEnum> = Vec::new();
-                        for a in &call.arguments {
-                            if let Some(expr) = a.as_expression() {
-                                let val = match self.lower_expr(expr, function, param_map, locals) {
-                                    Ok(v) => v,
-                                    Err(d) => return Err(d)?,
-                                };
-                                call_args.push(val.into());
-                            } else {
-                                return Err(Diagnostic::simple_boxed(
-                                    Severity::Error,
-                                    "unsupported argument type",
-                                ))?;
-                            }
-                        }
-                        if let Some(spec_fv) = self.module.get_function(&spec_name) {
-                            let cs = match self.builder.build_call(spec_fv, &call_args, "generic_mono_call") {
-                                Ok(cs) => cs,
-                                Err(_) => {
-                                    return Err(Diagnostic::simple_boxed(
-                                        Severity::Error,
-                                        "generic monomorphized call failed",
-                                    ));
-                                }
-                            };
-                            let either = cs.try_as_basic_value();
-                            if let inkwell::values::ValueKind::Basic(bv) = either {
-                                return Ok(bv);
-                            } else {
-                                let zero = self.f64_t.const_float(0.0);
-                                return Ok(zero.as_basic_value_enum());
-                            }
-                        }
+                    };
+                    let either = cs.try_as_basic_value();
+                    if let inkwell::values::ValueKind::Basic(bv) = either {
+                        return Ok(bv);
+                    } else {
+                        let zero = self.f64_t.const_float(0.0);
+                        return Ok(zero.as_basic_value_enum());
                     }
                 }
             }
         }
-        
+
         Err(Diagnostic::simple_with_span_boxed(
             Severity::Error,
             format!("function '{}' not found", fn_name),
             call.span.start as usize,
         ))
     }
-    
+
     /// Lower closure calls (calling closure objects)
     fn lower_closure_call(
         &self,
@@ -579,7 +618,10 @@ impl<'a> CodeGen<'a> {
             .builder
             .build_pointer_cast(fn_ptr_i8, fn_ptr_slot_ty, "fn_ptr_slot_cast")
             .map_err(|_| Diagnostic::error("LLVM builder error"))?;
-        let fn_ptr_bv = match self.builder.build_load(self.i8ptr_t, fn_ptr_slot, "loaded_fn_ptr") {
+        let fn_ptr_bv = match self
+            .builder
+            .build_load(self.i8ptr_t, fn_ptr_slot, "loaded_fn_ptr")
+        {
             Ok(v) => v,
             Err(_) => {
                 return Err(Diagnostic::simple_boxed(
@@ -594,7 +636,10 @@ impl<'a> CodeGen<'a> {
             .builder
             .build_pointer_cast(env_ptr_i8, env_slot_ty, "env_slot_cast")
             .map_err(|_| Diagnostic::error("LLVM builder error"))?;
-        let env_bv = match self.builder.build_load(self.i8ptr_t, env_slot, "loaded_env_ptr") {
+        let env_bv = match self
+            .builder
+            .build_load(self.i8ptr_t, env_slot, "loaded_env_ptr")
+        {
             Ok(v) => v,
             Err(_) => {
                 return Err(Diagnostic::simple_boxed(
@@ -623,9 +668,11 @@ impl<'a> CodeGen<'a> {
             }
         }
 
-        let static_ret = self.last_expr_origin_local.borrow().clone().and_then(|n| {
-            self.closure_local_rettype.borrow().get(&n).cloned()
-        });
+        let static_ret = self
+            .last_expr_origin_local
+            .borrow()
+            .clone()
+            .and_then(|n| self.closure_local_rettype.borrow().get(&n).cloned());
 
         if let BasicValueEnum::PointerValue(fn_ptr_pv) = fn_ptr_bv {
             let mut param_types: Vec<inkwell::types::BasicMetadataTypeEnum> = Vec::new();
@@ -656,15 +703,19 @@ impl<'a> CodeGen<'a> {
                     .builder
                     .build_pointer_cast(ret_i64_ptr, ret_ptr_ty, "ret_ptr_cast")
                     .map_err(|_| Diagnostic::error("LLVM builder error"))?;
-                let ret_bv = match self.builder.build_load(self.i64_t, ret_ptr_cast, "loaded_ret_tag") {
-                    Ok(v) => v,
-                    Err(_) => {
-                        return Err(Diagnostic::simple_boxed(
-                            Severity::Error,
-                            "operation failed",
-                        ));
-                    }
-                };
+                let ret_bv =
+                    match self
+                        .builder
+                        .build_load(self.i64_t, ret_ptr_cast, "loaded_ret_tag")
+                    {
+                        Ok(v) => v,
+                        Err(_) => {
+                            return Err(Diagnostic::simple_boxed(
+                                Severity::Error,
+                                "operation failed",
+                            ));
+                        }
+                    };
                 if let BasicValueEnum::IntValue(ret_iv) = ret_bv {
                     let one = self.i64_t.const_int(1, false);
                     let two = self.i64_t.const_int(2, false);
@@ -699,7 +750,12 @@ impl<'a> CodeGen<'a> {
             let mut call_args: Vec<inkwell::values::BasicMetadataValueEnum> = Vec::new();
             call_args.push(env_bv.into());
             call_args.extend(lowered_args);
-            let cs = match self.builder.build_indirect_call(fn_ty, fn_ptr_cast, &call_args, "call_closure") {
+            let cs = match self.builder.build_indirect_call(
+                fn_ty,
+                fn_ptr_cast,
+                &call_args,
+                "call_closure",
+            ) {
                 Ok(cs) => cs,
                 Err(_) => {
                     return Err(Diagnostic::simple_boxed(
@@ -717,7 +773,7 @@ impl<'a> CodeGen<'a> {
             self.last_expr_origin_local.borrow_mut().take();
             return Ok(zero.as_basic_value_enum());
         }
-        
+
         Err(Diagnostic::simple_with_span_boxed(
             Severity::Error,
             "unsupported closure call (indirect call lowering failed)",
@@ -736,11 +792,14 @@ impl<'a> CodeGen<'a> {
         param_map: &HashMap<String, u32>,
         locals: &mut Vec<HashMap<String, LocalEntry<'a>>>,
     ) -> crate::diagnostics::DiagnosticResult<inkwell::values::BasicValueEnum<'a>> {
-        let function_name = function.get_name().to_str().unwrap_or("");
+        let function_name = function.get_name().to_str().unwrap_or_default();
         let current_class = if let Some(underscore_pos) = function_name.rfind('_') {
             let prefix = &function_name[..underscore_pos];
             let suffix = &function_name[underscore_pos + 1..];
-            if suffix == "ctor" || suffix == "init" || (suffix == "impl" && prefix.ends_with("_ctor")) {
+            if suffix == "ctor"
+                || suffix == "init"
+                || (suffix == "impl" && prefix.ends_with("_ctor"))
+            {
                 if suffix == "impl" {
                     if let Some(ctor_pos) = prefix.rfind('_') {
                         prefix[..ctor_pos].to_string()
@@ -758,13 +817,23 @@ impl<'a> CodeGen<'a> {
                 let class_parents = self.class_parents.borrow();
                 for (_class_name, class_parent) in class_parents.iter() {
                     if class_parent.as_ref() == Some(parent) {
-                        return self.call_parent_method(parent, method_name, call, function, param_map, locals);
+                        return self.call_parent_method(
+                            parent,
+                            method_name,
+                            call,
+                            function,
+                            param_map,
+                            locals,
+                        );
                     }
                 }
             }
             return Err(Diagnostic::simple_with_span_boxed(
                 Severity::Error,
-                format!("cannot determine class from function name '{}'", function_name),
+                format!(
+                    "cannot determine class from function name '{}'",
+                    function_name
+                ),
                 call.span.start as usize,
             ));
         };
@@ -802,7 +871,6 @@ impl<'a> CodeGen<'a> {
         param_map: &HashMap<String, u32>,
         locals: &mut Vec<HashMap<String, LocalEntry<'a>>>,
     ) -> crate::diagnostics::DiagnosticResult<inkwell::values::BasicValueEnum<'a>> {
-
         let this_ptr = if let Some(pv) = function.get_nth_param(0) {
             if let BasicValueEnum::PointerValue(ptr) = pv {
                 ptr
@@ -840,7 +908,10 @@ impl<'a> CodeGen<'a> {
 
         let method_fn_name = format!("{}_{}", parent, method_name);
         if let Some(method_fn) = self.module.get_function(&method_fn_name) {
-            let cs = match self.builder.build_call(method_fn, &call_args, "super_method_call") {
+            let cs = match self
+                .builder
+                .build_call(method_fn, &call_args, "super_method_call")
+            {
                 Ok(cs) => cs,
                 Err(_) => {
                     return Err(Diagnostic::simple_with_span_boxed(
@@ -860,7 +931,10 @@ impl<'a> CodeGen<'a> {
         } else {
             Err(Diagnostic::simple_with_span_boxed(
                 Severity::Error,
-                format!("super method '{}' not found in parent class '{}'", method_name, parent),
+                format!(
+                    "super method '{}' not found in parent class '{}'",
+                    method_name, parent
+                ),
                 call.span.start as usize,
             ))
         }

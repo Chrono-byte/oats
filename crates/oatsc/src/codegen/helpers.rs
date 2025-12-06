@@ -225,12 +225,10 @@ impl<'a> super::CodeGen<'a> {
                 if let Ok(cs) =
                     self.builder
                         .build_call(unbox_fn, &[pv.into()], "union_unbox_f64_call")
+                    && let Some(bv) = extract_basic_value_from_valuekind(cs.try_as_basic_value())
+                    && let BasicValueEnum::FloatValue(fv) = bv
                 {
-                    if let Some(bv) = extract_basic_value_from_valuekind(cs.try_as_basic_value())
-                        && let BasicValueEnum::FloatValue(fv) = bv
-                    {
-                        return Some(fv);
-                    }
+                    return Some(fv);
                 }
                 None
             }

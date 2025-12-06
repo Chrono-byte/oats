@@ -167,10 +167,10 @@ fn collect_declared_fns(stmt: &Statement, out: &mut Vec<String>) {
     match stmt {
         Statement::FunctionDeclaration(function) => {
             // Only collect if it has no body (declare function)
-            if function.body.is_none() {
-                if let Some(id) = &function.id {
-                    out.push(id.name.to_string());
-                }
+            if function.body.is_none()
+                && let Some(id) = &function.id
+            {
+                out.push(id.name.to_string());
             }
         }
         Statement::BlockStatement(block) => {

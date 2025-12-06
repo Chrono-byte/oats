@@ -108,7 +108,12 @@ impl<'a> CodeGen<'a> {
         let nested_fns_borrow = self.nested_generic_fns.borrow();
         let (func_ast, fsig) = match nested_fns_borrow.get(func_name) {
             Some((func_ast, fsig)) => (func_ast, fsig.clone()),
-            None => return Err(Diagnostic::simple_boxed(Severity::Error, format!("Generic function '{}' not found", func_name))),
+            None => {
+                return Err(Diagnostic::simple_boxed(
+                    Severity::Error,
+                    format!("Generic function '{}' not found", func_name),
+                ));
+            }
         };
 
         // Obtain type parameter names: prefer fsig.type_params
@@ -193,7 +198,7 @@ impl<'a> CodeGen<'a> {
         let prev_block = self.builder.get_insert_block();
         if let Err(diag) = self.gen_function_ir(
             &specialized_name,
-            &func_ast,
+            func_ast,
             &concrete_params,
             &concrete_ret,
             None,

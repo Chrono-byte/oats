@@ -60,7 +60,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 if let Some(ty) = decl
                     .init
                     .as_ref()
-                    .and_then(|_| decl.id.type_annotation.as_ref())
+                    .and(decl.id.type_annotation.as_ref())
                     .or(decl.id.type_annotation.as_ref())
                     && let Some(mapped) = crate::types::map_ts_type(&ty.type_annotation)
                     && let crate::types::OatsType::NominalStruct(n) = &mapped

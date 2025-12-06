@@ -175,7 +175,7 @@ pub fn run_from_args(
                 let decl = &vdecl.declarations[0];
                 if let BindingPatternKind::BindingIdentifier(binding_ident) = &decl.id.kind
                     && let Some(init_expr) = &decl.init
-                    && let Expression::ArrowFunctionExpression(arrow) = &*init_expr
+                    && let Expression::ArrowFunctionExpression(arrow) = init_expr
                 {
                     let name = binding_ident.name.to_string();
                     arrows.push((name, arrow, false));
@@ -201,13 +201,13 @@ pub fn run_from_args(
     // Require the user script to export a `main` function as the program entrypoint
     let mut func_decl_opt: Option<&Function<'_>> = None;
     for stmt in &parsed.body {
-        if let Statement::FunctionDeclaration(fn_decl) = stmt {
-            if let Some(id) = &fn_decl.id {
-                let name = id.name.to_string();
-                if name == "main" {
-                    func_decl_opt = Some(fn_decl);
-                    break;
-                }
+        if let Statement::FunctionDeclaration(fn_decl) = stmt
+            && let Some(id) = &fn_decl.id
+        {
+            let name = id.name.to_string();
+            if name == "main" {
+                func_decl_opt = Some(fn_decl);
+                break;
             }
         }
     }
@@ -236,7 +236,7 @@ pub fn run_from_args(
     };
 
     let mut symbols = SymbolTable::new();
-    let func_sig = if let Some(ref func) = func_decl {
+    let func_sig = if let Some(func) = func_decl {
         let (sig_opt, type_diags) = check_function_strictness(func, &mut symbols)?;
         for diag in &type_diags {
             diagnostics::emit_diagnostic(diag, Some(&source));
@@ -474,7 +474,7 @@ pub fn run_from_args(
             // If this class extends a parent, record the parent name so constructors
             // and `super(...)` lowering can find the parent's initializer.
             let parent_name_opt = if let Some(super_class) = &c.super_class {
-                if let Expression::Identifier(id) = &*super_class {
+                if let Expression::Identifier(id) = super_class {
                     Some(id.name.to_string())
                 } else {
                     None
@@ -514,7 +514,7 @@ pub fn run_from_args(
                         // Try to type-check the method function
                         let mut method_symbols = SymbolTable::new();
                         let (sig_opt, type_diags) =
-                            check_function_strictness(&method_func, &mut method_symbols)?;
+                            check_function_strictness(method_func, &mut method_symbols)?;
 
                         // Emit type checking diagnostics
                         for diag in &type_diags {
@@ -529,7 +529,7 @@ pub fn run_from_args(
                             let ret = sig.ret;
                             let fname = format!("{}_{}", class_name, mname);
                             codegen
-                                .gen_function_ir(&fname, &method_func, &params, &ret, Some("this"))
+                                .gen_function_ir(&fname, method_func, &params, &ret, Some("this"))
                                 .map_err(|d| {
                                     diagnostics::emit_diagnostic(&d, Some(&parsed_mod.source));
                                     anyhow::anyhow!(d.message)
@@ -538,7 +538,7 @@ pub fn run_from_args(
                             // If strict check failed (e.g., missing return annotation), try to emit with Void return
                             let mut method_symbols = SymbolTable::new();
                             let (sig2_opt, type_diags2) =
-                                check_function_strictness(&method_func, &mut method_symbols)?;
+                                check_function_strictness(method_func, &mut method_symbols)?;
 
                             for diag in &type_diags2 {
                                 diagnostics::emit_diagnostic(diag, Some(&parsed_mod.source));
@@ -554,7 +554,7 @@ pub fn run_from_args(
                                 codegen
                                     .gen_function_ir(
                                         &fname,
-                                        &method_func,
+                                        method_func,
                                         &params,
                                         &crate::types::OatsType::Void,
                                         Some("this"),
@@ -833,7 +833,7 @@ pub fn run_from_args(
             // Use Function directly from oxc_ast
             let inner_func = fn_decl;
             let mut inner_symbols = SymbolTable::new();
-            let (sig_opt, type_diags) = check_function_strictness(&inner_func, &mut inner_symbols)?;
+            let (sig_opt, type_diags) = check_function_strictness(inner_func, &mut inner_symbols)?;
 
             for diag in &type_diags {
                 diagnostics::emit_diagnostic(diag, Some(&parsed_mod.source));
@@ -843,7 +843,7 @@ pub fn run_from_args(
                 // skip exported `main` (we handle exported main separately)
                 if fname != "main" {
                     codegen
-                        .gen_function_ir(&fname, &inner_func, &fsig.params, &fsig.ret, None)
+                        .gen_function_ir(&fname, inner_func, &fsig.params, &fsig.ret, None)
                         .map_err(|d| {
                             crate::diagnostics::emit_diagnostic(&d, Some(&parsed_mod.source));
                             anyhow::anyhow!("{}", d.message)
@@ -911,13 +911,10 @@ pub fn run_from_args(
         Some(dir) => dir,
         None => ".".to_string(),
     };
-    let src_filename = match std::path::Path::new(&src_path)
+    let src_filename = std::path::Path::new(&src_path)
         .file_stem()
         .and_then(|s| s.to_str())
-    {
-        Some(name) => name,
-        None => "out",
-    };
+        .unwrap_or("out");
     let out_ll = format!("{}/{}.ll", out_dir, src_filename);
     let out_exe = if let Some(ref opts) = options {
         if let Some(ref name) = opts.out_name {

@@ -201,12 +201,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         {
                             class_name_opt = Some(nom);
                         } else if let Some(param_idx) = param_map.get(&ident_name)
-                            && let Some(param_types) = self.fn_param_types.borrow().get(
-                                match function.get_name().to_str() {
-                                    Ok(name) => name,
-                                    Err(_) => "",
-                                },
-                            )
+                            && let Some(param_types) = self
+                                .fn_param_types
+                                .borrow()
+                                .get(function.get_name().to_str().unwrap_or_default())
                         {
                             let idx = *param_idx as usize;
                             if idx < param_types.len()
@@ -216,10 +214,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             }
                         }
                     } else if matches!(&static_member.object, Expression::ThisExpression(_)) {
-                        let fname = match function.get_name().to_str() {
-                            Ok(name) => name,
-                            Err(_) => "",
-                        };
+                        let fname = function.get_name().to_str().unwrap_or_default();
                         if let Some(param_types) = self.fn_param_types.borrow().get(fname)
                             && !param_types.is_empty()
                             && let crate::types::OatsType::NominalStruct(n) = &param_types[0]
@@ -509,12 +504,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         {
                             class_name_opt = Some(nom);
                         } else if let Some(param_idx) = param_map.get(&ident_name)
-                            && let Some(param_types) = self.fn_param_types.borrow().get(
-                                match function.get_name().to_str() {
-                                    Ok(name) => name,
-                                    Err(_) => "",
-                                },
-                            )
+                            && let Some(param_types) = self
+                                .fn_param_types
+                                .borrow()
+                                .get(function.get_name().to_str().unwrap_or_default())
                         {
                             let idx = *param_idx as usize;
                             if idx < param_types.len()
@@ -524,10 +517,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             }
                         }
                     } else if matches!(&computed_member.object, Expression::ThisExpression(_)) {
-                        let fname = match function.get_name().to_str() {
-                            Ok(name) => name,
-                            Err(_) => "",
-                        };
+                        let fname = function.get_name().to_str().unwrap_or_default();
                         if let Some(param_types) = self.fn_param_types.borrow().get(fname)
                             && !param_types.is_empty()
                             && let crate::types::OatsType::NominalStruct(n) = &param_types[0]
@@ -992,10 +982,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 // If we're inside a constructor function named <Class>_init,
                                 // infer the class name from the function name. Otherwise
                                 // fall back to fn_param_types map (receiver typed functions).
-                                let fname = match function.get_name().to_str() {
-                                    Ok(name) => name,
-                                    Err(_) => "",
-                                };
+                                let fname = function.get_name().to_str().unwrap_or_default();
                                 if let Some(cls) = fname.strip_suffix("_init") {
                                     class_name_opt = Some(cls.to_string());
                                 } else if let Some(param_types) =
@@ -1007,12 +994,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     class_name_opt = Some(n.clone());
                                 }
                             } else if let Some(param_idx) = param_map.get(&ident_name)
-                                && let Some(param_types) = self.fn_param_types.borrow().get(
-                                    match function.get_name().to_str().ok() {
-                                        Some(name) => name,
-                                        None => "",
-                                    },
-                                )
+                                && let Some(param_types) = self
+                                    .fn_param_types
+                                    .borrow()
+                                    .get(function.get_name().to_str().ok().unwrap_or_default())
                             {
                                 let idx = *param_idx as usize;
                                 if idx < param_types.len()
@@ -1041,10 +1026,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 }
                             }
                         } else if matches!(&static_member.object, Expression::ThisExpression(_)) {
-                            let fname = match function.get_name().to_str() {
-                                Ok(name) => name,
-                                Err(_) => "",
-                            };
+                            let fname = function.get_name().to_str().unwrap_or_default();
                             if let Some(cls) = fname.strip_suffix("_init") {
                                 class_name_opt = Some(cls.to_string());
                             } else if let Some(param_types) =
@@ -1063,10 +1045,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         let class_name = if let Some(c) = class_name_opt.clone() {
                             c
                         } else {
-                            let fname = match function.get_name().to_str() {
-                                Ok(name) => name,
-                                Err(_) => "<unknown>",
-                            };
+                            let fname = function.get_name().to_str().unwrap_or("<unknown>");
                             return Err(Diagnostic::simple_boxed(
                                 Severity::Error,
                                 format!(
@@ -1390,114 +1369,112 @@ impl<'a> crate::codegen::CodeGen<'a> {
         }
 
         // Handle array element assignment: arr[idx] = value
-        if let Some(member_expr) = assign.left.as_member_expression() {
-            if let oxc_ast::ast::MemberExpression::ComputedMemberExpression(computed_member) =
+        if let Some(member_expr) = assign.left.as_member_expression()
+            && let oxc_ast::ast::MemberExpression::ComputedMemberExpression(computed_member) =
                 member_expr
-            {
-                // This is arr[idx] = value
+        {
+            // This is arr[idx] = value
 
-                // Get the alloca pointer for the array variable (needed for reallocation)
-                let arr_alloca_opt = if let Expression::Identifier(ident) = &computed_member.object
+            // Get the alloca pointer for the array variable (needed for reallocation)
+            let arr_alloca_opt = if let Expression::Identifier(ident) = &computed_member.object {
+                let name = ident.as_ref().name.to_string();
+                self.find_local(locals, &name)
+                    .map(|(ptr, _, _, _, _, _, _)| ptr)
+            } else {
+                None
+            };
+
+            let arr_alloca = arr_alloca_opt.ok_or_else(|| {
+                Diagnostic::simple_with_span(
+                    Severity::Error,
+                    "array element assignment requires array stored in a variable",
+                    assign.span.start as usize,
+                )
+            })?;
+
+            // Lower the index expression
+            let idx_val =
+                self.lower_expr(&computed_member.expression, function, param_map, locals)?;
+            let idx_i64 = if let BasicValueEnum::FloatValue(fv) = idx_val {
+                // Convert f64 to i64
+                match self
+                    .builder
+                    .build_float_to_signed_int(fv, self.i64_t, "idx_i64")
                 {
-                    let name = ident.as_ref().name.to_string();
-                    self.find_local(locals, &name)
-                        .map(|(ptr, _, _, _, _, _, _)| ptr)
-                } else {
-                    None
-                };
-
-                let arr_alloca = arr_alloca_opt.ok_or_else(|| {
-                    Diagnostic::simple_with_span(
-                        Severity::Error,
-                        "array element assignment requires array stored in a variable",
-                        assign.span.start as usize,
-                    )
-                })?;
-
-                // Lower the index expression
-                let idx_val =
-                    self.lower_expr(&computed_member.expression, function, param_map, locals)?;
-                let idx_i64 = if let BasicValueEnum::FloatValue(fv) = idx_val {
-                    // Convert f64 to i64
-                    match self
-                        .builder
-                        .build_float_to_signed_int(fv, self.i64_t, "idx_i64")
-                    {
+                    Ok(v) => v,
+                    Err(_) => {
+                        return Err(Diagnostic::simple_boxed(
+                            Severity::Error,
+                            "failed to convert index to i64",
+                        ));
+                    }
+                }
+            } else if let BasicValueEnum::IntValue(iv) = idx_val {
+                // Extend to i64 if needed
+                if iv.get_type().get_bit_width() < 64 {
+                    match self.builder.build_int_s_extend(iv, self.i64_t, "idx_i64") {
                         Ok(v) => v,
                         Err(_) => {
                             return Err(Diagnostic::simple_boxed(
                                 Severity::Error,
-                                "failed to convert index to i64",
+                                "failed to extend index to i64",
                             ));
                         }
                     }
-                } else if let BasicValueEnum::IntValue(iv) = idx_val {
-                    // Extend to i64 if needed
-                    if iv.get_type().get_bit_width() < 64 {
-                        match self.builder.build_int_s_extend(iv, self.i64_t, "idx_i64") {
-                            Ok(v) => v,
-                            Err(_) => {
-                                return Err(Diagnostic::simple_boxed(
-                                    Severity::Error,
-                                    "failed to extend index to i64",
-                                ));
-                            }
-                        }
-                    } else {
-                        iv
-                    }
                 } else {
-                    return Err(Diagnostic::simple_boxed(
-                        Severity::Error,
-                        "array index must be a number",
-                    ));
-                };
-
-                // Lower the value to assign
-                let val = self.lower_expr(&assign.right, function, param_map, locals)?;
-
-                // Determine if this is a pointer or numeric assignment
-                if let BasicValueEnum::PointerValue(pv) = val {
-                    // Pointer assignment: array_set_ptr(arr_alloca, idx, val)
-                    let array_set_ptr = self.get_array_set_ptr();
-                    let _ = match self.builder.build_call(
-                        array_set_ptr,
-                        &[arr_alloca.into(), idx_i64.into(), pv.into()],
-                        "array_set_ptr",
-                    ) {
-                        Ok(cs) => cs,
-                        Err(_) => {
-                            return Err(Diagnostic::simple_boxed(
-                                Severity::Error,
-                                "failed to call array_set_ptr",
-                            ));
-                        }
-                    };
-                } else if let BasicValueEnum::FloatValue(fv) = val {
-                    // Numeric assignment: array_set_f64(arr_alloca, idx, val)
-                    let array_set_f64 = self.get_array_set_f64();
-                    let _ = match self.builder.build_call(
-                        array_set_f64,
-                        &[arr_alloca.into(), idx_i64.into(), fv.into()],
-                        "array_set_f64",
-                    ) {
-                        Ok(cs) => cs,
-                        Err(_) => {
-                            return Err(Diagnostic::simple_boxed(
-                                Severity::Error,
-                                "failed to call array_set_f64",
-                            ));
-                        }
-                    };
-                } else {
-                    return Err(Diagnostic::simple_boxed(
-                        Severity::Error,
-                        "unsupported array element value type",
-                    ));
+                    iv
                 }
+            } else {
+                return Err(Diagnostic::simple_boxed(
+                    Severity::Error,
+                    "array index must be a number",
+                ));
+            };
 
-                return Ok(val);
+            // Lower the value to assign
+            let val = self.lower_expr(&assign.right, function, param_map, locals)?;
+
+            // Determine if this is a pointer or numeric assignment
+            if let BasicValueEnum::PointerValue(pv) = val {
+                // Pointer assignment: array_set_ptr(arr_alloca, idx, val)
+                let array_set_ptr = self.get_array_set_ptr();
+                let _ = match self.builder.build_call(
+                    array_set_ptr,
+                    &[arr_alloca.into(), idx_i64.into(), pv.into()],
+                    "array_set_ptr",
+                ) {
+                    Ok(cs) => cs,
+                    Err(_) => {
+                        return Err(Diagnostic::simple_boxed(
+                            Severity::Error,
+                            "failed to call array_set_ptr",
+                        ));
+                    }
+                };
+            } else if let BasicValueEnum::FloatValue(fv) = val {
+                // Numeric assignment: array_set_f64(arr_alloca, idx, val)
+                let array_set_f64 = self.get_array_set_f64();
+                let _ = match self.builder.build_call(
+                    array_set_f64,
+                    &[arr_alloca.into(), idx_i64.into(), fv.into()],
+                    "array_set_f64",
+                ) {
+                    Ok(cs) => cs,
+                    Err(_) => {
+                        return Err(Diagnostic::simple_boxed(
+                            Severity::Error,
+                            "failed to call array_set_f64",
+                        ));
+                    }
+                };
+            } else {
+                return Err(Diagnostic::simple_boxed(
+                    Severity::Error,
+                    "unsupported array element value type",
+                ));
             }
+
+            return Ok(val);
         }
 
         Err(Diagnostic::simple_with_span_boxed(

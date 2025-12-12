@@ -266,7 +266,8 @@ pub fn handle_build(cli: &Cli, opts: BuildCommandOptions) -> Result<()> {
                     // Check if metadata file exists in output directory
                     let module_stem = std::path::Path::new(prev_module)
                         .file_stem()
-                        .and_then(|s| s.to_str()).unwrap_or("module");
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("module");
                     let potential_meta = std::path::Path::new(out_dir)
                         .join(format!("{}_pkg.oats.meta", module_stem));
 
@@ -432,7 +433,8 @@ pub fn handle_run(
     };
     let src_filename = std::path::Path::new(&src_file)
         .file_stem()
-        .and_then(|s| s.to_str()).unwrap_or("out");
+        .and_then(|s| s.to_str())
+        .unwrap_or("out");
     let exe_name = if let Some(name) = out_name {
         name
     } else {

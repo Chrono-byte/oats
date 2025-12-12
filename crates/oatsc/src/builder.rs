@@ -203,17 +203,16 @@ pub fn run_from_args(
     for stmt in &parsed.body {
         // Check for exported function: export function main() {}
         if let Statement::ExportNamedDeclaration(export_decl) = stmt
-            && let Some(export_declaration) = &export_decl.declaration {
-                if let Declaration::FunctionDeclaration(fn_decl) = export_declaration {
-                    if let Some(id) = &fn_decl.id {
-                        let name = id.name.to_string();
-                        if name == "main" {
-                            func_decl_opt = Some(fn_decl);
-                            break;
-                        }
-                    }
-                }
+            && let Some(export_declaration) = &export_decl.declaration
+            && let Declaration::FunctionDeclaration(fn_decl) = export_declaration
+            && let Some(id) = &fn_decl.id
+        {
+            let name = id.name.to_string();
+            if name == "main" {
+                func_decl_opt = Some(fn_decl);
+                break;
             }
+        }
         // Check for non-exported function: function main() {}
         if let Statement::FunctionDeclaration(fn_decl) = stmt
             && let Some(id) = &fn_decl.id
@@ -269,9 +268,28 @@ pub fn run_from_args(
     // Declare std functions first (console.log functions)
     let void_t = context.void_type();
     let i8ptr_t = context.ptr_type(inkwell::AddressSpace::default());
+    let f64_t = context.f64_type();
+    let i32_t = context.i32_type();
+
+    // Declare all console.log variants
     module.add_function(
         crate::runtime_functions::names::STD_CONSOLE_LOG,
         void_t.fn_type(&[i8ptr_t.into()], false),
+        None,
+    );
+    module.add_function(
+        "oats_std_console_log_number",
+        void_t.fn_type(&[f64_t.into()], false),
+        None,
+    );
+    module.add_function(
+        "oats_std_console_log_int",
+        void_t.fn_type(&[i32_t.into()], false),
+        None,
+    );
+    module.add_function(
+        "oats_std_console_log_newline",
+        void_t.fn_type(&[], false),
         None,
     );
 

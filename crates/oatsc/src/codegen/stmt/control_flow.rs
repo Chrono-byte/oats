@@ -31,56 +31,56 @@ impl<'a> crate::codegen::CodeGen<'a> {
         param_map: &HashMap<String, u32>,
         locals_stack: &mut Vec<HashMap<String, LocalEntry<'a>>>,
     ) -> crate::diagnostics::DiagnosticResult<bool> {
-        // Lower condition
-        if let Ok(cond_val) = self.lower_expr(&ifstmt.test, function, param_map, locals_stack) {
-            if let Some(cond_bool) = self.to_condition_i1(cond_val) {
-                let then_bb = self.context.append_basic_block(function, "if.then");
-                let else_bb = self.context.append_basic_block(function, "if.else");
-                let merge_bb = self.context.append_basic_block(function, "if.merge");
+        // Lower condition - errors must be propagated
+        let cond_val = self.lower_expr(&ifstmt.test, function, param_map, locals_stack)?;
+        if let Some(cond_bool) = self.to_condition_i1(cond_val) {
+            let then_bb = self.context.append_basic_block(function, "if.then");
+            let else_bb = self.context.append_basic_block(function, "if.else");
+            let merge_bb = self.context.append_basic_block(function, "if.merge");
 
-                // Conditional branch
-                let _ = self
-                    .builder
-                    .build_conditional_branch(cond_bool, then_bb, else_bb);
+            // Conditional branch
+            let _ = self
+                .builder
+                .build_conditional_branch(cond_bool, then_bb, else_bb);
 
-                // Build then block
-                self.builder.position_at_end(then_bb);
-                let then_terminated: bool = match &ifstmt.consequent {
-                    oxc_ast::ast::Statement::BlockStatement(block) => {
-                        self.lower_stmts(&block.body, function, param_map, locals_stack)?
-                    }
-                    _ => self.lower_stmt(&ifstmt.consequent, function, param_map, locals_stack)?,
-                };
-                if !then_terminated {
-                    let _ = self.builder.build_unconditional_branch(merge_bb);
+            // Build then block
+            self.builder.position_at_end(then_bb);
+            let then_terminated: bool = match &ifstmt.consequent {
+                oxc_ast::ast::Statement::BlockStatement(block) => {
+                    self.lower_stmts(&block.body, function, param_map, locals_stack)?
                 }
-
-                // Build else block
-                self.builder.position_at_end(else_bb);
-                let else_terminated: bool = match &ifstmt.alternate {
-                    Some(alt) => self.lower_stmt(alt, function, param_map, locals_stack)?,
-                    None => false,
-                };
-                if !else_terminated {
-                    let _ = self.builder.build_unconditional_branch(merge_bb);
-                }
-
-                // Position at merge
-                self.builder.position_at_end(merge_bb);
-
-                // If both branches terminated, the merge block is unreachable.
-                // Add an unreachable instruction to make LLVM happy.
-                if then_terminated && else_terminated {
-                    let _ = self.builder.build_unreachable();
-                }
-
-                // If both branches terminated, the if statement terminates
-                Ok(then_terminated && else_terminated)
-            } else {
-                Ok(false)
+                _ => self.lower_stmt(&ifstmt.consequent, function, param_map, locals_stack)?,
+            };
+            if !then_terminated {
+                let _ = self.builder.build_unconditional_branch(merge_bb);
             }
+
+            // Build else block
+            self.builder.position_at_end(else_bb);
+            let else_terminated: bool = match &ifstmt.alternate {
+                Some(alt) => self.lower_stmt(alt, function, param_map, locals_stack)?,
+                None => false,
+            };
+            if !else_terminated {
+                let _ = self.builder.build_unconditional_branch(merge_bb);
+            }
+
+            // Position at merge
+            self.builder.position_at_end(merge_bb);
+
+            // If both branches terminated, the merge block is unreachable.
+            // Add an unreachable instruction to make LLVM happy.
+            if then_terminated && else_terminated {
+                let _ = self.builder.build_unreachable();
+            }
+
+            // If both branches terminated, the if statement terminates
+            Ok(then_terminated && else_terminated)
         } else {
-            Ok(false)
+            Err(crate::diagnostics::Diagnostic::simple_boxed(
+                crate::diagnostics::Severity::Error,
+                "if condition must be coercible to boolean",
+            ))
         }
     }
 
@@ -104,7 +104,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     // ForStatementInit can be various expression types
                     // Use as_expression() to get the expression if available
                     if let Some(expr) = init.as_expression() {
-                        let _ = self.lower_expr(expr, function, param_map, locals_stack);
+                        self.lower_expr(expr, function, param_map, locals_stack)?;
                     }
                 }
             }
@@ -132,24 +132,20 @@ impl<'a> crate::codegen::CodeGen<'a> {
         // Build condition block
         self.builder.position_at_end(loop_cond_bb);
         if let Some(test) = &forstmt.test {
-            if let Ok(cond_val) = self.lower_expr(test, function, param_map, locals_stack) {
-                // Coerce to i1 boolean
-                if let Some(cond_bool) = self.to_condition_i1(cond_val) {
-                    let _ = self.builder.build_conditional_branch(
-                        cond_bool,
-                        loop_body_bb,
-                        loop_after_bb,
-                    );
-                } else {
-                    // Failed to coerce, bail out
-                    locals_stack.pop();
-                    return Ok(false);
-                }
+            // Lower test expression - errors must be propagated
+            let cond_val = self.lower_expr(test, function, param_map, locals_stack)?;
+            // Coerce to i1 boolean
+            if let Some(cond_bool) = self.to_condition_i1(cond_val) {
+                let _ =
+                    self.builder
+                        .build_conditional_branch(cond_bool, loop_body_bb, loop_after_bb);
             } else {
-                // Failed to lower test, bail out
-                let _ = self.builder.build_unconditional_branch(loop_after_bb);
+                // Failed to coerce, propagate error
                 locals_stack.pop();
-                return Ok(false);
+                return Err(crate::diagnostics::Diagnostic::simple_boxed(
+                    crate::diagnostics::Severity::Error,
+                    "for loop condition must be coercible to boolean",
+                ));
             }
         } else {
             // No test means infinite loop: always branch to body
@@ -173,7 +169,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         // Build increment block
         self.builder.position_at_end(loop_incr_bb);
         if let Some(update) = &forstmt.update {
-            let _ = self.lower_expr(update, function, param_map, locals_stack);
+            self.lower_expr(update, function, param_map, locals_stack)?;
         }
         let _ = self.builder.build_unconditional_branch(loop_cond_bb);
 
@@ -216,20 +212,19 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
         // Build condition block
         self.builder.position_at_end(loop_cond_bb);
-        if let Ok(cond_val) = self.lower_expr(&while_stmt.test, function, param_map, locals_stack) {
-            // Coerce to i1 boolean
-            if let Some(cond_bool) = self.to_condition_i1(cond_val) {
-                let _ =
-                    self.builder
-                        .build_conditional_branch(cond_bool, loop_body_bb, loop_after_bb);
-            } else {
-                self.loop_context_stack.borrow_mut().pop();
-                return Ok(false);
-            }
+        // Lower condition expression - errors must be propagated
+        let cond_val = self.lower_expr(&while_stmt.test, function, param_map, locals_stack)?;
+        // Coerce to i1 boolean
+        if let Some(cond_bool) = self.to_condition_i1(cond_val) {
+            let _ = self
+                .builder
+                .build_conditional_branch(cond_bool, loop_body_bb, loop_after_bb);
         } else {
-            let _ = self.builder.build_unconditional_branch(loop_after_bb);
             self.loop_context_stack.borrow_mut().pop();
-            return Ok(false);
+            return Err(crate::diagnostics::Diagnostic::simple_boxed(
+                crate::diagnostics::Severity::Error,
+                "while loop condition must be coercible to boolean",
+            ));
         }
 
         // Build body block
@@ -296,23 +291,21 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
         // Build condition block (executed after body)
         self.builder.position_at_end(loop_cond_bb);
-        if let Ok(cond_val) = self.lower_expr(&dowhile_stmt.test, function, param_map, locals_stack)
-        {
-            // Coerce to i1 boolean
-            if let Some(cond_bool) = self.to_condition_i1(cond_val) {
-                let _ = self.builder.build_conditional_branch(
-                    cond_bool,
-                    loop_body_bb, // Loop back to body
-                    loop_after_bb,
-                );
-            } else {
-                self.loop_context_stack.borrow_mut().pop();
-                return Ok(false);
-            }
+        // Lower condition expression - errors must be propagated
+        let cond_val = self.lower_expr(&dowhile_stmt.test, function, param_map, locals_stack)?;
+        // Coerce to i1 boolean
+        if let Some(cond_bool) = self.to_condition_i1(cond_val) {
+            let _ = self.builder.build_conditional_branch(
+                cond_bool,
+                loop_body_bb, // Loop back to body
+                loop_after_bb,
+            );
         } else {
-            let _ = self.builder.build_unconditional_branch(loop_after_bb);
             self.loop_context_stack.borrow_mut().pop();
-            return Ok(false);
+            return Err(crate::diagnostics::Diagnostic::simple_boxed(
+                crate::diagnostics::Severity::Error,
+                "do-while loop condition must be coercible to boolean",
+            ));
         }
 
         // Pop loop context

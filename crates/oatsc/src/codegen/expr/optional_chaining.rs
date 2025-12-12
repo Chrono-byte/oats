@@ -276,32 +276,33 @@ impl<'a> CodeGen<'a> {
 
         // If we have a class name, get the field offset
         if let Some(class_name) = class_name_opt
-            && let Some(fields) = self.class_fields.borrow().get(&class_name) {
-                let mut field_offset = 16u64; // Start after header (8) + meta_ptr (8)
-                for (fname, _ftype) in fields {
-                    if fname == &field_name {
-                        // Found the field - compute offset and load it
-                        let offset = self.i64_t.const_int(field_offset, false);
-                        let field_i8ptr = self
-                            .i8_ptr_from_offset_i64(obj_ptr, offset, "field_i8ptr")
-                            .map_err(|_| Diagnostic::error("failed to compute field pointer"))?;
+            && let Some(fields) = self.class_fields.borrow().get(&class_name)
+        {
+            let mut field_offset = 16u64; // Start after header (8) + meta_ptr (8)
+            for (fname, _ftype) in fields {
+                if fname == &field_name {
+                    // Found the field - compute offset and load it
+                    let offset = self.i64_t.const_int(field_offset, false);
+                    let field_i8ptr = self
+                        .i8_ptr_from_offset_i64(obj_ptr, offset, "field_i8ptr")
+                        .map_err(|_| Diagnostic::error("failed to compute field pointer"))?;
 
-                        let field_ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
-                        let field_ptr = self
-                            .builder
-                            .build_pointer_cast(field_i8ptr, field_ptr_ty, "field_ptr")
-                            .map_err(|_| Diagnostic::error("failed to cast field pointer"))?;
+                    let field_ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+                    let field_ptr = self
+                        .builder
+                        .build_pointer_cast(field_i8ptr, field_ptr_ty, "field_ptr")
+                        .map_err(|_| Diagnostic::error("failed to cast field pointer"))?;
 
-                        let loaded = self
-                            .builder
-                            .build_load(self.i8ptr_t, field_ptr, "field_load")
-                            .map_err(|_| Diagnostic::error("failed to load field"))?;
+                    let loaded = self
+                        .builder
+                        .build_load(self.i8ptr_t, field_ptr, "field_load")
+                        .map_err(|_| Diagnostic::error("failed to load field"))?;
 
-                        return Ok(loaded.as_basic_value_enum());
-                    }
-                    field_offset += 8; // Increment by pointer size
+                    return Ok(loaded.as_basic_value_enum());
                 }
+                field_offset += 8; // Increment by pointer size
             }
+        }
 
         // Fallback: if we can't determine the field offset, return an error
         Err(Diagnostic::simple_with_span_boxed(

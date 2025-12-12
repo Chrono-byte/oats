@@ -82,6 +82,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
             oxc_ast::ast::Statement::VariableDeclaration(vd) => {
                 self.lower_decl_stmt(vd, function, param_map, locals_stack)
             }
+            oxc_ast::ast::Statement::ExpressionStatement(expr_stmt) => {
+                self.lower_expr_stmt(expr_stmt, function, param_map, locals_stack)
+            }
             oxc_ast::ast::Statement::SwitchStatement(switch_stmt) => {
                 self.lower_switch_stmt(switch_stmt, function, param_map, locals_stack)
             }

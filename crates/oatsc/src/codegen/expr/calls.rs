@@ -273,6 +273,11 @@ impl<'a> CodeGen<'a> {
             }
         } else {
             // Handle std namespace functions (e.g., Math.max, console.log)
+            // Special handling for console.log to dispatch based on argument type
+            if obj_name == "console" && prop_name == "log" {
+                return self.lower_console_log(call, function, param_map, locals);
+            }
+
             let fname = format!("oats_std_{}_{}", obj_name, prop_name);
 
             let mut lowered_args: Vec<inkwell::values::BasicMetadataValueEnum> = Vec::new();
@@ -304,13 +309,8 @@ impl<'a> CodeGen<'a> {
                         ));
                     }
                 };
-                let either = cs.try_as_basic_value();
-                if let inkwell::values::ValueKind::Basic(bv) = either {
-                    Ok(bv)
-                } else {
-                    let zero = self.f64_t.const_float(0.0);
-                    Ok(zero.as_basic_value_enum())
-                }
+                // console.log returns void, so we return a dummy value
+                Ok(self.f64_t.const_float(0.0).as_basic_value_enum())
             } else {
                 Err(Diagnostic::simple_with_span_boxed(
                     Severity::Error,
@@ -318,6 +318,185 @@ impl<'a> CodeGen<'a> {
                     call.span.start as usize,
                 ))
             }
+        }
+    }
+
+    /// Lower console.log calls with type-based dispatch
+    fn lower_console_log(
+        &self,
+        call: &CallExpr,
+        function: inkwell::values::FunctionValue<'a>,
+        param_map: &HashMap<String, u32>,
+        locals: &mut Vec<HashMap<String, LocalEntry<'a>>>,
+    ) -> crate::diagnostics::DiagnosticResult<inkwell::values::BasicValueEnum<'a>> {
+        // Handle no arguments - print newline
+        if call.arguments.is_empty() {
+            if let Some(fv) = self.module.get_function("oats_std_console_log_newline") {
+                let _ = self.builder.build_call(fv, &[], "console_log_newline");
+                return Ok(self.f64_t.const_float(0.0).as_basic_value_enum());
+            } else {
+                return Err(Diagnostic::simple_with_span_boxed(
+                    Severity::Error,
+                    "oats_std_console_log_newline not found",
+                    call.span.start as usize,
+                ));
+            }
+        }
+
+        // Handle single argument - dispatch based on type
+        if call.arguments.len() == 1
+            && let Some(expr) = call.arguments[0].as_expression()
+        {
+            let arg_val = self.lower_expr(expr, function, param_map, locals)?;
+
+            match arg_val {
+                BasicValueEnum::PointerValue(_) => {
+                    // String or pointer - use string version
+                    if let Some(fv) = self
+                        .module
+                        .get_function(crate::runtime_functions::names::STD_CONSOLE_LOG)
+                    {
+                        let _ = self
+                            .builder
+                            .build_call(fv, &[arg_val.into()], "console_log");
+                        return Ok(self.f64_t.const_float(0.0).as_basic_value_enum());
+                    } else {
+                        return Err(Diagnostic::simple_with_span_boxed(
+                            Severity::Error,
+                            "oats_std_console_log not found",
+                            call.span.start as usize,
+                        ));
+                    }
+                }
+                BasicValueEnum::FloatValue(fv_val) => {
+                    // Number - use number version
+                    if let Some(fv) = self.module.get_function("oats_std_console_log_number") {
+                        let _ = self
+                            .builder
+                            .build_call(fv, &[fv_val.into()], "console_log_number");
+                        return Ok(self.f64_t.const_float(0.0).as_basic_value_enum());
+                    } else {
+                        return Err(Diagnostic::simple_with_span_boxed(
+                            Severity::Error,
+                            "oats_std_console_log_number not found",
+                            call.span.start as usize,
+                        ));
+                    }
+                }
+                BasicValueEnum::IntValue(iv_val) => {
+                    // Check if it's i32 or i64
+                    if iv_val.get_type().get_bit_width() == 32 {
+                        // i32 - use int version
+                        if let Some(fv) = self.module.get_function("oats_std_console_log_int") {
+                            let _ =
+                                self.builder
+                                    .build_call(fv, &[iv_val.into()], "console_log_int");
+                            return Ok(self.f64_t.const_float(0.0).as_basic_value_enum());
+                        } else {
+                            return Err(Diagnostic::simple_with_span_boxed(
+                                Severity::Error,
+                                "oats_std_console_log_int not found",
+                                call.span.start as usize,
+                            ));
+                        }
+                    } else {
+                        // i64 or other - convert to f64 and use number version
+                        let f64_val = self
+                            .builder
+                            .build_signed_int_to_float(iv_val, self.f64_t, "int_to_f64")
+                            .map_err(|_| {
+                                Diagnostic::simple_boxed(
+                                    Severity::Error,
+                                    "failed to convert int to float",
+                                )
+                            })?;
+                        if let Some(fv) = self.module.get_function("oats_std_console_log_number") {
+                            let _ = self.builder.build_call(
+                                fv,
+                                &[f64_val.into()],
+                                "console_log_number",
+                            );
+                            return Ok(self.f64_t.const_float(0.0).as_basic_value_enum());
+                        } else {
+                            return Err(Diagnostic::simple_with_span_boxed(
+                                Severity::Error,
+                                "oats_std_console_log_number not found",
+                                call.span.start as usize,
+                            ));
+                        }
+                    }
+                }
+                _ => {
+                    // Other types (arrays, structs, vectors) - convert to string
+                    // For now, return error - can be extended later
+                    return Err(Diagnostic::simple_with_span_boxed(
+                        Severity::Error,
+                        "console.log: unsupported argument type".to_string(),
+                        call.span.start as usize,
+                    ));
+                }
+            }
+        }
+
+        // Multiple arguments - convert all to strings and concatenate, or just use first
+        // For now, handle first argument only (can be extended later)
+        if let Some(expr) = call.arguments[0].as_expression() {
+            let arg_val = self.lower_expr(expr, function, param_map, locals)?;
+            // Convert to string pointer if needed
+            let str_ptr = match arg_val {
+                BasicValueEnum::PointerValue(pv) => pv,
+                BasicValueEnum::FloatValue(fv) => {
+                    // Convert number to string
+                    let num_to_str = self.get_number_to_string();
+                    let str_call = self
+                        .builder
+                        .build_call(num_to_str, &[fv.into()], "num_to_str")
+                        .map_err(|_| {
+                            Diagnostic::simple_boxed(
+                                Severity::Error,
+                                "failed to convert number to string",
+                            )
+                        })?;
+                    match str_call.try_as_basic_value() {
+                        inkwell::values::ValueKind::Basic(BasicValueEnum::PointerValue(p)) => p,
+                        _ => {
+                            return Err(Diagnostic::simple_boxed(
+                                Severity::Error,
+                                "number_to_string returned non-pointer",
+                            ));
+                        }
+                    }
+                }
+                _ => {
+                    return Err(Diagnostic::simple_with_span_boxed(
+                        Severity::Error,
+                        "unsupported console.log argument type",
+                        call.span.start as usize,
+                    ));
+                }
+            };
+
+            if let Some(fv) = self
+                .module
+                .get_function(crate::runtime_functions::names::STD_CONSOLE_LOG)
+            {
+                let _ = self
+                    .builder
+                    .build_call(fv, &[str_ptr.into()], "console_log");
+                Ok(self.f64_t.const_float(0.0).as_basic_value_enum())
+            } else {
+                Err(Diagnostic::simple_with_span_boxed(
+                    Severity::Error,
+                    "oats_std_console_log not found",
+                    call.span.start as usize,
+                ))
+            }
+        } else {
+            Err(Diagnostic::simple_with_span_boxed(
+                Severity::Error,
+                "console.log requires expression arguments",
+                call.span.start as usize,
+            ))
         }
     }
 

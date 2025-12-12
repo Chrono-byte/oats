@@ -28,18 +28,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
         param_map: &HashMap<String, u32>,
         locals_stack: &mut Vec<HashMap<String, LocalEntry<'a>>>,
     ) -> crate::diagnostics::DiagnosticResult<bool> {
-        // Evaluate expression for side-effects. If lowering fails,
-        // emit a diagnostic and continue rather than aborting the
-        // whole compile. This avoids silent empty functions while
-        // keeping compilation resilient for constructs like
-        // `this.x = ...` during constructor emission.
-        match self.lower_expr(&expr_stmt.expression, function, param_map, locals_stack) {
-            Ok(_val) => { /* success, continue */ }
-            Err(d) => {
-                crate::diagnostics::emit_diagnostic(&d, Some(self.source));
-                // don't propagate error further; continue lowering
-            }
-        }
+        // Evaluate expression for side-effects. Errors must be propagated
+        // to ensure compilation fails when codegen cannot proceed.
+        self.lower_expr(&expr_stmt.expression, function, param_map, locals_stack)?;
         Ok(false)
     }
 }

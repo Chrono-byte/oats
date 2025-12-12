@@ -18,11 +18,11 @@ export function main(): void {
     console.log(`Bitwise NOT: ${~d}`);
 
     // Test 5: Increment
-    let mut e: number = 1;
+    let e: number = 1;
     console.log(`Increment: ${++e}`);
 
     // Test 6: Decrement
-    let mut f: number = 10;
+    let f: number = 10;
     console.log(`Decrement: ${--f}`);
 
     console.log("Unary Operators Tests Completed");

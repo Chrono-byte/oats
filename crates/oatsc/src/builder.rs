@@ -201,6 +201,20 @@ pub fn run_from_args(
     // Require the user script to export a `main` function as the program entrypoint
     let mut func_decl_opt: Option<&Function<'_>> = None;
     for stmt in &parsed.body {
+        // Check for exported function: export function main() {}
+        if let Statement::ExportNamedDeclaration(export_decl) = stmt
+            && let Some(export_declaration) = &export_decl.declaration {
+                if let Declaration::FunctionDeclaration(fn_decl) = export_declaration {
+                    if let Some(id) = &fn_decl.id {
+                        let name = id.name.to_string();
+                        if name == "main" {
+                            func_decl_opt = Some(fn_decl);
+                            break;
+                        }
+                    }
+                }
+            }
+        // Check for non-exported function: function main() {}
         if let Statement::FunctionDeclaration(fn_decl) = stmt
             && let Some(id) = &fn_decl.id
         {
@@ -413,6 +427,7 @@ pub fn run_from_args(
         fn_rc_weak_upgrade: std::cell::RefCell::new(None),
         fn_union_get_discriminant: std::cell::RefCell::new(None),
         class_fields: RefCell::new(HashMap::new()),
+        interface_fields: RefCell::new(HashMap::new()),
         enum_variants: RefCell::new(HashMap::new()),
         class_parents: RefCell::new(HashMap::new()),
         type_aliases: RefCell::new(HashMap::new()),
@@ -617,14 +632,47 @@ pub fn run_from_args(
 
         // Handle interface declarations: `interface Name { ... }`
         // Interfaces are structural types in TypeScript/Oats - they don't generate runtime code
-        // but are used for type checking. For now, we just store them for potential future use.
+        // but are used for type checking. We store interface metadata (property names and types)
+        // for potential future type checking passes.
         if let Statement::TSInterfaceDeclaration(interface) = stmt {
             let interface_name = interface.id.name.to_string();
-            // Interfaces are type-only constructs - no codegen needed
-            // They may be used in future type checking passes
-            // For now, we just acknowledge their presence
-            // TODO: Store interface metadata for type checking if needed
-            let _ = interface_name; // Suppress unused variable warning
+
+            // Extract interface properties and their types
+            let mut interface_props: Vec<(String, crate::types::OatsType)> = Vec::new();
+
+            for member in &interface.body.body {
+                match member {
+                    oxc_ast::ast::TSSignature::TSPropertySignature(prop) => {
+                        // Extract property name
+                        let prop_name = match &prop.key {
+                            oxc_ast::ast::PropertyKey::Identifier(ident) => ident.name.to_string(),
+                            oxc_ast::ast::PropertyKey::StringLiteral(s) => s.value.to_string(),
+                            _ => continue, // Skip computed keys for now
+                        };
+
+                        // Extract property type
+                        if let Some(type_ann) = &prop.type_annotation {
+                            // Convert TSType to OatsType
+                            if let Some(oats_type) =
+                                crate::types::map_ts_type(&type_ann.type_annotation)
+                            {
+                                interface_props.push((prop_name, oats_type));
+                            }
+                            // Skip properties with unsupported types
+                        }
+                    }
+                    _ => {
+                        // Methods, index signatures, etc. are not yet stored
+                        // They can be added in the future if needed for type checking
+                    }
+                }
+            }
+
+            // Store interface metadata
+            codegen
+                .interface_fields
+                .borrow_mut()
+                .insert(interface_name, interface_props);
         }
 
         // Handle namespace declarations: `namespace Name { ... }`

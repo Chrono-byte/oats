@@ -108,10 +108,7 @@ fn is_valid_semver(version: &str) -> bool {
     // Split into core version and optional pre-release/build
     // splitn always returns at least one element, so we can safely get the first
     let mut parts = version.splitn(2, ['-', '+']);
-    let core = match parts.next() {
-        Some(c) => c,
-        None => "",
-    };
+    let core = parts.next().unwrap_or_default();
     if core.is_empty() {
         return false;
     }
@@ -422,10 +419,13 @@ pub fn load_modules_with_verbosity(
         };
 
         // Discover and enqueue relative imports from this module
-        use oats_ast::*;
-        for stmt in &parsed.parsed.body {
-            if let Stmt::Import(import_stmt) = stmt {
-                let import_src = &import_stmt.source;
+        // Use regex to find import statements since oxc_ast Program.body is Vec<Statement>
+        // and imports are not statements in the AST structure
+        use regex::Regex;
+        let import_re = Regex::new(r#"import\s+.*?\s+from\s+["']([^"']+)["']"#).unwrap();
+        for cap in import_re.captures_iter(&parsed.source) {
+            if let Some(import_src) = cap.get(1) {
+                let import_src = import_src.as_str();
                 // Process only relative import paths
                 if (import_src.starts_with("./") || import_src.starts_with("../"))
                     && let Some(imported_path) =
@@ -523,10 +523,13 @@ pub fn build_dependency_graph(
         })?;
 
         // Discover and enqueue relative imports from this module
-        use oats_ast::*;
-        for stmt in &parsed.parsed.body {
-            if let Stmt::Import(import_stmt) = stmt {
-                let import_src = &import_stmt.source;
+        // Use regex to find import statements since oxc_ast Program.body is Vec<Statement>
+        // and imports are not statements in the AST structure
+        use regex::Regex;
+        let import_re = Regex::new(r#"import\s+.*?\s+from\s+["']([^"']+)["']"#).unwrap();
+        for cap in import_re.captures_iter(&parsed.source) {
+            if let Some(import_src) = cap.get(1) {
+                let import_src = import_src.as_str();
                 // Process only relative import paths
                 if (import_src.starts_with("./") || import_src.starts_with("../"))
                     && let Some(imported_path) =

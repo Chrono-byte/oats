@@ -8,6 +8,7 @@ use inkwell::values::{BasicValueEnum, FunctionValue};
 use oxc_ast::ast::*;
 use std::collections::HashMap;
 
+#[allow(dead_code)]
 type LocalEntry<'a> = (
     inkwell::values::PointerValue<'a>,
     inkwell::types::BasicTypeEnum<'a>,
@@ -17,7 +18,6 @@ type LocalEntry<'a> = (
     Option<String>,
     Option<crate::types::OatsType>,
 );
-type LocalsStackLocal<'a> = Vec<HashMap<String, LocalEntry<'a>>>;
 
 impl<'a> crate::codegen::CodeGen<'a> {
     pub(crate) fn lower_for_in_stmt(
@@ -25,7 +25,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         for_in: &ForInStatement<'_>,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
-        locals_stack: &mut LocalsStackLocal<'a>,
+        locals_stack: &mut Vec<HashMap<String, LocalEntry<'a>>>,
     ) -> crate::diagnostics::DiagnosticResult<bool> {
         // For-in loops iterate over object property keys
         // Only handle the case where the left-hand side is a var declaration (e.g., `for (let key in obj)`)

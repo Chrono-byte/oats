@@ -15,7 +15,6 @@
 
 pub mod assignments;
 
-use crate::diagnostics::{Diagnostic, Severity};
 use inkwell::values::BasicValueEnum;
 use inkwell::values::FunctionValue;
 use std::collections::HashMap;
@@ -44,6 +43,7 @@ pub mod yield_expr;
 
 // LocalEntry now includes an Option<String> for an optional nominal type name
 // LocalEntry now includes an Option<OatsType> for union tracking
+#[allow(dead_code)]
 type LocalEntry<'a> = (
     PointerValue<'a>,
     BasicTypeEnum<'a>,
@@ -139,8 +139,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
             Expression::StaticMemberExpression(_) | Expression::ComputedMemberExpression(_) => {
                 self.lower_member_expr(expr, function, param_map, locals)
             }
-            // Optional chaining expressions may not be available in this version of oxc_ast
-            // They are handled in the default case below
+            Expression::ChainExpression(chain) => {
+                self.lower_optional_member_expr(chain, function, param_map, locals)
+            }
             Expression::NewExpression(new_expr) => {
                 self.lower_new_expr(new_expr, function, param_map, locals)
             }
@@ -150,13 +151,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
             Expression::ArrowFunctionExpression(arrow) => {
                 self.lower_arrow_expr(arrow, function, param_map, locals)
             }
-            Expression::FunctionExpression(_fn_expr) => {
-                // FunctionExpression contains Box<Function>, not ArrowFunctionExpression
-                // For now, return an error - this needs proper implementation
-                Err(Diagnostic::simple_boxed(
-                    Severity::Error,
-                    "FunctionExpression not yet fully supported",
-                ))
+            Expression::FunctionExpression(fn_expr) => {
+                self.lower_fn_expr(fn_expr, function, param_map, locals)
             }
             Expression::SequenceExpression(seq) => {
                 self.lower_seq_expr(seq, function, param_map, locals)

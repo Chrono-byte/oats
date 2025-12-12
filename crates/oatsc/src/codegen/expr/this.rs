@@ -8,6 +8,7 @@ use inkwell::values::PointerValue;
 
 // LocalEntry now includes an Option<String> for an optional nominal type name
 // LocalEntry now includes an Option<OatsType> for union tracking
+#[allow(dead_code)]
 type LocalEntry<'a> = (
     PointerValue<'a>,
     BasicTypeEnum<'a>,

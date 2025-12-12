@@ -150,10 +150,11 @@ pub fn load_modules_with_verbosity(
             .with_context(|| format!("Failed to parse module: {}", path))?;
 
         // Discover and enqueue relative imports from this module
-        use oats_ast::*;
-        for stmt in &parsed.parsed.body {
-            if let Stmt::Import(import_stmt) = stmt {
-                let import_src = &import_stmt.source;
+        use oxc_ast::ast::*;
+        for item in &parsed.parsed.body {
+            // Check if this is an import statement
+            if let oxc_ast::ast::ModuleItem::ModuleDeclaration(ModuleDeclaration::ImportDeclaration(import_stmt)) = item {
+                let import_src = import_stmt.source.value.as_str();
                 // Process only relative import paths
                 if import_src.starts_with("./") || import_src.starts_with("../") {
                     if let Some(imported_path) = resolve_relative_import(&path, import_src, project_root) {
@@ -234,13 +235,16 @@ pub fn build_dependency_graph(
             ))?;
 
         // Discover and enqueue relative imports from this module
-        use oats_ast::*;
-        for stmt in &parsed.parsed.body {
-            if let Stmt::Import(import_stmt) = stmt {
-                let import_src = &import_stmt.source;
+        // Use regex to find import statements since oxc_ast Program.body is Vec<Statement>
+        // and imports are not statements in the AST structure
+        use regex::Regex;
+        let import_re = Regex::new(r#"import\s+.*?\s+from\s+["']([^"']+)["']"#).unwrap();
+        for cap in import_re.captures_iter(&parsed.source) {
+            if let Some(import_src) = cap.get(1) {
+                let import_src = import_src.as_str();
                 // Process only relative import paths
                 if import_src.starts_with("./") || import_src.starts_with("../") {
-                    if let Some(imported_path) = resolve_relative_import(&current_path, &import_src, project_root) {
+                    if let Some(imported_path) = resolve_relative_import(&current_path, import_src, project_root) {
                         // Add dependency edge: current -> imported (current depends on imported)
                         let imported_node = if let Some(&existing_node) = node_indices.get(&imported_path) {
                             existing_node

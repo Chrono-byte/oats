@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use crate::types::OatsType;
 use oxc_ast::ast::*;
 
+#[allow(dead_code)]
 type LocalEntry<'a> = (
     inkwell::values::PointerValue<'a>,
     inkwell::types::BasicTypeEnum<'a>,
@@ -21,7 +22,6 @@ type LocalEntry<'a> = (
 // local is a Weak<T> (affects RC semantics), an optional nominal type
 // name used to guide member access lowering, and an optional OatsType
 // for union tracking.
-type LocalsStackLocal<'a> = Vec<HashMap<String, LocalEntry<'a>>>;
 
 impl<'a> crate::codegen::CodeGen<'a> {
     pub(crate) fn lower_if_stmt(
@@ -29,7 +29,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         ifstmt: &IfStatement<'_>,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
-        locals_stack: &mut LocalsStackLocal<'a>,
+        locals_stack: &mut Vec<HashMap<String, LocalEntry<'a>>>,
     ) -> crate::diagnostics::DiagnosticResult<bool> {
         // Lower condition
         if let Ok(cond_val) = self.lower_expr(&ifstmt.test, function, param_map, locals_stack) {
@@ -89,7 +89,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         forstmt: &ForStatement<'_>,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
-        locals_stack: &mut LocalsStackLocal<'a>,
+        locals_stack: &mut Vec<HashMap<String, LocalEntry<'a>>>,
     ) -> crate::diagnostics::DiagnosticResult<bool> {
         // Push new scope for the loop (init vars live in this scope)
         locals_stack.push(HashMap::new());
@@ -194,7 +194,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         while_stmt: &WhileStatement<'_>,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
-        locals_stack: &mut LocalsStackLocal<'a>,
+        locals_stack: &mut Vec<HashMap<String, LocalEntry<'a>>>,
     ) -> crate::diagnostics::DiagnosticResult<bool> {
         // Create basic blocks
         let loop_cond_bb = self.context.append_basic_block(function, "while.cond");
@@ -260,7 +260,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         dowhile_stmt: &DoWhileStatement<'_>,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
-        locals_stack: &mut LocalsStackLocal<'a>,
+        locals_stack: &mut Vec<HashMap<String, LocalEntry<'a>>>,
     ) -> crate::diagnostics::DiagnosticResult<bool> {
         // Create basic blocks
         let loop_body_bb = self.context.append_basic_block(function, "dowhile.body");

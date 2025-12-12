@@ -54,6 +54,7 @@ pub mod utils;
 // helper modules. Use the same alias here so different files agree on the
 // in-memory representation of the locals stack.
 // LocalEntry now carries an optional OatsType as the seventh element for union tracking.
+#[allow(dead_code)]
 type LocalEntry<'a> = (
     PointerValue<'a>,               // alloca ptr
     BasicTypeEnum<'a>,              // LLVM type
@@ -147,6 +148,8 @@ pub struct CodeGen<'a> {
     pub fn_rc_weak_upgrade: RefCell<Option<FunctionValue<'a>>>,
     /// Class name -> (field name, field type) pairs
     pub class_fields: RefCell<HashMap<String, Vec<(String, crate::types::OatsType)>>>,
+    /// Interface name -> (property name, property type) pairs
+    pub interface_fields: RefCell<HashMap<String, Vec<(String, crate::types::OatsType)>>>,
     /// Enum name -> (variant name, variant field types) pairs
     pub enum_variants: RefCell<HashMap<String, Vec<(String, Vec<crate::types::OatsType>)>>>,
     /// Class name -> parent class name (None if no parent)

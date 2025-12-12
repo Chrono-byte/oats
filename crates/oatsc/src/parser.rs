@@ -307,9 +307,25 @@ pub fn parse_oats_module_with_options(
             let mut diags = Vec::new();
             for error in parser_return.errors {
                 let message = error.to_string();
-                let span = diagnostics::Span {
-                    start: 0,
-                    end: source_without_bom.len(),
+                // Extract span from error labels if available
+                let span = if let Some(labels) = &error.labels {
+                    if !labels.is_empty() {
+                        let label = &labels[0];
+                        diagnostics::Span {
+                            start: label.offset(),
+                            end: (label.offset() + label.len()),
+                        }
+                    } else {
+                        diagnostics::Span {
+                            start: 0,
+                            end: source_without_bom.len(),
+                        }
+                    }
+                } else {
+                    diagnostics::Span {
+                        start: 0,
+                        end: source_without_bom.len(),
+                    }
                 };
                 diags.push(diagnostics::Diagnostic {
                     severity: diagnostics::Severity::Error,

@@ -70,9 +70,15 @@ export OATS_OATSC_PATH="$OATSC_BIN"
 # Create a temporary directory within the repo for script temp files
 TMP_DIR="${REPO_ROOT}/.test_tmp"
 mkdir -p "$TMP_DIR"
-# Clean up function to remove temp directory on exit
+# Clean up function to remove temp directory on exit (only if successful)
+# Keep temp files on failure for debugging
 cleanup() {
-    rm -rf "$TMP_DIR"
+    if [ ${#failures[@]} -eq 0 ]; then
+        rm -rf "$TMP_DIR"
+    else
+        echo ""
+        echo "Note: Temp files preserved in $TMP_DIR for debugging"
+    fi
 }
 trap cleanup EXIT
 
@@ -98,7 +104,13 @@ for file in "${files[@]}"; do
     tmp_out="${TMP_DIR}/$(basename "$file" .oats)_output.txt"
 
     # Run the local toasty binary and check its exit code.
-    if "$TOASTY_BIN" build "$file" &> "$tmp_out"; then
+    # Capture both stdout and stderr, and also preserve exit code
+    set +e  # Temporarily disable exit on error to capture exit code
+    "$TOASTY_BIN" build "$file" &> "$tmp_out"
+    exit_code=$?
+    set -e  # Re-enable exit on error
+    
+    if [ $exit_code -eq 0 ]; then
         # Command succeeded (exit code 0), but we still need to scan the output
         # for diagnostics like type errors that don't cause a non-zero exit.
 
@@ -110,18 +122,44 @@ for file in "${files[@]}"; do
         if grep -E '(^|\s)error:|^error\[' "$cleaned_out" >/dev/null; then
             echo "FAILED (errors found in output): $file"
             echo "---- begin output ----"
-            sed -n '1,200p' "$tmp_out" # Print first 200 lines of raw output
+            # Check if file exists and has content
+            if [ ! -s "$tmp_out" ]; then
+                echo "(no output captured)"
+            else
+                # Show full output, or up to 500 lines if very long
+                line_count=$(wc -l < "$tmp_out" 2>/dev/null || echo "0")
+                if [ "$line_count" -gt 500 ]; then
+                    head -n 500 "$tmp_out"
+                    echo "... (output truncated at 500 lines, see $tmp_out for full output)"
+                else
+                    cat "$tmp_out"
+                fi
+            fi
             echo "---- end output ----"
+            echo "Full output saved to: $tmp_out"
             failures+=("$file")
         else
             echo "Compiled successfully: $file"
         fi
     else
         # Command failed (non-zero exit code), indicating a crash or fatal error.
-        echo "FAILED (non-zero exit code): $file"
+        echo "FAILED (non-zero exit code: $exit_code): $file"
         echo "---- begin output ----"
-        sed -n '1,50p' "$tmp_out" # Print first 50 lines of raw output
+        # Check if file exists and has content
+        if [ ! -s "$tmp_out" ]; then
+            echo "(no output captured)"
+        else
+            # Show full output, or up to 500 lines if very long
+            line_count=$(wc -l < "$tmp_out" 2>/dev/null || echo "0")
+            if [ "$line_count" -gt 500 ]; then
+                head -n 500 "$tmp_out"
+                echo "... (output truncated at 500 lines, see $tmp_out for full output)"
+            else
+                cat "$tmp_out"
+            fi
+        fi
         echo "---- end output ----"
+        echo "Full output saved to: $tmp_out"
         failures+=("$file")
     fi
 done

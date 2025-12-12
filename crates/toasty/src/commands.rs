@@ -7,7 +7,7 @@ use colored::Colorize;
 use std::path::PathBuf;
 
 use crate::build;
-use crate::cli::{Cli, CompileOptions, PackageCommands, VersionCommands};
+use crate::cli::{Cli, CompileOptions, VersionCommands};
 use crate::compiler;
 use crate::diagnostics::{Result, ToastyError};
 use crate::fetch;
@@ -264,13 +264,9 @@ pub fn handle_build(cli: &Cli, opts: BuildCommandOptions) -> Result<()> {
                 // Try to find or generate metadata file for this module
                 let meta_path = if let Some(out_dir) = &out_dir {
                     // Check if metadata file exists in output directory
-                    let module_stem = match std::path::Path::new(prev_module)
+                    let module_stem = std::path::Path::new(prev_module)
                         .file_stem()
-                        .and_then(|s| s.to_str())
-                    {
-                        Some(stem) => stem,
-                        None => "module",
-                    };
+                        .and_then(|s| s.to_str()).unwrap_or("module");
                     let potential_meta = std::path::Path::new(out_dir)
                         .join(format!("{}_pkg.oats.meta", module_stem));
 
@@ -434,13 +430,9 @@ pub fn handle_run(
         Ok(dir) => dir,
         Err(_) => ".".to_string(),
     };
-    let src_filename = match std::path::Path::new(&src_file)
+    let src_filename = std::path::Path::new(&src_file)
         .file_stem()
-        .and_then(|s| s.to_str())
-    {
-        Some(name) => name,
-        None => "out",
-    };
+        .and_then(|s| s.to_str()).unwrap_or("out");
     let exe_name = if let Some(name) = out_name {
         name
     } else {
@@ -563,84 +555,6 @@ pub fn handle_compiler(action: VersionCommands) -> Result<()> {
 /// Handle runtime commands
 pub fn handle_runtime(action: VersionCommands) -> Result<()> {
     handle_version_commands(action, "runtime")
-}
-
-/// Handle package commands
-pub fn handle_package(action: PackageCommands) -> Result<()> {
-    match action {
-        PackageCommands::List { quiet } => {
-            // List available packages
-            let packages = fetch::list_available_packages()?;
-            if packages.is_empty() {
-                if !quiet {
-                    println!("No packages found.");
-                }
-            } else {
-                if !quiet {
-                    println!("Available packages:");
-                }
-                for package in packages {
-                    println!("  - {}", package);
-                }
-            }
-            Ok(())
-        }
-        PackageCommands::Install {
-            name,
-            version,
-            quiet,
-        } => {
-            // Install a specific package
-            let version_to_install = match version {
-                Some(v) => v,
-                None => "latest".to_string(),
-            };
-            fetch::install_package_version(&name, &version_to_install)?;
-            if !quiet {
-                println!(
-                    "Package {}@{} installed successfully.",
-                    name, version_to_install
-                );
-            }
-            Ok(())
-        }
-        PackageCommands::Uninstall { name, quiet } => {
-            // Uninstall a specific package
-            fetch::uninstall_package_version(&name)?;
-            if !quiet {
-                println!("Package {} uninstalled successfully.", name);
-            }
-            Ok(())
-        }
-        PackageCommands::Update { name, quiet } => {
-            // Update a specific package
-            fetch::update_package_version(&name)?;
-            if !quiet {
-                println!("Package {} updated successfully.", name);
-            }
-            Ok(())
-        }
-        PackageCommands::Info { name } => {
-            // Show information about a specific package
-            let info = fetch::get_package_info(&name)?;
-            println!("Package: {}", name);
-            println!("Version: {}", info.version);
-            println!(
-                "Description: {}",
-                match info.description {
-                    Some(desc) => desc,
-                    None => "No description".to_string(),
-                }
-            );
-            if let Some(deps) = info.dependencies {
-                println!("Dependencies:");
-                for dep in deps {
-                    println!("  - {}", dep);
-                }
-            }
-            Ok(())
-        }
-    }
 }
 
 /// Generic handler for version management commands (compiler/runtime)

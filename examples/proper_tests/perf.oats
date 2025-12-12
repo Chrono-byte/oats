@@ -2,8 +2,8 @@ export function main(): void {
     console.log("Starting performance test...");
 
     // A series of nonsensical calculations to test the compiler's ability to handle complex arithmetic expressions.
-    let mut result: number = 0;
-    for (let mut i: number = 0; i < 100; i = i + 1) {
+    let result: number = 0;
+    for (let i: number = 0; i < 100; i = i + 1) {
         result = (result + i) * 1.000000000000001 - (i / 1.000000000000001);
         if (i % 2 == 0) {
             result = result + 1;
@@ -18,8 +18,8 @@ export function main(): void {
         if (n <= 0) {
             return 1;
         }
-        let mut total: number = 0;
-        for (let mut i: number = 0; i < n; i = i + 1) {
+        let total: number = 0;
+        for (let i: number = 0; i < n; i = i + 1) {
             total = total + recursive(n - 1);
         }
         return total;
@@ -28,15 +28,15 @@ export function main(): void {
     console.log("Recursive function test finished.");
 
     // A large array to test the compiler's ability to handle large data structures.
-    let mut arr: number[] = [];
-    for (let mut i: number = 0; i < 1000; i = i + 1) {
+    let arr: number[] = [];
+    for (let i: number = 0; i < 1000; i = i + 1) {
         arr[i] = i;
     }
     console.log("Large array test finished.");
 
     // A series of string manipulations to test the compiler's ability to handle string operations.
-    let mut str: string = "";
-    for (let mut i: number = 0; i < 100; i = i + 1) {
+    let str: string = "";
+    for (let i: number = 0; i < 100; i = i + 1) {
         str = str + "a";
     }
     console.log("String manipulation test finished.");

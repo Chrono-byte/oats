@@ -4,6 +4,7 @@ use inkwell::values::{BasicValueEnum, FunctionValue};
 use oxc_ast::ast::*;
 use std::collections::HashMap;
 
+#[allow(dead_code)]
 type LocalEntry<'a> = (
     inkwell::values::PointerValue<'a>,
     inkwell::types::BasicTypeEnum<'a>,
@@ -21,7 +22,6 @@ type LocalEntry<'a> = (
 // local is a Weak<T> (affects RC semantics), an optional nominal type
 // name used to guide member access lowering, and an optional OatsType
 // for union tracking.
-type LocalsStackLocal<'a> = Vec<HashMap<String, LocalEntry<'a>>>;
 
 impl<'a> crate::codegen::CodeGen<'a> {
     pub(crate) fn lower_for_of_stmt(
@@ -29,7 +29,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         forof: &ForOfStatement<'_>,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
-        locals_stack: &mut LocalsStackLocal<'a>,
+        locals_stack: &mut Vec<HashMap<String, LocalEntry<'a>>>,
     ) -> crate::diagnostics::DiagnosticResult<bool> {
         // Only handle the case where the left-hand side is a var
         // declaration (e.g., `for (let v of rhs)`).

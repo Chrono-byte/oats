@@ -265,9 +265,11 @@ pub fn link_executable(
             cmd.arg("-O3");
         }
 
-        // Add LTO flags
+        // Add LTO flags (only if LTO is enabled, skip for "none")
         let lto_mode = config.lto.as_deref().unwrap_or("none");
-        cmd.arg(format!("-flto={}", lto_mode));
+        if lto_mode != "none" {
+            cmd.arg(format!("-flto={}", lto_mode));
+        }
 
         if let Some(ref lld) = lld_candidate {
             cmd.arg(format!("-fuse-ld={}", lld));

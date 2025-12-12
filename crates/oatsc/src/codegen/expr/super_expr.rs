@@ -10,6 +10,7 @@ use inkwell::values::{BasicValue, BasicValueEnum, FunctionValue};
 use oxc_ast::ast::*;
 use std::collections::HashMap;
 
+#[allow(dead_code)]
 type LocalEntry<'a> = (
     inkwell::values::PointerValue<'a>,
     inkwell::types::BasicTypeEnum<'a>,

@@ -80,6 +80,7 @@ pub struct ProcessUnregisterExpr<'a> {
     pub name: Box<'a, Expression<'a>>,
 }
 
+#[allow(dead_code)]
 type LocalEntry<'a> = (
     PointerValue<'a>,
     inkwell::types::BasicTypeEnum<'a>,
@@ -89,7 +90,6 @@ type LocalEntry<'a> = (
     Option<String>,
     Option<crate::types::OatsType>,
 );
-type LocalsStackLocal<'a> = Vec<HashMap<String, LocalEntry<'a>>>;
 
 impl<'a> crate::codegen::CodeGen<'a> {
     /// Lower spawn expression: spawn() or spawn(name, priority)
@@ -98,7 +98,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         spawn_expr: &SpawnExpr,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
-        locals: &mut LocalsStackLocal<'a>,
+        locals: &mut Vec<HashMap<String, LocalEntry<'a>>>,
     ) -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
         self.declare_libc(); // Ensure process functions are declared
 
@@ -215,7 +215,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         send_expr: &SendExpr,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
-        locals: &mut LocalsStackLocal<'a>,
+        locals: &mut Vec<HashMap<String, LocalEntry<'a>>>,
     ) -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
         self.declare_libc();
 
@@ -368,7 +368,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         receive_expr: &ReceiveExpr,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
-        locals: &mut LocalsStackLocal<'a>,
+        locals: &mut Vec<HashMap<String, LocalEntry<'a>>>,
     ) -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
         self.declare_libc();
 
@@ -535,7 +535,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         exit_expr: &ProcessExitExpr,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
-        locals: &mut LocalsStackLocal<'a>,
+        locals: &mut Vec<HashMap<String, LocalEntry<'a>>>,
     ) -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
         self.declare_libc();
 
@@ -661,7 +661,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         link_expr: &ProcessLinkExpr,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
-        locals: &mut LocalsStackLocal<'a>,
+        locals: &mut Vec<HashMap<String, LocalEntry<'a>>>,
     ) -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
         self.declare_libc();
 
@@ -763,7 +763,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         unlink_expr: &ProcessUnlinkExpr,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
-        locals: &mut LocalsStackLocal<'a>,
+        locals: &mut Vec<HashMap<String, LocalEntry<'a>>>,
     ) -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
         self.declare_libc();
 
@@ -857,7 +857,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         monitor_expr: &ProcessMonitorExpr,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
-        locals: &mut LocalsStackLocal<'a>,
+        locals: &mut Vec<HashMap<String, LocalEntry<'a>>>,
     ) -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
         self.declare_libc();
 
@@ -987,7 +987,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         demonitor_expr: &ProcessDemonitorExpr,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
-        locals: &mut LocalsStackLocal<'a>,
+        locals: &mut Vec<HashMap<String, LocalEntry<'a>>>,
     ) -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
         self.declare_libc();
 
@@ -1118,7 +1118,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         whereis_expr: &ProcessWhereisExpr,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
-        locals: &mut LocalsStackLocal<'a>,
+        locals: &mut Vec<HashMap<String, LocalEntry<'a>>>,
     ) -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
         self.declare_libc();
 
@@ -1171,7 +1171,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         register_expr: &ProcessRegisterExpr,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
-        locals: &mut LocalsStackLocal<'a>,
+        locals: &mut Vec<HashMap<String, LocalEntry<'a>>>,
     ) -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
         self.declare_libc();
 
@@ -1256,7 +1256,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         unregister_expr: &ProcessUnregisterExpr,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
-        locals: &mut LocalsStackLocal<'a>,
+        locals: &mut Vec<HashMap<String, LocalEntry<'a>>>,
     ) -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
         self.declare_libc();
 

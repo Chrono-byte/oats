@@ -160,10 +160,7 @@ fn compile_package(
     }
 
     // Configure output
-    let out_dir = match config.out_dir.as_deref() {
-        Some(dir) => dir,
-        None => "target",
-    };
+    let out_dir = config.out_dir.as_deref().unwrap_or("target");
     let obj_filename = format!("{}_pkg.o", pkg_name.replace('-', "_"));
     let obj_path = PathBuf::from(out_dir).join(&obj_filename);
 
@@ -378,7 +375,7 @@ fn compile_package_modules(
                     "./{}",
                     match std::path::Path::new(prev_module_path).file_stem() {
                         Some(stem) => stem.to_string_lossy(),
-                        None => std::ffi::OsStr::new("").into(),
+                        None => std::ffi::OsStr::new("").to_string_lossy(),
                     }
                 );
                 options.extern_oats.insert(module_name, symbol_list);
@@ -386,10 +383,7 @@ fn compile_package_modules(
         }
 
         // Configure output for this module
-        let out_dir = match config.out_dir.as_deref() {
-            Some(dir) => dir,
-            None => "target",
-        };
+        let out_dir = config.out_dir.as_deref().unwrap_or("target");
         std::fs::create_dir_all(out_dir).map_err(|e| ToastyError::io(out_dir, e))?;
 
         // Create CACHEDIR.TAG to mark this as a cache directory
@@ -466,10 +460,7 @@ fn link_package_modules(
     }
 
     // Link multiple modules together
-    let linker_cmd = match config.linker.as_deref() {
-        Some(cmd) => cmd,
-        None => "clang",
-    };
+    let linker_cmd = config.linker.as_deref().unwrap_or("clang");
     let mut link_cmd = std::process::Command::new(linker_cmd);
 
     // Ensure output directory exists
@@ -510,10 +501,7 @@ fn link_packages(
     build_results: &HashMap<String, PackageBuildResult>,
     config: &BuildConfig,
 ) -> Result<PathBuf> {
-    let out_dir = match config.out_dir.as_deref() {
-        Some(dir) => dir,
-        None => ".",
-    };
+    let out_dir = config.out_dir.as_deref().unwrap_or(".");
     let exe_name = match config.out_name.as_deref() {
         Some(name) => name,
         None => &build_results[root_pkg_name].name,

@@ -8,6 +8,7 @@ use crate::diagnostics::Diagnostic;
 use inkwell::values::{BasicValue, BasicValueEnum, FunctionValue};
 use std::collections::HashMap;
 
+#[allow(dead_code)]
 type LocalEntry<'a> = (
     inkwell::values::PointerValue<'a>,
     inkwell::types::BasicTypeEnum<'a>,
@@ -17,7 +18,6 @@ type LocalEntry<'a> = (
     Option<String>,
     Option<crate::types::OatsType>,
 );
-type LocalsStackLocal<'a> = Vec<std::collections::HashMap<String, LocalEntry<'a>>>;
 
 impl<'a> CodeGen<'a> {
     /// Lowers a yield expression.
@@ -33,7 +33,7 @@ impl<'a> CodeGen<'a> {
         yield_expr: &oxc_ast::ast::YieldExpression<'_>,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
-        locals: &mut LocalsStackLocal<'a>,
+        locals: &mut Vec<std::collections::HashMap<String, LocalEntry<'a>>>,
     ) -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
         use crate::diagnostics::Severity;
 
@@ -265,7 +265,7 @@ impl<'a> CodeGen<'a> {
         yield_expr: &oxc_ast::ast::YieldExpression<'_>,
         function: FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
-        locals: &mut LocalsStackLocal<'a>,
+        locals: &mut Vec<std::collections::HashMap<String, LocalEntry<'a>>>,
         yield_idx: u32,
     ) -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
         use crate::diagnostics::Severity;

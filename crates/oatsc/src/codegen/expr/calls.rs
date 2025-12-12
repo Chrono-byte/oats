@@ -8,8 +8,8 @@ use oxc_ast::ast::*;
 use std::collections::HashMap;
 
 type CallExpr<'a> = CallExpression<'a>;
-type MemberExpr<'a> = MemberExpression<'a>;
 
+#[allow(dead_code)]
 type LocalEntry<'a> = (
     PointerValue<'a>,
     BasicTypeEnum<'a>,

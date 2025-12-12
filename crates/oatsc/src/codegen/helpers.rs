@@ -28,6 +28,7 @@ pub(crate) fn extract_basic_value_from_valuekind<'a>(
     }
 }
 
+#[allow(dead_code)]
 type LocalEntry<'a> = (
     inkwell::values::PointerValue<'a>,
     BasicTypeEnum<'a>,

@@ -5,6 +5,7 @@ use inkwell::values::{BasicValue, BasicValueEnum, FunctionValue};
 use oxc_ast::ast::*;
 use std::collections::HashMap;
 
+#[allow(dead_code)]
 type LocalEntry<'a> = (
     inkwell::values::PointerValue<'a>,
     inkwell::types::BasicTypeEnum<'a>,
@@ -1646,20 +1647,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     }
                     continue;
                 }
-                BindingPatternKind::BindingIdentifier(_) => {
-                    return Err(crate::diagnostics::Diagnostic::error(
-                        "Rest patterns in variable declarations not yet supported",
-                    )
-                    .with_code("E1007")
-                    .with_label(crate::diagnostics::Label {
-                        span: crate::diagnostics::Span {
-                            start: decl.span.start as usize,
-                            end: decl.span.end as usize,
-                        },
-                        message: "Rest patterns (...rest) not yet supported".into(),
-                    })
-                    .into());
-                }
+                // BindingIdentifier is the normal case for simple variable declarations
+                // like `let x: number[] = ...` - it should fall through to normal handling
                 _ => {}
             }
 

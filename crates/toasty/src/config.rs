@@ -25,10 +25,7 @@ pub struct Config {
 impl Config {
     /// Load configuration from ~/.oats/config.toml and environment variables
     pub fn load() -> Result<Self> {
-        let mut config = match Self::load_from_file() {
-            Ok(cfg) => cfg,
-            Err(_) => Self::default(),
-        };
+        let mut config = Self::load_from_file().unwrap_or_default();
 
         // Override with environment variables if set
         if let Ok(path) = std::env::var("OATS_OATSC_PATH") {

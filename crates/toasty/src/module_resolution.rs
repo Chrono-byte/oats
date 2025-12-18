@@ -238,7 +238,8 @@ pub fn build_dependency_graph(
         // Use regex to find import statements since oxc_ast Program.body is Vec<Statement>
         // and imports are not statements in the AST structure
         use regex::Regex;
-        let import_re = Regex::new(r#"import\s+.*?\s+from\s+["']([^"']+)["']"#).unwrap();
+        let import_re = Regex::new(r#"import\s+.*?\s+from\s+["']([^"']+)["']"#)
+            .with_context(|| "Failed to compile import regex pattern")?;
         for cap in import_re.captures_iter(&parsed.source) {
             if let Some(import_src) = cap.get(1) {
                 let import_src = import_src.as_str();

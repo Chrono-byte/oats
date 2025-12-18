@@ -882,10 +882,83 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 .build_int_sub(length_i64, rest_pos_i64, "rest_len")
                 .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "int sub failed"))?;
 
-            // Get the element type from the source array (assume pointer elements for now)
-            // TODO: Could infer element type from array metadata if available
-            let elem_size = self.i32_t.const_int(8, false); // pointer size
-            let is_number = self.i32_t.const_int(0, false); // pointer elements
+            // Infer element type from array metadata if available
+            let (elem_size, is_number) = if let Expression::Identifier(ident) = init {
+                let arr_name = ident.name.to_string();
+                // Check if we have type information for this array
+                if let Some((_, _, _, _, _, _, oats_type)) =
+                    self.find_local(locals_stack, &arr_name)
+                {
+                    if let Some(crate::types::OatsType::Array(elem_ty)) = oats_type {
+                        match *elem_ty {
+                            crate::types::OatsType::Number => (
+                                self.i32_t.const_int(8, false),
+                                self.i32_t.const_int(1, false),
+                            ),
+                            _ => {
+                                // Pointer elements (strings, objects, arrays, etc.)
+                                (
+                                    self.i32_t.const_int(8, false),
+                                    self.i32_t.const_int(0, false),
+                                )
+                            }
+                        }
+                    } else {
+                        // Fallback: assume pointer elements
+                        (
+                            self.i32_t.const_int(8, false),
+                            self.i32_t.const_int(0, false),
+                        )
+                    }
+                } else if let Some(param_idx) = param_map.get(&arr_name) {
+                    // Check function parameter types
+                    let fname = function.get_name().to_str().unwrap_or_default();
+                    if let Some(param_types) = self.fn_param_types.borrow().get(fname) {
+                        let idx = *param_idx as usize;
+                        if idx < param_types.len() {
+                            if let crate::types::OatsType::Array(elem_ty) = &param_types[idx] {
+                                match **elem_ty {
+                                    crate::types::OatsType::Number => (
+                                        self.i32_t.const_int(8, false),
+                                        self.i32_t.const_int(1, false),
+                                    ),
+                                    _ => (
+                                        self.i32_t.const_int(8, false),
+                                        self.i32_t.const_int(0, false),
+                                    ),
+                                }
+                            } else {
+                                (
+                                    self.i32_t.const_int(8, false),
+                                    self.i32_t.const_int(0, false),
+                                )
+                            }
+                        } else {
+                            (
+                                self.i32_t.const_int(8, false),
+                                self.i32_t.const_int(0, false),
+                            )
+                        }
+                    } else {
+                        (
+                            self.i32_t.const_int(8, false),
+                            self.i32_t.const_int(0, false),
+                        )
+                    }
+                } else {
+                    // Fallback: assume pointer elements
+                    (
+                        self.i32_t.const_int(8, false),
+                        self.i32_t.const_int(0, false),
+                    )
+                }
+            } else {
+                // Fallback: assume pointer elements when we can't infer
+                (
+                    self.i32_t.const_int(8, false),
+                    self.i32_t.const_int(0, false),
+                )
+            };
 
             // Allocate new array for rest elements
             let array_alloc_fn = self.get_array_alloc();
@@ -1307,6 +1380,14 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         // Store the loaded nested object
                         let _ = self.builder.build_store(temp_alloca, loaded);
 
+                        // Infer nominal type from field type if it's a NominalStruct
+                        let inferred_nominal =
+                            if let crate::types::OatsType::NominalStruct(n) = _field_ty {
+                                Some(n)
+                            } else {
+                                None
+                            };
+
                         // Insert temporary into locals
                         self.insert_local_current_scope(
                             locals_stack,
@@ -1317,8 +1398,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 initialized: true,
                                 is_const: true, // Temporary, immutable
                                 is_weak: false,
-                                nominal: None, // TODO: Could infer from field type
-                                oats_type: None,
+                                nominal: inferred_nominal.cloned(),
+                                oats_type: Some(_field_ty.clone()),
                             },
                         );
 

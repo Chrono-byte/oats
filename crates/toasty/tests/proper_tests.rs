@@ -6,7 +6,11 @@ use tempfile::TempDir;
 #[test]
 fn test_proper_examples() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let repo_root = manifest_dir.parent().unwrap().parent().unwrap();
+    let repo_root = manifest_dir
+        .parent()
+        .expect("Failed to get parent of manifest dir")
+        .parent()
+        .expect("Failed to get repo root directory");
     let examples_dir = repo_root.join("examples").join("proper_tests");
 
     // Create a temporary output directory
@@ -51,7 +55,8 @@ fn test_proper_examples() {
     let mut failures = Vec::new();
 
     for path in files {
-        let mut cmd = Command::cargo_bin("toasty").unwrap();
+        let mut cmd = Command::cargo_bin("toasty")
+            .expect("Failed to find toasty binary. Run 'cargo build' first.");
         cmd.arg("build")
             .arg("--color")
             .arg("never")
@@ -97,6 +102,7 @@ fn test_proper_examples() {
 
 fn strip_ansi_codes(s: &str) -> String {
     // Simple regex-based stripper for ANSI escape codes
-    let re = regex::Regex::new(r"\x1b\[[0-9;]*[A-Za-z]").unwrap();
+    let re = regex::Regex::new(r"\x1b\[[0-9;]*[A-Za-z]")
+        .expect("Failed to compile ANSI escape code regex pattern");
     re.replace_all(s, "").to_string()
 }

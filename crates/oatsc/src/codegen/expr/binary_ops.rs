@@ -420,9 +420,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         .map_err(|_| Diagnostic::error("right shift failed"))?;
                     Ok(v.as_basic_value_enum())
                 }
-                // Note: UnsignedShiftRight variant doesn't exist in oxc_ast::ast::BinaryOperator
-                // This case is removed - unsigned right shift is not currently supported
-                // TODO: Re-enable when oxc_ast supports UnsignedShiftRight
+                // Note: UnsignedShiftRight (>>>) variant doesn't exist in oxc_ast::ast::BinaryOperator.
+                // If oxc_ast adds support for it, we should handle it here using build_right_shift
+                // with is_arithmetic=false (logical shift). For now, unsigned right shift is
+                // properly implemented in compound assignments (>>>=) in assignments.rs.
                 BinaryOperator::BitwiseAnd => {
                     let li64 = if li.get_type().get_bit_width() < 64 {
                         self.builder

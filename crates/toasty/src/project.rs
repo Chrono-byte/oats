@@ -390,7 +390,9 @@ pub fn load_modules_with_verbosity(
 
     // Compile regex once outside the loop
     use regex::Regex;
-    let import_re = Regex::new(r#"import\s+.*?\s+from\s+["']([^"']+)["']"#).unwrap();
+    let import_re = Regex::new(r#"import\s+.*?\s+from\s+["']([^"']+)["']"#).map_err(|e| {
+        ToastyError::other(format!("Failed to compile import regex pattern: {}", e))
+    })?;
 
     // PHASE 1: Transitive module loading and dependency resolution
     while let Some(path) = queue.pop_front() {
@@ -491,7 +493,9 @@ pub fn build_dependency_graph(
 
     // Compile regex once outside the loop
     use regex::Regex;
-    let import_re = Regex::new(r#"import\s+.*?\s+from\s+["']([^"']+)["']"#).unwrap();
+    let import_re = Regex::new(r#"import\s+.*?\s+from\s+["']([^"']+)["']"#).map_err(|e| {
+        ToastyError::other(format!("Failed to compile import regex pattern: {}", e))
+    })?;
 
     // PHASE 1: Build dependency graph
     while let Some(current_path) = queue.pop_front() {

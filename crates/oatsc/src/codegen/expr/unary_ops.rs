@@ -194,12 +194,13 @@ impl<'a> crate::codegen::CodeGen<'a> {
             }
             UnaryOperator::Delete => {
                 // Delete operator: delete a property from an object
-                // This requires runtime support for object property deletion
-                // For now, evaluate the expression and return true (success)
-                // TODO: Implement proper property deletion when runtime support is available
+                // This requires runtime support for object property deletion.
+                // Currently, Oats does not support dynamic property deletion at runtime.
+                // The delete operator is evaluated for side effects (property access) and
+                // returns true to maintain JavaScript semantics, but no actual deletion occurs.
                 let _ = self.lower_expr(&unary.argument, function, param_map, locals)?;
                 // Return true (1) to indicate successful deletion
-                // Note: In JavaScript, delete returns a boolean
+                // Note: In JavaScript, delete returns a boolean indicating success
                 Ok(self
                     .context
                     .bool_type()

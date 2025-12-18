@@ -78,55 +78,112 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     // Lower right-hand side
                     let rhs_val = self.lower_expr(&assign.right, function, param_map, locals)?;
 
-                    // Convert compound assignment operator to binary operator
-                    use oxc_ast::ast::BinaryOperator;
-                    let bin_op = match assign.operator {
-                        AssignmentOperator::Addition => BinaryOperator::Addition,
-                        AssignmentOperator::Subtraction => BinaryOperator::Subtraction,
-                        AssignmentOperator::Multiplication => BinaryOperator::Multiplication,
-                        AssignmentOperator::Division => BinaryOperator::Division,
-                        AssignmentOperator::Remainder => BinaryOperator::Remainder,
-                        AssignmentOperator::ShiftLeft => BinaryOperator::ShiftLeft,
-                        AssignmentOperator::ShiftRight => BinaryOperator::ShiftRight,
-                        AssignmentOperator::ShiftRightZeroFill => {
-                            // Use ShiftRight as fallback since UnsignedShiftRight may not be available
-                            // TODO: Fix when oxc_ast supports UnsignedShiftRight
-                            BinaryOperator::ShiftRight
-                        }
-                        AssignmentOperator::BitwiseAnd => BinaryOperator::BitwiseAnd,
-                        AssignmentOperator::BitwiseOR => BinaryOperator::BitwiseOR,
-                        AssignmentOperator::BitwiseXOR => BinaryOperator::BitwiseXOR,
-                        AssignmentOperator::Exponential => BinaryOperator::Exponential,
-                        AssignmentOperator::LogicalAnd => {
-                            return Err(Diagnostic::simple_boxed(
-                                Severity::Error,
-                                "logical AND assignment (&&=) not supported",
-                            ));
-                        }
-                        AssignmentOperator::LogicalOr => {
-                            return Err(Diagnostic::simple_boxed(
-                                Severity::Error,
-                                "logical OR assignment (||=) not supported",
-                            ));
-                        }
-                        AssignmentOperator::LogicalNullish => {
-                            return Err(Diagnostic::simple_boxed(
-                                Severity::Error,
-                                "nullish coalescing assignment (??=) not supported",
-                            ));
-                        }
-                        AssignmentOperator::Assign => unreachable!(), // Already handled above
-                    };
+                    // Handle unsigned right shift (>>>) specially
+                    let result =
+                        if matches!(assign.operator, AssignmentOperator::ShiftRightZeroFill) {
+                            // Unsigned right shift: convert operands to integers and use logical shift
+                            let left_i64 = if let Some(fv) = self.coerce_to_f64(current_val) {
+                                self.builder
+                                    .build_float_to_signed_int(fv, self.i64_t, "f2i_left")
+                                    .map_err(|_| {
+                                        Diagnostic::error("float to int conversion failed")
+                                    })?
+                            } else if let BasicValueEnum::IntValue(iv) = current_val {
+                                if iv.get_type().get_bit_width() < 64 {
+                                    self.builder
+                                        .build_int_s_extend(iv, self.i64_t, "extend_left")
+                                        .map_err(|_| Diagnostic::error("int extend failed"))?
+                                } else {
+                                    iv
+                                }
+                            } else {
+                                return Err(Diagnostic::simple_boxed(
+                                    Severity::Error,
+                                    "unsigned right shift requires numeric operand",
+                                ));
+                            };
 
-                    // Lower the binary expression using the current value as left operand
-                    let result = self.lower_binary_expr_with_values(
-                        &bin_op,
-                        current_val,
-                        rhs_val,
-                        function,
-                        param_map,
-                        locals,
-                    )?;
+                            let right_i64 = if let Some(fv) = self.coerce_to_f64(rhs_val) {
+                                self.builder
+                                    .build_float_to_signed_int(fv, self.i64_t, "f2i_right")
+                                    .map_err(|_| {
+                                        Diagnostic::error("float to int conversion failed")
+                                    })?
+                            } else if let BasicValueEnum::IntValue(iv) = rhs_val {
+                                if iv.get_type().get_bit_width() < 64 {
+                                    self.builder
+                                        .build_int_s_extend(iv, self.i64_t, "extend_right")
+                                        .map_err(|_| Diagnostic::error("int extend failed"))?
+                                } else {
+                                    iv
+                                }
+                            } else {
+                                return Err(Diagnostic::simple_boxed(
+                                    Severity::Error,
+                                    "unsigned right shift requires numeric operand",
+                                ));
+                            };
+
+                            // Perform unsigned (logical) right shift: is_arithmetic=false means logical shift
+                            let shifted = self
+                                .builder
+                                .build_right_shift(left_i64, right_i64, false, "ushift_right")
+                                .map_err(|_| Diagnostic::error("unsigned right shift failed"))?;
+
+                            // Convert result back to f64 for consistency with other numeric operations
+                            self.builder
+                                .build_signed_int_to_float(shifted, self.f64_t, "i2f")
+                                .map_err(|_| Diagnostic::error("int to float conversion failed"))?
+                                .as_basic_value_enum()
+                        } else {
+                            // Convert compound assignment operator to binary operator
+                            use oxc_ast::ast::BinaryOperator;
+                            let bin_op = match assign.operator {
+                                AssignmentOperator::Addition => BinaryOperator::Addition,
+                                AssignmentOperator::Subtraction => BinaryOperator::Subtraction,
+                                AssignmentOperator::Multiplication => {
+                                    BinaryOperator::Multiplication
+                                }
+                                AssignmentOperator::Division => BinaryOperator::Division,
+                                AssignmentOperator::Remainder => BinaryOperator::Remainder,
+                                AssignmentOperator::ShiftLeft => BinaryOperator::ShiftLeft,
+                                AssignmentOperator::ShiftRight => BinaryOperator::ShiftRight,
+                                AssignmentOperator::BitwiseAnd => BinaryOperator::BitwiseAnd,
+                                AssignmentOperator::BitwiseOR => BinaryOperator::BitwiseOR,
+                                AssignmentOperator::BitwiseXOR => BinaryOperator::BitwiseXOR,
+                                AssignmentOperator::Exponential => BinaryOperator::Exponential,
+                                AssignmentOperator::LogicalAnd => {
+                                    return Err(Diagnostic::simple_boxed(
+                                        Severity::Error,
+                                        "logical AND assignment (&&=) not supported",
+                                    ));
+                                }
+                                AssignmentOperator::LogicalOr => {
+                                    return Err(Diagnostic::simple_boxed(
+                                        Severity::Error,
+                                        "logical OR assignment (||=) not supported",
+                                    ));
+                                }
+                                AssignmentOperator::LogicalNullish => {
+                                    return Err(Diagnostic::simple_boxed(
+                                        Severity::Error,
+                                        "nullish coalescing assignment (??=) not supported",
+                                    ));
+                                }
+                                AssignmentOperator::Assign => unreachable!(), // Already handled above
+                                AssignmentOperator::ShiftRightZeroFill => unreachable!(), // Handled above
+                            };
+
+                            // Lower the binary expression using the current value as left operand
+                            self.lower_binary_expr_with_values(
+                                &bin_op,
+                                current_val,
+                                rhs_val,
+                                function,
+                                param_map,
+                                locals,
+                            )?
+                        };
 
                     // Store result directly
                     if _ty == self.i8ptr_t.as_basic_type_enum() {
@@ -303,54 +360,140 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 let rhs_val =
                                     self.lower_expr(&assign.right, function, param_map, locals)?;
 
-                                // Convert compound assignment operator to binary operator
-                                let bin_op = match assign.operator {
-                                    AssignmentOperator::Addition => BinaryOperator::Addition,
-                                    AssignmentOperator::Subtraction => BinaryOperator::Subtraction,
-                                    AssignmentOperator::Multiplication => {
-                                        BinaryOperator::Multiplication
-                                    }
-                                    AssignmentOperator::Division => BinaryOperator::Division,
-                                    AssignmentOperator::Remainder => BinaryOperator::Remainder,
-                                    AssignmentOperator::ShiftLeft => BinaryOperator::ShiftLeft,
-                                    AssignmentOperator::ShiftRight => BinaryOperator::ShiftRight,
-                                    AssignmentOperator::ShiftRightZeroFill => {
-                                        BinaryOperator::ShiftRight
-                                    } // TODO: Use UnsignedShiftRight when available
-                                    AssignmentOperator::BitwiseAnd => BinaryOperator::BitwiseAnd,
-                                    AssignmentOperator::BitwiseOR => BinaryOperator::BitwiseOR,
-                                    AssignmentOperator::BitwiseXOR => BinaryOperator::BitwiseXOR,
-                                    AssignmentOperator::Exponential => BinaryOperator::Exponential,
-                                    AssignmentOperator::LogicalAnd => {
-                                        return Err(Diagnostic::simple_boxed(
+                                // Handle unsigned right shift (>>>) specially
+                                let result = if matches!(
+                                    assign.operator,
+                                    AssignmentOperator::ShiftRightZeroFill
+                                ) {
+                                    // Unsigned right shift: convert operands to integers and use logical shift
+                                    let left_i64 = if let Some(fv) = self.coerce_to_f64(current_val)
+                                    {
+                                        self.builder
+                                            .build_float_to_signed_int(fv, self.i64_t, "f2i_left")
+                                            .map_err(|_| {
+                                                Diagnostic::error("float to int conversion failed")
+                                            })?
+                                    } else if let BasicValueEnum::IntValue(iv) = current_val {
+                                        if iv.get_type().get_bit_width() < 64 {
+                                            self.builder
+                                                .build_int_s_extend(iv, self.i64_t, "extend_left")
+                                                .map_err(|_| {
+                                                    Diagnostic::error("int extend failed")
+                                                })?
+                                        } else {
+                                            iv
+                                        }
+                                    } else {
+                                        return Err(Diagnostic::simple_with_span_boxed(
                                             Severity::Error,
-                                            "logical AND assignment (&&=) not supported",
+                                            "unsigned right shift requires numeric operand",
+                                            assign.span.start as usize,
                                         ));
-                                    }
-                                    AssignmentOperator::LogicalOr => {
-                                        return Err(Diagnostic::simple_boxed(
-                                            Severity::Error,
-                                            "logical OR assignment (||=) not supported",
-                                        ));
-                                    }
-                                    AssignmentOperator::LogicalNullish => {
-                                        return Err(Diagnostic::simple_boxed(
-                                            Severity::Error,
-                                            "nullish coalescing assignment (??=) not supported",
-                                        ));
-                                    }
-                                    AssignmentOperator::Assign => unreachable!(),
-                                };
+                                    };
 
-                                // Perform binary operation
-                                let result = self.lower_binary_expr_with_values(
-                                    &bin_op,
-                                    current_val,
-                                    rhs_val,
-                                    function,
-                                    param_map,
-                                    locals,
-                                )?;
+                                    let right_i64 = if let Some(fv) = self.coerce_to_f64(rhs_val) {
+                                        self.builder
+                                            .build_float_to_signed_int(fv, self.i64_t, "f2i_right")
+                                            .map_err(|_| {
+                                                Diagnostic::error("float to int conversion failed")
+                                            })?
+                                    } else if let BasicValueEnum::IntValue(iv) = rhs_val {
+                                        if iv.get_type().get_bit_width() < 64 {
+                                            self.builder
+                                                .build_int_s_extend(iv, self.i64_t, "extend_right")
+                                                .map_err(|_| {
+                                                    Diagnostic::error("int extend failed")
+                                                })?
+                                        } else {
+                                            iv
+                                        }
+                                    } else {
+                                        return Err(Diagnostic::simple_with_span_boxed(
+                                            Severity::Error,
+                                            "unsigned right shift requires numeric operand",
+                                            assign.span.start as usize,
+                                        ));
+                                    };
+
+                                    // Perform unsigned (logical) right shift: is_arithmetic=false means logical shift
+                                    let shifted = self
+                                        .builder
+                                        .build_right_shift(
+                                            left_i64,
+                                            right_i64,
+                                            false,
+                                            "ushift_right",
+                                        )
+                                        .map_err(|_| {
+                                            Diagnostic::error("unsigned right shift failed")
+                                        })?;
+
+                                    // Convert result back to f64 for consistency with other numeric operations
+                                    self.builder
+                                        .build_signed_int_to_float(shifted, self.f64_t, "i2f")
+                                        .map_err(|_| {
+                                            Diagnostic::error("int to float conversion failed")
+                                        })?
+                                        .as_basic_value_enum()
+                                } else {
+                                    // Convert compound assignment operator to binary operator
+                                    use oxc_ast::ast::BinaryOperator;
+                                    let bin_op = match assign.operator {
+                                        AssignmentOperator::Addition => BinaryOperator::Addition,
+                                        AssignmentOperator::Subtraction => {
+                                            BinaryOperator::Subtraction
+                                        }
+                                        AssignmentOperator::Multiplication => {
+                                            BinaryOperator::Multiplication
+                                        }
+                                        AssignmentOperator::Division => BinaryOperator::Division,
+                                        AssignmentOperator::Remainder => BinaryOperator::Remainder,
+                                        AssignmentOperator::ShiftLeft => BinaryOperator::ShiftLeft,
+                                        AssignmentOperator::ShiftRight => {
+                                            BinaryOperator::ShiftRight
+                                        }
+                                        AssignmentOperator::BitwiseAnd => {
+                                            BinaryOperator::BitwiseAnd
+                                        }
+                                        AssignmentOperator::BitwiseOR => BinaryOperator::BitwiseOR,
+                                        AssignmentOperator::BitwiseXOR => {
+                                            BinaryOperator::BitwiseXOR
+                                        }
+                                        AssignmentOperator::Exponential => {
+                                            BinaryOperator::Exponential
+                                        }
+                                        AssignmentOperator::LogicalAnd => {
+                                            return Err(Diagnostic::simple_boxed(
+                                                Severity::Error,
+                                                "logical AND assignment (&&=) not supported",
+                                            ));
+                                        }
+                                        AssignmentOperator::LogicalOr => {
+                                            return Err(Diagnostic::simple_boxed(
+                                                Severity::Error,
+                                                "logical OR assignment (||=) not supported",
+                                            ));
+                                        }
+                                        AssignmentOperator::LogicalNullish => {
+                                            return Err(Diagnostic::simple_boxed(
+                                                Severity::Error,
+                                                "nullish coalescing assignment (??=) not supported",
+                                            ));
+                                        }
+                                        AssignmentOperator::Assign => unreachable!(),
+                                        AssignmentOperator::ShiftRightZeroFill => unreachable!(), // Handled above
+                                    };
+
+                                    // Perform binary operation
+                                    self.lower_binary_expr_with_values(
+                                        &bin_op,
+                                        current_val,
+                                        rhs_val,
+                                        function,
+                                        param_map,
+                                        locals,
+                                    )?
+                                };
 
                                 // Store result back to field
                                 match field_ty {
@@ -680,50 +823,114 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     // Lower right-hand side
                     let rhs_val = self.lower_expr(&assign.right, function, param_map, locals)?;
 
-                    // Convert compound assignment operator to binary operator
-                    let bin_op = match assign.operator {
-                        AssignmentOperator::Addition => BinaryOperator::Addition,
-                        AssignmentOperator::Subtraction => BinaryOperator::Subtraction,
-                        AssignmentOperator::Multiplication => BinaryOperator::Multiplication,
-                        AssignmentOperator::Division => BinaryOperator::Division,
-                        AssignmentOperator::Remainder => BinaryOperator::Remainder,
-                        AssignmentOperator::ShiftLeft => BinaryOperator::ShiftLeft,
-                        AssignmentOperator::ShiftRight => BinaryOperator::ShiftRight,
-                        AssignmentOperator::ShiftRightZeroFill => BinaryOperator::ShiftRight, // TODO: Use UnsignedShiftRight when available
-                        AssignmentOperator::BitwiseAnd => BinaryOperator::BitwiseAnd,
-                        AssignmentOperator::BitwiseOR => BinaryOperator::BitwiseOR,
-                        AssignmentOperator::BitwiseXOR => BinaryOperator::BitwiseXOR,
-                        AssignmentOperator::Exponential => BinaryOperator::Exponential,
-                        AssignmentOperator::LogicalAnd => {
-                            return Err(Diagnostic::simple_boxed(
-                                Severity::Error,
-                                "logical AND assignment (&&=) not supported",
-                            ));
-                        }
-                        AssignmentOperator::LogicalOr => {
-                            return Err(Diagnostic::simple_boxed(
-                                Severity::Error,
-                                "logical OR assignment (||=) not supported",
-                            ));
-                        }
-                        AssignmentOperator::LogicalNullish => {
-                            return Err(Diagnostic::simple_boxed(
-                                Severity::Error,
-                                "nullish coalescing assignment (??=) not supported",
-                            ));
-                        }
-                        AssignmentOperator::Assign => unreachable!(),
-                    };
+                    // Handle unsigned right shift (>>>) specially
+                    let result =
+                        if matches!(assign.operator, AssignmentOperator::ShiftRightZeroFill) {
+                            // Unsigned right shift: convert operands to integers and use logical shift
+                            let left_i64 = if let Some(fv) = self.coerce_to_f64(current_val) {
+                                self.builder
+                                    .build_float_to_signed_int(fv, self.i64_t, "f2i_left")
+                                    .map_err(|_| {
+                                        Diagnostic::error("float to int conversion failed")
+                                    })?
+                            } else if let BasicValueEnum::IntValue(iv) = current_val {
+                                if iv.get_type().get_bit_width() < 64 {
+                                    self.builder
+                                        .build_int_s_extend(iv, self.i64_t, "extend_left")
+                                        .map_err(|_| Diagnostic::error("int extend failed"))?
+                                } else {
+                                    iv
+                                }
+                            } else {
+                                return Err(Diagnostic::simple_with_span_boxed(
+                                    Severity::Error,
+                                    "unsigned right shift requires numeric operand",
+                                    assign.span.start as usize,
+                                ));
+                            };
 
-                    // Perform binary operation
-                    let result = self.lower_binary_expr_with_values(
-                        &bin_op,
-                        current_val,
-                        rhs_val,
-                        function,
-                        param_map,
-                        locals,
-                    )?;
+                            let right_i64 = if let Some(fv) = self.coerce_to_f64(rhs_val) {
+                                self.builder
+                                    .build_float_to_signed_int(fv, self.i64_t, "f2i_right")
+                                    .map_err(|_| {
+                                        Diagnostic::error("float to int conversion failed")
+                                    })?
+                            } else if let BasicValueEnum::IntValue(iv) = rhs_val {
+                                if iv.get_type().get_bit_width() < 64 {
+                                    self.builder
+                                        .build_int_s_extend(iv, self.i64_t, "extend_right")
+                                        .map_err(|_| Diagnostic::error("int extend failed"))?
+                                } else {
+                                    iv
+                                }
+                            } else {
+                                return Err(Diagnostic::simple_with_span_boxed(
+                                    Severity::Error,
+                                    "unsigned right shift requires numeric operand",
+                                    assign.span.start as usize,
+                                ));
+                            };
+
+                            // Perform unsigned (logical) right shift: is_arithmetic=false means logical shift
+                            let shifted = self
+                                .builder
+                                .build_right_shift(left_i64, right_i64, false, "ushift_right")
+                                .map_err(|_| Diagnostic::error("unsigned right shift failed"))?;
+
+                            // Convert result back to f64 for consistency with other numeric operations
+                            self.builder
+                                .build_signed_int_to_float(shifted, self.f64_t, "i2f")
+                                .map_err(|_| Diagnostic::error("int to float conversion failed"))?
+                                .as_basic_value_enum()
+                        } else {
+                            // Convert compound assignment operator to binary operator
+                            use oxc_ast::ast::BinaryOperator;
+                            let bin_op = match assign.operator {
+                                AssignmentOperator::Addition => BinaryOperator::Addition,
+                                AssignmentOperator::Subtraction => BinaryOperator::Subtraction,
+                                AssignmentOperator::Multiplication => {
+                                    BinaryOperator::Multiplication
+                                }
+                                AssignmentOperator::Division => BinaryOperator::Division,
+                                AssignmentOperator::Remainder => BinaryOperator::Remainder,
+                                AssignmentOperator::ShiftLeft => BinaryOperator::ShiftLeft,
+                                AssignmentOperator::ShiftRight => BinaryOperator::ShiftRight,
+                                AssignmentOperator::BitwiseAnd => BinaryOperator::BitwiseAnd,
+                                AssignmentOperator::BitwiseOR => BinaryOperator::BitwiseOR,
+                                AssignmentOperator::BitwiseXOR => BinaryOperator::BitwiseXOR,
+                                AssignmentOperator::Exponential => BinaryOperator::Exponential,
+                                AssignmentOperator::LogicalAnd => {
+                                    return Err(Diagnostic::simple_boxed(
+                                        Severity::Error,
+                                        "logical AND assignment (&&=) not supported",
+                                    ));
+                                }
+                                AssignmentOperator::LogicalOr => {
+                                    return Err(Diagnostic::simple_boxed(
+                                        Severity::Error,
+                                        "logical OR assignment (||=) not supported",
+                                    ));
+                                }
+                                AssignmentOperator::LogicalNullish => {
+                                    return Err(Diagnostic::simple_boxed(
+                                        Severity::Error,
+                                        "nullish coalescing assignment (??=) not supported",
+                                    ));
+                                }
+                                AssignmentOperator::Assign => unreachable!(),
+                                AssignmentOperator::ShiftRightZeroFill => unreachable!(), // Handled above
+                            };
+
+                            // Perform binary operation
+                            self.lower_binary_expr_with_values(
+                                &bin_op,
+                                current_val,
+                                rhs_val,
+                                function,
+                                param_map,
+                                locals,
+                            )?
+                        };
 
                     // Store result back to field
                     match field_ty {

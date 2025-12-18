@@ -28,7 +28,8 @@ fn run_oats_code(name: &str, code: &str) -> String {
     fs::write(&src_path, code).expect("Failed to write source file");
 
     // Run toasty run
-    let mut cmd = Command::cargo_bin("toasty").unwrap();
+    let mut cmd = Command::cargo_bin("toasty")
+        .expect("Failed to find toasty binary. Run 'cargo build' first.");
     cmd.arg("run")
         .arg("--color")
         .arg("never")
@@ -59,7 +60,8 @@ fn run_oats_code(name: &str, code: &str) -> String {
 }
 
 fn strip_ansi_codes(s: &str) -> String {
-    let re = regex::Regex::new(r"\x1b\[[0-9;]*[A-Za-z]").unwrap();
+    let re = regex::Regex::new(r"\x1b\[[0-9;]*[A-Za-z]")
+        .expect("Failed to compile ANSI escape code regex pattern");
     re.replace_all(s, "").to_string()
 }
 

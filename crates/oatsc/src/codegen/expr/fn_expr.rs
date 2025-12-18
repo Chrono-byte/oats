@@ -68,16 +68,15 @@ impl<'a> CodeGen<'a> {
         // we'll provide a basic implementation that reuses arrow function logic where possible
         // but note the limitations
 
-        Err(Diagnostic::simple_with_span_boxed(
-            Severity::Error,
-            "FunctionExpression support is partially implemented - function expressions need conversion to closure format",
-            fn_expr.span.start as usize,
-        ))
-
-        // TODO: Full implementation would:
+        // Function expressions are not yet fully supported. A complete implementation would:
         // 1. Create a synthetic ArrowFunctionExpression-like structure from Function
         // 2. Call lower_arrow_expr with that structure
-        // 3. Handle `this` binding differences
+        // 3. Handle `this` binding differences (function expressions have their own `this` binding)
         // 4. Handle function name (for recursion) if fn_expr.id is Some
+        Err(Diagnostic::simple_with_span_boxed(
+            Severity::Error,
+            "FunctionExpression support is not yet implemented - function expressions need conversion to closure format",
+            fn_expr.span.start as usize,
+        ))
     }
 }

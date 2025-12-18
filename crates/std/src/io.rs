@@ -103,7 +103,7 @@ pub unsafe extern "C" fn oats_std_io_read_file_bytes(
         return -1;
     }
 
-    let path_str = match unsafe { CStr::from_ptr(path).to_str() } {
+    let path_str = match CStr::from_ptr(path).to_str() {
         Ok(s) => s,
         Err(_) => return -1,
     };
@@ -135,7 +135,7 @@ pub unsafe extern "C" fn oats_std_io_write_file_bytes(
         return -1;
     }
 
-    let path_str = match unsafe { CStr::from_ptr(path).to_str() } {
+    let path_str = match CStr::from_ptr(path).to_str() {
         Ok(s) => s,
         Err(_) => return -1,
     };

@@ -197,55 +197,57 @@ pub fn add_root_candidate(p: *mut c_void) {
 /// plus `max_len * sizeof(i32)` bytes if the header is valid. This function ensures
 /// that if it returns `true`, the full metadata block can be safely read.
 pub unsafe fn validate_meta_block(meta: *const u64, max_len: usize) -> bool {
-    // Reject null pointers
-    if meta.is_null() {
-        return false;
-    }
-
-    let addr = meta as usize;
-    if !is_plausible_addr(addr) {
-        return false;
-    }
-
-    // Read the header (magic + length)
-    let meta0 = unsafe { *meta };
-
-    // Validate magic number
-    let magic = meta0 >> 32;
-    if magic != META_MAGIC {
-        return false;
-    }
-
-    // Validate length is in range
-    let len = (meta0 & 0xffffffff) as usize;
-    if len == 0 || len > max_len {
-        return false;
-    }
-
-    // Validate each offset safely
-    const MAX_OFFSET: usize = 1 << 20; // 1 MiB conservative bound
-    const MIN_OFFSET: usize = 16; // header (8) + meta_slot (8)
-
-    // Calculate the offsets array pointer and total required size
-    let offsets_ptr = unsafe { meta.add(1) as *const i32 };
-
-    // Check for arithmetic overflow in required size
-    // let header_size = std::mem::size_of::<u64>();
-    // let offsets_size = len.saturating_mul(std::mem::size_of::<i32>());
-
-    // Ensure we can safely iterate over all offsets
-    for i in 0..len {
-        // Read each offset safely
-        let off_i32 = unsafe { *offsets_ptr.add(i) };
-        let off = off_i32 as usize;
-
-        // Validate offset constraints
-        if !(MIN_OFFSET..=MAX_OFFSET).contains(&off) || (off & 7) != 0 {
+    unsafe {
+        // Reject null pointers
+        if meta.is_null() {
             return false;
         }
-    }
 
-    true
+        let addr = meta as usize;
+        if !is_plausible_addr(addr) {
+            return false;
+        }
+
+        // Read the header (magic + length)
+        let meta0 = *meta;
+
+        // Validate magic number
+        let magic = meta0 >> 32;
+        if magic != META_MAGIC {
+            return false;
+        }
+
+        // Validate length is in range
+        let len = (meta0 & 0xffffffff) as usize;
+        if len == 0 || len > max_len {
+            return false;
+        }
+
+        // Validate each offset safely
+        const MAX_OFFSET: usize = 1 << 20; // 1 MiB conservative bound
+        const MIN_OFFSET: usize = 16; // header (8) + meta_slot (8)
+
+        // Calculate the offsets array pointer and total required size
+        let offsets_ptr = meta.add(1) as *const i32;
+
+        // Check for arithmetic overflow in required size
+        // let header_size = std::mem::size_of::<u64>();
+        // let offsets_size = len.saturating_mul(std::mem::size_of::<i32>());
+
+        // Ensure we can safely iterate over all offsets
+        for i in 0..len {
+            // Read each offset safely
+            let off_i32 = *offsets_ptr.add(i);
+            let off = off_i32 as usize;
+
+            // Validate offset constraints
+            if !(MIN_OFFSET..=MAX_OFFSET).contains(&off) || (off & 7) != 0 {
+                return false;
+            }
+        }
+
+        true
+    }
 }
 
 /// Check if an address is plausible (aligned, within reasonable bounds)

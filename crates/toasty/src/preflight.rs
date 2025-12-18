@@ -29,6 +29,7 @@ pub fn check_environment() -> Result<()> {
     // Check for oatsc compiler (try selected version first, then local target, then system)
     let oatsc_available = if let Some(oatsc_path) = fetch::get_selected_compiler_path() {
         // Use selected oatsc version
+        // SAFETY: set_var is unsafe in Rust 2024 due to thread-safety concerns
         unsafe {
             std::env::set_var("OATS_OATSC_PATH", oatsc_path);
         }
@@ -42,6 +43,7 @@ pub fn check_environment() -> Result<()> {
 
         if let Some(oatsc_path) = local_oatsc {
             // Use local oatsc from target directory
+            // SAFETY: set_var is unsafe in Rust 2024 due to thread-safety concerns
             unsafe {
                 std::env::set_var("OATS_OATSC_PATH", oatsc_path);
             }

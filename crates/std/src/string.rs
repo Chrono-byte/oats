@@ -19,12 +19,12 @@ pub unsafe extern "C" fn oats_std_string_split(
         return std::ptr::null_mut();
     }
 
-    let str_val = match unsafe { CStr::from_ptr(str).to_str() } {
+    let str_val = match CStr::from_ptr(str).to_str() {
         Ok(s) => s,
         Err(_) => return std::ptr::null_mut(),
     };
 
-    let delim = match unsafe { CStr::from_ptr(delimiter).to_str() } {
+    let delim = match CStr::from_ptr(delimiter).to_str() {
         Ok(s) => s,
         Err(_) => return std::ptr::null_mut(),
     };
@@ -81,7 +81,7 @@ pub unsafe extern "C" fn oats_std_string_split_count(split_result: *mut *mut c_c
     if split_result.is_null() {
         return 0;
     }
-    unsafe { *split_result as usize }
+    *split_result as usize
 }
 
 /// Get a split result at index (caller must free result)
@@ -98,12 +98,12 @@ pub unsafe extern "C" fn oats_std_string_split_get(
         return std::ptr::null_mut();
     }
 
-    let count = unsafe { *split_result as usize };
+    let count = *split_result as usize;
     if index >= count {
         return std::ptr::null_mut();
     }
 
-    unsafe { *split_result.add(index + 1) }
+    *split_result.add(index + 1)
 }
 
 /// Free a split result array
@@ -117,14 +117,16 @@ pub unsafe extern "C" fn oats_std_string_split_free(split_result: *mut *mut c_ch
         return;
     }
 
-    let count = unsafe { *split_result as usize };
-    unsafe {
-        for i in 0..count {
-            let ptr = *split_result.add(i + 1);
-            if !ptr.is_null() {
+    let count = *split_result as usize;
+    for i in 0..count {
+        let ptr = *split_result.add(i + 1);
+        if !ptr.is_null() {
+            unsafe {
                 libc::free(ptr as *mut libc::c_void);
             }
         }
+    }
+    unsafe {
         libc::free(split_result as *mut libc::c_void);
     }
 }
@@ -146,17 +148,17 @@ pub unsafe extern "C" fn oats_std_string_replace(
         return std::ptr::null_mut();
     }
 
-    let str_val = match unsafe { CStr::from_ptr(str).to_str() } {
+    let str_val = match CStr::from_ptr(str).to_str() {
         Ok(s) => s,
         Err(_) => return std::ptr::null_mut(),
     };
 
-    let from_str = match unsafe { CStr::from_ptr(from).to_str() } {
+    let from_str = match CStr::from_ptr(from).to_str() {
         Ok(s) => s,
         Err(_) => return std::ptr::null_mut(),
     };
 
-    let to_str = match unsafe { CStr::from_ptr(to).to_str() } {
+    let to_str = match CStr::from_ptr(to).to_str() {
         Ok(s) => s,
         Err(_) => return std::ptr::null_mut(),
     };
@@ -182,7 +184,7 @@ pub unsafe extern "C" fn oats_std_string_trim(str: *const c_char) -> *mut c_char
         return std::ptr::null_mut();
     }
 
-    let str_val = match unsafe { CStr::from_ptr(str).to_str() } {
+    let str_val = match CStr::from_ptr(str).to_str() {
         Ok(s) => s,
         Err(_) => return std::ptr::null_mut(),
     };
@@ -207,7 +209,7 @@ pub unsafe extern "C" fn oats_std_string_len(str: *const c_char) -> usize {
         return 0;
     }
 
-    match unsafe { CStr::from_ptr(str).to_str() } {
+    match CStr::from_ptr(str).to_str() {
         Ok(s) => s.len(),
         Err(_) => 0,
     }
@@ -228,12 +230,12 @@ pub unsafe extern "C" fn oats_std_string_contains(
         return 0;
     }
 
-    let str_val = match unsafe { CStr::from_ptr(str).to_str() } {
+    let str_val = match CStr::from_ptr(str).to_str() {
         Ok(s) => s,
         Err(_) => return 0,
     };
 
-    let sub = match unsafe { CStr::from_ptr(substring).to_str() } {
+    let sub = match CStr::from_ptr(substring).to_str() {
         Ok(s) => s,
         Err(_) => return 0,
     };
@@ -257,7 +259,7 @@ pub unsafe extern "C" fn oats_std_string_to_uppercase(str: *const c_char) -> *mu
         return std::ptr::null_mut();
     }
 
-    let str_val = match unsafe { CStr::from_ptr(str).to_str() } {
+    let str_val = match CStr::from_ptr(str).to_str() {
         Ok(s) => s,
         Err(_) => return std::ptr::null_mut(),
     };
@@ -282,7 +284,7 @@ pub unsafe extern "C" fn oats_std_string_to_lowercase(str: *const c_char) -> *mu
         return std::ptr::null_mut();
     }
 
-    let str_val = match unsafe { CStr::from_ptr(str).to_str() } {
+    let str_val = match CStr::from_ptr(str).to_str() {
         Ok(s) => s,
         Err(_) => return std::ptr::null_mut(),
     };
@@ -310,12 +312,12 @@ pub unsafe extern "C" fn oats_std_string_starts_with(
         return 0;
     }
 
-    let str_val = match unsafe { CStr::from_ptr(str).to_str() } {
+    let str_val = match CStr::from_ptr(str).to_str() {
         Ok(s) => s,
         Err(_) => return 0,
     };
 
-    let prefix_str = match unsafe { CStr::from_ptr(prefix).to_str() } {
+    let prefix_str = match CStr::from_ptr(prefix).to_str() {
         Ok(s) => s,
         Err(_) => return 0,
     };
@@ -342,12 +344,12 @@ pub unsafe extern "C" fn oats_std_string_ends_with(
         return 0;
     }
 
-    let str_val = match unsafe { CStr::from_ptr(str).to_str() } {
+    let str_val = match CStr::from_ptr(str).to_str() {
         Ok(s) => s,
         Err(_) => return 0,
     };
 
-    let suffix_str = match unsafe { CStr::from_ptr(suffix).to_str() } {
+    let suffix_str = match CStr::from_ptr(suffix).to_str() {
         Ok(s) => s,
         Err(_) => return 0,
     };
@@ -371,12 +373,12 @@ pub unsafe extern "C" fn oats_std_string_find(str: *const c_char, substring: *co
         return -1;
     }
 
-    let str_val = match unsafe { CStr::from_ptr(str).to_str() } {
+    let str_val = match CStr::from_ptr(str).to_str() {
         Ok(s) => s,
         Err(_) => return -1,
     };
 
-    let sub = match unsafe { CStr::from_ptr(substring).to_str() } {
+    let sub = match CStr::from_ptr(substring).to_str() {
         Ok(s) => s,
         Err(_) => return -1,
     };
@@ -403,7 +405,7 @@ pub unsafe extern "C" fn oats_std_string_substring(
         return std::ptr::null_mut();
     }
 
-    let str_val = match unsafe { CStr::from_ptr(str).to_str() } {
+    let str_val = match CStr::from_ptr(str).to_str() {
         Ok(s) => s,
         Err(_) => return std::ptr::null_mut(),
     };
@@ -432,7 +434,7 @@ pub unsafe extern "C" fn oats_std_string_repeat(str: *const c_char, count: usize
         return std::ptr::null_mut();
     }
 
-    let str_val = match unsafe { CStr::from_ptr(str).to_str() } {
+    let str_val = match CStr::from_ptr(str).to_str() {
         Ok(s) => s,
         Err(_) => return std::ptr::null_mut(),
     };

@@ -10,37 +10,41 @@ use crate::header::make_heap_header;
 use crate::{RUNTIME_LOG, rc_dec, rc_inc};
 
 #[unsafe(no_mangle)]
-pub extern "C" fn heap_str_alloc(str_len: size_t) -> *mut c_void {
-    unsafe {
-        let total_size = match 16usize.checked_add(str_len).and_then(|s| s.checked_add(1)) {
-            Some(total) => total,
-            None => {
-                if RUNTIME_LOG.load(Ordering::Relaxed) {
-                    let _ = io::stderr().write_all(
-                        format!(
-                            "[oats runtime] heap_str_alloc: integer overflow (str_len={})\n",
-                            str_len
-                        )
-                        .as_bytes(),
-                    );
-                }
-                return ptr::null_mut();
+/// # Safety
+/// Allocates a heap string object. The caller is responsible for managing
+/// the lifetime of the returned pointer. The returned pointer must be freed
+/// using appropriate reference counting mechanisms.
+pub unsafe extern "C" fn heap_str_alloc(str_len: size_t) -> *mut c_void {
+    let total_size = match 16usize.checked_add(str_len).and_then(|s| s.checked_add(1)) {
+        Some(total) => total,
+        None => {
+            if RUNTIME_LOG.load(Ordering::Relaxed) {
+                let _ = io::stderr().write_all(
+                    format!(
+                        "[oats runtime] heap_str_alloc: integer overflow (str_len={})\n",
+                        str_len
+                    )
+                    .as_bytes(),
+                );
             }
-        };
-
-        let p = crate::runtime_malloc(total_size);
-        if p.is_null() {
             return ptr::null_mut();
         }
+    };
 
-        let header_ptr = p as *mut u64;
+    let p = crate::runtime_malloc(total_size);
+    if p.is_null() {
+        return ptr::null_mut();
+    }
+
+    let header_ptr = p as *mut u64;
+    unsafe {
         *header_ptr = make_heap_header(1);
 
         let len_ptr = (p as *mut u8).add(8) as *mut u64;
         *len_ptr = str_len as u64;
-
-        p
     }
+
+    p
 }
 
 #[unsafe(no_mangle)]
@@ -48,10 +52,10 @@ pub extern "C" fn heap_str_alloc(str_len: size_t) -> *mut c_void {
 /// `s` must be a valid nul-terminated C string. The returned pointer is an
 /// owning heap string data pointer and must be released via `rc_dec_str`.
 pub unsafe extern "C" fn heap_str_from_cstr(s: *const c_char) -> *mut c_char {
-    if s.is_null() {
-        return ptr::null_mut();
-    }
     unsafe {
+        if s.is_null() {
+            return ptr::null_mut();
+        }
         let cstr = CStr::from_ptr(s);
         let bytes = cstr.to_bytes_with_nul();
         let len = bytes.len() - 1;
@@ -91,10 +95,10 @@ pub unsafe fn heap_str_to_obj(data: *const c_char) -> *mut c_void {
 /// (either a static literal or a heap-allocated string). Passing invalid
 /// pointers is undefined behavior.
 pub unsafe extern "C" fn rc_inc_str(data: *mut c_char) {
-    if data.is_null() {
-        return;
-    }
     unsafe {
+        if data.is_null() {
+            return;
+        }
         let obj = heap_str_to_obj(data);
         rc_inc(obj);
     }
@@ -115,10 +119,10 @@ pub unsafe fn rc_inc_str_pub(data: *mut c_char) {
 /// (either a static literal or a heap-allocated string). Passing invalid
 /// pointers is undefined behavior.
 pub unsafe extern "C" fn rc_dec_str(data: *mut c_char) {
-    if data.is_null() {
-        return;
-    }
     unsafe {
+        if data.is_null() {
+            return;
+        }
         let obj = heap_str_to_obj(data);
         rc_dec(obj);
     }
@@ -139,18 +143,18 @@ pub unsafe fn rc_dec_str_pub(data: *mut c_char) {
 /// If non-null, the string must remain valid for the duration of this call.
 #[unsafe(no_mangle)]
 pub unsafe fn str_dup(s: *const c_char) -> *mut c_char {
-    unsafe {
-        if s.is_null() {
-            return ptr::null_mut();
-        }
-        let len = libc::strlen(s) + 1;
-        let dst = crate::runtime_malloc(len) as *mut c_char;
-        if dst.is_null() {
-            return ptr::null_mut();
-        }
-        ptr::copy_nonoverlapping(s as *const u8, dst as *mut u8, len);
-        dst
+    if s.is_null() {
+        return ptr::null_mut();
     }
+    let len = unsafe { libc::strlen(s) } + 1;
+    let dst = crate::runtime_malloc(len) as *mut c_char;
+    if dst.is_null() {
+        return ptr::null_mut();
+    }
+    unsafe {
+        ptr::copy_nonoverlapping(s as *const u8, dst as *mut u8, len);
+    }
+    dst
 }
 
 /// # Safety
@@ -206,5 +210,6 @@ pub extern "C" fn number_to_string(num: f64) -> *mut c_char {
     let s = format!("{}", num);
     // TODO: formatting to match JS/Oats spec (e.g. NaN, Infinity)
     let c_str = CString::new(s).unwrap_or_default();
+    // SAFETY: c_str.as_ptr() is valid for the duration of this call
     unsafe { heap_str_from_cstr(c_str.as_ptr()) }
 }

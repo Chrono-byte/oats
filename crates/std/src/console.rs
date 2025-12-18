@@ -10,9 +10,7 @@
 #[no_mangle]
 pub unsafe extern "C" fn oats_std_console_log(msg: *mut libc::c_char) {
     if !msg.is_null() {
-        unsafe {
-            crate::sys::println(std::ffi::CStr::from_ptr(msg).to_string_lossy().as_ref());
-        }
+        crate::sys::println(std::ffi::CStr::from_ptr(msg).to_string_lossy().as_ref());
     }
 }
 

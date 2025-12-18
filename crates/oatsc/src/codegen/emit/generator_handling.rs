@@ -310,8 +310,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
         let mut live_sets: Vec<HashSet<String>> = Vec::new();
         for &yield_idx in &yield_indices {
             let mut live: HashSet<String> = HashSet::new();
-            for i in (yield_idx + 1)..nodes.len() {
-                if let Node::Ident(name) = &nodes[i] {
+            for node in nodes.iter().skip(yield_idx + 1) {
+                if let Node::Ident(name) = node {
                     live.insert(name.clone());
                 }
             }

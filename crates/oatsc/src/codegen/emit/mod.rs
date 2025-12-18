@@ -15,6 +15,7 @@
 //!   helpers (rc_inc/rc_dec, box/unbox) to manage lifetimes.
 
 pub mod async_handling;
+pub mod classes;
 pub mod constructors;
 pub mod enums;
 pub mod functions;

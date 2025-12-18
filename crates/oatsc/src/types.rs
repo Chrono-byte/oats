@@ -105,6 +105,9 @@ pub enum Symbol {
         mangled_name: String,
         sig: FunctionSig,
     },
+    Type {
+        mangled_name: String,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -170,6 +173,7 @@ impl SymbolTable {
         self.get(name).and_then(|symbol| match symbol {
             Symbol::Variable { ty } => Some(ty),
             Symbol::StdFunction { .. } => None,
+            Symbol::Type { .. } => None,
         })
     }
 
@@ -205,6 +209,11 @@ impl SymbolTable {
     /// * `sig` - Function signature
     pub fn insert_std_function(&mut self, name: String, mangled_name: String, sig: FunctionSig) {
         self.insert(name, Symbol::StdFunction { mangled_name, sig });
+    }
+
+    /// Inserts a type symbol into the current (innermost) scope.
+    pub fn insert_type(&mut self, name: String, mangled_name: String) {
+        self.insert(name, Symbol::Type { mangled_name });
     }
 
     /// Returns all symbols from all scopes as a flattened collection.
@@ -273,22 +282,25 @@ fn ts_type_span(ty: &TSType<'_>) -> OxcSpan {
 /// - Array types with element type inference
 /// - Function types with parameter and return type mapping
 pub fn map_ts_type(ty: &TSType<'_>) -> Option<OatsType> {
-    map_ts_type_with_aliases(ty, None)
+    map_ts_type_with_aliases(ty, None, None)
 }
 
 /// Maps an Oats AST type annotation to OatsType, with optional type alias resolution.
 ///
 /// If `type_aliases` is provided, type references will be resolved through the alias map.
 /// For generic type aliases, type arguments are substituted into the aliased type.
+type TypeAliasMap<'a> = HashMap<String, (Option<Vec<String>>, &'a TSType<'a>)>;
 pub fn map_ts_type_with_aliases(
     ty: &TSType<'_>,
-    type_aliases: Option<&HashMap<String, (Option<Vec<String>>, &TSType<'_>)>>,
+    type_aliases: Option<&TypeAliasMap<'_>>,
+    symbols: Option<&SymbolTable>,
 ) -> Option<OatsType> {
     match ty {
         TSType::TSNumberKeyword(_) => Some(OatsType::Number),
         TSType::TSVoidKeyword(_) => Some(OatsType::Void),
         TSType::TSBooleanKeyword(_) => Some(OatsType::Boolean),
         TSType::TSStringKeyword(_) => Some(OatsType::String),
+        TSType::TSUndefinedKeyword(_) | TSType::TSNullKeyword(_) => Some(OatsType::Void),
         TSType::TSTypeReference(type_ref) => {
             let TSTypeName::IdentifierReference(ident) = &type_ref.type_name else {
                 // QualifiedName and ThisExpression not yet supported
@@ -307,6 +319,13 @@ pub fn map_ts_type_with_aliases(
                     _ => {}
                 }
 
+                // Check symbol table for mangled types
+                if let Some(syms) = symbols
+                    && let Some(Symbol::Type { mangled_name }) = syms.get(ident.name.as_str())
+                {
+                    return Some(OatsType::NominalStruct(mangled_name.clone()));
+                }
+
                 // Check for type aliases before falling back to built-in types
                 if let Some(aliases) = type_aliases
                     && let Some((alias_type_params, aliased_type)) =
@@ -320,8 +339,11 @@ pub fn map_ts_type_with_aliases(
                             let mut subst = HashMap::new();
                             for (i, alias_param) in alias_params.iter().enumerate() {
                                 if let Some(concrete_arg) = type_args.params.get(i)
-                                    && let Some(mapped_arg) =
-                                        map_ts_type_with_aliases(concrete_arg, type_aliases)
+                                    && let Some(mapped_arg) = map_ts_type_with_aliases(
+                                        concrete_arg,
+                                        type_aliases,
+                                        symbols,
+                                    )
                                 {
                                     subst.insert(alias_param.clone(), mapped_arg);
                                 }
@@ -339,11 +361,11 @@ pub fn map_ts_type_with_aliases(
                             }
                             // If substitution failed, try resolving the aliased type directly
                             // (for non-parameterized parts)
-                            return map_ts_type_with_aliases(aliased_type, type_aliases);
+                            return map_ts_type_with_aliases(aliased_type, type_aliases, symbols);
                         }
                     } else {
                         // Non-generic type alias: just resolve to the aliased type
-                        return map_ts_type_with_aliases(aliased_type, type_aliases);
+                        return map_ts_type_with_aliases(aliased_type, type_aliases, symbols);
                     }
                 }
                 // Check for generic classes or functions
@@ -353,7 +375,7 @@ pub fn map_ts_type_with_aliases(
                     let mapped_params: Vec<_> = type_args
                         .params
                         .iter()
-                        .filter_map(|p| map_ts_type_with_aliases(p, type_aliases))
+                        .filter_map(|p| map_ts_type_with_aliases(p, type_aliases, symbols))
                         .collect();
                     return Some(OatsType::Generic(mapped_params));
                 }
@@ -363,7 +385,7 @@ pub fn map_ts_type_with_aliases(
                     if let Some(type_args) = &type_ref.type_arguments
                         && let Some(first_param) = type_args.params.first()
                     {
-                        return map_ts_type_with_aliases(first_param, type_aliases)
+                        return map_ts_type_with_aliases(first_param, type_aliases, symbols)
                             .map(|inner| OatsType::Promise(Box::new(inner)));
                     }
                     // Promise without type parameter defaults to Promise<void>
@@ -374,7 +396,7 @@ pub fn map_ts_type_with_aliases(
                     if let Some(type_args) = &type_ref.type_arguments
                         && let Some(first_param) = type_args.params.first()
                     {
-                        return map_ts_type_with_aliases(first_param, type_aliases)
+                        return map_ts_type_with_aliases(first_param, type_aliases, symbols)
                             .map(|inner| OatsType::Array(Box::new(inner)));
                     }
                     // No type param -> default to Array<number>
@@ -385,7 +407,7 @@ pub fn map_ts_type_with_aliases(
                     if let Some(type_args) = &type_ref.type_arguments
                         && let Some(first_param) = type_args.params.first()
                     {
-                        return map_ts_type_with_aliases(first_param, type_aliases)
+                        return map_ts_type_with_aliases(first_param, type_aliases, symbols)
                             .map(|inner| OatsType::Weak(Box::new(inner)));
                     }
                     return None;
@@ -394,7 +416,7 @@ pub fn map_ts_type_with_aliases(
                     if let Some(type_args) = &type_ref.type_arguments
                         && let Some(first_param) = type_args.params.first()
                     {
-                        return map_ts_type_with_aliases(first_param, type_aliases)
+                        return map_ts_type_with_aliases(first_param, type_aliases, symbols)
                             .map(|inner| OatsType::Unowned(Box::new(inner)));
                     }
                     return None;
@@ -403,7 +425,7 @@ pub fn map_ts_type_with_aliases(
                     if let Some(type_args) = &type_ref.type_arguments
                         && let Some(first_param) = type_args.params.first()
                     {
-                        return map_ts_type_with_aliases(first_param, type_aliases)
+                        return map_ts_type_with_aliases(first_param, type_aliases, symbols)
                             .map(|inner| OatsType::Option(Box::new(inner)));
                     }
                     return None;
@@ -424,26 +446,27 @@ pub fn map_ts_type_with_aliases(
                 // Try to detect `null` or `undefined` in one of the union
                 // arms and map the other arm to an OatsType; if
                 // successful, return Option<that_type>.
-                let seen_nullish = false;
-                let mut other: Option<&TSType<'_>> = None;
-                for t in &ut.types {
+                let mut nullish_idx = None;
+                for (i, t) in ut.types.iter().enumerate() {
                     if matches!(t, TSType::TSNullKeyword(_) | TSType::TSUndefinedKeyword(_)) {
-                        // Note: null/undefined keywords detected but optimization disabled for now
-                        // This will need to be updated when those are properly handled
+                        nullish_idx = Some(i);
+                        break;
                     }
-                    other = Some(t);
                 }
-                if seen_nullish
-                    && let Some(o) = other
-                    && let Some(mapped) = map_ts_type_with_aliases(o, type_aliases)
-                {
-                    return Some(OatsType::Option(Box::new(mapped)));
+
+                if let Some(idx) = nullish_idx {
+                    let other_idx = 1 - idx;
+                    if let Some(mapped) =
+                        map_ts_type_with_aliases(&ut.types[other_idx], type_aliases, symbols)
+                    {
+                        return Some(OatsType::Option(Box::new(mapped)));
+                    }
                 }
             }
 
             let mut parts = Vec::new();
             for t in &ut.types {
-                if let Some(mapped) = map_ts_type_with_aliases(t, type_aliases) {
+                if let Some(mapped) = map_ts_type_with_aliases(t, type_aliases, symbols) {
                     parts.push(mapped);
                 } else {
                     return None;
@@ -453,7 +476,7 @@ pub fn map_ts_type_with_aliases(
         }
         TSType::TSArrayType(arr) => {
             // element type
-            map_ts_type_with_aliases(&arr.element_type, type_aliases)
+            map_ts_type_with_aliases(&arr.element_type, type_aliases, symbols)
                 .map(|elem| OatsType::Array(Box::new(elem)))
         }
         // Map tuple types like `[A, B]` to an array-of-union of the element types.
@@ -474,7 +497,7 @@ pub fn map_ts_type_with_aliases(
                         continue;
                     }
                 };
-                if let Some(mapped) = map_ts_type_with_aliases(elem_ty, type_aliases) {
+                if let Some(mapped) = map_ts_type_with_aliases(elem_ty, type_aliases, symbols) {
                     elems.push(mapped);
                 } else {
                     return None;
@@ -494,25 +517,29 @@ pub fn map_ts_type_with_aliases(
             for member in &typelit.members {
                 match member {
                     TSSignature::TSPropertySignature(prop) => {
-                        match &prop.key {
-                            PropertyKey::Identifier(ident) => {
-                                if let Some(type_ann) = &prop.type_annotation {
-                                    if let Some(mapped_ty) = map_ts_type_with_aliases(
-                                        &type_ann.type_annotation,
-                                        type_aliases,
-                                    ) {
-                                        fields.push((ident.name.to_string(), mapped_ty));
-                                    } else {
-                                        return None;
-                                    }
+                        let prop_name = match &prop.key {
+                            PropertyKey::StaticIdentifier(ident) => Some(ident.name.to_string()),
+                            PropertyKey::Identifier(ident) => Some(ident.name.to_string()),
+                            PropertyKey::StringLiteral(s) => Some(s.value.to_string()),
+                            _ => None,
+                        };
+
+                        if let Some(name) = prop_name {
+                            if let Some(type_ann) = &prop.type_annotation {
+                                if let Some(mapped_ty) = map_ts_type_with_aliases(
+                                    &type_ann.type_annotation,
+                                    type_aliases,
+                                    symbols,
+                                ) {
+                                    fields.push((name, mapped_ty));
                                 } else {
                                     return None;
                                 }
-                            }
-                            _ => {
-                                // Only identifier keys supported for now
+                            } else {
                                 return None;
                             }
+                        } else {
+                            return None;
                         }
                     }
                     _ => {
@@ -556,7 +583,9 @@ fn map_ts_type_with_subst_depth(
         TSType::TSNumberKeyword(_)
         | TSType::TSVoidKeyword(_)
         | TSType::TSBooleanKeyword(_)
-        | TSType::TSStringKeyword(_) => map_ts_type(ty),
+        | TSType::TSStringKeyword(_)
+        | TSType::TSUndefinedKeyword(_)
+        | TSType::TSNullKeyword(_) => map_ts_type(ty),
         TSType::TSTypeReference(type_ref) => {
             let TSTypeName::IdentifierReference(ident) = &type_ref.type_name else {
                 // QualifiedName and ThisExpression not yet supported
@@ -626,21 +655,21 @@ fn map_ts_type_with_subst_depth(
             {
                 // Special-case `T | null` or `T | undefined` -> Option<T>
                 if un.types.len() == 2 {
-                    let mut seen_nullish = false;
-                    let mut other: Option<&TSType<'_>> = None;
-                    for t in &un.types {
+                    let mut nullish_idx = None;
+                    for (i, t) in un.types.iter().enumerate() {
                         if matches!(t, TSType::TSNullKeyword(_) | TSType::TSUndefinedKeyword(_)) {
-                            // Note: null/undefined keywords detected but optimization disabled for now
-                            seen_nullish = true;
-                            continue;
+                            nullish_idx = Some(i);
+                            break;
                         }
-                        other = Some(t);
                     }
-                    if seen_nullish && let Some(o) = other {
-                        if let Some(mapped) = map_ts_type_with_subst(o, subst) {
+
+                    if let Some(idx) = nullish_idx {
+                        let other_idx = 1 - idx;
+                        if let Some(mapped) =
+                            map_ts_type_with_subst_depth(&un.types[other_idx], subst, depth + 1)
+                        {
                             return Some(OatsType::Option(Box::new(mapped)));
                         }
-                        return None;
                     }
                 }
 
@@ -688,24 +717,29 @@ fn map_ts_type_with_subst_depth(
             for member in &typelit.members {
                 match member {
                     TSSignature::TSPropertySignature(prop) => {
-                        match &prop.key {
-                            PropertyKey::Identifier(ident) => {
-                                if let Some(type_ann) = &prop.type_annotation {
-                                    if let Some(mapped_ty) =
-                                        map_ts_type_with_subst(&type_ann.type_annotation, subst)
-                                    {
-                                        fields.push((ident.name.to_string(), mapped_ty));
-                                    } else {
-                                        return None;
-                                    }
+                        let prop_name = match &prop.key {
+                            PropertyKey::StaticIdentifier(ident) => Some(ident.name.to_string()),
+                            PropertyKey::Identifier(ident) => Some(ident.name.to_string()),
+                            PropertyKey::StringLiteral(s) => Some(s.value.to_string()),
+                            _ => None,
+                        };
+
+                        if let Some(name) = prop_name {
+                            if let Some(type_ann) = &prop.type_annotation {
+                                if let Some(mapped_ty) = map_ts_type_with_subst_depth(
+                                    &type_ann.type_annotation,
+                                    subst,
+                                    depth + 1,
+                                ) {
+                                    fields.push((name, mapped_ty));
                                 } else {
                                     return None;
                                 }
-                            }
-                            _ => {
-                                // Only identifier keys supported for now
+                            } else {
                                 return None;
                             }
+                        } else {
+                            return None;
                         }
                     }
                     _ => {
@@ -732,9 +766,22 @@ pub fn check_function_strictness(
 ) -> Result<(Option<FunctionSig>, Vec<Diagnostic>)> {
     let mut diagnostics = Vec::new();
 
+    // 0. Register type parameters in symbol table first
+    let mut type_params = Vec::new();
+    if let Some(tp) = &func_decl.type_parameters {
+        for p in &tp.params {
+            let name = p.name.name.to_string();
+            type_params.push(name.clone());
+            // Register as a placeholder type
+            _symbols.insert_type(name.clone(), name);
+        }
+    }
+
     // Return type annotation required for regular functions, but for arrows, we infer
     let ret_type = if let Some(return_type) = &func_decl.return_type {
-        if let Some(mapped) = map_ts_type(&return_type.type_annotation) {
+        if let Some(mapped) =
+            map_ts_type_with_aliases(&return_type.type_annotation, None, Some(_symbols))
+        {
             mapped
         } else {
             diagnostics.push(
@@ -774,7 +821,9 @@ pub fn check_function_strictness(
         match &param.pattern.kind {
             BindingPatternKind::BindingIdentifier(ident) => {
                 if let Some(type_ann) = &param.pattern.type_annotation {
-                    if let Some(mapped) = map_ts_type(&type_ann.type_annotation) {
+                    if let Some(mapped) =
+                        map_ts_type_with_aliases(&type_ann.type_annotation, None, Some(_symbols))
+                    {
                         param_types.push(mapped);
                         continue;
                     } else {
@@ -821,7 +870,9 @@ pub fn check_function_strictness(
             BindingPatternKind::ArrayPattern(_) => {
                 // Array destructuring - require type annotation
                 if let Some(type_ann) = &param.pattern.type_annotation {
-                    if let Some(mapped) = map_ts_type(&type_ann.type_annotation) {
+                    if let Some(mapped) =
+                        map_ts_type_with_aliases(&type_ann.type_annotation, None, Some(_symbols))
+                    {
                         param_types.push(mapped);
                     } else {
                         diagnostics.push(
@@ -859,7 +910,9 @@ pub fn check_function_strictness(
             BindingPatternKind::ObjectPattern(_) => {
                 // Object destructuring - require type annotation
                 if let Some(type_ann) = &param.pattern.type_annotation {
-                    if let Some(mapped) = map_ts_type(&type_ann.type_annotation) {
+                    if let Some(mapped) =
+                        map_ts_type_with_aliases(&type_ann.type_annotation, None, Some(_symbols))
+                    {
                         param_types.push(mapped);
                     } else {
                         diagnostics.push(
@@ -897,7 +950,9 @@ pub fn check_function_strictness(
             BindingPatternKind::AssignmentPattern(_) => {
                 // Rest parameters - require type annotation
                 if let Some(type_ann) = &param.pattern.type_annotation {
-                    if let Some(mapped) = map_ts_type(&type_ann.type_annotation) {
+                    if let Some(mapped) =
+                        map_ts_type_with_aliases(&type_ann.type_annotation, None, Some(_symbols))
+                    {
                         param_types.push(mapped);
                     } else {
                         diagnostics.push(
@@ -934,7 +989,7 @@ pub fn check_function_strictness(
 
     Ok((
         Some(FunctionSig {
-            type_params: Vec::new(),
+            type_params,
             params: param_types,
             ret: ret_type,
         }),

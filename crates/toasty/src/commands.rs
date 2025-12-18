@@ -414,6 +414,12 @@ pub fn handle_run(
         eprintln!("{}", "Building before run...".blue());
     }
 
+    // Determine output directory before compiling
+    let out_dir = match std::env::var("OATS_OUT_DIR") {
+        Ok(dir) => dir,
+        Err(_) => ".".to_string(),
+    };
+
     // Build compile options with all discovered modules
     let mut all_src_files: Vec<String> = modules.keys().cloned().collect();
     // Ensure the entry point is first
@@ -423,14 +429,9 @@ pub fn handle_run(
     let entry_point = all_src_files[0].clone();
     let mut options = CompileOptions::with_modules(entry_point);
     options.out_name = out_name.clone();
+    options.out_dir = Some(out_dir.clone());
 
     let _build_res = compiler::invoke_oatsc(&options)?;
-
-    // Determine output exe path
-    let out_dir = match std::env::var("OATS_OUT_DIR") {
-        Ok(dir) => dir,
-        Err(_) => ".".to_string(),
-    };
     let src_filename = std::path::Path::new(&src_file)
         .file_stem()
         .and_then(|s| s.to_str())

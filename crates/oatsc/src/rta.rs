@@ -50,6 +50,9 @@ pub struct RTAResults {
 impl RTAResults {
     /// Check if a class is live (instantiated at runtime).
     pub fn is_class_live(&self, class_name: &str) -> bool {
+        if self.live_classes.is_empty() {
+            return true;
+        }
         self.live_classes.contains(class_name)
     }
 
@@ -62,6 +65,9 @@ impl RTAResults {
     /// # Returns
     /// `true` if the method is live, `false` otherwise
     pub fn is_method_live(&self, class_name: &str, method_name: &str) -> bool {
+        if self.live_methods.is_empty() {
+            return true;
+        }
         match self.live_methods.get(class_name) {
             Some(methods) => methods.contains(method_name),
             None => false,

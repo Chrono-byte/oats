@@ -473,7 +473,6 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             // If the declared field type is Weak<T>, use rc_weak_inc; otherwise rc_inc
                             match _field_type {
                                 OatsType::Weak(_) => {
-                                    println!("Invoking rc_weak_inc for field: {:?}", field_name);
                                     let rc_weak_inc = self.get_rc_weak_inc();
                                     let _ = self.builder.build_call(
                                         rc_weak_inc,
@@ -549,10 +548,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     .into_iter()
                     .map(|iv| {
                         // Try to extract a constant; fall back to zero if not available.
-                        let v = match iv.get_zero_extended_constant() {
-                            Some(val) => val,
-                            None => 0,
-                        };
+                        let v = iv.get_zero_extended_constant().unwrap_or(0);
                         self.i32_t.const_int(v & 0xffffffffu64, false)
                     })
                     .collect();

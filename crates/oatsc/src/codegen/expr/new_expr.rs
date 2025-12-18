@@ -30,7 +30,17 @@ impl<'a> CodeGen<'a> {
         locals: &mut LocalsStackLocal<'a>,
     ) -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
         if let Expression::Identifier(ident) = &new_expr.callee {
-            let ctor_name = format!("{}_ctor", ident.name);
+            let name = ident.name.to_string();
+            // Resolve class name through symbol table
+            let class_name = if let Some(crate::types::Symbol::Type { mangled_name }) =
+                self.symbol_table.borrow().get(&name)
+            {
+                mangled_name.clone()
+            } else {
+                name
+            };
+
+            let ctor_name = format!("{}_ctor", class_name);
             if let Some(fv) = self.module.get_function(&ctor_name) {
                 let mut lowered_args: Vec<inkwell::values::BasicMetadataValueEnum> = Vec::new();
                 for arg in &new_expr.arguments {

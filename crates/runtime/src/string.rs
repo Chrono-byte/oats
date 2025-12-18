@@ -1,7 +1,7 @@
 //! String helpers for runtime
 
 use libc::{c_char, c_void, size_t};
-use std::ffi::CStr;
+use std::ffi::{CStr, CString};
 use std::io::{self, Write};
 use std::ptr;
 use std::sync::atomic::Ordering;
@@ -197,4 +197,14 @@ pub unsafe fn str_concat(a: *const c_char, b: *const c_char) -> *mut c_char {
 
         data_ptr
     }
+}
+
+/// Convert number to string.
+/// Returns a heap-allocated Oats string.
+#[unsafe(no_mangle)]
+pub extern "C" fn number_to_string(num: f64) -> *mut c_char {
+    let s = format!("{}", num);
+    // TODO: formatting to match JS/Oats spec (e.g. NaN, Infinity)
+    let c_str = CString::new(s).unwrap_or_default();
+    unsafe { heap_str_from_cstr(c_str.as_ptr()) }
 }

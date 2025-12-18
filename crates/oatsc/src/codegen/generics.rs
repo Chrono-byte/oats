@@ -107,7 +107,7 @@ impl<'a> CodeGen<'a> {
         // We need to keep the borrow alive for the entire function
         let nested_fns_borrow = self.nested_generic_fns.borrow();
         let (func_ast, fsig) = match nested_fns_borrow.get(func_name) {
-            Some((func_ast, fsig)) => (func_ast, fsig.clone()),
+            Some((func_ast, fsig)) => (*func_ast, fsig.clone()),
             None => {
                 return Err(Diagnostic::simple_boxed(
                     Severity::Error,

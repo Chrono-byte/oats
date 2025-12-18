@@ -47,7 +47,7 @@ impl<'a> CodeGen<'a> {
         let call_result = self
             .builder
             .build_call(oats_main, &[], "call_oats_main")
-            .inspect_err(|e| {
+            .inspect_err(|_e| {
                 crate::diagnostics::emit_diagnostic(
                     &Diagnostic::simple_boxed(Severity::Error, "failed to build call to oats_main"),
                     Some(self.source),

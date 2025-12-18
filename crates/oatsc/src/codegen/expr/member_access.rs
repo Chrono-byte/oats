@@ -58,14 +58,14 @@ impl<'a> CodeGen<'a> {
                     // Try to infer a nominal class name from the object
                     let mut class_name_opt: Option<String> = None;
                     if let Expression::Identifier(ident) = &computed.object {
-                        let ident_name = ident.as_ref().name.to_string();
+                        let arr_name = ident.as_ref().name.to_string();
                         // check locals for nominal annotation
                         if let Some((_, _ty, _init, _is_const, _is_weak, nominal, _oats_type)) =
-                            self.find_local(locals, &ident_name)
+                            self.find_local(locals, &arr_name)
                             && let Some(nom) = nominal
                         {
                             class_name_opt = Some(nom);
-                        } else if let Some(param_idx) = param_map.get(&ident_name) {
+                        } else if let Some(param_idx) = param_map.get(&arr_name) {
                             let fname = function.get_name().to_str().unwrap_or_default();
                             if let Some(param_types) = self.fn_param_types.borrow().get(fname) {
                                 let idx = *param_idx as usize;
@@ -479,6 +479,8 @@ impl<'a> CodeGen<'a> {
                     // If it's `this`, param_map contains "this" -> idx 0 typically.
                     // Use fn_param_types map to get the nominal type for `this`.
                     let mut class_name_opt: Option<String> = None;
+                    let mut struct_literal_fields: Option<Vec<(String, OatsType)>> = None;
+
                     // Prefer `this` receiver lookup, but also support parameters
                     // that are nominal structs. If member.obj is an Ident and
                     // matches a parameter name, use the declared param type
@@ -490,44 +492,66 @@ impl<'a> CodeGen<'a> {
                             let fname = function.get_name().to_str().unwrap_or_default();
                             if let Some(param_types) = self.fn_param_types.borrow().get(fname)
                                 && !param_types.is_empty()
-                                && let crate::types::OatsType::NominalStruct(n) = &param_types[0]
                             {
-                                class_name_opt = Some(n.clone());
+                                match &param_types[0] {
+                                    crate::types::OatsType::NominalStruct(n) => {
+                                        class_name_opt = Some(n.clone())
+                                    }
+                                    crate::types::OatsType::StructLiteral(f) => {
+                                        struct_literal_fields = Some(f.clone())
+                                    }
+                                    _ => {}
+                                }
                             }
                         } else if let Some(param_idx) = param_map.get(&ident_name) {
                             // param_map stores parameter name -> index (u32)
                             let fname = function.get_name().to_str().unwrap_or_default();
                             if let Some(param_types) = self.fn_param_types.borrow().get(fname) {
                                 let idx = *param_idx as usize;
-                                if idx < param_types.len()
-                                    && let crate::types::OatsType::NominalStruct(n) =
-                                        &param_types[idx]
-                                {
-                                    class_name_opt = Some(n.clone());
+                                if idx < param_types.len() {
+                                    match &param_types[idx] {
+                                        crate::types::OatsType::NominalStruct(n) => {
+                                            class_name_opt = Some(n.clone())
+                                        }
+                                        crate::types::OatsType::StructLiteral(f) => {
+                                            struct_literal_fields = Some(f.clone())
+                                        }
+                                        _ => {}
+                                    }
                                 }
                             }
-                            // If it's not a parameter, check locals for a nominal annotation
-                            else if let Some((
-                                _,
-                                _ty,
-                                _init,
-                                _is_const,
-                                _is_weak,
-                                nominal,
-                                _oats_type,
-                            )) = self.find_local(locals, &ident_name)
-                                && let Some(nom) = nominal
-                            {
+                        } else if let Some((
+                            _,
+                            _ty,
+                            _init,
+                            _is_const,
+                            _is_weak,
+                            nominal,
+                            oats_type_opt,
+                        )) = self.find_local(locals, &ident_name)
+                        {
+                            if let Some(nom) = nominal {
                                 class_name_opt = Some(nom);
+                            } else if let Some(crate::types::OatsType::StructLiteral(f)) =
+                                oats_type_opt
+                            {
+                                struct_literal_fields = Some(f);
                             }
                         }
                     } else if matches!(&static_member.object, Expression::ThisExpression(_)) {
                         let fname = function.get_name().to_str().unwrap_or_default();
                         if let Some(param_types) = self.fn_param_types.borrow().get(fname)
                             && !param_types.is_empty()
-                            && let crate::types::OatsType::NominalStruct(n) = &param_types[0]
                         {
-                            class_name_opt = Some(n.clone());
+                            match &param_types[0] {
+                                crate::types::OatsType::NominalStruct(n) => {
+                                    class_name_opt = Some(n.clone())
+                                }
+                                crate::types::OatsType::StructLiteral(f) => {
+                                    struct_literal_fields = Some(f.clone())
+                                }
+                                _ => {}
+                            }
                         }
                     } else if matches!(
                         &static_member.object,
@@ -545,127 +569,154 @@ impl<'a> CodeGen<'a> {
                         );
                     }
 
-                    if let Some(class_name) = class_name_opt {
-                        // lookup field list for this class
-                        if let Some(fields) = self.class_fields.borrow().get(&class_name) {
-                            // find index of field
-                            if let Some((field_idx, (_fname, field_ty))) = fields
-                                .iter()
-                                .enumerate()
-                                .find(|(_, (n, _))| n == &field_name)
-                            {
-                                // field storage layout: after u64 header, fields are stored in pointer-sized slots
-                                // compute byte offset = sizeof(u64) + field_idx * sizeof(void*)
-                                let hdr_size = self
-                                    .i64_t
-                                    .const_int(std::mem::size_of::<u64>() as u64, false);
-                                let ptr_sz = self
-                                    .i64_t
-                                    .const_int(std::mem::size_of::<usize>() as u64, false);
-                                let idx_const = self.i64_t.const_int(field_idx as u64, false);
-                                // offset = hdr_size + idx * ptr_sz
-                                let mul = self
-                                    .builder
-                                    .build_int_mul(idx_const, ptr_sz, "fld_off_mul")
-                                    .map_err(|_| Diagnostic::error("LLVM builder error"))?;
-                                // Reserve an 8-byte metadata slot after the header so field
-                                // offsets are computed as: header_size + meta_slot + idx * ptr_size
-                                let meta_slot = self.i64_t.const_int(8u64, false);
-                                let tmp = self
-                                    .builder
-                                    .build_int_add(hdr_size, meta_slot, "hdr_plus_meta")
-                                    .map_err(|_| Diagnostic::error("LLVM builder error"))?;
-                                let offset = self
-                                    .builder
-                                    .build_int_add(tmp, mul, "fld_off")
-                                    .map_err(|_| Diagnostic::error("LLVM builder error"))?;
-                                // We need a i32 index sequence for gep on i8 pointer: cast offset to i64->i32 for index
-                                let offset_i64 = offset;
-                                let gep_ptr = self
-                                    .i8_ptr_from_offset_i64(obj_ptr, offset_i64, "field_i8ptr")
-                                    .map_err(|_| Diagnostic::error("operation failed"))?;
-                                // Load based on field type
-                                match field_ty {
-                                    crate::types::OatsType::Number => {
-                                        // Cast to opaque pointer and load as f64
-                                        let f64_ptr = self
-                                            .builder
-                                            .build_pointer_cast(
-                                                gep_ptr,
-                                                self.context.ptr_type(AddressSpace::default()),
-                                                "f64_ptr_cast",
+                    let fields = if let Some(class_name) = class_name_opt {
+                        // Lookup field list for this class or interface
+                        let fields_borrow = self.class_fields.borrow();
+                        let interface_borrow = self.interface_fields.borrow();
+                        fields_borrow
+                            .get(&class_name)
+                            .or_else(|| interface_borrow.get(&class_name))
+                            .cloned()
+                    } else {
+                        struct_literal_fields
+                    };
+
+                    if let Some(fields) = fields {
+                        // find index of field
+                        if let Some((field_idx, (_fname, field_ty))) = fields
+                            .iter()
+                            .enumerate()
+                            .find(|(_, (n, _))| n == &field_name)
+                        {
+                            // field storage layout: after u64 header, fields are stored in pointer-sized slots
+                            // compute byte offset = sizeof(u64) + field_idx * sizeof(void*)
+                            let hdr_size = self
+                                .i64_t
+                                .const_int(std::mem::size_of::<u64>() as u64, false);
+                            let ptr_sz = self
+                                .i64_t
+                                .const_int(std::mem::size_of::<usize>() as u64, false);
+                            let idx_const = self.i64_t.const_int(field_idx as u64, false);
+                            // offset = hdr_size + idx * ptr_sz
+                            let mul = self
+                                .builder
+                                .build_int_mul(idx_const, ptr_sz, "fld_off_mul")
+                                .map_err(|_| Diagnostic::error("LLVM builder error"))?;
+                            // Reserve an 8-byte metadata slot after the header so field
+                            // offsets are computed as: header_size + meta_slot + idx * ptr_size
+                            let meta_slot = self.i64_t.const_int(8u64, false);
+                            let tmp = self
+                                .builder
+                                .build_int_add(hdr_size, meta_slot, "hdr_plus_meta")
+                                .map_err(|_| Diagnostic::error("LLVM builder error"))?;
+                            let offset = self
+                                .builder
+                                .build_int_add(tmp, mul, "fld_off")
+                                .map_err(|_| Diagnostic::error("LLVM builder error"))?;
+                            // We need a i32 index sequence for gep on i8 pointer: cast offset to i64->i32 for index
+                            let offset_i64 = offset;
+                            let gep_ptr = self
+                                .i8_ptr_from_offset_i64(obj_ptr, offset_i64, "field_i8ptr")
+                                .map_err(|_| Diagnostic::error("operation failed"))?;
+                            // Load based on field type
+                            match field_ty {
+                                crate::types::OatsType::Number => {
+                                    // Cast to opaque pointer and load as f64
+                                    let f64_ptr = self
+                                        .builder
+                                        .build_pointer_cast(
+                                            gep_ptr,
+                                            self.context.ptr_type(AddressSpace::default()),
+                                            "f64_ptr_cast",
+                                        )
+                                        .map_err(|_| Diagnostic::error("LLVM builder error"))?;
+                                    let loaded = self
+                                        .builder
+                                        .build_load(self.f64_t, f64_ptr, "field_f64_load")
+                                        .map_err(|_| {
+                                            Diagnostic::simple_boxed(
+                                                Severity::Error,
+                                                "operation failed",
                                             )
-                                            .map_err(|_| Diagnostic::error("LLVM builder error"))?;
-                                        let loaded = self
-                                            .builder
-                                            .build_load(self.f64_t, f64_ptr, "field_f64_load")
-                                            .map_err(|_| {
-                                                Diagnostic::simple_boxed(
-                                                    Severity::Error,
-                                                    "operation failed",
-                                                )
-                                            })?;
-                                        return Ok(loaded.as_basic_value_enum());
-                                    }
-                                    crate::types::OatsType::String
-                                    | crate::types::OatsType::NominalStruct(_)
-                                    | crate::types::OatsType::Array(_) => {
-                                        // Cast to pointer type and load
-                                        let slot_ptr_ty =
-                                            self.context.ptr_type(AddressSpace::default());
-                                        let slot_ptr = self
-                                            .builder
-                                            .build_pointer_cast(
-                                                gep_ptr,
-                                                slot_ptr_ty,
-                                                "slot_ptr_cast",
+                                        })?;
+                                    return Ok(loaded.as_basic_value_enum());
+                                }
+                                crate::types::OatsType::String
+                                | crate::types::OatsType::NominalStruct(_)
+                                | crate::types::OatsType::Array(_) => {
+                                    // Cast to pointer type and load
+                                    let slot_ptr_ty =
+                                        self.context.ptr_type(AddressSpace::default());
+                                    let slot_ptr = self
+                                        .builder
+                                        .build_pointer_cast(gep_ptr, slot_ptr_ty, "slot_ptr_cast")
+                                        .map_err(|_| {
+                                            Diagnostic::simple_boxed(
+                                                Severity::Error,
+                                                "operation failed",
                                             )
-                                            .map_err(|_| {
-                                                Diagnostic::simple_boxed(
-                                                    Severity::Error,
-                                                    "operation failed",
-                                                )
-                                            })?;
-                                        // load slot (an i8*)
-                                        let loaded = self
-                                            .builder
-                                            .build_load(self.i8ptr_t, slot_ptr, "field_load")
-                                            .map_err(|_| {
-                                                Diagnostic::simple_boxed(
-                                                    Severity::Error,
-                                                    "operation failed",
-                                                )
-                                            })?;
-                                        // If the object expression had an origin marker,
-                                        // check for a synthetic mapping for this object's field
-                                        // and, if present, set last_expr_origin_local so
-                                        // callers can find a statically-known closure ret type.
-                                        if let Some(obj_orig) =
-                                            self.last_expr_origin_local.borrow().clone()
+                                        })?;
+                                    // load slot (an i8*)
+                                    let loaded = self
+                                        .builder
+                                        .build_load(self.i8ptr_t, slot_ptr, "field_load")
+                                        .map_err(|_| {
+                                            Diagnostic::simple_boxed(
+                                                Severity::Error,
+                                                "operation failed",
+                                            )
+                                        })?;
+                                    // If the object expression had an origin marker,
+                                    // check for a synthetic mapping for this object's field
+                                    // and, if present, set last_expr_origin_local so
+                                    // callers can find a statically-known closure ret type.
+                                    if let Some(obj_orig) =
+                                        self.last_expr_origin_local.borrow().clone()
+                                    {
+                                        let field_key = format!("{}.{}", obj_orig, field_name);
+                                        if self
+                                            .closure_local_rettype
+                                            .borrow()
+                                            .contains_key(&field_key)
                                         {
-                                            let field_key = format!("{}.{}", obj_orig, field_name);
-                                            if self
-                                                .closure_local_rettype
-                                                .borrow()
-                                                .contains_key(&field_key)
-                                            {
-                                                self.last_expr_origin_local
-                                                    .borrow_mut()
-                                                    .replace(field_key);
-                                            }
+                                            self.last_expr_origin_local
+                                                .borrow_mut()
+                                                .replace(field_key);
                                         }
-                                        return Ok(loaded.as_basic_value_enum());
                                     }
-                                    crate::types::OatsType::Union(_) => {
-                                        // Unions are stored boxed as i8*; load boxed pointer and unbox to requested payload.
-                                        let slot_ptr_ty =
-                                            self.context.ptr_type(AddressSpace::default());
-                                        let slot_ptr = self
+                                    return Ok(loaded.as_basic_value_enum());
+                                }
+                                crate::types::OatsType::Union(_) => {
+                                    // Unions are stored boxed as i8*; load boxed pointer and unbox to requested payload.
+                                    let slot_ptr_ty =
+                                        self.context.ptr_type(AddressSpace::default());
+                                    let slot_ptr = self
+                                        .builder
+                                        .build_pointer_cast(gep_ptr, slot_ptr_ty, "slot_ptr_cast")
+                                        .map_err(|_| {
+                                            Diagnostic::simple_boxed(
+                                                Severity::Error,
+                                                "operation failed",
+                                            )
+                                        })?;
+                                    let boxed = self
+                                        .builder
+                                        .build_load(self.i8ptr_t, slot_ptr, "union_boxed_load")
+                                        .map_err(|_| {
+                                            Diagnostic::simple_boxed(
+                                                Severity::Error,
+                                                "operation failed",
+                                            )
+                                        })?;
+                                    // Try to unbox as f64 first
+                                    if let BasicValueEnum::PointerValue(boxed_ptr) = boxed {
+                                        let unbox_f = self.get_union_unbox_f64();
+                                        let cs = self
                                             .builder
-                                            .build_pointer_cast(
-                                                gep_ptr,
-                                                slot_ptr_ty,
-                                                "slot_ptr_cast",
+                                            .build_call(
+                                                unbox_f,
+                                                &[boxed_ptr.into()],
+                                                "union_unbox_f64_call",
                                             )
                                             .map_err(|_| {
                                                 Diagnostic::simple_boxed(
@@ -673,53 +724,27 @@ impl<'a> CodeGen<'a> {
                                                     "operation failed",
                                                 )
                                             })?;
-                                        let boxed = self
-                                            .builder
-                                            .build_load(self.i8ptr_t, slot_ptr, "union_boxed_load")
-                                            .map_err(|_| {
-                                                Diagnostic::simple_boxed(
+                                        match cs.try_as_basic_value() {
+                                            ValueKind::Basic(bv) => return Ok(bv),
+                                            _ => {
+                                                return Err(Diagnostic::simple_boxed(
                                                     Severity::Error,
                                                     "operation failed",
-                                                )
-                                            })?;
-                                        // Try to unbox as f64 first
-                                        if let BasicValueEnum::PointerValue(boxed_ptr) = boxed {
-                                            let unbox_f = self.get_union_unbox_f64();
-                                            let cs = self
-                                                .builder
-                                                .build_call(
-                                                    unbox_f,
-                                                    &[boxed_ptr.into()],
-                                                    "union_unbox_f64_call",
-                                                )
-                                                .map_err(|_| {
-                                                    Diagnostic::simple_boxed(
-                                                        Severity::Error,
-                                                        "operation failed",
-                                                    )
-                                                })?;
-                                            match cs.try_as_basic_value() {
-                                                ValueKind::Basic(bv) => return Ok(bv),
-                                                _ => {
-                                                    return Err(Diagnostic::simple_boxed(
-                                                        Severity::Error,
-                                                        "operation failed",
-                                                    ));
-                                                }
+                                                ));
                                             }
                                         }
-                                        return Err(Diagnostic::simple_boxed(
-                                            Severity::Error,
-                                            "operation failed",
-                                        ));
                                     }
-                                    _ => {
-                                        // Unsupported field type
-                                        return Err(Diagnostic::simple_boxed(
-                                            Severity::Error,
-                                            "expression lowering failed",
-                                        ))?;
-                                    }
+                                    return Err(Diagnostic::simple_boxed(
+                                        Severity::Error,
+                                        "operation failed",
+                                    ));
+                                }
+                                _ => {
+                                    // Unsupported field type
+                                    return Err(Diagnostic::simple_boxed(
+                                        Severity::Error,
+                                        "expression lowering failed",
+                                    ))?;
                                 }
                             }
                         }
@@ -874,189 +899,6 @@ impl<'a> CodeGen<'a> {
             _ => Err(Diagnostic::simple_boxed(
                 Severity::Error,
                 "unsupported field type for super member access",
-            )),
-        }
-    }
-
-    fn lower_member_assign(
-        &self,
-        member: &oxc_ast::ast::Expression<'_>,
-        value: BasicValueEnum<'a>,
-        function: FunctionValue<'a>,
-        param_map: &HashMap<String, u32>,
-        locals: &mut LocalsStackLocal<'a>,
-    ) -> crate::diagnostics::DiagnosticResult<()> {
-        // Handle assignment to member expressions like obj.prop = value
-        match member {
-            Expression::StaticMemberExpression(static_member) => {
-                let field_name = static_member.property.name.to_string();
-                let obj_ptr =
-                    match self.lower_expr(&static_member.object, function, param_map, locals) {
-                        Ok(BasicValueEnum::PointerValue(pv)) => pv,
-                        _ => {
-                            return Err(Diagnostic::simple_with_span_boxed(
-                                Severity::Error,
-                                "member assignment requires object pointer",
-                                static_member.span.start as usize,
-                            ));
-                        }
-                    };
-
-                // Determine nominal class name
-                let mut class_name_opt: Option<String> = None;
-                if let Expression::Identifier(ident) = &static_member.object {
-                    let ident_name = ident.as_ref().name.to_string();
-                    if let Some((_, _ty, _init, _is_const, _is_weak, nominal, _oats_type)) =
-                        self.find_local(locals, &ident_name)
-                        && let Some(nom) = nominal
-                    {
-                        class_name_opt = Some(nom);
-                    } else if let Some(param_idx) = param_map.get(&ident_name) {
-                        let fname = function.get_name().to_str().unwrap_or_default();
-                        if let Some(param_types) = self.fn_param_types.borrow().get(fname) {
-                            let idx = *param_idx as usize;
-                            if idx < param_types.len()
-                                && let crate::types::OatsType::NominalStruct(n) = &param_types[idx]
-                            {
-                                class_name_opt = Some(n.clone());
-                            }
-                        }
-                    }
-                } else if matches!(&static_member.object, Expression::ThisExpression(_)) {
-                    let fname = function.get_name().to_str().unwrap_or_default();
-                    if let Some(param_types) = self.fn_param_types.borrow().get(fname)
-                        && !param_types.is_empty()
-                        && let crate::types::OatsType::NominalStruct(n) = &param_types[0]
-                    {
-                        class_name_opt = Some(n.clone());
-                    }
-                } else if matches!(
-                    &static_member.object,
-                    Expression::StaticMemberExpression(_) | Expression::ComputedMemberExpression(_)
-                ) {
-                    // Nested member access
-                    class_name_opt = self.resolve_member_type(
-                        &static_member.object,
-                        function,
-                        param_map,
-                        locals,
-                    );
-                }
-
-                if let Some(class_name) = class_name_opt
-                    && let Some(fields) = self.class_fields.borrow().get(&class_name)
-                    && let Some((field_idx, (_fname, field_ty))) = fields
-                        .iter()
-                        .enumerate()
-                        .find(|(_, (n, _))| n == &field_name)
-                {
-                    // Compute field offset
-                    let hdr_size = self
-                        .i64_t
-                        .const_int(std::mem::size_of::<u64>() as u64, false);
-                    let ptr_sz = self
-                        .i64_t
-                        .const_int(std::mem::size_of::<usize>() as u64, false);
-                    let idx_const = self.i64_t.const_int(field_idx as u64, false);
-                    let mul = self
-                        .builder
-                        .build_int_mul(idx_const, ptr_sz, "fld_off_mul")
-                        .map_err(|_| Diagnostic::error("LLVM builder error"))?;
-                    let meta_slot = self.i64_t.const_int(8u64, false);
-                    let tmp = self
-                        .builder
-                        .build_int_add(hdr_size, meta_slot, "hdr_plus_meta")
-                        .map_err(|_| Diagnostic::error("LLVM builder error"))?;
-                    let offset = self
-                        .builder
-                        .build_int_add(tmp, mul, "fld_off")
-                        .map_err(|_| Diagnostic::error("LLVM builder error"))?;
-                    let gep_ptr = self
-                        .i8_ptr_from_offset_i64(obj_ptr, offset, "field_i8ptr")
-                        .map_err(|_| Diagnostic::error("operation failed"))?;
-
-                    // Store based on field type
-                    match field_ty {
-                        crate::types::OatsType::Number => {
-                            let f64_ptr = self
-                                .builder
-                                .build_pointer_cast(
-                                    gep_ptr,
-                                    self.context.ptr_type(AddressSpace::default()),
-                                    "f64_ptr_cast",
-                                )
-                                .map_err(|_| Diagnostic::error("LLVM builder error"))?;
-                            if let BasicValueEnum::FloatValue(fv) = value {
-                                self.builder
-                                    .build_store(f64_ptr, fv)
-                                    .map_err(|_| Diagnostic::error("operation failed"))?;
-                            } else {
-                                return Err(Diagnostic::simple_with_span_boxed(
-                                    Severity::Error,
-                                    "type mismatch: expected number for field assignment",
-                                    static_member.span.start as usize,
-                                ));
-                            }
-                        }
-                        crate::types::OatsType::String
-                        | crate::types::OatsType::NominalStruct(_)
-                        | crate::types::OatsType::Array(_) => {
-                            let slot_ptr_ty = self.context.ptr_type(AddressSpace::default());
-                            let slot_ptr = self
-                                .builder
-                                .build_pointer_cast(gep_ptr, slot_ptr_ty, "slot_ptr_cast")
-                                .map_err(|_| Diagnostic::error("operation failed"))?;
-                            if let BasicValueEnum::PointerValue(pv) = value {
-                                // RC protocol: increment new value before storing
-                                let rc_inc = self.get_rc_inc();
-                                self.builder
-                                    .build_call(rc_inc, &[pv.into()], "rc_inc_new")
-                                    .map_err(|_| Diagnostic::error("operation failed"))?;
-                                // Load old value and decrement it
-                                let old_val = self
-                                    .builder
-                                    .build_load(self.i8ptr_t, slot_ptr, "old_field_load")
-                                    .map_err(|_| Diagnostic::error("operation failed"))?;
-                                if let BasicValueEnum::PointerValue(old_pv) = old_val {
-                                    let rc_dec = self.get_rc_dec();
-                                    self.builder
-                                        .build_call(rc_dec, &[old_pv.into()], "rc_dec_old")
-                                        .map_err(|_| Diagnostic::error("operation failed"))?;
-                                }
-                                self.builder
-                                    .build_store(slot_ptr, pv)
-                                    .map_err(|_| Diagnostic::error("operation failed"))?;
-                            } else {
-                                return Err(Diagnostic::simple_with_span_boxed(
-                                    Severity::Error,
-                                    "type mismatch: expected pointer for field assignment",
-                                    static_member.span.start as usize,
-                                ));
-                            }
-                        }
-                        _ => {
-                            return Err(Diagnostic::simple_with_span_boxed(
-                                Severity::Error,
-                                "unsupported field type for assignment",
-                                static_member.span.start as usize,
-                            ));
-                        }
-                    }
-                    return Ok(());
-                }
-                Err(Diagnostic::simple_with_span_boxed(
-                    Severity::Error,
-                    format!("field '{}' not found or class type unknown", field_name),
-                    static_member.span.start as usize,
-                ))
-            }
-            Expression::ComputedMemberExpression(_) => Err(Diagnostic::simple_boxed(
-                Severity::Error,
-                "assignment to computed member expression not yet supported",
-            )),
-            _ => Err(Diagnostic::simple_boxed(
-                Severity::Error,
-                "unsupported member expression type for assignment",
             )),
         }
     }

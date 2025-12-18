@@ -499,125 +499,10 @@ pub fn run_from_args(
     for stmt in &parsed.body {
         // Handle class declarations: `class Foo {}`
         if let oxc_ast::ast::Statement::ClassDeclaration(c) = stmt {
-            let class_name = if let Some(id) = &c.id {
-                id.name.to_string()
-            } else {
-                continue;
-            };
-            // If this class extends a parent, record the parent name so constructors
-            // and `super(...)` lowering can find the parent's initializer.
-            let parent_name_opt = if let Some(super_class) = &c.super_class {
-                if let Expression::Identifier(id) = super_class {
-                    Some(id.name.to_string())
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
-            // Store class hierarchy for persistent access
-            codegen
-                .class_parents
-                .borrow_mut()
-                .insert(class_name.clone(), parent_name_opt.clone());
-            // Also set current_class_parent for constructor codegen
-            *codegen.current_class_parent.borrow_mut() = parent_name_opt.clone();
-
-            // Emit members for this class
-            for member in c.body.body.iter() {
-                match member {
-                    ClassElement::MethodDefinition(m) => {
-                        // method name
-                        let mname = match &m.key {
-                            PropertyKey::Identifier(id) => id.name.to_string(),
-                            _ => continue,
-                        };
-
-                        // Use RTA to skip dead methods (dead code elimination)
-                        if let Some(ref rta) = codegen.rta_results
-                            && !rta.is_method_live(&class_name, &mname)
-                        {
-                            // Method is not reachable, skip code generation
-                            continue;
-                        }
-
-                        // Convert MethodDefinition to Function for type checking
-                        // In oxc_ast, MethodDefinition has a `value` field containing the function
-                        let method_func = &m.value;
-                        // Try to type-check the method function
-                        let mut method_symbols = SymbolTable::new();
-                        let (sig_opt, type_diags) =
-                            check_function_strictness(method_func, &mut method_symbols)?;
-
-                        // Emit type checking diagnostics
-                        for diag in &type_diags {
-                            diagnostics::emit_diagnostic(diag, Some(&parsed_mod.source));
-                        }
-
-                        if let Some(sig) = sig_opt {
-                            // Prepend `this` as the first param (nominal struct pointer)
-                            let mut params = Vec::new();
-                            params.push(crate::types::OatsType::NominalStruct(class_name.clone()));
-                            params.extend(sig.params.into_iter());
-                            let ret = sig.ret;
-                            let fname = format!("{}_{}", class_name, mname);
-                            codegen
-                                .gen_function_ir(&fname, method_func, &params, &ret, Some("this"))
-                                .map_err(|d| {
-                                    diagnostics::emit_diagnostic(&d, Some(&parsed_mod.source));
-                                    anyhow::anyhow!(d.message)
-                                })?;
-                        } else {
-                            // If strict check failed (e.g., missing return annotation), try to emit with Void return
-                            let mut method_symbols = SymbolTable::new();
-                            let (sig2_opt, type_diags2) =
-                                check_function_strictness(method_func, &mut method_symbols)?;
-
-                            for diag in &type_diags2 {
-                                diagnostics::emit_diagnostic(diag, Some(&parsed_mod.source));
-                            }
-
-                            if let Some(sig2) = sig2_opt {
-                                let mut params = Vec::new();
-                                params.push(crate::types::OatsType::NominalStruct(
-                                    class_name.clone(),
-                                ));
-                                params.extend(sig2.params.into_iter());
-                                let fname = format!("{}_{}", class_name, mname);
-                                codegen
-                                    .gen_function_ir(
-                                        &fname,
-                                        method_func,
-                                        &params,
-                                        &crate::types::OatsType::Void,
-                                        Some("this"),
-                                    )
-                                    .map_err(|d| {
-                                        crate::diagnostics::emit_diagnostic(
-                                            &d,
-                                            Some(source.as_str()),
-                                        );
-                                        anyhow::anyhow!(d.message)
-                                    })?;
-                            }
-                        }
-                    }
-                    ClassElement::StaticBlock(_) => {
-                        // Static blocks are not currently supported
-                    }
-                    ClassElement::PropertyDefinition(_) => {
-                        // Property definitions are not currently supported
-                    }
-                    ClassElement::AccessorProperty(_) => {
-                        // Accessor properties are not currently supported
-                    }
-                    ClassElement::TSIndexSignature(_) => {
-                        // TypeScript index signatures are not currently supported
-                    }
-                }
-            }
-            // Done emitting this class; clear current parent
-            codegen.current_class_parent.borrow_mut().take();
+            codegen.gen_class_ir(c, "").map_err(|d| {
+                crate::diagnostics::emit_diagnostic(&d, Some(&parsed_mod.source));
+                anyhow::anyhow!("{}", d.message)
+            })?;
         }
 
         // Handle enum declarations: `enum Name { Variant1, Variant2(Type1, Type2), ... }`
@@ -908,6 +793,13 @@ pub fn run_from_args(
             if let Some(fsig) = sig_opt {
                 // skip exported `main` (we handle exported main separately)
                 if fname != "main" {
+                    // Register in symbol table
+                    codegen.symbol_table.borrow_mut().insert_std_function(
+                        fname.clone(),
+                        fname.clone(),
+                        fsig.clone(),
+                    );
+
                     codegen
                         .gen_function_ir(&fname, inner_func, &fsig.params, &fsig.ret, None)
                         .map_err(|d| {
@@ -921,7 +813,7 @@ pub fn run_from_args(
 
     // Emit arrow functions declared as top-level const/let bindings
     // Example: const foo = (x: number): number => x + 1;
-    for (fname, _arrow, is_exported) in &arrow_functions {
+    for (fname, arrow, is_exported) in &arrow_functions {
         // Skip exported main - it will be handled separately
         if fname == "main" && *is_exported {
             continue;
@@ -931,10 +823,45 @@ pub fn run_from_args(
             continue;
         }
 
-        // Arrow functions are handled directly during expression lowering
-        // They don't need separate function IR generation here
-        // TODO: If arrow functions need to be hoisted or have special handling, implement it here
-        continue;
+        // For arrows, we need to infer the signature if missing
+        let mut param_types = Vec::new();
+        for p in &arrow.params.items {
+            if let Some(ann) = &p.pattern.type_annotation
+                && let Some(ty) = crate::types::map_ts_type(&ann.type_annotation)
+            {
+                param_types.push(ty);
+                continue;
+            }
+            param_types.push(crate::types::OatsType::Number);
+        }
+
+        let ret_type = if let Some(ann) = &arrow.return_type {
+            crate::types::map_ts_type(&ann.type_annotation)
+                .unwrap_or(crate::types::OatsType::Number)
+        } else {
+            crate::types::OatsType::Number
+        };
+
+        let sig = crate::types::FunctionSig {
+            type_params: Vec::new(),
+            params: param_types.clone(),
+            ret: ret_type.clone(),
+        };
+
+        // Register in symbol table
+        codegen.symbol_table.borrow_mut().insert_std_function(
+            fname.clone(),
+            fname.clone(), // top-level name is not mangled
+            sig,
+        );
+
+        // Generate IR
+        codegen
+            .gen_arrow_function_ir(fname, arrow, &param_types, &ret_type)
+            .map_err(|d| {
+                crate::diagnostics::emit_diagnostic(&d, Some(&parsed_mod.source));
+                anyhow::anyhow!("{}", d.message)
+            })?;
     }
 
     // Emit the user's exported `main` under an internal symbol name to avoid
@@ -1006,15 +933,12 @@ pub fn run_from_args(
     f.sync_all()?;
 
     // Determine optimization level and build profile
-    let build_profile = match options
+    let build_profile = options
         .as_ref()
         .and_then(|o| o.build_profile.as_ref())
         .cloned()
         .or_else(|| std::env::var("OATS_BUILD_PROFILE").ok())
-    {
-        Some(profile) => profile,
-        None => String::new(),
-    };
+        .unwrap_or_default();
     let opt_level = if let Some(ref opts) = options {
         if let Some(ref opt_str) = opts.opt_level {
             match opt_str.as_str() {
@@ -1091,15 +1015,15 @@ pub fn run_from_args(
         return Ok(Some(out_obj));
     }
 
-    // Build the runtime library
-    let rust_lib = crate::linking::build_runtime_library()?;
+    // Get runtime libraries (runtime + std)
+    let rust_libs = crate::linking::get_runtime_libraries()?;
 
     // Locate or compile rt_main object
     let rt_main_obj = crate::linking::locate_rt_main(&out_dir, emitted_host_main)?;
 
     // Link final executable
     let final_exe =
-        crate::linking::link_executable(&linking_config, &out_obj, &rust_lib, &rt_main_obj)?;
+        crate::linking::link_executable(&linking_config, &out_obj, &rust_libs, &rt_main_obj)?;
 
     println!("{}", final_exe);
     Ok(Some(final_exe))

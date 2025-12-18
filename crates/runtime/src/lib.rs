@@ -57,7 +57,6 @@ pub mod ffi;
 pub mod header;
 pub mod heap;
 pub mod object;
-pub mod process;
 pub mod rc;
 pub mod string;
 pub mod utils;

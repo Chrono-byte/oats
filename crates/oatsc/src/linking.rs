@@ -100,32 +100,68 @@ pub fn compile_to_object(module: &Module, config: &LinkingConfig) -> Result<Stri
     Ok(config.out_obj.clone())
 }
 
-/// Builds the runtime library.
+/// Returns paths to the runtime libraries (runtime and std).
 ///
-/// # Returns
-/// Path to the built runtime library
-pub fn build_runtime_library() -> Result<String> {
-    let mut cargo_cmd = Command::new("cargo");
-    cargo_cmd
-        .arg("build")
-        .arg("--release")
-        .arg("--package")
-        .arg("runtime");
-    match cargo_cmd.status() {
-        Ok(status) => {
-            if !status.success() {
-                anyhow::bail!("cargo failed to build runtime");
+/// Respects OATS_RUNTIME_PATH and OATS_STD_PATH env vars.
+/// If not set, builds them using cargo.
+pub fn get_runtime_libraries() -> Result<Vec<String>> {
+    let mut libs = Vec::new();
+
+    // 1. Runtime Library
+    if let Ok(path) = std::env::var("OATS_RUNTIME_PATH") {
+        libs.push(path);
+    } else {
+        let mut cargo_cmd = Command::new("cargo");
+        cargo_cmd
+            .arg("build")
+            .arg("--release")
+            .arg("--package")
+            .arg("runtime");
+        match cargo_cmd.status() {
+            Ok(status) => {
+                if !status.success() {
+                    anyhow::bail!("cargo failed to build runtime");
+                }
+            }
+            Err(e) => {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    anyhow::bail!("cargo not found in PATH");
+                } else {
+                    return Err(e.into());
+                }
             }
         }
-        Err(e) => {
-            if e.kind() == std::io::ErrorKind::NotFound {
-                anyhow::bail!("cargo not found in PATH");
-            } else {
-                return Err(e.into());
-            }
-        }
+        libs.push("target/release/libruntime.a".to_string());
     }
-    Ok("target/release/libruntime.a".to_string())
+
+    // 2. Standard Library
+    if let Ok(path) = std::env::var("OATS_STD_PATH") {
+        libs.push(path);
+    } else {
+        let mut cargo_cmd = Command::new("cargo");
+        cargo_cmd
+            .arg("build")
+            .arg("--release")
+            .arg("--package")
+            .arg("oats_std");
+        match cargo_cmd.status() {
+            Ok(status) => {
+                if !status.success() {
+                    anyhow::bail!("cargo failed to build oats_std");
+                }
+            }
+            Err(e) => {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    anyhow::bail!("cargo not found in PATH");
+                } else {
+                    return Err(e.into());
+                }
+            }
+        }
+        libs.push("target/release/liboats_std.a".to_string());
+    }
+
+    Ok(libs)
 }
 
 /// Locates or compiles the runtime main object file.
@@ -185,7 +221,7 @@ pub fn locate_rt_main(out_dir: &str, emitted_host_main: bool) -> Result<String> 
 /// # Arguments
 /// * `config` - Linking configuration
 /// * `out_obj` - Path to the main object file
-/// * `rust_lib` - Path to the runtime library
+/// * `rust_libs` - Paths to the runtime libraries
 /// * `rt_main_obj` - Path to rt_main.o (empty if not needed)
 ///
 /// # Returns
@@ -193,7 +229,7 @@ pub fn locate_rt_main(out_dir: &str, emitted_host_main: bool) -> Result<String> 
 pub fn link_executable(
     config: &LinkingConfig,
     out_obj: &str,
-    rust_lib: &str,
+    rust_libs: &[String],
     rt_main_obj: &str,
 ) -> Result<String> {
     // Helper to test whether a program is runnable
@@ -239,10 +275,19 @@ pub fn link_executable(
         if !rt_main_obj.is_empty() {
             cmd.arg(rt_main_obj);
         }
-        cmd.arg(out_obj)
-            .arg(rust_lib)
-            .arg("-o")
-            .arg(&config.out_exe);
+        cmd.arg(out_obj);
+        for lib in rust_libs {
+            cmd.arg(lib);
+        }
+
+        // Add native system libraries required by oats_std (e.g. OpenSSL)
+        cmd.arg("-lssl");
+        cmd.arg("-lcrypto");
+        cmd.arg("-lpthread");
+        cmd.arg("-ldl");
+        cmd.arg("-lm");
+
+        cmd.arg("-o").arg(&config.out_exe);
         match cmd.status() {
             Ok(status) => {
                 if status.success() {
@@ -278,10 +323,19 @@ pub fn link_executable(
         if !rt_main_obj.is_empty() {
             cmd.arg(rt_main_obj);
         }
-        cmd.arg(out_obj)
-            .arg(rust_lib)
-            .arg("-o")
-            .arg(&config.out_exe);
+        cmd.arg(out_obj);
+        for lib in rust_libs {
+            cmd.arg(lib);
+        }
+
+        // Add native system libraries required by oats_std (e.g. OpenSSL)
+        cmd.arg("-lssl");
+        cmd.arg("-lcrypto");
+        cmd.arg("-lpthread");
+        cmd.arg("-ldl");
+        cmd.arg("-lm");
+
+        cmd.arg("-o").arg(&config.out_exe);
         match cmd.status() {
             Ok(status) => {
                 if status.success() {
@@ -298,10 +352,19 @@ pub fn link_executable(
         if !rt_main_obj.is_empty() {
             cmd.arg(rt_main_obj);
         }
-        cmd.arg(out_obj)
-            .arg(rust_lib)
-            .arg("-o")
-            .arg(&config.out_exe);
+        cmd.arg(out_obj);
+        for lib in rust_libs {
+            cmd.arg(lib);
+        }
+
+        // Add native system libraries required by oats_std (e.g. OpenSSL)
+        cmd.arg("-lssl");
+        cmd.arg("-lcrypto");
+        cmd.arg("-lpthread");
+        cmd.arg("-ldl");
+        cmd.arg("-lm");
+
+        cmd.arg("-o").arg(&config.out_exe);
         match cmd.status() {
             Ok(status) => {
                 if status.success() {

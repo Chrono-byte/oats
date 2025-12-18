@@ -96,6 +96,9 @@ pub fn invoke_oatsc(options: &CompileOptions) -> Result<Option<PathBuf>> {
     }
 
     // Execute command
+    if std::env::var("TOASTY_VERBOSE").is_ok() {
+        eprintln!("Executing oatsc: {} {:?}", oatsc_path, args);
+    }
     let output = std::process::Command::new(&oatsc_path)
         .args(&args)
         .output()

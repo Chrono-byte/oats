@@ -41,6 +41,10 @@ struct Cli {
     #[arg(long = "extern-oats", value_name = "PATH=META")]
     extern_oats: Vec<String>,
 
+    /// Output file path
+    #[arg(short = 'o', long = "output")]
+    output: Option<String>,
+
     /// Override the output executable/library name
     #[arg(long = "out-name")]
     out_name: Option<String>,
@@ -58,6 +62,7 @@ fn main() -> Result<()> {
         cli.extern_oats,
         cli.emit_object_only,
         cli.out_name,
+        cli.output,
     )
 }
 
@@ -67,6 +72,7 @@ fn compile_file(
     extern_oats: Vec<String>,
     emit_object_only: bool,
     out_name: Option<String>,
+    output: Option<String>,
 ) -> Result<()> {
     // Parse --extern-oats flags
     let mut extern_map = std::collections::HashMap::new();
@@ -82,6 +88,16 @@ fn compile_file(
     options.extern_oats = extern_map;
     options.emit_object_only = emit_object_only;
     options.out_name = out_name;
+
+    if let Some(out_path) = output {
+        let path = std::path::Path::new(&out_path);
+        if let Some(parent) = path.parent() {
+            options.out_dir = Some(parent.to_string_lossy().to_string());
+        }
+        if let Some(stem) = path.file_stem() {
+            options.out_name = Some(stem.to_string_lossy().to_string());
+        }
+    }
 
     oatsc::compile(options)?;
     Ok(())

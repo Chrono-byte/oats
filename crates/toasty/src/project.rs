@@ -388,6 +388,10 @@ pub fn load_modules_with_verbosity(
     };
     queue.push_back(entry_str.clone());
 
+    // Compile regex once outside the loop
+    use regex::Regex;
+    let import_re = Regex::new(r#"import\s+.*?\s+from\s+["']([^"']+)["']"#).unwrap();
+
     // PHASE 1: Transitive module loading and dependency resolution
     while let Some(path) = queue.pop_front() {
         if modules.contains_key(&path) {
@@ -421,8 +425,6 @@ pub fn load_modules_with_verbosity(
         // Discover and enqueue relative imports from this module
         // Use regex to find import statements since oxc_ast Program.body is Vec<Statement>
         // and imports are not statements in the AST structure
-        use regex::Regex;
-        let import_re = Regex::new(r#"import\s+.*?\s+from\s+["']([^"']+)["']"#).unwrap();
         for cap in import_re.captures_iter(&parsed.source) {
             if let Some(import_src) = cap.get(1) {
                 let import_src = import_src.as_str();
@@ -487,6 +489,10 @@ pub fn build_dependency_graph(
     let mut queue: VecDeque<String> = VecDeque::new();
     queue.push_back(entry_str.clone());
 
+    // Compile regex once outside the loop
+    use regex::Regex;
+    let import_re = Regex::new(r#"import\s+.*?\s+from\s+["']([^"']+)["']"#).unwrap();
+
     // PHASE 1: Build dependency graph
     while let Some(current_path) = queue.pop_front() {
         if verbose {
@@ -525,8 +531,6 @@ pub fn build_dependency_graph(
         // Discover and enqueue relative imports from this module
         // Use regex to find import statements since oxc_ast Program.body is Vec<Statement>
         // and imports are not statements in the AST structure
-        use regex::Regex;
-        let import_re = Regex::new(r#"import\s+.*?\s+from\s+["']([^"']+)["']"#).unwrap();
         for cap in import_re.captures_iter(&parsed.source) {
             if let Some(import_src) = cap.get(1) {
                 let import_src = import_src.as_str();

@@ -34,12 +34,10 @@ pub mod member_access;
 pub mod new_expr;
 pub mod optional_chaining;
 pub mod paren;
-pub mod process;
 pub mod seq_expr;
 pub mod super_expr;
 pub mod this;
 pub mod unary_ops;
-pub mod yield_expr;
 
 // LocalEntry now includes an Option<String> for an optional nominal type name
 // LocalEntry now includes an Option<OatsType> for union tracking
@@ -312,13 +310,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
             _ => None,
         };
 
-        // Now look up the field type in the class_fields map
-        if let Some(obj_type_name) = obj_nominal
-            && let Some(fields) = self.class_fields.borrow().get(&obj_type_name)
-        {
-            // Get the property name from member
-            match member {
-                Expression::StaticMemberExpression(static_mem) => {
+        // Now look up the field type in the class_fields map or interface_fields
+        if let Some(obj_type_name) = obj_nominal {
+            // Check classes
+            if let Some(fields) = self.class_fields.borrow().get(&obj_type_name) {
+                // Get the property name from member
+                if let Expression::StaticMemberExpression(static_mem) = member {
                     let field_name = static_mem.property.name.to_string();
                     // Find the field and return its type if it's a NominalStruct
                     for (fname, ftype) in fields {
@@ -326,16 +323,26 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             if let crate::types::OatsType::NominalStruct(n) = ftype {
                                 return Some(n.clone());
                             } else {
-                                // Field exists but is not a nominal struct
                                 return None;
                             }
                         }
                     }
                 }
-                Expression::ComputedMemberExpression(_) => {
-                    // Computed member expressions (obj[expr]) not supported for field lookup
+            }
+            // Check interfaces
+            if let Some(fields) = self.interface_fields.borrow().get(&obj_type_name)
+                && let Expression::StaticMemberExpression(static_mem) = member
+            {
+                let field_name = static_mem.property.name.to_string();
+                for (fname, ftype) in fields {
+                    if fname == &field_name {
+                        if let crate::types::OatsType::NominalStruct(n) = ftype {
+                            return Some(n.clone());
+                        } else {
+                            return None;
+                        }
+                    }
                 }
-                _ => {}
             }
         }
 

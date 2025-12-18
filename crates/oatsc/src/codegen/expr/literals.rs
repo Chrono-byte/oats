@@ -412,9 +412,10 @@ pub fn lower_object<'a>(
     for prop in &obj_lit.properties {
         match prop {
             oxc_ast::ast::ObjectPropertyKind::ObjectProperty(prop) => {
-                // Only identifier keys are supported currently.
+                // Support both StaticIdentifier and Identifier keys.
                 match &prop.key {
-                    oxc_ast::ast::PropertyKey::Identifier(_ident) => {
+                    oxc_ast::ast::PropertyKey::StaticIdentifier(_)
+                    | oxc_ast::ast::PropertyKey::Identifier(_) => {
                         // Lower the value expression
                         let val = codegen.lower_expr(&prop.value, function, param_map, locals)?;
                         field_values.push(val);

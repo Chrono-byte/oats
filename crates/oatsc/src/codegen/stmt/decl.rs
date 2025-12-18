@@ -63,13 +63,17 @@ impl<'a> crate::codegen::CodeGen<'a> {
         let mut declared_nominal: Option<String> = None;
 
         // Determine if the identifier has an explicit type annotation
-        // Note: VariableDeclarator doesn't have a type annotation field directly
-        // Type annotations would be on the VariableDeclaration parent, but for now
-        // we'll rely on type inference from the initializer
-        let ty_opt: Option<&TSType<'_>> = None;
+        let ty_opt: Option<&TSType<'_>> = decl
+            .id
+            .type_annotation
+            .as_ref()
+            .map(|ta| &ta.type_annotation);
         if let Some(ty) = ty_opt
-            && let Some(mapped) =
-                crate::types::map_ts_type_with_aliases(ty, Some(&*self.type_aliases.borrow()))
+            && let Some(mapped) = crate::types::map_ts_type_with_aliases(
+                ty,
+                Some(&*self.type_aliases.borrow()),
+                Some(&*self.symbol_table.borrow()),
+            )
         {
             declared_mapped = Some(mapped.clone());
             if let crate::types::OatsType::Union(_) = &mapped {
@@ -211,7 +215,16 @@ impl<'a> crate::codegen::CodeGen<'a> {
         if let Expression::NewExpression(new_expr) = init
             && let Expression::Identifier(ident) = &new_expr.callee
         {
-            *declared_nominal = Some(ident.name.to_string());
+            let cname = ident.name.to_string();
+            // Resolve class name through symbol table
+            let class_name = if let Some(crate::types::Symbol::Type { mangled_name }) =
+                self.symbol_table.borrow().get(&cname)
+            {
+                mangled_name.clone()
+            } else {
+                cname
+            };
+            *declared_nominal = Some(class_name);
 
             // Pre-allocate an i8* slot and insert the local into
             // the current scope marked as uninitialized. This

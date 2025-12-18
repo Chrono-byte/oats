@@ -94,6 +94,39 @@ impl<'a> crate::codegen::CodeGen<'a> {
             oxc_ast::ast::Statement::ThrowStatement(throw_stmt) => {
                 self.lower_throw_stmt(throw_stmt, function, param_map, locals_stack)
             }
+            oxc_ast::ast::Statement::BlockStatement(block) => {
+                self.lower_block_stmt(block, function, param_map, locals_stack)
+            }
+            oxc_ast::ast::Statement::ReturnStatement(ret_stmt) => {
+                self.lower_return_stmt(ret_stmt, function, param_map, locals_stack)
+            }
+            oxc_ast::ast::Statement::IfStatement(if_stmt) => {
+                self.lower_if_stmt(if_stmt, function, param_map, locals_stack)
+            }
+            oxc_ast::ast::Statement::WhileStatement(while_stmt) => {
+                self.lower_while_stmt(while_stmt, function, param_map, locals_stack)
+            }
+            oxc_ast::ast::Statement::DoWhileStatement(do_while) => {
+                self.lower_do_while_stmt(do_while, function, param_map, locals_stack)
+            }
+            oxc_ast::ast::Statement::ForStatement(for_stmt) => {
+                self.lower_for_stmt(for_stmt, function, param_map, locals_stack)
+            }
+            oxc_ast::ast::Statement::ForInStatement(for_in) => {
+                self.lower_for_in_stmt(for_in, function, param_map, locals_stack)
+            }
+            oxc_ast::ast::Statement::ForOfStatement(for_of) => {
+                self.lower_for_of_stmt(for_of, function, param_map, locals_stack)
+            }
+            oxc_ast::ast::Statement::BreakStatement(break_stmt) => {
+                self.lower_break_stmt(break_stmt, locals_stack)
+            }
+            oxc_ast::ast::Statement::ContinueStatement(continue_stmt) => {
+                self.lower_continue_stmt(continue_stmt, locals_stack)
+            }
+            oxc_ast::ast::Statement::LabeledStatement(labeled) => {
+                self.lower_labeled_stmt(labeled, function, param_map, locals_stack)
+            }
             _ => {
                 // These are handled at module level, not in statement lowering
                 Ok(false)

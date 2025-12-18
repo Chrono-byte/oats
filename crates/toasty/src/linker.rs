@@ -80,6 +80,14 @@ pub fn link_executable(
     // Add the std library
     link_cmd.arg(&std_lib);
 
+    // Add native system libraries required by oats_std (e.g. OpenSSL)
+    // TODO: Make this configurable or auto-detected
+    link_cmd.arg("-lssl");
+    link_cmd.arg("-lcrypto");
+    link_cmd.arg("-lpthread");
+    link_cmd.arg("-ldl");
+    link_cmd.arg("-lm");
+
     if verbose {
         eprintln!("Link command: {:?}", link_cmd);
     }

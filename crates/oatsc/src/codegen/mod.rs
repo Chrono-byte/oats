@@ -83,6 +83,9 @@ pub struct LoopContext<'a> {
 /// Main code generation context holding LLVM state and caches.
 ///
 /// See module-level documentation for architecture overview.
+type EnumVariantMap = HashMap<String, Vec<(String, Vec<crate::types::OatsType>)>>;
+type TypeAliasMap<'a> = HashMap<String, (Option<Vec<String>>, &'a oxc_ast::ast::TSType<'a>)>;
+
 pub struct CodeGen<'a> {
     /// LLVM context
     pub context: &'a Context,
@@ -151,11 +154,11 @@ pub struct CodeGen<'a> {
     /// Interface name -> (property name, property type) pairs
     pub interface_fields: RefCell<HashMap<String, Vec<(String, crate::types::OatsType)>>>,
     /// Enum name -> (variant name, variant field types) pairs
-    pub enum_variants: RefCell<HashMap<String, Vec<(String, Vec<crate::types::OatsType>)>>>,
+    pub enum_variants: RefCell<EnumVariantMap>,
     /// Class name -> parent class name (None if no parent)
     pub class_parents: RefCell<HashMap<String, Option<String>>>,
     /// Type alias name -> (type parameters, aliased type). None type_params for non-generic aliases
-    pub type_aliases: RefCell<HashMap<String, (Option<Vec<String>>, &'a oxc_ast::ast::TSType<'a>)>>,
+    pub type_aliases: RefCell<TypeAliasMap<'a>>,
     /// Function name -> parameter types
     pub fn_param_types: RefCell<HashMap<String, Vec<crate::types::OatsType>>>,
     /// Stack of active loop contexts for break/continue
@@ -228,7 +231,7 @@ pub struct CodeGen<'a> {
     pub current_escape_info: RefCell<Option<crate::codegen::escape::EscapeInfo>>,
     /// Nested generic functions: name -> (AST, signature)
     pub nested_generic_fns:
-        RefCell<HashMap<String, (oxc_ast::ast::Function<'a>, crate::types::FunctionSig)>>,
+        RefCell<HashMap<String, (&'a oxc_ast::ast::Function<'a>, crate::types::FunctionSig)>>,
     /// Monomorphization cache: key -> specialized function name
     pub monomorphized_map: RefCell<HashMap<String, String>>,
     /// Rapid Type Analysis results for optimization
@@ -336,15 +339,6 @@ impl<'a> CodeGen<'a> {
         match self.module.get_function("executor_enqueue") {
             Some(f) => f,
             None => self.module.add_function("executor_enqueue", fn_type, None),
-        }
-    }
-
-    fn get_executor_run(&self) -> FunctionValue<'a> {
-        // executor_run() -> void
-        let fn_type = self.context.void_type().fn_type(&[], false);
-        match self.module.get_function("executor_run") {
-            Some(f) => f,
-            None => self.module.add_function("executor_run", fn_type, None),
         }
     }
 
@@ -531,24 +525,6 @@ impl<'a> CodeGen<'a> {
         }
     }
 
-    fn get_array_set_f64(&self) -> FunctionValue<'a> {
-        match self.module.get_function("array_set_f64") {
-            Some(f) => f,
-            None => {
-                // array_set_f64(arr_ptr: i8**, idx: i64, v: f64) -> void
-                // Takes pointer-to-pointer to allow reallocation
-                // Represent i8** as pointer-to (i8*) type
-                // Build i8** by asking the Context for a pointer type in the default address space
-                let ptr_ptr_t = self.context.ptr_type(AddressSpace::default());
-                let fn_type = self.context.void_type().fn_type(
-                    &[ptr_ptr_t.into(), self.i64_t.into(), self.f64_t.into()],
-                    false,
-                );
-                self.module.add_function("array_set_f64", fn_type, None)
-            }
-        }
-    }
-
     fn get_array_set_ptr(&self) -> FunctionValue<'a> {
         match self.module.get_function("array_set_ptr") {
             Some(f) => f,
@@ -671,6 +647,15 @@ impl<'a> CodeGen<'a> {
                     let name = ident.name.to_string();
                     let idx = (i + receiver_name.map_or(0, |_| 1)) as u32;
                     param_map.insert(name, idx);
+                }
+                oxc_ast::ast::BindingPatternKind::AssignmentPattern(assign) => {
+                    if let oxc_ast::ast::BindingPatternKind::BindingIdentifier(ident) =
+                        &assign.left.kind
+                    {
+                        let name = ident.name.to_string();
+                        let idx = (i + receiver_name.map_or(0, |_| 1)) as u32;
+                        param_map.insert(name, idx);
+                    }
                 }
                 _ => {
                     // Destructuring parameters not yet supported in parameter mapping

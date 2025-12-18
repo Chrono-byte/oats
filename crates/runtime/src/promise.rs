@@ -255,8 +255,6 @@ fn init_executor() -> Arc<Exec> {
                                 w.cv.notify_one();
                             } else {
                                 crate::runtime_free(out_mem as *mut c_void);
-                                // Check if any processes are waiting for this promise
-                                crate::process::process_check_promises();
                             }
                         }
                     }

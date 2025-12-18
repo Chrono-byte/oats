@@ -1076,15 +1076,17 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 if let Some(inst) = first_inst
                     && inst.get_opcode() == inkwell::values::InstructionOpcode::Phi
                 {
-                    // use inkwell::values::AsValueRef;
-                    // let phi_value = unsafe { inkwell::values::PhiValue::new(inst.as_value_ref()) };
-                    // phi_value.add_incoming(&[(&resumed_value.as_basic_value_enum(), *rb)]);
-
-                    // stubbed out because we prefer not to use unsafe code
-                    return Err(Diagnostic::simple_boxed(
-                        Severity::Error,
-                        "phi node in cont_bb",
-                    ));
+                    use inkwell::values::PhiValue;
+                    // Safely convert InstructionValue to PhiValue
+                    // PhiValue implements TryFrom<InstructionValue>
+                    if let Ok(phi_value) = PhiValue::try_from(inst) {
+                        phi_value.add_incoming(&[(&_resumed_value, *rb)]);
+                    } else {
+                        return Err(Diagnostic::simple_boxed(
+                            Severity::Error,
+                            "failed to convert instruction to phi node in cont_bb",
+                        ));
+                    }
                 }
             }
         }

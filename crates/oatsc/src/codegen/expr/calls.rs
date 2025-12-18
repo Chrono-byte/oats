@@ -194,8 +194,7 @@ impl<'a> CodeGen<'a> {
         // If the identifier is a local variable, treat this as an instance method call
         if self.find_local(locals, &obj_name).is_some() {
             return self.lower_instance_method_call(
-                &obj_name,
-                &prop_name,
+                (&obj_name, &prop_name),
                 &member.object,
                 call,
                 function,
@@ -300,7 +299,7 @@ impl<'a> CodeGen<'a> {
             }
 
             if let Some(fv) = self.module.get_function(&fname) {
-                let cs = match self.builder.build_call(fv, &lowered_args, "std_call") {
+                let _cs = match self.builder.build_call(fv, &lowered_args, "std_call") {
                     Ok(cs) => cs,
                     Err(_) => {
                         return Err(Diagnostic::simple_boxed(
@@ -503,14 +502,14 @@ impl<'a> CodeGen<'a> {
     /// Lower instance method calls (obj.method())
     fn lower_instance_method_call(
         &self,
-        obj_name: &str,
-        method_name: &str,
+        method_info: (&str, &str),
         obj_expr: &Expression<'_>,
         call: &CallExpr,
         function: inkwell::values::FunctionValue<'a>,
         param_map: &HashMap<String, u32>,
         locals: &mut Vec<HashMap<String, LocalEntry<'a>>>,
     ) -> crate::diagnostics::DiagnosticResult<inkwell::values::BasicValueEnum<'a>> {
+        let (obj_name, method_name) = method_info;
         if let Ok(obj_val) = self.lower_expr(obj_expr, function, param_map, locals) {
             // Support weak reference helpers
             if method_name == "downgrade" {
@@ -576,41 +575,73 @@ impl<'a> CodeGen<'a> {
                 }
             }
 
-            // Check nominal on local to resolve class method name
-            if let Some((_, _, _, _, _, nominal_opt, _)) = self.find_local(locals, obj_name)
-                && let Some(nom) = nominal_opt
-            {
-                let method_fn_name = if let Some(ref rta) = self.rta_results {
-                    if let Some(devirt_target) = rta.can_devirtualize(&nom, method_name) {
-                        devirt_target
-                    } else {
-                        format!("{}_{}", nom, method_name)
+            // Determine nominal type of the object
+            let mut nominal_opt = None;
+            if let Some((_, _, _, _, _, nom, _)) = self.find_local(locals, obj_name) {
+                nominal_opt = nom;
+            } else if let Some(param_idx) = param_map.get(obj_name) {
+                let fname = function.get_name().to_str().unwrap_or_default();
+                if let Some(param_types) = self.fn_param_types.borrow().get(fname) {
+                    let idx = *param_idx as usize;
+                    if idx < param_types.len()
+                        && let crate::types::OatsType::NominalStruct(n) = &param_types[idx]
+                    {
+                        nominal_opt = Some(n.clone());
                     }
-                } else {
-                    format!("{}_{}", nom, method_name)
-                };
+                }
+            }
 
-                if let Some(method_fn) = self.module.get_function(&method_fn_name) {
-                    let cs =
-                        match self
-                            .builder
-                            .build_call(method_fn, &call_args, "class_method_call")
+            if let Some(nom) = nominal_opt {
+                let mut current_nom = nom.clone();
+                let mut method_fn = None;
+
+                loop {
+                    let method_fn_name = if let Some(ref rta) = self.rta_results {
+                        if let Some(devirt_target) = rta.can_devirtualize(&current_nom, method_name)
                         {
-                            Ok(cs) => cs,
-                            Err(_) => {
-                                return Err(Box::new(
+                            devirt_target
+                        } else {
+                            format!("{}_{}", current_nom, method_name)
+                        }
+                    } else {
+                        format!("{}_{}", current_nom, method_name)
+                    };
+
+                    if let Some(f) = self.module.get_function(&method_fn_name) {
+                        method_fn = Some(f);
+                        break;
+                    }
+
+                    // Check parent class
+                    let parents = self.class_parents.borrow();
+                    if let Some(Some(parent_nom)) = parents.get(&current_nom) {
+                        current_nom = parent_nom.clone();
+                    } else {
+                        break;
+                    }
+                }
+
+                if let Some(method_fn) = method_fn {
+                    let cs = match self.builder.build_call(
+                        method_fn,
+                        &call_args,
+                        "class_method_call",
+                    ) {
+                        Ok(cs) => cs,
+                        Err(_) => {
+                            return Err(Box::new(
                                     Diagnostic::simple(Severity::Error, "class method call failed")
                                         .with_note(format!(
                                             "Failed to call method '{}' on class '{}'",
                                             method_name, nom
                                         ))
                                         .with_help(format!(
-                                            "Ensure the method '{}' exists in class '{}'",
+                                            "Ensure the method '{}' exists in class '{}' or its parents",
                                             method_name, nom
                                         )),
                                 ));
-                            }
-                        };
+                        }
+                    };
                     let either = cs.try_as_basic_value();
                     if let inkwell::values::ValueKind::Basic(bv) = either {
                         return Ok(bv);
@@ -669,7 +700,48 @@ impl<'a> CodeGen<'a> {
     ) -> crate::diagnostics::DiagnosticResult<inkwell::values::BasicValueEnum<'a>> {
         let fn_name = ident.name.to_string();
 
-        // Check if it's a direct function call
+        // Check symbol table for functions (including nested/mangled ones)
+        let symbol_opt = self.symbol_table.borrow().get(&fn_name).cloned();
+        if let Some(crate::types::Symbol::StdFunction {
+            mangled_name,
+            sig: _,
+        }) = symbol_opt
+            && let Some(fv) = self.module.get_function(&mangled_name)
+        {
+            let mut call_args: Vec<inkwell::values::BasicMetadataValueEnum> = Vec::new();
+            for a in &call.arguments {
+                if let Some(expr) = a.as_expression() {
+                    let val = match self.lower_expr(expr, function, param_map, locals) {
+                        Ok(v) => v,
+                        Err(d) => return Err(d)?,
+                    };
+                    call_args.push(val.into());
+                } else {
+                    return Err(Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "unsupported argument type",
+                    ))?;
+                }
+            }
+            let cs = match self.builder.build_call(fv, &call_args, "function_call") {
+                Ok(cs) => cs,
+                Err(_) => {
+                    return Err(Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "function call failed",
+                    ));
+                }
+            };
+            let either = cs.try_as_basic_value();
+            if let inkwell::values::ValueKind::Basic(bv) = either {
+                return Ok(bv);
+            } else {
+                let zero = self.f64_t.const_float(0.0);
+                return Ok(zero.as_basic_value_enum());
+            }
+        }
+
+        // Check if it's a direct function call (fallback for global functions not in symbol table)
         if let Some(fv) = self.module.get_function(&fn_name) {
             let mut call_args: Vec<inkwell::values::BasicMetadataValueEnum> = Vec::new();
             for a in &call.arguments {
@@ -710,8 +782,20 @@ impl<'a> CodeGen<'a> {
             && !call.arguments.is_empty()
             && let Some(first_arg_expr) = call.arguments[0].as_expression()
         {
-            let inferred = crate::types::infer_type(None, Some(first_arg_expr));
-            if let crate::types::OatsType::Array(elem_ty) = inferred
+            // Try to infer the type of the first argument to determine T
+            let mut inferred_opt = None;
+            if let Expression::Identifier(arg_ident) = first_arg_expr {
+                let name = arg_ident.name.to_string();
+                if let Some((_, _, _, _, _, _, oats_type)) = self.find_local(locals, &name) {
+                    inferred_opt = oats_type;
+                }
+            } else {
+                // Fallback to basic inference
+                inferred_opt = Some(crate::types::infer_type(None, Some(first_arg_expr)));
+            }
+
+            if let Some(inferred) = inferred_opt
+                && let crate::types::OatsType::Array(elem_ty) = inferred
                 && let Ok(spec_name) = self.monomorphize_function(&fn_name, &[(*elem_ty).clone()])
             {
                 if self.module.get_function(&spec_name).is_none() {

@@ -1,0 +1,14 @@
+export function main(): void {
+    function getFirstElement<T>(arr: T[]): T | undefined {
+        return arr.length > 0 ? arr[0] : undefined;
+    }
+
+    let numbers: number[] = [10, 20, 30];
+    let strings: string[] = ["a", "b", "c"];
+
+    console.log(`First number: ${getFirstElement(numbers)}`);
+    console.log(`First string: ${getFirstElement(strings)}`);
+
+    return;
+}
+

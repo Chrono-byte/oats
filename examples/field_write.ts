@@ -1,0 +1,22 @@
+export class Counter {
+    private count: number;
+
+    constructor() {
+        this.count = 0;
+    }
+
+    increment(): void {
+        this.count += 1;
+    }
+
+    getCount(): number {
+        return this.count;
+    }
+}
+
+export function main(): void {
+    let counter: Counter = new Counter();
+    counter.increment();
+    console.log(counter.getCount());
+}
+

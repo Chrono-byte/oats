@@ -1,0 +1,10 @@
+// myapp/src/main.ts
+import { add, multiply } from "mylib";
+
+export function main(): number {
+    const result: number = add(5, 3);
+    const product: number = multiply(4, 2);
+    console.log("Testing package build system");
+    return 0;
+}
+

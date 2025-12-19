@@ -1,0 +1,16 @@
+// Test nested member access
+
+export function main(): number {
+    // Test 1: Simple nested object
+    let inner: { value: number } = { value: 42 };
+    let outer: { data: { value: number } } = { data: inner };
+    
+    // This should work but currently fails
+    let result: number = outer.data.value;
+    
+    console.log("Nested access result:");
+    console.log(result);
+    
+    return 0;
+}
+

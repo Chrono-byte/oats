@@ -1,0 +1,54 @@
+// Test for cycle potential tracking
+// Classes with self-referential fields should keep cycle bit unset
+// Classes without should have cycle bit set
+
+export class AcyclicCounter {
+    private value: number;
+
+    constructor() {
+        this.value = 0;
+    }
+
+    increment(): void {
+        this.value = this.value + 1;
+    }
+
+    get(): number {
+        return this.value;
+    }
+}
+
+export class CyclicNode {
+    private next: CyclicNode | null;
+
+    constructor() {
+        this.next = null;
+    }
+
+    setNext(node: CyclicNode): void {
+        this.next = node;
+    }
+}
+
+export function test_acyclic(): number {
+    // AcyclicCounter should have cycle bit set, skip GC
+    let c: AcyclicCounter = new AcyclicCounter();
+    c.increment();
+    c.increment();
+    return c.get();
+}
+
+export function test_cyclic(): void {
+    // CyclicNode should not have cycle bit set, go through GC
+    let n1: CyclicNode = new CyclicNode();
+    let n2: CyclicNode = new CyclicNode();
+    n1.setNext(n2);
+    // Both should be collected by GC when they go out of scope
+}
+
+export function main(): void {
+    console.log(test_acyclic());  // Should print 2
+    test_cyclic();            // Should complete without error
+    return;
+}
+

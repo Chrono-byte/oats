@@ -1,0 +1,23 @@
+export function main(): void {
+    console.log("Control Flow Tests");
+
+    // Test 1: While loop
+    let i: number = 0;
+    while (i < 5) {
+        console.log("While loop iteration");
+        i = i + 1;
+    }
+
+    // Test 2: For loop
+    for (let k: number = 0; k < 10; k = k + 1) {
+        if (k == 3) {
+            console.log("Breaking at k=3");
+            break;
+        }
+        console.log("For loop iteration");
+    }
+
+    console.log("Control Flow Tests Completed");
+    return;
+}
+

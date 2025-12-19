@@ -1,0 +1,12 @@
+// main.ts - Entry point that imports from math.ts
+
+import { add, multiply } from "./math";
+
+export function main(): number {
+    const x: number = add(3, 4);
+    const y: number = multiply(2, 5);
+    const result: number = x + y;
+    console.log(result);
+    return 0;
+}
+

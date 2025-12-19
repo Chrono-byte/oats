@@ -1,0 +1,20 @@
+export class Point {
+    constructor(public x: number, public y: number) {
+    }
+
+    sum(): number {
+        return this.x + this.y;
+    }
+}
+
+export function main(): number {
+    let p: Point = new Point(1.0, 2.0);
+    let v: number = 0.0;
+
+    print_f64(p.sum());
+
+    print_f64(10);
+
+    return 1;
+}
+

@@ -1,0 +1,17 @@
+// Test basic union type functionality
+// This tests that union types are properly tracked in LocalEntry
+
+function testUnion(): void {
+    let x: number | string;
+    
+    x = 42;
+    console.log(x);  // Should print: 42
+    
+    x = "hello";
+    console.log(x);  // Should print: hello
+}
+
+export function main(): void {
+    testUnion();
+}
+

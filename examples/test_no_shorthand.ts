@@ -1,0 +1,10 @@
+// Test without shorthand
+
+export function main(): number {
+    let x_val: number = 5;
+    let y_val: number = 15;
+    let coords: { x: number, y: number } = { x: x_val, y: y_val };
+    let sum2: number = coords.x + coords.y;
+    return sum2;
+}
+

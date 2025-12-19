@@ -1,0 +1,31 @@
+export class Node {
+    parent: Node | null = null;
+    child: Node | null = null;
+
+    constructor(public name: string) {
+    }
+
+    setChild(c: Node | null) {
+        this.child = c;
+    }
+
+    setParent(p: Node | null) {
+        this.parent = p;
+    }
+}
+
+export function main(): void {
+    // Create two nodes that reference each other and then drop external refs
+    let a: Node = new Node("A");
+    let b: Node = new Node("B");
+
+    a.child = b;
+    b.parent = a;
+
+    // At function end, both `a` and `b` go out of scope and ARC leaves a cycle.
+    // Give the collector a short time to inspect nodes when run as a process.
+    sleep_ms(500.0);
+    console.log("Cycle created and function returning");
+    return;
+}
+

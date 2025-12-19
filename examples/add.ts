@@ -1,0 +1,12 @@
+function add(a: number, b: number): number {
+    return a + b;
+}
+
+export function main(): number {
+    let num: number = add(3, 5);
+
+    console.log(num);
+
+    return 0;
+}
+

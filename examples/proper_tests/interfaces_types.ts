@@ -1,0 +1,31 @@
+export function main(): void {
+    // Interface for an object
+    interface User {
+        id: number;
+        name: string;
+        isActive?: boolean;
+    }
+
+    // Type alias for a primitive or complex type
+    type Point = {
+        x: number;
+        y: number;
+    };
+
+    let user: User = {
+        id: 1,
+        name: "Bob",
+    };
+
+    let location: Point = {
+        x: 10,
+        y: 20,
+    };
+
+    // Print selected fields (printing raw objects may be unsupported)
+    console.log(`User: ${user.name} (id=${user.id})`);
+    console.log(`Location: ${location.x}, ${location.y}`);
+
+    return;
+}
+

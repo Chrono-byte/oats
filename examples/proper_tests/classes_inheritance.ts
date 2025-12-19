@@ -1,0 +1,27 @@
+export function main(): void {
+    class Animal {
+        // Public property with shorthand initialization
+        constructor(public name: string) {}
+
+        move(distanceInMeters: number = 0): void {
+            console.log(`${this.name} moved ${distanceInMeters}m.`);
+        }
+    }
+
+    class Dog extends Animal {
+        constructor(name: string) {
+            super(name);
+        }
+
+        bark(): void {
+            console.log("Woof! Woof!");
+        }
+    }
+
+    let buddy: Dog = new Dog("Buddy");
+    buddy.bark();
+    buddy.move(10);
+
+    return;
+}
+

@@ -1,0 +1,8 @@
+export function main(): number {
+    let mut j: number = 0;
+    do {
+        j = j + 1;
+    } while (j < 5);
+    return 0;
+}
+

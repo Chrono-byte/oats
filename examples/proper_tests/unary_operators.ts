@@ -1,0 +1,31 @@
+export function main(): void {
+    console.log("Unary Operators Tests");
+
+    // Test 1: Unary minus
+    let a: number = 5;
+    console.log(`Unary minus: ${-a}`);
+
+    // Test 2: Unary plus
+    let b: string = "42";
+    console.log(`Unary plus: ${+b}`);
+
+    // Test 3: Logical NOT
+    let c: boolean = true;
+    console.log(`Logical NOT: ${!c}`);
+
+    // Test 4: Bitwise NOT
+    let d: number = 5;
+    console.log(`Bitwise NOT: ${~d}`);
+
+    // Test 5: Increment
+    let e: number = 1;
+    console.log(`Increment: ${++e}`);
+
+    // Test 6: Decrement
+    let f: number = 10;
+    console.log(`Decrement: ${--f}`);
+
+    console.log("Unary Operators Tests Completed");
+    return;
+}
+

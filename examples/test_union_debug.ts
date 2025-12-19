@@ -1,0 +1,6 @@
+// Debug union printing
+export function main(): void {
+    let x: number | string = 42;
+    console.log(x);
+}
+

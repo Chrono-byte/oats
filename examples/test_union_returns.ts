@@ -1,0 +1,22 @@
+// Test function returns with unions - basic version
+export function main(): void {
+    function getNumber(): number | string {
+        return 42;
+    }
+    
+    function getString(): number | string {
+        return "hello";
+    }
+    
+    // The functions return boxed unions
+    // We can assign them to regular variables (not union-typed)
+    // and then convert/cast as needed
+    
+    // For now, just test that functions compile and return
+    let x: number | string = getNumber();
+    let y: number | string = getString();
+    
+    // Direct assignment works because the functions already return boxed values
+    console.log("Function returns test complete");
+}
+

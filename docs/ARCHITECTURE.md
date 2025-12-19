@@ -6,29 +6,28 @@ This reference summarizes the current compiler architecture, runtime object mode
 
 ## Current Implementation Status
 
-**October 18, 2025:** Oats implements a substantial language surface with the following key features:
+**October 18, 2025:** Oats implements TypeScript/JavaScript with the following key features:
 
 - **Language**: Classes, async/await, generics, unions, interfaces, enums, destructuring, template literals
 - **Types**: Full primitive set (integers, floats, char), tuples, promises, weak/unowned references
 - **Memory**: ARC with cycle collection, escape analysis for RC elimination
 - **Runtime**: C-callable with helpers for strings, arrays, RC operations
-- **Parser**: ~90.43% syntax compatibility with TypeScript (for migration purposes)
 
 ## Overview
 
-Oats is an ahead-of-time compiler that compiles the Oats language to native executables via LLVM. It targets predictable performance, a small safe runtime, and a compact language surface suitable for systems programming. The language surface and type system use syntax similar to TypeScript for familiarity; the memory model and ownership semantics are inspired by Swift's ARC (Automatic Reference Counting) adapted for a deterministic, low-level runtime.
+Oats is an ahead-of-time compiler that compiles TypeScript and JavaScript to native executables via LLVM. It targets predictable performance, a small safe runtime, and full compatibility with standard TypeScript/JavaScript. The memory model and ownership semantics are inspired by Swift's ARC (Automatic Reference Counting) adapted for a deterministic, low-level runtime.
 
 ## Design Goals
 
 - Predictable performance and memory layout for interop with native code.
 - Clear, small semantics that map well to LLVM and a C-callable runtime.
 - Safe, deterministic reference-counted memory management with weak refs and cycle collector support.
-- Developer ergonomics with familiar syntax, but trimmed for AOT compilation.
+- Developer ergonomics with full TypeScript/JavaScript compatibility.
 
 ## Source Model & Syntax
 
-- Syntax is similar to TypeScript but tailored for AOT compilation:
-  - `let` / `let mut`, `function`, `class`, `import`/`export`. Semicolons are enforced; `var` is rejected. `const` is supported as an immutable binding (preferred for values that should not change). The language also includes an explicit `let mut` form to declare mutable bindings when needed.
+- Full TypeScript/JavaScript syntax support:
+  - Standard TypeScript/JavaScript syntax including `let`, `const`, `function`, `class`, `import`/`export`, etc.
   - Source size limits apply (enforced in parser).
 - No dynamic eval. Modules are statically resolved at compile time.
 
@@ -52,18 +51,18 @@ Oats is an ahead-of-time compiler that compiles the Oats language to native exec
 ## Workspace Overview
 
 - `crates/oats` – Ahead-of-time compiler (parser, type checker, codegen).
-  - `parser.rs` – Oats language parsing via `deno_ast`.
+  - `parser.rs` – TypeScript/JavaScript parsing via `deno_ast`.
   - `types.rs` – `OatsType` representation and type inference helpers.
   - `codegen/` – LLVM IR lowering (`emit.rs`, `expr.rs`, `stmt.rs`, `helpers.rs`, `escape.rs`).
   - `builder.rs` – Entry point that wires parsing, type checking, and codegen.
 - `crates/runtime` – C-callable runtime linked into user binaries (ARC helpers, allocators, string/array primitives, logging, and the cycle collector).
-- `examples/` – Representative `.oats` programs that compile under the current language surface.
+- `examples/` – Representative TypeScript/JavaScript programs that compile.
 - `docs/` – Design references (this folder).
 
 ## Compilation Pipeline
 
 ```text
-Oats source (.oats)
+TypeScript/JavaScript source (.ts/.js/.oats)
   ↓  parser.rs (deno_ast)
 Abstract Syntax Tree (AST)
   ↓  types.rs (type checking / OatsType mapping)
@@ -170,7 +169,7 @@ Pointer rules and ARC semantics:
 
 ## Compiler Pipeline
 
-1. Parse: `deno_ast` → AST (parser enforces semicolons, rejects `var`, enforces size limits).
+1. Parse: `deno_ast` → AST (parser enforces size limits).
 2. Type check: map Oats type annotations to `OatsType`.
 3. Codegen:
    - `CodeGen` struct holds LLVM context, cached runtime function declarations, and helper types (`i8ptr_t`, `i64_t`, etc.).
@@ -184,7 +183,7 @@ Pointer rules and ARC semantics:
 ## Modules & Imports
 
 - Entry point resolves transitive imports.
-- Relative imports resolved with `.oats` extensions; directory imports try `index.oats`.
+- Relative imports resolved with standard TypeScript/JavaScript module resolution.
 - Paths are canonicalized to avoid duplicate compilation and cycles.
 - Compiled modules stored in a `HashMap<String, ParsedModule>`.
 

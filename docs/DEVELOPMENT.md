@@ -2,7 +2,7 @@
 
 ## Current Status
 
-Oats is an active AOT compiler for the Oats language with good language support. We have tests, snapshots, and fuzzing. Parser maintains ~90% syntax compatibility with TypeScript for migration purposes.
+Oats is an active AOT compiler for TypeScript/JavaScript with good language support. We have tests, snapshots, and fuzzing.
 
 ## Setup
 
@@ -322,7 +322,6 @@ The following features have been fully implemented in AST and parser:
 
 - All core TypeScript language features are now parseable
 - AST is complete for all major language constructs
-- Parser maintains ~95%+ syntax compatibility with TypeScript
 - Ready for codegen implementation of these features
 
 #### Blocked (Requires AST Changes)

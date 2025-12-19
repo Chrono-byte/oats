@@ -4,10 +4,10 @@
 [![Rust](https://img.shields.io/badge/built%20with-Rust-000000.svg?logo=rust)](https://www.rust-lang.org/)
 [![LLVM](https://img.shields.io/badge/powered%20by-LLVM%2018-262D3A.svg)](https://llvm.org/)
 
-> An Ahead-of-Time (AOT) Compiler for the Oats Language
+> An Ahead-of-Time (AOT) Compiler for TypeScript/JavaScript
 
-Oats is an experimental ahead-of-time (AOT) compiler that compiles the Oats
-language into native machine code using LLVM. It
+Oats is an experimental ahead-of-time (AOT) compiler that compiles TypeScript and JavaScript
+into native machine code using LLVM. It
 supports multi-file compilation with a package system for dependency management,
 generates standalone executables, and uses reference counting for memory
 management.

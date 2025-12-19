@@ -22,7 +22,7 @@ documentation and find what you need.
 
 ## Current Implementation Status
 
-**October 18, 2025:** Oats supports a substantial language surface including:
+**October 18, 2025:** Oats supports TypeScript/JavaScript including:
 
 - ✅ **Core language**: Functions, classes, interfaces, enums, generics, unions
 - ✅ **Async/await**: Full `async`/`await` syntax and state machine lowering

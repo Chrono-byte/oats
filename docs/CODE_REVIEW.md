@@ -5,7 +5,7 @@
 
 ## Executive Summary
 
-The Oats compiler has excellent AST and parser coverage (~95% TypeScript syntax compatibility), but there's a significant gap between what's parseable and what's codegen-ready. Many language features are fully implemented in the AST and parser but lack codegen implementations.
+The Oats compiler has excellent AST and parser coverage for TypeScript/JavaScript, but there's a significant gap between what's parseable and what's codegen-ready. Many language features are fully implemented in the AST and parser but lack codegen implementations.
 
 **Key Findings:**
 

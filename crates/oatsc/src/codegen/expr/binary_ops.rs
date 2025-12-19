@@ -88,16 +88,68 @@ impl<'a> crate::codegen::CodeGen<'a> {
         let right_origin = self.last_expr_origin_local.borrow().clone();
 
         // Handle string concatenation BEFORE numeric coercion
-        // If both operands are pointers and op is Add, treat as string concat
-        if let BinaryOperator::Addition = bin.operator
-            && let (BasicValueEnum::PointerValue(lp), BasicValueEnum::PointerValue(rp)) = (l, r)
-        {
-            if let Some(strcat) = self.module.get_function("str_concat") {
-                let call_site =
-                    match self
-                        .builder
-                        .build_call(strcat, &[lp.into(), rp.into()], "concat")
-                    {
+        // If op is Add and at least one operand is a pointer (string), treat as string concat
+        if let BinaryOperator::Addition = bin.operator {
+            // Convert numbers to strings if needed
+            // Helper to convert a numeric value (IntValue or FloatValue) to string
+            let num_to_string = |num_val: BasicValueEnum<'a>| -> crate::diagnostics::DiagnosticResult<PointerValue<'a>> {
+                let f64_val = if let Some(fv) = self.coerce_to_f64(num_val) {
+                    fv
+                } else {
+                    return Err(Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "cannot convert value to number for string conversion",
+                    ));
+                };
+                let num_to_str = self.get_number_to_string();
+                let str_call = self
+                    .builder
+                    .build_call(num_to_str, &[f64_val.into()], "num_to_str")
+                    .map_err(|_| {
+                        Diagnostic::simple_boxed(
+                            Severity::Error,
+                            "failed to convert number to string",
+                        )
+                    })?;
+                match str_call.try_as_basic_value() {
+                    inkwell::values::ValueKind::Basic(BasicValueEnum::PointerValue(p)) => Ok(p),
+                    _ => Err(Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "number_to_string returned non-pointer",
+                    )),
+                }
+            };
+
+            if let Some((left_str, right_str)) = match (l, r) {
+                (BasicValueEnum::PointerValue(lp), BasicValueEnum::PointerValue(rp)) => {
+                    // Both are already strings
+                    Some((lp, rp))
+                }
+                (BasicValueEnum::PointerValue(lp), _) => {
+                    // Left is string, right is number - convert right to string
+                    match num_to_string(r) {
+                        Ok(rp) => Some((lp, rp)),
+                        Err(e) => return Err(e),
+                    }
+                }
+                (_, BasicValueEnum::PointerValue(rp)) => {
+                    // Left is number, right is string - convert left to string
+                    match num_to_string(l) {
+                        Ok(lp) => Some((lp, rp)),
+                        Err(e) => return Err(e),
+                    }
+                }
+                _ => {
+                    // Not a string concatenation case, fall through to numeric operations below
+                    None
+                }
+            } {
+                if let Some(strcat) = self.module.get_function("str_concat") {
+                    let call_site = match self.builder.build_call(
+                        strcat,
+                        &[left_str.into(), right_str.into()],
+                        "concat",
+                    ) {
                         Ok(cs) => cs,
                         Err(_) => {
                             return Err(Diagnostic::simple_boxed(
@@ -106,41 +158,43 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             ));
                         }
                     };
-                let either = call_site.try_as_basic_value();
-                match either {
-                    inkwell::values::ValueKind::Basic(bv) => {
-                        // After creating the concatenated string, decrement
-                        // temporary operands that didn't originate from locals.
-                        if left_origin.is_none()
-                            && let Some(rc_dec_fn) = self.module.get_function("rc_dec")
-                        {
-                            let _ = self
-                                .builder
-                                .build_call(rc_dec_fn, &[lp.into()], "rc_dec_tmp_left")
-                                .ok();
+                    let either = call_site.try_as_basic_value();
+                    match either {
+                        inkwell::values::ValueKind::Basic(bv) => {
+                            // After creating the concatenated string, decrement
+                            // temporary operands that didn't originate from locals.
+                            // Also decrement any number-to-string conversions we created.
+                            if left_origin.is_none()
+                                && let Some(rc_dec_fn) = self.module.get_function("rc_dec")
+                            {
+                                let _ = self
+                                    .builder
+                                    .build_call(rc_dec_fn, &[left_str.into()], "rc_dec_tmp_left")
+                                    .ok();
+                            }
+                            if right_origin.is_none()
+                                && let Some(rc_dec_fn) = self.module.get_function("rc_dec")
+                            {
+                                let _ = self
+                                    .builder
+                                    .build_call(rc_dec_fn, &[right_str.into()], "rc_dec_tmp_right")
+                                    .ok();
+                            }
+                            return Ok(bv);
                         }
-                        if right_origin.is_none()
-                            && let Some(rc_dec_fn) = self.module.get_function("rc_dec")
-                        {
-                            let _ = self
-                                .builder
-                                .build_call(rc_dec_fn, &[rp.into()], "rc_dec_tmp_right")
-                                .ok();
+                        _ => {
+                            return Err(Diagnostic::simple_boxed(
+                                Severity::Error,
+                                "operation not supported (bin strcat result)",
+                            ));
                         }
-                        return Ok(bv);
                     }
-                    _ => {
-                        return Err(Diagnostic::simple_boxed(
-                            Severity::Error,
-                            "operation not supported (bin strcat result)",
-                        ));
-                    }
+                } else {
+                    return Err(Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "string concatenation helper `str_concat` not found",
+                    ));
                 }
-            } else {
-                return Err(Diagnostic::simple_boxed(
-                    Severity::Error,
-                    "string concatenation helper `str_concat` not found",
-                ));
             }
         }
 

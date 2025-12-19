@@ -195,8 +195,9 @@ pub fn lower_array<'a>(
         }
     };
 
-    // compute data pointer: arr_ptr points at header start; data starts after header+len
-    let header_bytes = (std::mem::size_of::<u64>() + std::mem::size_of::<u64>()) as u64;
+    // compute data pointer: arr_ptr points at header start; data starts after ARRAY_HEADER_SIZE
+    // ARRAY_HEADER_SIZE = 3 * sizeof(u64) = 24 bytes (header + length + capacity)
+    let header_bytes = (std::mem::size_of::<u64>() * 3) as u64;
 
     // Compute a pointer to the array data region (i8*) located after the header+length
     let data_ptr_i8 = codegen

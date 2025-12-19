@@ -27,15 +27,15 @@ pub struct LinkingConfig {
     pub emit_object_only: bool,
 }
 
-/// Compiles LLVM IR to an object file.
+/// Compiles LLVM IR to an object file in memory.
 ///
 /// # Arguments
 /// * `module` - LLVM module containing the IR
 /// * `config` - Linking configuration
 ///
 /// # Returns
-/// Path to the generated object file
-pub fn compile_to_object(module: &Module, config: &LinkingConfig) -> Result<String> {
+/// Bytes of the generated object file
+pub fn compile_to_object_bytes(module: &Module, config: &LinkingConfig) -> Result<Vec<u8>> {
     // Initialize native target
     Target::initialize_native(&InitializationConfig::default())
         .map_err(|e| anyhow::anyhow!("Failed to initialize LLVM target: {}", e))?;
@@ -77,6 +77,34 @@ pub fn compile_to_object(module: &Module, config: &LinkingConfig) -> Result<Stri
     let tm =
         tm.ok_or_else(|| anyhow::anyhow!("Failed to create TargetMachine with any CPU candidate"))?;
 
+    // Emit object file to memory buffer
+    let memory_buffer = tm
+        .write_to_memory_buffer(module, FileType::Object)
+        .map_err(|e| {
+            anyhow::anyhow!(
+                "TargetMachine failed to emit object file to memory: {:?}",
+                e
+            )
+        })?;
+
+    // Convert memory buffer to Vec<u8>
+    let obj_bytes = memory_buffer.as_slice().to_vec();
+
+    Ok(obj_bytes)
+}
+
+/// Compiles LLVM IR to an object file on disk.
+///
+/// # Arguments
+/// * `module` - LLVM module containing the IR
+/// * `config` - Linking configuration
+///
+/// # Returns
+/// Path to the generated object file
+pub fn compile_to_object(module: &Module, config: &LinkingConfig) -> Result<String> {
+    // Compile to bytes first
+    let obj_bytes = compile_to_object_bytes(module, config)?;
+
     // Ensure output directory exists
     std::fs::create_dir_all(&config.out_dir).map_err(|e| {
         anyhow::anyhow!(
@@ -86,16 +114,14 @@ pub fn compile_to_object(module: &Module, config: &LinkingConfig) -> Result<Stri
         )
     })?;
 
-    // Emit object file
-    let out_obj_path = Path::new(&config.out_obj);
-    tm.write_to_file(module, FileType::Object, out_obj_path)
-        .map_err(|e| {
-            anyhow::anyhow!(
-                "TargetMachine failed to emit object file {}: {:?}",
-                config.out_obj,
-                e
-            )
-        })?;
+    // Write bytes to file
+    std::fs::write(&config.out_obj, obj_bytes).map_err(|e| {
+        anyhow::anyhow!(
+            "Failed to write object file {}: {}",
+            config.out_obj,
+            e
+        )
+    })?;
 
     Ok(config.out_obj.clone())
 }

@@ -52,6 +52,14 @@ struct Cli {
     /// Emit object file only, do not link
     #[arg(long = "emit-object-only")]
     emit_object_only: bool,
+
+    /// Emit LLVM IR to .ll file
+    #[arg(long = "emit-ir")]
+    emit_ir: bool,
+
+    /// Emit object file to .o file in output directory
+    #[arg(long = "emit-obj")]
+    emit_obj: bool,
 }
 
 fn main() -> Result<()> {
@@ -63,6 +71,8 @@ fn main() -> Result<()> {
         cli.emit_object_only,
         cli.out_name,
         cli.output,
+        cli.emit_ir,
+        cli.emit_obj,
     )
 }
 
@@ -73,6 +83,8 @@ fn compile_file(
     emit_object_only: bool,
     out_name: Option<String>,
     output: Option<String>,
+    emit_ir: bool,
+    emit_obj: bool,
 ) -> Result<()> {
     // Parse --extern-oats flags
     let mut extern_map = std::collections::HashMap::new();
@@ -88,6 +100,8 @@ fn compile_file(
     options.extern_oats = extern_map;
     options.emit_object_only = emit_object_only;
     options.out_name = out_name;
+    options.emit_ir = emit_ir;
+    options.emit_obj = emit_obj;
 
     if let Some(out_path) = output {
         let path = std::path::Path::new(&out_path);

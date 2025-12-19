@@ -908,6 +908,17 @@ pub fn run_from_args(
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("out");
+    
+    // Determine if we should emit IR and object files
+    let emit_ir = options
+        .as_ref()
+        .map(|o| o.emit_ir)
+        .unwrap_or(false);
+    let emit_obj = options
+        .as_ref()
+        .map(|o| o.emit_obj)
+        .unwrap_or(false);
+    
     let out_ll = format!("{}/{}.ll", out_dir, src_filename);
     let out_exe = if let Some(ref opts) = options {
         if let Some(ref name) = opts.out_name {
@@ -920,17 +931,21 @@ pub fn run_from_args(
     } else {
         format!("{}/{}", out_dir, src_filename)
     };
+    
+    // Determine object file path (only needed if emit_obj is true or for emit_object_only)
     let out_obj = format!("{}/{}.o", out_dir, src_filename);
 
-    // Ensure output directory exists
-    if let Err(e) = std::fs::create_dir_all(&out_dir) {
+    // Ensure output directory exists (only needed if we're emitting files there)
+    if (emit_ir || emit_obj) && let Err(e) = std::fs::create_dir_all(&out_dir) {
         anyhow::bail!("failed to create output directory {}: {}", out_dir, e);
     }
 
-    // Write LLVM IR to file
-    let mut f = File::create(&out_ll)?;
-    f.write_all(ir.as_bytes())?;
-    f.sync_all()?;
+    // Write LLVM IR to file only if emit_ir is enabled
+    if emit_ir {
+        let mut f = File::create(&out_ll)?;
+        f.write_all(ir.as_bytes())?;
+        f.sync_all()?;
+    }
 
     // Determine optimization level and build profile
     let build_profile = options
@@ -1002,17 +1017,28 @@ pub fn run_from_args(
         },
     };
 
-    // Compile LLVM IR to object file
-    crate::linking::compile_to_object(&codegen.module, &linking_config)?;
+    // Compile LLVM IR to object file bytes (in memory)
+    let obj_bytes = crate::linking::compile_to_object_bytes(&codegen.module, &linking_config)?;
+
+    // If emit_obj is true, write object file to disk
+    if emit_obj {
+        std::fs::write(&out_obj, &obj_bytes).map_err(|e| {
+            anyhow::anyhow!("Failed to write object file {}: {}", out_obj, e)
+        })?;
+    }
 
     // If requested, only emit the object and skip the final host linking step.
     if linking_config.emit_object_only {
-        eprintln!(
-            "OATS_EMIT_OBJECT_ONLY set; emitted {} and skipping link",
-            out_obj
-        );
-        println!("{}", out_obj);
-        return Ok(Some(out_obj));
+        if emit_obj {
+            eprintln!(
+                "OATS_EMIT_OBJECT_ONLY set; emitted {} and skipping link",
+                out_obj
+            );
+            println!("{}", out_obj);
+        } else {
+            eprintln!("OATS_EMIT_OBJECT_ONLY set; object file compiled in memory (use --emit-obj to write to disk)");
+        }
+        return Ok(if emit_obj { Some(out_obj) } else { None });
     }
 
     // Get runtime libraries (runtime + std)
@@ -1021,9 +1047,29 @@ pub fn run_from_args(
     // Locate or compile rt_main object
     let rt_main_obj = crate::linking::locate_rt_main(&out_dir, emitted_host_main)?;
 
+    // For linking, we need the object file on disk. Write to temp file if emit_obj is false.
+    let (link_obj_path, is_temp) = if emit_obj {
+        (out_obj.clone(), false)
+    } else {
+        // Write to temporary file for linking
+        let temp_dir = std::env::temp_dir();
+        let temp_filename = format!("oatsc_{}_{}.o", src_filename, std::process::id());
+        let temp_path = temp_dir.join(temp_filename).to_string_lossy().to_string();
+        std::fs::write(&temp_path, &obj_bytes).map_err(|e| {
+            anyhow::anyhow!("Failed to write temporary object file {}: {}", temp_path, e)
+        })?;
+        (temp_path, true)
+    };
+
     // Link final executable
     let final_exe =
-        crate::linking::link_executable(&linking_config, &out_obj, &rust_libs, &rt_main_obj)?;
+        crate::linking::link_executable(&linking_config, &link_obj_path, &rust_libs, &rt_main_obj)?;
+
+    // Clean up temporary object file if we created one
+    if is_temp && let Err(e) = std::fs::remove_file(&link_obj_path) {
+        // Log but don't fail - temp files will be cleaned up eventually
+        eprintln!("Warning: Failed to remove temporary object file {}: {}", link_obj_path, e);
+    }
 
     println!("{}", final_exe);
     Ok(Some(final_exe))

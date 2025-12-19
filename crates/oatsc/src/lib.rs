@@ -46,6 +46,12 @@ pub struct CompileOptions {
     /// Whether to emit object file only (skip linking)
     pub emit_object_only: bool,
 
+    /// Whether to emit LLVM IR to .ll file
+    pub emit_ir: bool,
+
+    /// Whether to emit object file to .o file in output directory
+    pub emit_obj: bool,
+
     /// Optimization level: none, default, aggressive
     pub opt_level: Option<String>,
 
@@ -78,6 +84,8 @@ impl CompileOptions {
             out_name: None,
             linker: None,
             emit_object_only: false,
+            emit_ir: false,
+            emit_obj: false,
             opt_level: None,
             lto: None,
             target_triple: None,
@@ -99,6 +107,8 @@ impl CompileOptions {
             out_name: None,
             linker: None,
             emit_object_only: false,
+            emit_ir: false,
+            emit_obj: false,
             opt_level: None,
             lto: None,
             target_triple: None,
@@ -120,6 +130,8 @@ impl CompileOptions {
             out_name: None,
             linker: None,
             emit_object_only: true, // Package mode always emits objects
+            emit_ir: false,
+            emit_obj: false,
             opt_level: None,
             lto: None,
             target_triple: None,

@@ -210,6 +210,35 @@ impl<'a> super::CodeGen<'a> {
     /// - `PointerValue` -> attempt to `union_unbox_f64` (unbox boxed union)
     ///
     /// Returns `None` when coercion isn't possible.
+    /// Convert a string object pointer to a data pointer.
+    ///
+    /// Oats strings are stored as objects with a 16-byte header (8 bytes header + 8 bytes length).
+    /// Field loads return object pointers (offset 0), but functions like `str_concat` and
+    /// `console.log` need data pointers (offset 16).
+    ///
+    /// This function adds 16 bytes to convert from object pointer to data pointer.
+    /// Note: Only use this when you know the pointer is an object pointer (e.g., from field loads).
+    /// String literals and runtime functions already return data pointers.
+    pub(crate) fn string_obj_ptr_to_data_ptr(
+        &self,
+        obj_ptr: inkwell::values::PointerValue<'a>,
+    ) -> crate::diagnostics::DiagnosticResult<inkwell::values::PointerValue<'a>> {
+        let header_offset = self.i64_t.const_int(16, false);
+        let ptr_int = self
+            .builder
+            .build_ptr_to_int(obj_ptr, self.i64_t, "str_obj_int")
+            .map_err(|_| Diagnostic::error("LLVM builder error"))?;
+        let data_ptr_int = self
+            .builder
+            .build_int_add(ptr_int, header_offset, "str_data_int")
+            .map_err(|_| Diagnostic::error("LLVM builder error"))?;
+        let data_ptr = self
+            .builder
+            .build_int_to_ptr(data_ptr_int, self.i8ptr_t, "str_data_ptr")
+            .map_err(|_| Diagnostic::error("LLVM builder error"))?;
+        Ok(data_ptr)
+    }
+
     pub(crate) fn coerce_to_f64(
         &self,
         val: inkwell::values::BasicValueEnum<'a>,

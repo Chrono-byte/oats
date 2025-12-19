@@ -349,15 +349,15 @@ impl<'a> CodeGen<'a> {
             let arg_val = self.lower_expr(expr, function, param_map, locals)?;
 
             match arg_val {
-                BasicValueEnum::PointerValue(_) => {
-                    // String or pointer - use string version
+                BasicValueEnum::PointerValue(pv) => {
+                    // String or pointer - pv is already a data pointer (offset +16 from object base)
+                    // String literals, str_concat, and number_to_string all return data pointers
+                    // oats_std_console_log expects a pointer to the actual string data
                     if let Some(fv) = self
                         .module
                         .get_function(crate::runtime_functions::names::STD_CONSOLE_LOG)
                     {
-                        let _ = self
-                            .builder
-                            .build_call(fv, &[arg_val.into()], "console_log");
+                        let _ = self.builder.build_call(fv, &[pv.into()], "console_log");
                         return Ok(self.f64_t.const_float(0.0).as_basic_value_enum());
                     } else {
                         return Err(Diagnostic::simple_with_span_boxed(
@@ -475,6 +475,9 @@ impl<'a> CodeGen<'a> {
                 }
             };
 
+            // str_ptr is already a data pointer (offset +16 from object base)
+            // String literals, str_concat, and number_to_string all return data pointers
+            // oats_std_console_log expects a pointer to the actual string data
             if let Some(fv) = self
                 .module
                 .get_function(crate::runtime_functions::names::STD_CONSOLE_LOG)

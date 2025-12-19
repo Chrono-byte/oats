@@ -467,16 +467,101 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         }
                     }
                     _ => {
-                        let _ = self.builder.build_store(field_ptr_cast, param_val);
+                        // For string fields, parameters come as data pointers (offset +16)
+                        // but we need to store object pointers (offset 0) for RC operations
+                        let store_val = if matches!(_field_type, OatsType::String)
+                            && param_val.get_type().is_pointer_type()
+                            && let inkwell::values::BasicValueEnum::PointerValue(data_ptr) =
+                                param_val
+                        {
+                            // Convert data pointer to object pointer (subtract 16)
+                            let header_offset = self.i64_t.const_int(16, false);
+                            let data_ptr_int = self
+                                .builder
+                                .build_ptr_to_int(data_ptr, self.i64_t, "data_ptr_int")
+                                .map_err(|_| {
+                                    crate::diagnostics::Diagnostic::simple_boxed(
+                                        Severity::Error,
+                                        "ptr_to_int failed",
+                                    )
+                                })?;
+                            let obj_ptr_int = self
+                                .builder
+                                .build_int_sub(data_ptr_int, header_offset, "obj_ptr_int")
+                                .map_err(|_| {
+                                    crate::diagnostics::Diagnostic::simple_boxed(
+                                        Severity::Error,
+                                        "int_sub failed",
+                                    )
+                                })?;
+                            let obj_ptr = self
+                                .builder
+                                .build_int_to_ptr(obj_ptr_int, self.i8ptr_t, "obj_ptr")
+                                .map_err(|_| {
+                                    crate::diagnostics::Diagnostic::simple_boxed(
+                                        Severity::Error,
+                                        "int_to_ptr failed",
+                                    )
+                                })?;
+                            obj_ptr.as_basic_value_enum()
+                        } else {
+                            param_val
+                        };
+
+                        let _ = self.builder.build_store(field_ptr_cast, store_val);
 
                         if param_val.get_type().is_pointer_type() {
+                            // For RC operations, we need the object pointer
+                            // If we converted data_ptr to obj_ptr above, use obj_ptr for RC
+                            let rc_ptr = if matches!(_field_type, OatsType::String)
+                                && let inkwell::values::BasicValueEnum::PointerValue(data_ptr) =
+                                    param_val
+                            {
+                                let header_offset = self.i64_t.const_int(16, false);
+                                let data_ptr_int = self
+                                    .builder
+                                    .build_ptr_to_int(data_ptr, self.i64_t, "data_ptr_int_rc")
+                                    .map_err(|_| {
+                                        crate::diagnostics::Diagnostic::simple_boxed(
+                                            Severity::Error,
+                                            "ptr_to_int failed",
+                                        )
+                                    })?;
+                                let obj_ptr_int = self
+                                    .builder
+                                    .build_int_sub(data_ptr_int, header_offset, "obj_ptr_int_rc")
+                                    .map_err(|_| {
+                                        crate::diagnostics::Diagnostic::simple_boxed(
+                                            Severity::Error,
+                                            "int_sub failed",
+                                        )
+                                    })?;
+                                self.builder
+                                    .build_int_to_ptr(obj_ptr_int, self.i8ptr_t, "obj_ptr_rc")
+                                    .map_err(|_| {
+                                        crate::diagnostics::Diagnostic::simple_boxed(
+                                            Severity::Error,
+                                            "int_to_ptr failed",
+                                        )
+                                    })?
+                            } else if let inkwell::values::BasicValueEnum::PointerValue(pv) =
+                                param_val
+                            {
+                                pv
+                            } else {
+                                return Err(crate::diagnostics::Diagnostic::simple_boxed(
+                                    Severity::Error,
+                                    "expected pointer value for RC operation",
+                                ));
+                            };
+
                             // If the declared field type is Weak<T>, use rc_weak_inc; otherwise rc_inc
                             match _field_type {
                                 OatsType::Weak(_) => {
                                     let rc_weak_inc = self.get_rc_weak_inc();
                                     let _ = self.builder.build_call(
                                         rc_weak_inc,
-                                        &[param_val.into()],
+                                        &[rc_ptr.into()],
                                         "rc_weak_inc_field",
                                     );
                                 }
@@ -484,7 +569,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     let rc_inc_fn = self.get_rc_inc();
                                     let _ = self.builder.build_call(
                                         rc_inc_fn,
-                                        &[param_val.into()],
+                                        &[rc_ptr.into()],
                                         "rc_inc_field",
                                     );
                                 }

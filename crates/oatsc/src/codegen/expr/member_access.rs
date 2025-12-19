@@ -641,8 +641,61 @@ impl<'a> CodeGen<'a> {
                                         })?;
                                     return Ok(loaded.as_basic_value_enum());
                                 }
-                                crate::types::OatsType::String
-                                | crate::types::OatsType::NominalStruct(_)
+                                crate::types::OatsType::String => {
+                                    // String fields store object pointers, but we need to return data pointers
+                                    // for compatibility with str_concat and console.log
+                                    let slot_ptr_ty =
+                                        self.context.ptr_type(AddressSpace::default());
+                                    let slot_ptr = self
+                                        .builder
+                                        .build_pointer_cast(gep_ptr, slot_ptr_ty, "slot_ptr_cast")
+                                        .map_err(|_| {
+                                            Diagnostic::simple_boxed(
+                                                Severity::Error,
+                                                "operation failed",
+                                            )
+                                        })?;
+                                    // load slot (an i8* object pointer)
+                                    let loaded = self
+                                        .builder
+                                        .build_load(self.i8ptr_t, slot_ptr, "field_load")
+                                        .map_err(|_| {
+                                            Diagnostic::simple_boxed(
+                                                Severity::Error,
+                                                "operation failed",
+                                            )
+                                        })?;
+                                    // Convert object pointer to data pointer (add 16 bytes)
+                                    if let BasicValueEnum::PointerValue(obj_ptr) = loaded {
+                                        let data_ptr = self
+                                            .string_obj_ptr_to_data_ptr(obj_ptr)
+                                            .map_err(|_| {
+                                                Diagnostic::simple_boxed(
+                                                    Severity::Error,
+                                                    "failed to convert string pointer",
+                                                )
+                                            })?;
+                                        // If the object expression had an origin marker,
+                                        // check for a synthetic mapping for this object's field
+                                        if let Some(obj_orig) =
+                                            self.last_expr_origin_local.borrow().clone()
+                                        {
+                                            let field_key = format!("{}.{}", obj_orig, field_name);
+                                            if self
+                                                .closure_local_rettype
+                                                .borrow()
+                                                .contains_key(&field_key)
+                                            {
+                                                self.last_expr_origin_local
+                                                    .borrow_mut()
+                                                    .replace(field_key);
+                                            }
+                                        }
+                                        return Ok(data_ptr.as_basic_value_enum());
+                                    }
+                                    return Ok(loaded.as_basic_value_enum());
+                                }
+                                crate::types::OatsType::NominalStruct(_)
                                 | crate::types::OatsType::Array(_) => {
                                     // Cast to pointer type and load
                                     let slot_ptr_ty =

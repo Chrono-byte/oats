@@ -22,7 +22,6 @@ pub mod path;
 pub mod process;
 pub mod random;
 pub mod string;
-pub mod temporal;
 pub mod time;
 
 // Re-export commonly used types

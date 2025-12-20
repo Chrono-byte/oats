@@ -379,43 +379,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     // Handle class declarations
                     self.gen_class_ir(c, prefix)?;
                 }
-                Statement::TSInterfaceDeclaration(interface) => {
-                    let interface_name = interface.id.name.to_string();
-                    let mangled_name = format!("{}_{}", prefix, interface_name);
-
-                    // Register in symbol table
-                    self.symbol_table
-                        .borrow_mut()
-                        .insert_type(interface_name.clone(), mangled_name.clone());
-
-                    // Extract interface properties and their types
-                    let mut interface_props: Vec<(String, crate::types::OatsType)> = Vec::new();
-                    for member in &interface.body.body {
-                        if let oxc_ast::ast::TSSignature::TSPropertySignature(prop) = member {
-                            let prop_name = match &prop.key {
-                                oxc_ast::ast::PropertyKey::StaticIdentifier(ident) => {
-                                    ident.name.to_string()
-                                }
-                                oxc_ast::ast::PropertyKey::Identifier(ident) => {
-                                    ident.name.to_string()
-                                }
-                                oxc_ast::ast::PropertyKey::StringLiteral(s) => s.value.to_string(),
-                                _ => continue,
-                            };
-                            if let Some(type_ann) = &prop.type_annotation
-                                && let Some(oats_type) = crate::types::map_ts_type_with_aliases(
-                                    &type_ann.type_annotation,
-                                    Some(&*self.type_aliases.borrow()),
-                                    Some(&*self.symbol_table.borrow()),
-                                )
-                            {
-                                interface_props.push((prop_name, oats_type));
-                            }
-                        }
-                    }
-                    self.interface_fields
-                        .borrow_mut()
-                        .insert(mangled_name, interface_props);
+                Statement::TSInterfaceDeclaration(_interface) => {
+                    // Skip interfaces in gen_nested_decls - they should only be processed
+                    // at the top level in builder.rs. Processing them here would create
+                    // mangled names (e.g., "printPoint_Point") that don't match lookups
+                    // which use the unmangled name ("Point").
+                    // Top-level interfaces are handled in builder.rs before function codegen.
                 }
                 Statement::TSTypeAliasDeclaration(ta) => {
                     let alias_name = ta.id.name.to_string();

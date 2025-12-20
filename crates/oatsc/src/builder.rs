@@ -539,27 +539,88 @@ pub fn run_from_args(
         // for potential future type checking passes.
         if let Statement::TSInterfaceDeclaration(interface) = stmt {
             let interface_name = interface.id.name.to_string();
+            // For top-level interfaces, use the interface name as both key and mangled name
+            // (no prefix needed for top-level declarations)
+            let mangled_name = interface_name.clone();
+
+            // Register in symbol table so parameter types can resolve to this interface
+            codegen
+                .symbol_table
+                .borrow_mut()
+                .insert_type(interface_name.clone(), mangled_name.clone());
 
             // Extract interface properties and their types
             let mut interface_props: Vec<(String, crate::types::OatsType)> = Vec::new();
 
-            for member in &interface.body.body {
+            // Log to file instead of stderr to avoid suppression
+            let log_path = "/home/chrono/Dev/oats/.cursor/debug.log";
+            let _ = std::fs::OpenOptions::new().create(true).append(true).open(log_path).and_then(|mut f| {
+                writeln!(f, r#"{{"id":"log_{}","timestamp":{},"location":"builder.rs:555","message":"processing interface","data":{{"interface_name":"{}","body_len":{}}},"sessionId":"debug-session","runId":"run1","hypothesisId":"K"}}"#,
+                    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+                    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis(),
+                    interface_name, interface.body.body.len())
+            });
+
+            for (idx, member) in interface.body.body.iter().enumerate() {
+                let _ = std::fs::OpenOptions::new().create(true).append(true).open(log_path).and_then(|mut f| {
+                    writeln!(f, r#"{{"id":"log_{}","timestamp":{},"location":"builder.rs:560","message":"member type","data":{{"idx":{},"discriminant":"{:?}"}},"sessionId":"debug-session","runId":"run1","hypothesisId":"K"}}"#,
+                        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+                        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis(),
+                        idx, std::mem::discriminant(member))
+                });
                 match member {
                     oxc_ast::ast::TSSignature::TSPropertySignature(prop) => {
+                        let _ = std::fs::OpenOptions::new().create(true).append(true).open(log_path).and_then(|mut f| {
+                            writeln!(f, r#"{{"id":"log_{}","timestamp":{},"location":"builder.rs:562","message":"found property signature","data":{{"key_discriminant":"{:?}"}},"sessionId":"debug-session","runId":"run1","hypothesisId":"K"}}"#,
+                                std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+                                std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis(),
+                                std::mem::discriminant(&prop.key))
+                        });
                         // Extract property name
                         let prop_name = match &prop.key {
-                            oxc_ast::ast::PropertyKey::Identifier(ident) => ident.name.to_string(),
+                            oxc_ast::ast::PropertyKey::StaticIdentifier(ident) => {
+                                ident.name.to_string()
+                            }
+                            oxc_ast::ast::PropertyKey::Identifier(ident) => {
+                                ident.name.to_string()
+                            }
                             oxc_ast::ast::PropertyKey::StringLiteral(s) => s.value.to_string(),
-                            _ => continue, // Skip computed keys for now
+                            _ => {
+                                eprintln!("DEBUG: Skipped property key type: {:?}", std::mem::discriminant(&prop.key));
+                                continue; // Skip computed keys for now
+                            }
                         };
+
+                        let _ = std::fs::OpenOptions::new().create(true).append(true).open(log_path).and_then(|mut f| {
+                            writeln!(f, r#"{{"id":"log_{}","timestamp":{},"location":"builder.rs:576","message":"property name extracted","data":{{"prop_name":"{}","has_type_ann":{}}},"sessionId":"debug-session","runId":"run1","hypothesisId":"K"}}"#,
+                                std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+                                std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis(),
+                                prop_name, prop.type_annotation.is_some())
+                        });
 
                         // Extract property type
                         if let Some(type_ann) = &prop.type_annotation {
-                            // Convert TSType to OatsType
-                            if let Some(oats_type) =
-                                crate::types::map_ts_type(&type_ann.type_annotation)
-                            {
-                                interface_props.push((prop_name, oats_type));
+                            // Convert TSType to OatsType - use map_ts_type_with_aliases to support
+                            // type aliases and symbol table lookups (needed for interface types)
+                            let oats_type_opt = crate::types::map_ts_type_with_aliases(
+                                &type_ann.type_annotation,
+                                Some(&*codegen.type_aliases.borrow()),
+                                Some(&*codegen.symbol_table.borrow()),
+                            );
+                            let _ = std::fs::OpenOptions::new().create(true).append(true).open(log_path).and_then(|mut f| {
+                                writeln!(f, r#"{{"id":"log_{}","timestamp":{},"location":"builder.rs:587","message":"type mapping","data":{{"prop_name":"{}","oats_type_some":{}}},"sessionId":"debug-session","runId":"run1","hypothesisId":"K"}}"#,
+                                    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+                                    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis(),
+                                    prop_name, oats_type_opt.is_some())
+                            });
+                            if let Some(oats_type) = oats_type_opt {
+                                let _ = std::fs::OpenOptions::new().create(true).append(true).open(log_path).and_then(|mut f| {
+                                    writeln!(f, r#"{{"id":"log_{}","timestamp":{},"location":"builder.rs:590","message":"adding property","data":{{"prop_name":"{}"}},"sessionId":"debug-session","runId":"run1","hypothesisId":"K"}}"#,
+                                        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+                                        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis(),
+                                        prop_name)
+                                });
+                                interface_props.push((prop_name.clone(), oats_type.clone()));
                             }
                             // Skip properties with unsupported types
                         }
@@ -571,11 +632,18 @@ pub fn run_from_args(
                 }
             }
 
-            // Store interface metadata
+            let _ = std::fs::OpenOptions::new().create(true).append(true).open(log_path).and_then(|mut f| {
+                writeln!(f, r#"{{"id":"log_{}","timestamp":{},"location":"builder.rs:604","message":"interface final","data":{{"interface_name":"{}","props_count":{}}},"sessionId":"debug-session","runId":"run1","hypothesisId":"K"}}"#,
+                    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+                    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis(),
+                    interface_name, interface_props.len())
+            });
+
+            // Store interface metadata with mangled name (same as interface_name for top-level)
             codegen
                 .interface_fields
                 .borrow_mut()
-                .insert(interface_name, interface_props);
+                .insert(mangled_name, interface_props);
         }
 
         // Handle namespace declarations: `namespace Name { ... }`

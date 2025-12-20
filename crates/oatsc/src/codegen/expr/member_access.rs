@@ -469,8 +469,8 @@ impl<'a> CodeGen<'a> {
                         return Ok(loaded.as_basic_value_enum());
                     }
                 }
-                if let Ok(BasicValueEnum::PointerValue(obj_ptr)) =
-                    self.lower_expr(&static_member.object, function, param_map, locals)
+                let lower_result = self.lower_expr(&static_member.object, function, param_map, locals);
+                if let Ok(BasicValueEnum::PointerValue(obj_ptr)) = lower_result
                 {
                     // Determine nominal class name if obj is the `this` parameter
                     // or if function param types carry nominal info.
@@ -573,9 +573,10 @@ impl<'a> CodeGen<'a> {
                         // Lookup field list for this class or interface
                         let fields_borrow = self.class_fields.borrow();
                         let interface_borrow = self.interface_fields.borrow();
-                        fields_borrow
-                            .get(&class_name)
-                            .or_else(|| interface_borrow.get(&class_name))
+                        let class_result = fields_borrow.get(&class_name);
+                        let interface_result = interface_borrow.get(&class_name);
+                        class_result
+                            .or(interface_result)
                             .cloned()
                     } else {
                         struct_literal_fields

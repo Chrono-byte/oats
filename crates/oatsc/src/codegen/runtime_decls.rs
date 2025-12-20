@@ -16,7 +16,6 @@ impl<'a> CodeGen<'a> {
     pub fn declare_libc(&self) {
         self.declare_libc_functions();
         self.declare_print_functions();
-        self.declare_temporal_functions();
         self.declare_process_functions();
     }
 
@@ -110,43 +109,6 @@ impl<'a> CodeGen<'a> {
 
         // declare print_newline() -> void
         self.declare_function_if_missing("print_newline", &[], None, |_| {});
-    }
-
-    fn declare_temporal_functions(&self) {
-        self.declare_function_if_missing(
-            "oats_std_temporal_now",
-            &[],
-            Some(self.i8ptr_t.into()),
-            |_| {},
-        );
-
-        self.declare_function_if_missing(
-            "oats_std_temporal_now_instant",
-            &[],
-            Some(self.i8ptr_t.into()),
-            |_| {},
-        );
-
-        self.declare_function_if_missing(
-            "oats_std_temporal_instant_from_epoch_nanoseconds",
-            &[self.i64_t.into()],
-            Some(self.i8ptr_t.into()),
-            |_| {},
-        );
-
-        self.declare_function_if_missing(
-            "oats_std_temporal_instant_epoch_nanoseconds",
-            &[self.i8ptr_t.into()],
-            Some(self.i64_t.into()),
-            |_| {},
-        );
-
-        self.declare_function_if_missing(
-            "oats_std_temporal_instant_add",
-            &[self.i8ptr_t.into(), self.i64_t.into()],
-            Some(self.i8ptr_t.into()),
-            |_| {},
-        );
     }
 
     fn declare_process_functions(&self) {

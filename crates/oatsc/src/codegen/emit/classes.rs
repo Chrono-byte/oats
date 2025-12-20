@@ -163,6 +163,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
             self.gen_constructor_ir(&class_name, ctor, &fields, None)?;
 
             *self.current_class_parent.borrow_mut() = old_parent;
+        } else {
+            // Generate default constructor for classes without explicit constructors
+            // This allows `new ClassName()` to work even when no constructor is defined
+            self.gen_default_constructor_ir(&class_name, &fields)?;
         }
 
         Ok(())

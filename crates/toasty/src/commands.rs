@@ -4,6 +4,7 @@
 
 use atty::Stream as AtStream;
 use colored::Colorize;
+use std::io::Write;
 use std::path::PathBuf;
 
 use crate::build;
@@ -420,6 +421,11 @@ pub fn handle_run(
         Err(_) => ".".to_string(),
     };
 
+    // Ensure output directory exists
+    std::fs::create_dir_all(&out_dir).map_err(|e| {
+        ToastyError::other(format!("Failed to create output directory {}: {}", out_dir, e))
+    })?;
+
     // Build compile options with all discovered modules
     let mut all_src_files: Vec<String> = modules.keys().cloned().collect();
     // Ensure the entry point is first
@@ -430,7 +436,6 @@ pub fn handle_run(
     let mut options = CompileOptions::with_modules(entry_point);
     options.out_name = out_name.clone();
     options.out_dir = Some(out_dir.clone());
-
     let _build_res = compiler::invoke_oatsc(&options)?;
     let src_filename = std::path::Path::new(&src_file)
         .file_stem()
@@ -464,9 +469,13 @@ pub fn handle_run(
     if !quiet && (verbose || cfg!(debug_assertions)) {
         eprintln!("{}", format!("Running `{}`", out_exe).green());
     }
-
-    let status = cmd.status()?;
-    if !status.success() {
+    let output = cmd.output()?;
+    
+    // Forward stdout and stderr from the executed program
+    std::io::stdout().write_all(&output.stdout)?;
+    std::io::stderr().write_all(&output.stderr)?;
+    
+    if !output.status.success() {
         return Err(ToastyError::other(
             "Executed program returned non-zero exit code",
         ));

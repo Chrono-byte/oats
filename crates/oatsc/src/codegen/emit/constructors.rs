@@ -178,25 +178,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
         let init_entry = self.context.append_basic_block(init_f, "entry");
         self.builder.position_at_end(init_entry);
 
-        // Merge constructor parameter properties (TS shorthand `constructor(public x: T)`) into
-        // the effective field list so they become true object fields even if not
-        // listed in the declared `fields` slice passed in. This ensures the
-        // constructor will allocate storage and initialize those fields.
-        let mut combined_fields: Vec<(String, crate::types::OatsType)> = fields.to_vec();
-        // Detect parameter properties by comparing the ctor param list. We
-        // previously collected `param_names` and `param_types_vec`; reconstruct
-        // which params were declared as `TsParamProp` by checking the AST again
-        // (ctor.params). For simplicity, if a parameter name matches an
-        // existing field we leave it alone; otherwise append it.
-        for (i, pname) in param_names.iter().enumerate() {
-            // If the pname is already a declared field, skip
-            if combined_fields.iter().any(|(n, _)| n == pname) {
-                continue;
-            }
-            // Otherwise, this parameter becomes a field (TS param-property)
-            // and we use the resolved parameter type as its field type.
-            combined_fields.push((pname.clone(), param_types_vec[i].clone()));
-        }
+        // Use the fields as-is from class_fields to ensure consistent ordering
+        // with member access. The fields parameter already includes constructor
+        // parameter properties added in gen_class_ir, so we don't need to merge again.
+        // This ensures field indices match between storage (constructor) and access (member).
+        let combined_fields: Vec<(String, crate::types::OatsType)> = fields.to_vec();
 
         // Layout: [ header (8) | metadata ptr (8) | field0 (8) | field1 (8) | ... ]
         // Reserve an 8-byte metadata slot immediately after the header so the
@@ -205,36 +191,6 @@ impl<'a> crate::codegen::CodeGen<'a> {
         let meta_slot = 8u64; // metadata pointer word after header
         let field_count = combined_fields.len();
         let total_size = header_size + meta_slot + (field_count as u64 * 8);
-
-        let malloc_fn = self.get_malloc();
-        let size_const = self.i64_t.const_int(total_size, false);
-        let call_site = self
-            .builder
-            .build_call(malloc_fn, &[size_const.into()], "call_malloc")
-            .map_err(|_| {
-                crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "build_call failed")
-            })?;
-        let malloc_ret = match extract_basic_value_from_valuekind(call_site.try_as_basic_value()) {
-            Some(bv) => bv.into_pointer_value(),
-            None => {
-                return Err(crate::diagnostics::Diagnostic::simple_boxed(
-                    Severity::Error,
-                    "malloc call did not return a value",
-                ));
-            }
-        };
-
-        // Set header with cycle bit
-        let header_ptr = self
-            .builder
-            .build_pointer_cast(malloc_ret, self.i8ptr_t, "hdr_ptr")
-            .map_err(|_| {
-                crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "pointer cast failed")
-            })?;
-        let type_tag_val = 2u64 << 49;
-        let cycle_bit = if can_form_cycles { 0 } else { 1u64 << 48 };
-        let header_val = self.i64_t.const_int(type_tag_val | cycle_bit | 1u64, false);
-        let _ = self.builder.build_store(header_ptr, header_val);
 
         // For the init function, `this` is the first parameter; set up locals and store params
         let mut locals: LocalsStackLocal = vec![];
@@ -246,6 +202,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 "missing `this` parameter for init",
             )
         })?;
+        let this_ptr_val = this_param.into_pointer_value();
         let this_alloca = self
             .builder
             .build_alloca(self.i8ptr_t, "this")
@@ -256,6 +213,18 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 )
             })?;
         let _ = self.builder.build_store(this_alloca, this_param);
+
+        // Set header with cycle bit on the passed-in this object
+        let header_ptr = self
+            .builder
+            .build_pointer_cast(this_ptr_val, self.i8ptr_t, "hdr_ptr")
+            .map_err(|_| {
+                crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "pointer cast failed")
+            })?;
+        let type_tag_val = 2u64 << 49;
+        let cycle_bit = if can_form_cycles { 0 } else { 1u64 << 48 };
+        let header_val = self.i64_t.const_int(type_tag_val | cycle_bit | 1u64, false);
+        let _ = self.builder.build_store(header_ptr, header_val);
         scope.insert(
             "this".to_string(),
             (
@@ -274,7 +243,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             let field_offset = header_size + meta_slot + (field_idx as u64 * 8);
             let obj_ptr_int = self
                 .builder
-                .build_ptr_to_int(malloc_ret, self.i64_t, "obj_addr_for_zero")
+                .build_ptr_to_int(this_ptr_val, self.i64_t, "obj_addr_for_zero")
                 .map_err(|_| {
                     crate::diagnostics::Diagnostic::simple_boxed(
                         Severity::Error,
@@ -366,7 +335,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 let field_offset = header_size + meta_slot + (field_idx as u64 * 8);
                 let field_ptr_int = self
                     .builder
-                    .build_ptr_to_int(malloc_ret, self.i64_t, "obj_addr")
+                    .build_ptr_to_int(this_ptr_val, self.i64_t, "obj_addr")
                     .map_err(|_| {
                         crate::diagnostics::Diagnostic::simple_boxed(
                             Severity::Error,
@@ -471,39 +440,46 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         // but we need to store object pointers (offset 0) for RC operations
                         let store_val = if matches!(_field_type, OatsType::String)
                             && param_val.get_type().is_pointer_type()
-                            && let inkwell::values::BasicValueEnum::PointerValue(data_ptr) =
-                                param_val
                         {
-                            // Convert data pointer to object pointer (subtract 16)
-                            let header_offset = self.i64_t.const_int(16, false);
-                            let data_ptr_int = self
-                                .builder
-                                .build_ptr_to_int(data_ptr, self.i64_t, "data_ptr_int")
-                                .map_err(|_| {
-                                    crate::diagnostics::Diagnostic::simple_boxed(
-                                        Severity::Error,
-                                        "ptr_to_int failed",
-                                    )
-                                })?;
-                            let obj_ptr_int = self
-                                .builder
-                                .build_int_sub(data_ptr_int, header_offset, "obj_ptr_int")
-                                .map_err(|_| {
-                                    crate::diagnostics::Diagnostic::simple_boxed(
-                                        Severity::Error,
-                                        "int_sub failed",
-                                    )
-                                })?;
-                            let obj_ptr = self
-                                .builder
-                                .build_int_to_ptr(obj_ptr_int, self.i8ptr_t, "obj_ptr")
-                                .map_err(|_| {
-                                    crate::diagnostics::Diagnostic::simple_boxed(
-                                        Severity::Error,
-                                        "int_to_ptr failed",
-                                    )
-                                })?;
-                            obj_ptr.as_basic_value_enum()
+                            // Try to extract pointer value - param_val should be a PointerValue for strings
+                            match param_val {
+                                inkwell::values::BasicValueEnum::PointerValue(data_ptr) => {
+                                    // Convert data pointer to object pointer (subtract 16)
+                                    let header_offset = self.i64_t.const_int(16, false);
+                                    let data_ptr_int = self
+                                        .builder
+                                        .build_ptr_to_int(data_ptr, self.i64_t, "data_ptr_int")
+                                        .map_err(|_| {
+                                            crate::diagnostics::Diagnostic::simple_boxed(
+                                                Severity::Error,
+                                                "ptr_to_int failed",
+                                            )
+                                        })?;
+                                    let obj_ptr_int = self
+                                        .builder
+                                        .build_int_sub(data_ptr_int, header_offset, "obj_ptr_int")
+                                        .map_err(|_| {
+                                            crate::diagnostics::Diagnostic::simple_boxed(
+                                                Severity::Error,
+                                                "int_sub failed",
+                                            )
+                                        })?;
+                                    let obj_ptr = self
+                                        .builder
+                                        .build_int_to_ptr(obj_ptr_int, self.i8ptr_t, "obj_ptr")
+                                        .map_err(|_| {
+                                            crate::diagnostics::Diagnostic::simple_boxed(
+                                                Severity::Error,
+                                                "int_to_ptr failed",
+                                            )
+                                        })?;
+                                    obj_ptr.as_basic_value_enum()
+                                }
+                                _ => {
+                                    // Fallback: use param_val as-is (shouldn't happen for strings)
+                                    param_val
+                                }
+                            }
                         } else {
                             param_val
                         };
@@ -656,10 +632,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         self.builder
                             .build_pointer_cast(gv_ptr, self.i8ptr_t, "field_map_i8ptr")
                     {
-                        // compute field slot address: ptr_to_int(malloc_ret) + 8 -> int_to_ptr(i8*)
+                        // compute field slot address: ptr_to_int(this_ptr_val) + 8 -> int_to_ptr(i8*)
                         let obj_ptr_int = self
                             .builder
-                            .build_ptr_to_int(malloc_ret, self.i64_t, "obj_addr_for_meta")
+                            .build_ptr_to_int(this_ptr_val, self.i64_t, "obj_addr_for_meta")
                             .map_err(|_| {
                                 crate::diagnostics::Diagnostic::simple_boxed(
                                     Severity::Error,
@@ -850,6 +826,236 @@ impl<'a> crate::codegen::CodeGen<'a> {
             let null_ptr = self.i8ptr_t.const_null().as_basic_value_enum();
             let _ = self.builder.build_return(Some(&null_ptr));
         }
+
+        Ok(())
+    }
+
+    /// Generate a default constructor for a class without an explicit constructor.
+    /// This allows `new ClassName()` to work even when no constructor is defined.
+    pub fn gen_default_constructor_ir(
+        &self,
+        class_name: &str,
+        fields: &[(String, crate::types::OatsType)],
+    ) -> crate::diagnostics::DiagnosticResult<()> {
+        use crate::types::OatsType;
+
+        // Check if this class can form reference cycles
+        let can_form_cycles = fields.iter().any(|(_, field_type)| {
+            matches!(field_type, OatsType::NominalStruct(name) if name == class_name)
+        });
+
+        let fname = format!("{}_ctor", class_name);
+        let init_name = format!("{}_init", class_name);
+
+        // Layout: [ header (8) | metadata ptr (8) | field0 (8) | field1 (8) | ... ]
+        let header_size = 8u64;
+        let meta_slot = 8u64;
+        let field_count = fields.len();
+        let total_size = header_size + meta_slot + (field_count as u64 * 8);
+
+        // Create init function: takes `this` parameter, initializes object
+        let init_param_types = vec![self.i8ptr_t.into()];
+        let init_fn_ty = self.i8ptr_t.fn_type(&init_param_types, false);
+        let init_f = self.module.add_function(&init_name, init_fn_ty, None);
+
+        // Create public constructor: takes no parameters, allocates and calls init
+        let ctor_fn_ty = self.i8ptr_t.fn_type(&[], false);
+        let ctor_f = self.module.add_function(&fname, ctor_fn_ty, None);
+
+        // Emit init function body
+        let init_entry = self.context.append_basic_block(init_f, "entry");
+        self.builder.position_at_end(init_entry);
+
+        let this_param = init_f.get_nth_param(0).ok_or_else(|| {
+            crate::diagnostics::Diagnostic::simple_boxed(
+                Severity::Error,
+                "missing `this` parameter for init",
+            )
+        })?;
+        let this_ptr_val = this_param.into_pointer_value();
+
+        // Set header with cycle bit
+        let header_ptr = self
+            .builder
+            .build_pointer_cast(this_ptr_val, self.i8ptr_t, "hdr_ptr")
+            .map_err(|_| {
+                crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "pointer cast failed")
+            })?;
+        let type_tag_val = 2u64 << 49;
+        let cycle_bit = if can_form_cycles { 0 } else { 1u64 << 48 };
+        let header_val = self.i64_t.const_int(type_tag_val | cycle_bit | 1u64, false);
+        let _ = self.builder.build_store(header_ptr, header_val);
+
+        // Zero-initialize all field slots
+        for field_idx in 0..field_count {
+            let field_offset = header_size + meta_slot + (field_idx as u64 * 8);
+            let obj_ptr_int = self
+                .builder
+                .build_ptr_to_int(this_ptr_val, self.i64_t, "obj_addr_for_zero")
+                .map_err(|_| {
+                    crate::diagnostics::Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "ptr_to_int failed",
+                    )
+                })?;
+            let off_const = self.i64_t.const_int(field_offset, false);
+            let field_addr = self
+                .builder
+                .build_int_add(obj_ptr_int, off_const, "field_addr_zero")
+                .map_err(|_| {
+                    crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "int_add failed")
+                })?;
+            let field_ptr_cast = self
+                .builder
+                .build_int_to_ptr(field_addr, self.i8ptr_t, "field_ptr_zero")
+                .map_err(|_| {
+                    crate::diagnostics::Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "int_to_ptr failed",
+                    )
+                })?;
+            let null_ptr = self.i8ptr_t.const_null();
+            let _ = self
+                .builder
+                .build_store(field_ptr_cast, null_ptr.as_basic_value_enum());
+        }
+
+        // Set up metadata (field map) if there are pointer fields
+        let mut ptr_field_offsets = Vec::new();
+        for (field_idx, (_field_name, field_type)) in fields.iter().enumerate() {
+            let is_ptr = matches!(
+                field_type,
+                OatsType::String
+                    | OatsType::NominalStruct(_)
+                    | OatsType::Array(_)
+                    | OatsType::Promise(_)
+                    | OatsType::Weak(_)
+                    | OatsType::Option(_)
+                    | OatsType::Union(_)
+            );
+            if is_ptr {
+                let offset = header_size + meta_slot + (field_idx as u64 * 8);
+                let const_off = self.i64_t.const_int(offset, false);
+                ptr_field_offsets.push(const_off.as_basic_value_enum());
+            }
+        }
+
+        if !ptr_field_offsets.is_empty() {
+            let len = ptr_field_offsets.len();
+            let int_vals: Vec<inkwell::values::IntValue> = ptr_field_offsets
+                .into_iter()
+                .map(|bv| bv.into_int_value())
+                .collect();
+            let arr_i32_ty = self.context.i32_type().array_type(len as u32);
+            let struct_ty = self
+                .context
+                .struct_type(&[self.i64_t.into(), arr_i32_ty.into()], false);
+
+            let magic_u64 = 0x4F415453u64; // 'OATS'
+            let meta0_val = (magic_u64 << 32) | (len as u64 & 0xffffffffu64);
+            let meta0_const = self.i64_t.const_int(meta0_val, false);
+
+            let int32_vals: Vec<inkwell::values::IntValue> = int_vals
+                .into_iter()
+                .map(|iv| {
+                    let v = iv.get_zero_extended_constant().unwrap_or(0);
+                    self.i32_t.const_int(v & 0xffffffffu64, false)
+                })
+                .collect();
+            let array_const = self.i32_t.const_array(&int32_vals);
+            let initializer = self
+                .context
+                .const_struct(&[meta0_const.into(), array_const.into()], false);
+
+            let gv_name = format!("{}_field_map", class_name);
+            let gv = self.module.add_global(struct_ty, None, &gv_name);
+            gv.set_initializer(&initializer);
+            gv.set_constant(true);
+
+            if let Some(gv_global) = self.module.get_global(&gv_name) {
+                let gv_ptr = gv_global.as_pointer_value();
+                if let Ok(gv_i8ptr) =
+                    self.builder
+                        .build_pointer_cast(gv_ptr, self.i8ptr_t, "field_map_i8ptr")
+                {
+                    let obj_ptr_int = self
+                        .builder
+                        .build_ptr_to_int(this_ptr_val, self.i64_t, "obj_addr_for_meta")
+                        .map_err(|_| {
+                            crate::diagnostics::Diagnostic::simple_boxed(
+                                Severity::Error,
+                                "ptr_to_int failed",
+                            )
+                        })?;
+                    let off_const = self.i64_t.const_int(8, false);
+                    let field_addr = self
+                        .builder
+                        .build_int_add(obj_ptr_int, off_const, "meta_field_addr")
+                        .map_err(|_| {
+                            crate::diagnostics::Diagnostic::simple_boxed(
+                                Severity::Error,
+                                "int_add failed",
+                            )
+                        })?;
+                    let field_ptr = self
+                        .builder
+                        .build_int_to_ptr(field_addr, self.i8ptr_t, "meta_field_ptr")
+                        .map_err(|_| {
+                            crate::diagnostics::Diagnostic::simple_boxed(
+                                Severity::Error,
+                                "int_to_ptr failed",
+                            )
+                        })?;
+                    let _ = self
+                        .builder
+                        .build_store(field_ptr, gv_i8ptr.as_basic_value_enum());
+                }
+            }
+        }
+
+        // Return this
+        let _ = self.builder.build_return(Some(&this_param));
+
+        // Emit constructor function: allocate object then call init
+        let ctor_entry = self.context.append_basic_block(ctor_f, "entry");
+        self.builder.position_at_end(ctor_entry);
+
+        let malloc_fn = self.get_malloc();
+        let size_const = self.i64_t.const_int(total_size, false);
+        let call_site = self
+            .builder
+            .build_call(malloc_fn, &[size_const.into()], "call_malloc")
+            .map_err(|_| {
+                crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "build_call failed")
+            })?;
+        let malloc_ret = match extract_basic_value_from_valuekind(call_site.try_as_basic_value()) {
+            Some(bv) => bv.into_pointer_value(),
+            None => {
+                return Err(crate::diagnostics::Diagnostic::simple_boxed(
+                    Severity::Error,
+                    "malloc call did not return a value",
+                ));
+            }
+        };
+
+        // Call init with allocated object
+        let init_args = vec![malloc_ret.as_basic_value_enum().into()];
+        let call_init = self
+            .builder
+            .build_call(init_f, &init_args, "call_init")
+            .map_err(|_| {
+                crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "build_call failed")
+            })?;
+        let init_result = match extract_basic_value_from_valuekind(call_init.try_as_basic_value()) {
+            Some(bv) => bv,
+            None => {
+                return Err(crate::diagnostics::Diagnostic::simple_boxed(
+                    Severity::Error,
+                    "init call did not return a value",
+                ));
+            }
+        };
+        let _ = self.builder.build_return(Some(&init_result));
 
         Ok(())
     }

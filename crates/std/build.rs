@@ -42,7 +42,6 @@ fn generate_type_definitions() -> String {
         ("path", "src/path.rs"),
         ("net", "src/net.rs"),
         ("env", "src/env.rs"),
-        ("temporal", "src/temporal.rs"),
         ("time", "src/time.rs"),
     ];
 

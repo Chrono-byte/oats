@@ -89,7 +89,7 @@ pub fn link_executable(
     link_cmd.arg("-lm");
 
     if verbose {
-        eprintln!("Link command: {:?}", link_cmd);
+        eprintln!("Link command: {link_cmd:?}");
     }
 
     let link_status = link_cmd.status()?;

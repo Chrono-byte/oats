@@ -8,7 +8,7 @@ use libc::c_char;
 ///
 /// `name` must be a valid pointer to a null-terminated C string, or null.
 /// If non-null, the string must remain valid for the duration of this call.
-/// #[oats_export]
+/// #[`oats_export`]
 #[no_mangle]
 pub unsafe extern "C" fn oats_std_env_get_var(name: *const c_char) -> *mut c_char {
     if name.is_null() {
@@ -30,7 +30,7 @@ pub unsafe extern "C" fn oats_std_env_get_var(name: *const c_char) -> *mut c_cha
 }
 
 /// Get current executable path (caller must free)
-/// #[oats_export]
+/// #[`oats_export`]
 #[no_mangle]
 pub extern "C" fn oats_std_env_current_exe() -> *mut c_char {
     match std::env::current_exe() {
@@ -50,7 +50,7 @@ pub extern "C" fn oats_std_env_current_exe() -> *mut c_char {
 /// # Safety
 ///
 /// `name` and `value` must be valid pointers to null-terminated C strings, or null.
-/// #[oats_export]
+/// #[`oats_export`]
 #[no_mangle]
 pub unsafe extern "C" fn oats_std_env_set_var(
     name: *const c_char,
@@ -83,7 +83,7 @@ pub unsafe extern "C" fn oats_std_env_set_var(
 /// # Safety
 ///
 /// `name` must be a valid pointer to a null-terminated C string, or null.
-/// #[oats_export]
+/// #[`oats_export`]
 #[no_mangle]
 pub unsafe extern "C" fn oats_std_env_remove_var(name: *const c_char) -> libc::c_int {
     if name.is_null() {
@@ -100,11 +100,11 @@ pub unsafe extern "C" fn oats_std_env_remove_var(name: *const c_char) -> libc::c
 }
 
 /// Get all environment variables (returns array of "KEY=VALUE" strings, caller must free each)
-/// #[oats_export]
+/// #[`oats_export`]
 #[no_mangle]
 pub extern "C" fn oats_std_env_vars() -> *mut *mut c_char {
     let vars: Vec<String> = std::env::vars()
-        .map(|(k, v)| format!("{}={}", k, v))
+        .map(|(k, v)| format!("{k}={v}"))
         .collect();
 
     let count = vars.len();
@@ -113,7 +113,7 @@ pub extern "C" fn oats_std_env_vars() -> *mut *mut c_char {
     }
 
     let ptr_size = std::mem::size_of::<*mut c_char>();
-    let array_ptr = unsafe { libc::malloc((count + 1) * ptr_size) as *mut *mut c_char };
+    let array_ptr = unsafe { libc::malloc((count + 1) * ptr_size).cast::<*mut c_char>() };
 
     if array_ptr.is_null() {
         return std::ptr::null_mut();
@@ -124,19 +124,16 @@ pub extern "C" fn oats_std_env_vars() -> *mut *mut c_char {
     }
 
     for (i, var) in vars.iter().enumerate() {
-        match std::ffi::CString::new(var.as_str()) {
-            Ok(cstring) => unsafe {
-                *array_ptr.add(i + 1) = cstring.into_raw();
-            },
-            Err(_) => {
-                unsafe {
-                    for j in 0..i {
-                        libc::free(*array_ptr.add(j + 1) as *mut libc::c_void);
-                    }
-                    libc::free(array_ptr as *mut libc::c_void);
+        if let Ok(cstring) = std::ffi::CString::new(var.as_str()) { unsafe {
+            *array_ptr.add(i + 1) = cstring.into_raw();
+        } } else {
+            unsafe {
+                for j in 0..i {
+                    libc::free((*array_ptr.add(j + 1)).cast::<libc::c_void>());
                 }
-                return std::ptr::null_mut();
+                libc::free(array_ptr.cast::<libc::c_void>());
             }
+            return std::ptr::null_mut();
         }
     }
 
@@ -194,9 +191,9 @@ pub unsafe extern "C" fn oats_std_env_vars_free(vars_result: *mut *mut c_char) {
         for i in 0..count {
             let ptr = *vars_result.add(i + 1);
             if !ptr.is_null() {
-                libc::free(ptr as *mut libc::c_void);
+                libc::free(ptr.cast::<libc::c_void>());
             }
         }
-        libc::free(vars_result as *mut libc::c_void);
+        libc::free(vars_result.cast::<libc::c_void>());
     }
 }

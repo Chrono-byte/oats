@@ -6,7 +6,7 @@ use crate::codegen::helpers::extract_basic_value_from_valuekind;
 use crate::diagnostics::Severity;
 use oxc_ast::ast::TSEnumDeclaration;
 
-impl<'a> crate::codegen::CodeGen<'a> {
+impl crate::codegen::CodeGen<'_> {
     /// Generate IR for a Rust-like enum declaration.
     ///
     /// Enums are represented as discriminated unions at runtime:
@@ -40,7 +40,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             .value
                             .cooked
                             .as_ref()
-                            .map_or_else(|| "<invalid template>".to_string(), |v| v.to_string())
+                            .map_or_else(|| "<invalid template>".to_string(), std::string::ToString::to_string)
                     } else {
                         return Err(crate::diagnostics::Diagnostic::simple_boxed(
                             Severity::Error,
@@ -137,7 +137,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
         // Generate constructor functions for each variant
         for (variant_idx, (variant_name, field_types)) in variant_types.iter().enumerate() {
-            let ctor_name = format!("{}_{}", enum_name, variant_name);
+            let ctor_name = format!("{enum_name}_{variant_name}");
 
             // Build parameter types for constructor
             let mut param_types: Vec<inkwell::types::BasicMetadataTypeEnum> = Vec::new();

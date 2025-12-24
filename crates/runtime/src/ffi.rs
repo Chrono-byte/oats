@@ -1,11 +1,11 @@
 //! C ABI exports for the runtime. This module centralizes all C-callable
-//! symbols (#[no_mangle] extern "C" functions) so the public ABI is easy
+//! symbols (#[`no_mangle`] extern "C" functions) so the public ABI is easy
 //! to audit and maintain.
 
 use libc::{c_char, size_t};
 use std::ffi::{CStr, CString};
 
-use crate::*;
+use crate::init_collector;
 
 // Re-exported from this module by `lib.rs`.
 
@@ -39,9 +39,9 @@ pub unsafe fn runtime_strlen(s: *const c_char) -> size_t {
     c.to_bytes().len() as size_t
 }
 
-/// Free a CString that was previously returned by `CString::into_raw()`.
+/// Free a `CString` that was previously returned by `CString::into_raw()`.
 ///
-/// This function safely reclaims memory from a CString that was converted
+/// This function safely reclaims memory from a `CString` that was converted
 /// to a raw pointer using `CString::into_raw()`. It should be called to free
 /// strings returned by functions like `oats_std_io_read_line`, `oats_std_fs_read_file`,
 /// `oats_std_net_http_get`, etc.

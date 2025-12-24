@@ -7,6 +7,7 @@ use crate::diagnostics::{Result, ToastyWarn, WarningCollector};
 use crate::fetch;
 
 /// Check if a command is available in PATH
+#[must_use] 
 pub fn is_command_available(cmd: &str) -> bool {
     match std::process::Command::new(cmd)
         .arg("--version")

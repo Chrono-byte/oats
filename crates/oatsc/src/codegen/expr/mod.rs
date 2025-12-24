@@ -38,6 +38,7 @@ pub mod seq_expr;
 pub mod super_expr;
 pub mod this;
 pub mod unary_ops;
+pub mod yield_expr;
 
 // LocalEntry now includes an Option<String> for an optional nominal type name
 // LocalEntry now includes an Option<OatsType> for union tracking
@@ -146,6 +147,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
             Expression::AwaitExpression(await_expr) => {
                 self.lower_await_expr(await_expr, function, param_map, locals)
             }
+            Expression::YieldExpression(yield_expr) => {
+                self.lower_yield_expr(yield_expr, function, param_map, locals)
+            }
             Expression::ArrowFunctionExpression(arrow) => {
                 self.lower_arrow_expr(arrow, function, param_map, locals)
             }
@@ -171,7 +175,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             // For now, we'll need to handle these differently or they may need to be custom extensions
             _ => Err(crate::diagnostics::Diagnostic::simple_boxed(
                 crate::diagnostics::Severity::Error,
-                format!("Unsupported expression type: {:?}", expr),
+                format!("Unsupported expression type: {expr:?}"),
             )),
         }
     }
@@ -322,9 +326,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         if fname == &field_name {
                             if let crate::types::OatsType::NominalStruct(n) = ftype {
                                 return Some(n.clone());
-                            } else {
-                                return None;
                             }
+                            return None;
                         }
                     }
                 }
@@ -338,9 +341,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     if fname == &field_name {
                         if let crate::types::OatsType::NominalStruct(n) = ftype {
                             return Some(n.clone());
-                        } else {
-                            return None;
                         }
+                        return None;
                     }
                 }
             }

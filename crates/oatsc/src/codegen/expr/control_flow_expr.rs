@@ -347,12 +347,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             .map_err(|_| Diagnostic::error("phi creation failed"))?;
                         phi_node.add_incoming(&[(&then_f64, then_bb), (&else_f64, else_bb)]);
                         return Ok(phi_node.as_basic_value());
-                    } else {
-                        return Err(Diagnostic::simple_boxed(
-                            Severity::Error,
-                            "unboxing failed for phi",
-                        ));
                     }
+                    return Err(Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "unboxing failed for phi",
+                    ));
                 } else {
                     // The function expects a pointer return (i8*). Prefer a pointer phi:
                     // box the numeric `then` arm into a union pointer, keep the
@@ -455,12 +454,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 if let (Some(then_val), Some(else_val)) = (then_incoming, else_incoming) {
                     phi_node.add_incoming(&[(&then_val, then_bb), (&else_val, else_bb)]);
                     return Ok(phi_node.as_basic_value());
-                } else {
-                    return Err(Diagnostic::simple_boxed(
-                        Severity::Error,
-                        "missing incoming values for phi",
-                    ));
                 }
+                return Err(Diagnostic::simple_boxed(
+                    Severity::Error,
+                    "missing incoming values for phi",
+                ));
             }
 
             // Otherwise try the general helper

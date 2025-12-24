@@ -393,4 +393,3 @@ fn test_generic_constructor_parameters() {
     let code = "type ConstructorParams<T> = T extends new (...args: infer P) => any ? P : never;";
     let (_parsed_mod, _diags) = parse_snippet(code).expect("Should parse");
 }
-

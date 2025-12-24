@@ -9,7 +9,7 @@ use inkwell::values::BasicValue;
 use oxc_ast::ast::BindingPatternKind;
 use std::collections::HashMap;
 
-impl<'a> crate::codegen::CodeGen<'a> {
+impl crate::codegen::CodeGen<'_> {
     /// Generate a complete constructor function for a class.
     ///
     /// The constructor created here follows the runtime object layout used
@@ -57,9 +57,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
         // runtime. The impl name holds the original emitted body; the
         // exported `fname` will be the wrapper that calls decorators and
         // forwards to the final constructor pointer.
-        let impl_fname = format!("{}_ctor_impl", class_name);
-        let fname = format!("{}_ctor", class_name);
-        let init_name = format!("{}_init", class_name);
+        let impl_fname = format!("{class_name}_ctor_impl");
+        let fname = format!("{class_name}_ctor");
+        let init_name = format!("{class_name}_init");
 
         let mut param_types_vec = Vec::new();
         let mut param_names = Vec::new();
@@ -152,6 +152,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     // Generic instances are specialized, so treat as pointer types
                     self.i8ptr_t.into()
                 }
+                OatsType::NumberObject => self.i8ptr_t.into(),
             };
             llvm_param_types.push(llvm_ty);
         }
@@ -285,19 +286,18 @@ impl<'a> crate::codegen::CodeGen<'a> {
             let param_val = init_f.get_nth_param((i + 1) as u32).ok_or_else(|| {
                 crate::diagnostics::Diagnostic::simple_boxed(
                     Severity::Error,
-                    format!("missing parameter {} for constructor {}", pname, class_name),
+                    format!("missing parameter {pname} for constructor {class_name}"),
                 )
             })?;
             let param_ty = param_val.get_type();
             let alloca = self
                 .builder
-                .build_alloca(param_ty, &format!("param_{}", pname))
+                .build_alloca(param_ty, &format!("param_{pname}"))
                 .map_err(|_| {
                     crate::diagnostics::Diagnostic::simple_boxed(
                         Severity::Error,
                         format!(
-                            "alloca failed for param {} in constructor {}",
-                            pname, class_name
+                            "alloca failed for param {pname} in constructor {class_name}"
                         ),
                     )
                 })?;
@@ -327,8 +327,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         crate::diagnostics::Diagnostic::simple_boxed(
                             Severity::Error,
                             format!(
-                                "missing parameter {} for constructor {}",
-                                field_name, class_name
+                                "missing parameter {field_name} for constructor {class_name}"
                             ),
                         )
                     })?;
@@ -362,141 +361,91 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         )
                     })?;
                 // If the field type is a union, we expect to store a boxed union object.
-                match _field_type {
-                    OatsType::Union(_) => {
-                        // If the incoming param is a float, box it; if it's already a pointer, box via union_box_ptr.
-                        // We do a small ABI-aware decision here: the constructor
-                        // ABI may pass unions as either a float or pointer. If
-                        // the parameter's LLVM type is a float then we must
-                        // allocate a union container for the f64 and return a
-                        // pointer to it (`union_box_f64`). Otherwise, if the
-                        // ABI passed an i8* we call `union_box_ptr` which will
-                        // wrap the existing pointer in a union tag. The
-                        // runtime's union_box_* helpers return an owned pointer
-                        // (with RC=1) which we then store into the object and
-                        // immediately `rc_inc` to reflect the object's strong
-                        // reference to it.
-                        if param_val.get_type().is_float_type() {
-                            let unboxed_f = param_val.into_float_value();
-                            let box_fn = self.get_union_box_f64();
-                            let cs = self.builder.build_call(
-                                box_fn,
-                                &[unboxed_f.into()],
-                                "union_box_f64_ctor",
-                            );
-                            if let Ok(cs) = cs
-                                && let Some(bv) =
-                                    extract_basic_value_from_valuekind(cs.try_as_basic_value())
-                            {
-                                let boxed_ptr = bv.into_pointer_value();
-                                let boxed_bv =
-                                    inkwell::values::BasicValueEnum::PointerValue(boxed_ptr);
-                                let _ = self.builder.build_store(field_ptr_cast, boxed_bv);
-
-                                // For union-boxed pointers we treat the stored pointer as strong by default.
-                                // If the declared field type within the union is Weak, more refined handling
-                                // The weak/strong distinction will be added later.
-                                // Use the strong `rc_inc` path for current allocations.
-                                let rc_inc_fn = self.get_rc_inc();
-                                let _ = self.builder.build_call(
-                                    rc_inc_fn,
-                                    &[boxed_ptr.into()],
-                                    "rc_inc_field",
-                                );
-                            }
-                        } else if param_val.get_type().is_pointer_type() {
-                            // box the pointer payload
-                            let box_fn = self.get_union_box_ptr();
-                            let cs = self.builder.build_call(
-                                box_fn,
-                                &[param_val.into()],
-                                "union_box_ptr_ctor",
-                            );
-                            if let Ok(cs) = cs
-                                && let Some(bv) =
-                                    extract_basic_value_from_valuekind(cs.try_as_basic_value())
-                            {
-                                let boxed_ptr = bv.into_pointer_value();
-                                let boxed_bv =
-                                    inkwell::values::BasicValueEnum::PointerValue(boxed_ptr);
-                                let _ = self.builder.build_store(field_ptr_cast, boxed_bv);
-
-                                // Use rc_weak_inc for weak fields
-                                let rc_fn = match _field_type {
-                                    OatsType::Weak(_) => self.get_rc_weak_inc(),
-                                    _ => self.get_rc_inc(),
-                                };
-                                let _ =
-                                    self.builder
-                                        .build_call(rc_fn, &[boxed_ptr.into()], "rc_field");
-                            }
-                        } else {
-                            // other param ABI not expected for unions
-                            let _ = self.builder.build_store(field_ptr_cast, param_val);
-                        }
-                    }
-                    _ => {
-                        // For string fields, parameters come as data pointers (offset +16)
-                        // but we need to store object pointers (offset 0) for RC operations
-                        let store_val = if matches!(_field_type, OatsType::String)
-                            && param_val.get_type().is_pointer_type()
+                if let OatsType::Union(_) = _field_type {
+                    // If the incoming param is a float, box it; if it's already a pointer, box via union_box_ptr.
+                    // We do a small ABI-aware decision here: the constructor
+                    // ABI may pass unions as either a float or pointer. If
+                    // the parameter's LLVM type is a float then we must
+                    // allocate a union container for the f64 and return a
+                    // pointer to it (`union_box_f64`). Otherwise, if the
+                    // ABI passed an i8* we call `union_box_ptr` which will
+                    // wrap the existing pointer in a union tag. The
+                    // runtime's union_box_* helpers return an owned pointer
+                    // (with RC=1) which we then store into the object and
+                    // immediately `rc_inc` to reflect the object's strong
+                    // reference to it.
+                    if param_val.get_type().is_float_type() {
+                        let unboxed_f = param_val.into_float_value();
+                        let box_fn = self.get_union_box_f64();
+                        let cs = self.builder.build_call(
+                            box_fn,
+                            &[unboxed_f.into()],
+                            "union_box_f64_ctor",
+                        );
+                        if let Ok(cs) = cs
+                            && let Some(bv) =
+                                extract_basic_value_from_valuekind(cs.try_as_basic_value())
                         {
-                            // Try to extract pointer value - param_val should be a PointerValue for strings
-                            match param_val {
-                                inkwell::values::BasicValueEnum::PointerValue(data_ptr) => {
-                                    // Convert data pointer to object pointer (subtract 16)
-                                    let header_offset = self.i64_t.const_int(16, false);
-                                    let data_ptr_int = self
-                                        .builder
-                                        .build_ptr_to_int(data_ptr, self.i64_t, "data_ptr_int")
-                                        .map_err(|_| {
-                                            crate::diagnostics::Diagnostic::simple_boxed(
-                                                Severity::Error,
-                                                "ptr_to_int failed",
-                                            )
-                                        })?;
-                                    let obj_ptr_int = self
-                                        .builder
-                                        .build_int_sub(data_ptr_int, header_offset, "obj_ptr_int")
-                                        .map_err(|_| {
-                                            crate::diagnostics::Diagnostic::simple_boxed(
-                                                Severity::Error,
-                                                "int_sub failed",
-                                            )
-                                        })?;
-                                    let obj_ptr = self
-                                        .builder
-                                        .build_int_to_ptr(obj_ptr_int, self.i8ptr_t, "obj_ptr")
-                                        .map_err(|_| {
-                                            crate::diagnostics::Diagnostic::simple_boxed(
-                                                Severity::Error,
-                                                "int_to_ptr failed",
-                                            )
-                                        })?;
-                                    obj_ptr.as_basic_value_enum()
-                                }
-                                _ => {
-                                    // Fallback: use param_val as-is (shouldn't happen for strings)
-                                    param_val
-                                }
-                            }
-                        } else {
-                            param_val
-                        };
+                            let boxed_ptr = bv.into_pointer_value();
+                            let boxed_bv =
+                                inkwell::values::BasicValueEnum::PointerValue(boxed_ptr);
+                            let _ = self.builder.build_store(field_ptr_cast, boxed_bv);
 
-                        let _ = self.builder.build_store(field_ptr_cast, store_val);
+                            // For union-boxed pointers we treat the stored pointer as strong by default.
+                            // If the declared field type within the union is Weak, more refined handling
+                            // The weak/strong distinction will be added later.
+                            // Use the strong `rc_inc` path for current allocations.
+                            let rc_inc_fn = self.get_rc_inc();
+                            let _ = self.builder.build_call(
+                                rc_inc_fn,
+                                &[boxed_ptr.into()],
+                                "rc_inc_field",
+                            );
+                        }
+                    } else if param_val.get_type().is_pointer_type() {
+                        // box the pointer payload
+                        let box_fn = self.get_union_box_ptr();
+                        let cs = self.builder.build_call(
+                            box_fn,
+                            &[param_val.into()],
+                            "union_box_ptr_ctor",
+                        );
+                        if let Ok(cs) = cs
+                            && let Some(bv) =
+                                extract_basic_value_from_valuekind(cs.try_as_basic_value())
+                        {
+                            let boxed_ptr = bv.into_pointer_value();
+                            let boxed_bv =
+                                inkwell::values::BasicValueEnum::PointerValue(boxed_ptr);
+                            let _ = self.builder.build_store(field_ptr_cast, boxed_bv);
 
-                        if param_val.get_type().is_pointer_type() {
-                            // For RC operations, we need the object pointer
-                            // If we converted data_ptr to obj_ptr above, use obj_ptr for RC
-                            let rc_ptr = if matches!(_field_type, OatsType::String)
-                                && let inkwell::values::BasicValueEnum::PointerValue(data_ptr) =
-                                    param_val
-                            {
+                            // Use rc_weak_inc for weak fields
+                            let rc_fn = match _field_type {
+                                OatsType::Weak(_) => self.get_rc_weak_inc(),
+                                _ => self.get_rc_inc(),
+                            };
+                            let _ =
+                                self.builder
+                                    .build_call(rc_fn, &[boxed_ptr.into()], "rc_field");
+                        }
+                    } else {
+                        // other param ABI not expected for unions
+                        let _ = self.builder.build_store(field_ptr_cast, param_val);
+                    }
+                } else {
+                    // For string fields, parameters come as data pointers (offset +16)
+                    // but we need to store object pointers (offset 0) for RC operations
+                    let store_val = if matches!(_field_type, OatsType::String)
+                        && param_val.get_type().is_pointer_type()
+                    {
+                        // Try to extract pointer value - param_val should be a PointerValue for strings
+                        match param_val {
+                            inkwell::values::BasicValueEnum::PointerValue(data_ptr) => {
+                                // Convert data pointer to object pointer (subtract 16)
                                 let header_offset = self.i64_t.const_int(16, false);
                                 let data_ptr_int = self
                                     .builder
-                                    .build_ptr_to_int(data_ptr, self.i64_t, "data_ptr_int_rc")
+                                    .build_ptr_to_int(data_ptr, self.i64_t, "data_ptr_int")
                                     .map_err(|_| {
                                         crate::diagnostics::Diagnostic::simple_boxed(
                                             Severity::Error,
@@ -505,51 +454,95 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     })?;
                                 let obj_ptr_int = self
                                     .builder
-                                    .build_int_sub(data_ptr_int, header_offset, "obj_ptr_int_rc")
+                                    .build_int_sub(data_ptr_int, header_offset, "obj_ptr_int")
                                     .map_err(|_| {
                                         crate::diagnostics::Diagnostic::simple_boxed(
                                             Severity::Error,
                                             "int_sub failed",
                                         )
                                     })?;
-                                self.builder
-                                    .build_int_to_ptr(obj_ptr_int, self.i8ptr_t, "obj_ptr_rc")
+                                let obj_ptr = self
+                                    .builder
+                                    .build_int_to_ptr(obj_ptr_int, self.i8ptr_t, "obj_ptr")
                                     .map_err(|_| {
                                         crate::diagnostics::Diagnostic::simple_boxed(
                                             Severity::Error,
                                             "int_to_ptr failed",
                                         )
-                                    })?
-                            } else if let inkwell::values::BasicValueEnum::PointerValue(pv) =
-                                param_val
-                            {
-                                pv
-                            } else {
-                                return Err(crate::diagnostics::Diagnostic::simple_boxed(
-                                    Severity::Error,
-                                    "expected pointer value for RC operation",
-                                ));
-                            };
-
-                            // If the declared field type is Weak<T>, use rc_weak_inc; otherwise rc_inc
-                            match _field_type {
-                                OatsType::Weak(_) => {
-                                    let rc_weak_inc = self.get_rc_weak_inc();
-                                    let _ = self.builder.build_call(
-                                        rc_weak_inc,
-                                        &[rc_ptr.into()],
-                                        "rc_weak_inc_field",
-                                    );
-                                }
-                                _ => {
-                                    let rc_inc_fn = self.get_rc_inc();
-                                    let _ = self.builder.build_call(
-                                        rc_inc_fn,
-                                        &[rc_ptr.into()],
-                                        "rc_inc_field",
-                                    );
-                                }
+                                    })?;
+                                obj_ptr.as_basic_value_enum()
                             }
+                            _ => {
+                                // Fallback: use param_val as-is (shouldn't happen for strings)
+                                param_val
+                            }
+                        }
+                    } else {
+                        param_val
+                    };
+
+                    let _ = self.builder.build_store(field_ptr_cast, store_val);
+
+                    if param_val.get_type().is_pointer_type() {
+                        // For RC operations, we need the object pointer
+                        // If we converted data_ptr to obj_ptr above, use obj_ptr for RC
+                        let rc_ptr = if matches!(_field_type, OatsType::String)
+                            && let inkwell::values::BasicValueEnum::PointerValue(data_ptr) =
+                                param_val
+                        {
+                            let header_offset = self.i64_t.const_int(16, false);
+                            let data_ptr_int = self
+                                .builder
+                                .build_ptr_to_int(data_ptr, self.i64_t, "data_ptr_int_rc")
+                                .map_err(|_| {
+                                    crate::diagnostics::Diagnostic::simple_boxed(
+                                        Severity::Error,
+                                        "ptr_to_int failed",
+                                    )
+                                })?;
+                            let obj_ptr_int = self
+                                .builder
+                                .build_int_sub(data_ptr_int, header_offset, "obj_ptr_int_rc")
+                                .map_err(|_| {
+                                    crate::diagnostics::Diagnostic::simple_boxed(
+                                        Severity::Error,
+                                        "int_sub failed",
+                                    )
+                                })?;
+                            self.builder
+                                .build_int_to_ptr(obj_ptr_int, self.i8ptr_t, "obj_ptr_rc")
+                                .map_err(|_| {
+                                    crate::diagnostics::Diagnostic::simple_boxed(
+                                        Severity::Error,
+                                        "int_to_ptr failed",
+                                    )
+                                })?
+                        } else if let inkwell::values::BasicValueEnum::PointerValue(pv) =
+                            param_val
+                        {
+                            pv
+                        } else {
+                            return Err(crate::diagnostics::Diagnostic::simple_boxed(
+                                Severity::Error,
+                                "expected pointer value for RC operation",
+                            ));
+                        };
+
+                        // If the declared field type is Weak<T>, use rc_weak_inc; otherwise rc_inc
+                        if let OatsType::Weak(_) = _field_type {
+                            let rc_weak_inc = self.get_rc_weak_inc();
+                            let _ = self.builder.build_call(
+                                rc_weak_inc,
+                                &[rc_ptr.into()],
+                                "rc_weak_inc_field",
+                            );
+                        } else {
+                            let rc_inc_fn = self.get_rc_inc();
+                            let _ = self.builder.build_call(
+                                rc_inc_fn,
+                                &[rc_ptr.into()],
+                                "rc_inc_field",
+                            );
                         }
                     }
                 }
@@ -618,7 +611,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     .context
                     .const_struct(&[meta0_const.into(), array_const.into()], false);
 
-                let gv_name = format!("{}_field_map", class_name);
+                let gv_name = format!("{class_name}_field_map");
                 let gv = self.module.add_global(struct_ty, None, &gv_name);
                 gv.set_initializer(&initializer);
                 gv.set_constant(true);
@@ -844,8 +837,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
             matches!(field_type, OatsType::NominalStruct(name) if name == class_name)
         });
 
-        let fname = format!("{}_ctor", class_name);
-        let init_name = format!("{}_init", class_name);
+        let fname = format!("{class_name}_ctor");
+        let init_name = format!("{class_name}_init");
 
         // Layout: [ header (8) | metadata ptr (8) | field0 (8) | field1 (8) | ... ]
         let header_size = 8u64;
@@ -967,7 +960,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 .context
                 .const_struct(&[meta0_const.into(), array_const.into()], false);
 
-            let gv_name = format!("{}_field_map", class_name);
+            let gv_name = format!("{class_name}_field_map");
             let gv = self.module.add_global(struct_ty, None, &gv_name);
             gv.set_initializer(&initializer);
             gv.set_constant(true);

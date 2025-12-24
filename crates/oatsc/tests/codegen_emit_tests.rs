@@ -75,7 +75,8 @@ fn test_emit_class_with_inheritance() {
 
 #[test]
 fn test_emit_class_multiple_inheritance_levels() {
-    let code = "class Grandparent { } class Parent extends Grandparent { } class Child extends Parent { }";
+    let code =
+        "class Grandparent { } class Parent extends Grandparent { } class Child extends Parent { }";
     assert_compiles(code);
 }
 
@@ -300,4 +301,3 @@ fn test_emit_generic_type_alias() {
     let code = "type Box<T> = { value: T; };";
     assert_compiles(code);
 }
-

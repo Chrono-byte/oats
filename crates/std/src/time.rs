@@ -3,7 +3,7 @@
 use libc::c_longlong;
 
 /// Get current Unix timestamp (seconds since epoch)
-/// #[oats_export]
+/// #[`oats_export`]
 #[no_mangle]
 pub extern "C" fn oats_std_time_now() -> c_longlong {
     match std::time::SystemTime::now().duration_since(std::time::SystemTime::UNIX_EPOCH) {
@@ -13,7 +13,7 @@ pub extern "C" fn oats_std_time_now() -> c_longlong {
 }
 
 /// Sleep for specified milliseconds
-/// #[oats_export]
+/// #[`oats_export`]
 #[no_mangle]
 pub extern "C" fn oats_std_time_sleep_ms(ms: c_longlong) {
     if ms > 0 {
@@ -22,7 +22,7 @@ pub extern "C" fn oats_std_time_sleep_ms(ms: c_longlong) {
 }
 
 /// Get current Unix timestamp in nanoseconds
-/// #[oats_export]
+/// #[`oats_export`]
 #[no_mangle]
 pub extern "C" fn oats_std_time_now_nanos() -> c_longlong {
     match std::time::SystemTime::now().duration_since(std::time::SystemTime::UNIX_EPOCH) {
@@ -32,7 +32,7 @@ pub extern "C" fn oats_std_time_now_nanos() -> c_longlong {
 }
 
 /// Get current Unix timestamp in milliseconds
-/// #[oats_export]
+/// #[`oats_export`]
 #[no_mangle]
 pub extern "C" fn oats_std_time_now_millis() -> c_longlong {
     match std::time::SystemTime::now().duration_since(std::time::SystemTime::UNIX_EPOCH) {
@@ -42,7 +42,7 @@ pub extern "C" fn oats_std_time_now_millis() -> c_longlong {
 }
 
 /// Sleep for specified seconds
-/// #[oats_export]
+/// #[`oats_export`]
 #[no_mangle]
 pub extern "C" fn oats_std_time_sleep_secs(secs: c_longlong) {
     if secs > 0 {
@@ -51,7 +51,7 @@ pub extern "C" fn oats_std_time_sleep_secs(secs: c_longlong) {
 }
 
 /// Sleep for specified nanoseconds
-/// #[oats_export]
+/// #[`oats_export`]
 #[no_mangle]
 pub extern "C" fn oats_std_time_sleep_nanos(nanos: c_longlong) {
     if nanos > 0 {
@@ -60,7 +60,7 @@ pub extern "C" fn oats_std_time_sleep_nanos(nanos: c_longlong) {
 }
 
 /// Format timestamp as RFC 3339 string (caller must free result)
-/// #[oats_export]
+/// #[`oats_export`]
 #[no_mangle]
 pub extern "C" fn oats_std_time_format_rfc3339(timestamp: c_longlong) -> *mut libc::c_char {
     use chrono::{TimeZone, Utc};
@@ -82,7 +82,7 @@ pub extern "C" fn oats_std_time_format_rfc3339(timestamp: c_longlong) -> *mut li
 /// # Safety
 ///
 /// `rfc3339_str` must be a valid pointer to a null-terminated C string, or null.
-/// #[oats_export]
+/// #[`oats_export`]
 #[no_mangle]
 pub unsafe extern "C" fn oats_std_time_parse_rfc3339(
     rfc3339_str: *const libc::c_char,

@@ -295,7 +295,8 @@ fn test_codegen_async_await() {
 
 #[test]
 fn test_codegen_async_await_expression() {
-    let code = "async function f(): Promise<number> { let x = await Promise.resolve(1); return x; }";
+    let code =
+        "async function f(): Promise<number> { let x = await Promise.resolve(1); return x; }";
     assert_compiles(code);
 }
 
@@ -484,4 +485,3 @@ fn test_codegen_void_keyword() {
     let code = "let x: void = undefined;";
     assert_compiles(code);
 }
-

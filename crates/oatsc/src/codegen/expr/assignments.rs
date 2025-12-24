@@ -35,7 +35,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         param_map: &HashMap<String, u32>,
         locals: &mut LocalsStackLocal<'a>,
     ) -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
-        use oxc_ast::ast::*;
+        use oxc_ast::ast::Expression;
 
         // Handle compound assignment operators (e.g., +=, -=, *=, etc.)
         // For compound assignments, we need to:
@@ -511,13 +511,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                                 })?;
                                             let _ = self.builder.build_store(f64_ptr, fv);
                                             return Ok(result);
-                                        } else {
-                                            return Err(Diagnostic::simple_with_span_boxed(
-                                                Severity::Error,
-                                                "compound assignment result type mismatch for number field",
-                                                assign.span.start as usize,
-                                            ));
                                         }
+                                        return Err(Diagnostic::simple_with_span_boxed(
+                                            Severity::Error,
+                                            "compound assignment result type mismatch for number field",
+                                            assign.span.start as usize,
+                                        ));
                                     }
                                     crate::types::OatsType::String
                                     | crate::types::OatsType::NominalStruct(_)
@@ -575,13 +574,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                             }
 
                                             return Ok(result);
-                                        } else {
-                                            return Err(Diagnostic::simple_with_span_boxed(
-                                                Severity::Error,
-                                                "compound assignment result type mismatch for pointer field",
-                                                assign.span.start as usize,
-                                            ));
                                         }
+                                        return Err(Diagnostic::simple_with_span_boxed(
+                                            Severity::Error,
+                                            "compound assignment result type mismatch for pointer field",
+                                            assign.span.start as usize,
+                                        ));
                                     }
                                     _ => {
                                         return Err(Diagnostic::simple_with_span_boxed(
@@ -592,32 +590,28 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         ));
                                     }
                                 }
-                            } else {
-                                return Err(Diagnostic::simple_with_span_boxed(
-                                    Severity::Error,
-                                    format!(
-                                        "field '{}' not found in class '{}'",
-                                        field_name, class_name
-                                    ),
-                                    assign.span.start as usize,
-                                ));
                             }
-                        } else {
                             return Err(Diagnostic::simple_with_span_boxed(
                                 Severity::Error,
-                                format!("class '{}' has no registered fields", class_name),
+                                format!(
+                                    "field '{field_name}' not found in class '{class_name}'"
+                                ),
                                 assign.span.start as usize,
                             ));
                         }
-                    } else {
-                        // Cannot determine class type at compile time
-                        // All types must be known at compile time - this is a type inference failure
                         return Err(Diagnostic::simple_with_span_boxed(
                             Severity::Error,
-                            "cannot determine object type for compound assignment: all types must be known at compile time",
+                            format!("class '{class_name}' has no registered fields"),
                             assign.span.start as usize,
                         ));
                     }
+                    // Cannot determine class type at compile time
+                    // All types must be known at compile time - this is a type inference failure
+                    return Err(Diagnostic::simple_with_span_boxed(
+                        Severity::Error,
+                        "cannot determine object type for compound assignment: all types must be known at compile time",
+                        assign.span.start as usize,
+                    ));
                 } else if let oxc_ast::ast::MemberExpression::ComputedMemberExpression(
                     computed_member,
                 ) = member_expr
@@ -688,8 +682,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     return Err(Diagnostic::simple_with_span_boxed(
                                         Severity::Error,
                                         format!(
-                                            "field '{}' not found in class '{}'",
-                                            s, class_name
+                                            "field '{s}' not found in class '{class_name}'"
                                         ),
                                         assign.span.start as usize,
                                     ));
@@ -730,8 +723,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         return Err(Diagnostic::simple_with_span_boxed(
                                             Severity::Error,
                                             format!(
-                                                "field index {} out of bounds for class '{}'",
-                                                idx_usize, class_name
+                                                "field index {idx_usize} out of bounds for class '{class_name}'"
                                             ),
                                             assign.span.start as usize,
                                         ));
@@ -747,7 +739,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         } else {
                             return Err(Diagnostic::simple_with_span_boxed(
                                 Severity::Error,
-                                format!("class '{}' has no registered fields", class_name),
+                                format!("class '{class_name}' has no registered fields"),
                                 assign.span.start as usize,
                             ));
                         }
@@ -946,13 +938,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     .map_err(|_| Diagnostic::error("LLVM builder error"))?;
                                 let _ = self.builder.build_store(f64_ptr, fv);
                                 return Ok(result);
-                            } else {
-                                return Err(Diagnostic::simple_with_span_boxed(
-                                    Severity::Error,
-                                    "compound assignment result type mismatch for number field",
-                                    assign.span.start as usize,
-                                ));
                             }
+                            return Err(Diagnostic::simple_with_span_boxed(
+                                Severity::Error,
+                                "compound assignment result type mismatch for number field",
+                                assign.span.start as usize,
+                            ));
                         }
                         crate::types::OatsType::String
                         | crate::types::OatsType::NominalStruct(_)
@@ -989,13 +980,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 }
 
                                 return Ok(result);
-                            } else {
-                                return Err(Diagnostic::simple_with_span_boxed(
-                                    Severity::Error,
-                                    "compound assignment result type mismatch for pointer field",
-                                    assign.span.start as usize,
-                                ));
                             }
+                            return Err(Diagnostic::simple_with_span_boxed(
+                                Severity::Error,
+                                "compound assignment result type mismatch for pointer field",
+                                assign.span.start as usize,
+                            ));
                         }
                         _ => {
                             return Err(Diagnostic::simple_with_span_boxed(
@@ -1005,13 +995,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             ));
                         }
                     }
-                } else {
-                    return Err(Diagnostic::simple_with_span_boxed(
-                        Severity::Error,
-                        "compound assignment to private name member access not yet supported",
-                        assign.span.start as usize,
-                    ));
                 }
+                return Err(Diagnostic::simple_with_span_boxed(
+                    Severity::Error,
+                    "compound assignment to private name member access not yet supported",
+                    assign.span.start as usize,
+                ));
             }
         }
 

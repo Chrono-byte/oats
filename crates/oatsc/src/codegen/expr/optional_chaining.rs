@@ -8,7 +8,7 @@ use crate::codegen::CodeGen;
 use crate::diagnostics::{Diagnostic, Severity};
 use inkwell::types::BasicType;
 use inkwell::values::{BasicValue, BasicValueEnum, FunctionValue};
-use oxc_ast::ast::*;
+use oxc_ast::ast::Expression;
 use std::collections::HashMap;
 
 #[allow(dead_code)]
@@ -308,8 +308,7 @@ impl<'a> CodeGen<'a> {
         Err(Diagnostic::simple_with_span_boxed(
             Severity::Error,
             format!(
-                "could not determine field offset for '{}' in optional chaining",
-                field_name
+                "could not determine field offset for '{field_name}' in optional chaining"
             ),
             member.span.start as usize,
         ))
@@ -364,23 +363,122 @@ impl<'a> CodeGen<'a> {
     /// Lower optional call (func?.())
     fn lower_optional_call(
         &self,
-        _callee_ptr: inkwell::values::PointerValue<'a>,
+        callee_ptr: inkwell::values::PointerValue<'a>,
         call: &oxc_ast::ast::CallExpression<'_>,
-        _function: FunctionValue<'a>,
-        _param_map: &HashMap<String, u32>,
-        _locals: &mut LocalsStackLocal<'a>,
+        function: FunctionValue<'a>,
+        param_map: &HashMap<String, u32>,
+        locals: &mut LocalsStackLocal<'a>,
     ) -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
-        // Optional call needs integration with the existing call lowering logic
-        // For now, return an error indicating this needs to be implemented
-        // A full implementation would need to:
-        // 1. Lower all arguments
-        // 2. Determine the function signature
-        // 3. Call the function (direct or indirect/closure)
-        // 4. Handle return value
-        Err(Diagnostic::simple_with_span_boxed(
-            Severity::Error,
-            "optional call (func?.()) needs integration with call lowering - not yet implemented",
-            call.span.start as usize,
-        ))
+        // Allocate storage for result (will hold null or the call result)
+        let result_alloca = self
+            .builder
+            .build_alloca(self.i8ptr_t.as_basic_type_enum(), "opt_call_result")
+            .map_err(|_| {
+                Diagnostic::simple_with_span_boxed(
+                    Severity::Error,
+                    "failed to allocate result for optional call",
+                    call.span.start as usize,
+                )
+            })?;
+
+        // Initialize with null (for the null case)
+        let null_ptr = self.i8ptr_t.const_null();
+        let _ = self
+            .builder
+            .build_store(result_alloca, null_ptr.as_basic_value_enum());
+
+        // Create basic blocks
+        let call_bb = self.context.append_basic_block(function, "opt_call_exec");
+        let merge_bb = self.context.append_basic_block(function, "opt_call_merge");
+
+        // Check if callee is null
+        let is_null = self
+            .builder
+            .build_is_null(callee_ptr, "opt_call_is_null")
+            .map_err(|_| {
+                Diagnostic::simple_with_span_boxed(
+                    Severity::Error,
+                    "failed to check null for optional call",
+                    call.span.start as usize,
+                )
+            })?;
+
+        // Branch: if null, go to merge (result is already null), else call
+        let _ = self
+            .builder
+            .build_conditional_branch(is_null, merge_bb, call_bb);
+
+        // Call block: perform the function call
+        self.builder.position_at_end(call_bb);
+
+        // Lower arguments
+        let mut lowered_args: Vec<inkwell::values::BasicMetadataValueEnum> = Vec::new();
+        for arg in &call.arguments {
+            if let Some(expr) = arg.as_expression() {
+                if let Ok(val) = self.lower_expr(expr, function, param_map, locals) {
+                    lowered_args.push(val.into());
+                } else {
+                    return Err(Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "expression lowering failed in optional call",
+                    ));
+                }
+            } else {
+                return Err(Diagnostic::simple_boxed(
+                    Severity::Error,
+                    "spread arguments not supported in optional calls",
+                ));
+            }
+        }
+
+        // Perform indirect call through the pointer
+        // Create function type based on arguments (simplified: assume returns i8*)
+        let mut param_types: Vec<inkwell::types::BasicMetadataTypeEnum> = Vec::new();
+        for _ in &lowered_args {
+            param_types.push(self.i8ptr_t.into()); // Assume all args are pointers
+        }
+        let fn_type = self.i8ptr_t.fn_type(&param_types, false);
+
+        let call_result = self
+            .builder
+            .build_indirect_call(fn_type, callee_ptr, &lowered_args, "opt_call_result")
+            .map_err(|_| {
+                Diagnostic::simple_with_span_boxed(
+                    Severity::Error,
+                    "failed to build indirect call for optional call",
+                    call.span.start as usize,
+                )
+            })?;
+
+        // Store the result
+        match call_result.try_as_basic_value() {
+            inkwell::values::ValueKind::Basic(bv) => {
+                let _ = self.builder.build_store(result_alloca, bv);
+            }
+            _ => {
+                // Void return, store null
+                let _ = self
+                    .builder
+                    .build_store(result_alloca, null_ptr.as_basic_value_enum());
+            }
+        }
+
+        // Branch to merge
+        let _ = self.builder.build_unconditional_branch(merge_bb);
+
+        // Merge block: return the result
+        self.builder.position_at_end(merge_bb);
+        let final_result = self
+            .builder
+            .build_load(self.i8ptr_t, result_alloca, "opt_call_final")
+            .map_err(|_| {
+                Diagnostic::simple_with_span_boxed(
+                    Severity::Error,
+                    "failed to load optional call result",
+                    call.span.start as usize,
+                )
+            })?;
+
+        Ok(final_result.as_basic_value_enum())
     }
 }

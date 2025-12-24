@@ -11,7 +11,7 @@ use std::process::Command;
 /// `program` must be a valid pointer to a null-terminated C string, or null.
 /// `args` must be a valid pointer to an array of `args_len` pointers to null-terminated C strings, or null.
 /// If non-null, all strings must remain valid for the duration of this call.
-/// #[oats_export]
+/// #[`oats_export`]
 #[no_mangle]
 pub unsafe extern "C" fn oats_std_process_exec(
     program: *const c_char,
@@ -45,7 +45,7 @@ pub unsafe extern "C" fn oats_std_process_exec(
         Ok(output) => {
             let stdout = String::from_utf8_lossy(&output.stdout);
             let stderr = String::from_utf8_lossy(&output.stderr);
-            let combined = format!("STDOUT:\n{}\nSTDERR:\n{}", stdout, stderr);
+            let combined = format!("STDOUT:\n{stdout}\nSTDERR:\n{stderr}");
 
             match CString::new(combined) {
                 Ok(cstring) => cstring.into_raw(),
@@ -63,7 +63,7 @@ pub unsafe extern "C" fn oats_std_process_exec(
 /// `program` must be a valid pointer to a null-terminated C string, or null.
 /// `args` must be a valid pointer to an array of `args_len` pointers to null-terminated C strings, or null.
 /// If non-null, all strings must remain valid for the duration of this call.
-/// #[oats_export]
+/// #[`oats_export`]
 #[no_mangle]
 pub unsafe extern "C" fn oats_std_process_exec_status(
     program: *const c_char,
@@ -100,7 +100,7 @@ pub unsafe extern "C" fn oats_std_process_exec_status(
 }
 
 /// Check if a command exists in PATH
-/// #[oats_export]
+/// #[`oats_export`]
 ///
 /// # Safety
 ///
@@ -119,18 +119,14 @@ pub unsafe extern "C" fn oats_std_process_command_exists(cmd: *const c_char) -> 
 
     match Command::new(cmd_str).arg("--version").output() {
         Ok(output) => {
-            if output.status.success() {
-                1
-            } else {
-                0
-            }
+            i32::from(output.status.success())
         }
         Err(_) => 0,
     }
 }
 
 /// Get current working directory (caller must free)
-/// #[oats_export]
+/// #[`oats_export`]
 #[no_mangle]
 pub extern "C" fn oats_std_process_get_current_dir() -> *mut c_char {
     match std::env::current_dir() {

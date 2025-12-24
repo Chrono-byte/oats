@@ -27,7 +27,7 @@ use crate::codegen::CodeGen;
 use crate::diagnostics;
 use crate::parser;
 use crate::types::{SymbolTable, check_function_strictness};
-use oxc_ast::ast::*;
+use oxc_ast::ast::{Program, Statement, BindingPatternKind, Expression, Function, Declaration, TSModuleDeclarationName, VariableDeclarationKind};
 
 use inkwell::OptimizationLevel;
 use inkwell::context::Context;
@@ -37,7 +37,7 @@ use inkwell::types::BasicType;
 /// Compiles a source file with the given options.
 ///
 /// This is the main entry point for compilation when you have options ready.
-/// Unlike run_from_args, it doesn't mess with environment variables or CLI parsing.
+/// Unlike `run_from_args`, it doesn't mess with environment variables or CLI parsing.
 ///
 /// # Arguments
 /// * `options` - The compilation options
@@ -113,16 +113,12 @@ pub fn run_from_args(
             let path = std::path::Path::new(meta_path);
             if !path.exists() {
                 anyhow::bail!(
-                    "extern_oats entry '{}' points to non-existent metadata file: {}",
-                    import_path,
-                    meta_path
+                    "extern_oats entry '{import_path}' points to non-existent metadata file: {meta_path}"
                 );
             }
             if !path.is_file() {
                 anyhow::bail!(
-                    "extern_oats entry '{}' points to a non-file path: {}",
-                    import_path,
-                    meta_path
+                    "extern_oats entry '{import_path}' points to a non-file path: {meta_path}"
                 );
             }
         }
@@ -130,23 +126,19 @@ pub fn run_from_args(
     } else if let Ok(extern_oats_json) = std::env::var("OATS_EXTERN_OATS") {
         let map: std::collections::HashMap<String, String> =
             serde_json::from_str(&extern_oats_json)
-                .map_err(|e| anyhow::anyhow!("Failed to parse OATS_EXTERN_OATS JSON: {}", e))?;
+                .map_err(|e| anyhow::anyhow!("Failed to parse OATS_EXTERN_OATS JSON: {e}"))?;
 
         // Validate that all metadata file paths exist
         for (import_path, meta_path) in &map {
             let path = std::path::Path::new(meta_path);
             if !path.exists() {
                 anyhow::bail!(
-                    "extern_oats entry '{}' points to non-existent metadata file: {}",
-                    import_path,
-                    meta_path
+                    "extern_oats entry '{import_path}' points to non-existent metadata file: {meta_path}"
                 );
             }
             if !path.is_file() {
                 anyhow::bail!(
-                    "extern_oats entry '{}' points to a non-file path: {}",
-                    import_path,
-                    meta_path
+                    "extern_oats entry '{import_path}' points to a non-file path: {meta_path}"
                 );
             }
         }
@@ -161,7 +153,7 @@ pub fn run_from_args(
     /// This looks for arrow functions assigned to const/let vars at the top level,
     /// since they need special treatment in codegen. It separates exported vs non-exported ones.
     ///
-    /// Returns a list of (name, arrow_expr, is_exported) tuples.
+    /// Returns a list of (name, `arrow_expr`, `is_exported`) tuples.
     fn extract_arrow_functions<'a>(
         parsed: &'a Program<'a>,
     ) -> Vec<(String, &'a oxc_ast::ast::ArrowFunctionExpression<'a>, bool)> {
@@ -305,7 +297,7 @@ pub fn run_from_args(
         let meta_content = match std::fs::read_to_string(meta_path) {
             Ok(content) => content,
             Err(e) => {
-                eprintln!("Warning: Failed to read metadata file {}: {}", meta_path, e);
+                eprintln!("Warning: Failed to read metadata file {meta_path}: {e}");
                 continue;
             }
         };
@@ -314,7 +306,7 @@ pub fn run_from_args(
         for line in meta_content.lines() {
             let line = line.trim();
             if line.starts_with("function ")
-                && line.ends_with(";")
+                && line.ends_with(';')
                 && let Some((name, func_sig)) =
                     crate::extern_resolution::parse_function_signature_from_metadata(line)
             {
@@ -356,57 +348,49 @@ pub fn run_from_args(
                 })
                 .collect();
 
-            let fn_type = match ret_type {
-                crate::types::OatsType::Void => {
-                    let void_t = context.void_type();
-                    void_t.fn_type(&llvm_param_types, false)
-                }
-                _ => {
-                    let ret_llvm_type = match ret_type {
-                        crate::types::OatsType::Number | crate::types::OatsType::F64 => {
-                            context.f64_type().into()
-                        }
-                        crate::types::OatsType::F32 => context.f32_type().into(),
-                        crate::types::OatsType::I64 => context.i64_type().into(),
-                        crate::types::OatsType::I32 => context.i32_type().into(),
-                        crate::types::OatsType::I8 => context.i8_type().into(),
-                        crate::types::OatsType::Boolean => context.bool_type().into(),
-                        crate::types::OatsType::String => {
-                            context.ptr_type(inkwell::AddressSpace::default()).into()
-                        }
-                        _ => context.f64_type().into(),
-                    };
-                    // Convert BasicMetadataTypeEnum to BasicTypeEnum for fn_type
-                    let ret_basic_type: inkwell::types::BasicTypeEnum = match ret_llvm_type {
-                        inkwell::types::BasicMetadataTypeEnum::FloatType(ft) => ft.into(),
-                        inkwell::types::BasicMetadataTypeEnum::IntType(it) => it.into(),
-                        inkwell::types::BasicMetadataTypeEnum::PointerType(pt) => pt.into(),
-                        inkwell::types::BasicMetadataTypeEnum::ArrayType(at) => at.into(),
-                        inkwell::types::BasicMetadataTypeEnum::VectorType(vt) => vt.into(),
-                        inkwell::types::BasicMetadataTypeEnum::StructType(st) => st.into(),
-                        inkwell::types::BasicMetadataTypeEnum::ScalableVectorType(svt) => {
-                            svt.into()
-                        }
-                        inkwell::types::BasicMetadataTypeEnum::MetadataType(_) => {
-                            context.f64_type().into()
-                        }
-                    };
-                    ret_basic_type.fn_type(&llvm_param_types, false)
-                }
+            let fn_type = if ret_type == crate::types::OatsType::Void {
+                let void_t = context.void_type();
+                void_t.fn_type(&llvm_param_types, false)
+            } else {
+                let ret_llvm_type = match ret_type {
+                    crate::types::OatsType::Number | crate::types::OatsType::F64 => {
+                        context.f64_type().into()
+                    }
+                    crate::types::OatsType::F32 => context.f32_type().into(),
+                    crate::types::OatsType::I64 => context.i64_type().into(),
+                    crate::types::OatsType::I32 => context.i32_type().into(),
+                    crate::types::OatsType::I8 => context.i8_type().into(),
+                    crate::types::OatsType::Boolean => context.bool_type().into(),
+                    crate::types::OatsType::String => {
+                        context.ptr_type(inkwell::AddressSpace::default()).into()
+                    }
+                    _ => context.f64_type().into(),
+                };
+                // Convert BasicMetadataTypeEnum to BasicTypeEnum for fn_type
+                let ret_basic_type: inkwell::types::BasicTypeEnum = match ret_llvm_type {
+                    inkwell::types::BasicMetadataTypeEnum::FloatType(ft) => ft.into(),
+                    inkwell::types::BasicMetadataTypeEnum::IntType(it) => it.into(),
+                    inkwell::types::BasicMetadataTypeEnum::PointerType(pt) => pt.into(),
+                    inkwell::types::BasicMetadataTypeEnum::ArrayType(at) => at.into(),
+                    inkwell::types::BasicMetadataTypeEnum::VectorType(vt) => vt.into(),
+                    inkwell::types::BasicMetadataTypeEnum::StructType(st) => st.into(),
+                    inkwell::types::BasicMetadataTypeEnum::ScalableVectorType(svt) => {
+                        svt.into()
+                    }
+                    inkwell::types::BasicMetadataTypeEnum::MetadataType(_) => {
+                        context.f64_type().into()
+                    }
+                };
+                ret_basic_type.fn_type(&llvm_param_types, false)
             };
             module.add_function(&symbol, fn_type, None);
         }
     }
 
     // Perform Rapid Type Analysis on all modules
-    // For now, we only have a single module, but RTA is designed to work with multiple modules
-    // We create a HashMap with the single module for RTA analysis
-    let modules_map = std::collections::HashMap::new();
-    // RTA only reads from parsed_mod, so we can pass a reference
-    // For now, we'll need to restructure RTA to work with references
-    // TODO: Refactor RTA to work with references instead of owned values
-    // For now, skip RTA if we can't clone
-    // modules_map.insert(src_path.clone(), parsed_mod.clone());
+    // RTA now works with references instead of owned values
+    let mut modules_map = std::collections::HashMap::new();
+    modules_map.insert(src_path.clone(), &parsed_mod);
 
     // Run RTA analysis between parsing and code generation
     let rta_results = crate::rta::analyze(&modules_map);
@@ -436,6 +420,16 @@ pub fn run_from_args(
         fn_rc_inc: std::cell::RefCell::new(None),
         fn_rc_dec: std::cell::RefCell::new(None),
         fn_number_to_string: std::cell::RefCell::new(None),
+        fn_number_is_nan: std::cell::RefCell::new(None),
+        fn_number_is_finite: std::cell::RefCell::new(None),
+        fn_number_is_infinite: std::cell::RefCell::new(None),
+        fn_number_parse_float: std::cell::RefCell::new(None),
+        fn_number_new: std::cell::RefCell::new(None),
+        fn_number_is_nan_static: std::cell::RefCell::new(None),
+        fn_number_is_finite_static: std::cell::RefCell::new(None),
+        fn_number_is_integer: std::cell::RefCell::new(None),
+        fn_number_parse_float_static: std::cell::RefCell::new(None),
+        fn_number_parse_int: std::cell::RefCell::new(None),
         fn_union_box_f64: std::cell::RefCell::new(None),
         fn_union_box_ptr: std::cell::RefCell::new(None),
         fn_union_unbox_f64: std::cell::RefCell::new(None),
@@ -454,6 +448,7 @@ pub fn run_from_args(
         current_class_parent: RefCell::new(None),
         closure_local_rettype: RefCell::new(HashMap::new()),
         last_expr_origin_local: RefCell::new(None),
+        last_expr_oats_type: RefCell::new(None),
         async_await_live_sets: RefCell::new(None),
         generator_yield_live_sets: RefCell::new(None),
         generator_local_name_to_slot: RefCell::new(None),
@@ -477,6 +472,7 @@ pub fn run_from_args(
         const_interns: std::cell::RefCell::new(std::collections::HashMap::new()),
         current_escape_info: RefCell::new(None),
         nested_generic_fns: RefCell::new(HashMap::new()),
+        nested_generic_classes: RefCell::new(HashMap::new()),
         monomorphized_map: RefCell::new(HashMap::new()),
         mut_var_decls: parsed_mod.mut_var_decls.clone(),
         current_function_return_type: RefCell::new(None),
@@ -555,87 +551,92 @@ pub fn run_from_args(
             // Log to file instead of stderr to avoid suppression
             let log_path = "/home/chrono/Dev/oats/.cursor/debug.log";
             let _ = std::fs::OpenOptions::new().create(true).append(true).open(log_path).and_then(|mut f| {
+                let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or(std::time::Duration::from_secs(0));
                 writeln!(f, r#"{{"id":"log_{}","timestamp":{},"location":"builder.rs:555","message":"processing interface","data":{{"interface_name":"{}","body_len":{}}},"sessionId":"debug-session","runId":"run1","hypothesisId":"K"}}"#,
-                    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
-                    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis(),
+                    now.as_nanos(),
+                    now.as_millis(),
                     interface_name, interface.body.body.len())
             });
 
             for (idx, member) in interface.body.body.iter().enumerate() {
                 let _ = std::fs::OpenOptions::new().create(true).append(true).open(log_path).and_then(|mut f| {
+                    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or(std::time::Duration::from_secs(0));
                     writeln!(f, r#"{{"id":"log_{}","timestamp":{},"location":"builder.rs:560","message":"member type","data":{{"idx":{},"discriminant":"{:?}"}},"sessionId":"debug-session","runId":"run1","hypothesisId":"K"}}"#,
-                        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
-                        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis(),
+                        now.as_nanos(),
+                        now.as_millis(),
                         idx, std::mem::discriminant(member))
                 });
-                match member {
-                    oxc_ast::ast::TSSignature::TSPropertySignature(prop) => {
-                        let _ = std::fs::OpenOptions::new().create(true).append(true).open(log_path).and_then(|mut f| {
-                            writeln!(f, r#"{{"id":"log_{}","timestamp":{},"location":"builder.rs:562","message":"found property signature","data":{{"key_discriminant":"{:?}"}},"sessionId":"debug-session","runId":"run1","hypothesisId":"K"}}"#,
-                                std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
-                                std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis(),
-                                std::mem::discriminant(&prop.key))
-                        });
-                        // Extract property name
-                        let prop_name = match &prop.key {
-                            oxc_ast::ast::PropertyKey::StaticIdentifier(ident) => {
-                                ident.name.to_string()
-                            }
-                            oxc_ast::ast::PropertyKey::Identifier(ident) => {
-                                ident.name.to_string()
-                            }
-                            oxc_ast::ast::PropertyKey::StringLiteral(s) => s.value.to_string(),
-                            _ => {
-                                eprintln!("DEBUG: Skipped property key type: {:?}", std::mem::discriminant(&prop.key));
-                                continue; // Skip computed keys for now
-                            }
-                        };
-
-                        let _ = std::fs::OpenOptions::new().create(true).append(true).open(log_path).and_then(|mut f| {
-                            writeln!(f, r#"{{"id":"log_{}","timestamp":{},"location":"builder.rs:576","message":"property name extracted","data":{{"prop_name":"{}","has_type_ann":{}}},"sessionId":"debug-session","runId":"run1","hypothesisId":"K"}}"#,
-                                std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
-                                std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis(),
-                                prop_name, prop.type_annotation.is_some())
-                        });
-
-                        // Extract property type
-                        if let Some(type_ann) = &prop.type_annotation {
-                            // Convert TSType to OatsType - use map_ts_type_with_aliases to support
-                            // type aliases and symbol table lookups (needed for interface types)
-                            let oats_type_opt = crate::types::map_ts_type_with_aliases(
-                                &type_ann.type_annotation,
-                                Some(&*codegen.type_aliases.borrow()),
-                                Some(&*codegen.symbol_table.borrow()),
-                            );
-                            let _ = std::fs::OpenOptions::new().create(true).append(true).open(log_path).and_then(|mut f| {
-                                writeln!(f, r#"{{"id":"log_{}","timestamp":{},"location":"builder.rs:587","message":"type mapping","data":{{"prop_name":"{}","oats_type_some":{}}},"sessionId":"debug-session","runId":"run1","hypothesisId":"K"}}"#,
-                                    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
-                                    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis(),
-                                    prop_name, oats_type_opt.is_some())
-                            });
-                            if let Some(oats_type) = oats_type_opt {
-                                let _ = std::fs::OpenOptions::new().create(true).append(true).open(log_path).and_then(|mut f| {
-                                    writeln!(f, r#"{{"id":"log_{}","timestamp":{},"location":"builder.rs:590","message":"adding property","data":{{"prop_name":"{}"}},"sessionId":"debug-session","runId":"run1","hypothesisId":"K"}}"#,
-                                        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
-                                        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis(),
-                                        prop_name)
-                                });
-                                interface_props.push((prop_name.clone(), oats_type.clone()));
-                            }
-                            // Skip properties with unsupported types
+                if let oxc_ast::ast::TSSignature::TSPropertySignature(prop) = member {
+                    let _ = std::fs::OpenOptions::new().create(true).append(true).open(log_path).and_then(|mut f| {
+                        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or(std::time::Duration::from_secs(0));
+                        writeln!(f, r#"{{"id":"log_{}","timestamp":{},"location":"builder.rs:562","message":"found property signature","data":{{"key_discriminant":"{:?}"}},"sessionId":"debug-session","runId":"run1","hypothesisId":"K"}}"#,
+                            now.as_nanos(),
+                            now.as_millis(),
+                            std::mem::discriminant(&prop.key))
+                    });
+                    // Extract property name
+                    let prop_name = match &prop.key {
+                        oxc_ast::ast::PropertyKey::StaticIdentifier(ident) => {
+                            ident.name.to_string()
                         }
+                        oxc_ast::ast::PropertyKey::Identifier(ident) => ident.name.to_string(),
+                        oxc_ast::ast::PropertyKey::StringLiteral(s) => s.value.to_string(),
+                        _ => {
+                            eprintln!(
+                                "Skipping property key: {:?}",
+                                std::mem::discriminant(&prop.key)
+                            );
+                            continue; // Skip computed keys for now
+                        }
+                    };
+
+                    let _ = std::fs::OpenOptions::new().create(true).append(true).open(log_path).and_then(|mut f| {
+                        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or(std::time::Duration::from_secs(0));
+                        writeln!(f, r#"{{"id":"log_{}","timestamp":{},"location":"builder.rs:576","message":"property name extracted","data":{{"prop_name":"{}","has_type_ann":{}}},"sessionId":"debug-session","runId":"run1","hypothesisId":"K"}}"#,
+                            now.as_nanos(),
+                            now.as_millis(),
+                            prop_name, prop.type_annotation.is_some())
+                    });
+
+                    // Extract property type
+                    if let Some(type_ann) = &prop.type_annotation {
+                        // Convert TSType to OatsType - use map_ts_type_with_aliases to support
+                        // type aliases and symbol table lookups (needed for interface types)
+                        let oats_type_opt = crate::types::map_ts_type_with_aliases(
+                            &type_ann.type_annotation,
+                            Some(&*codegen.type_aliases.borrow()),
+                            Some(&*codegen.symbol_table.borrow()),
+                        );
+                        let _ = std::fs::OpenOptions::new().create(true).append(true).open(log_path).and_then(|mut f| {
+                            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or(std::time::Duration::from_secs(0));
+                            writeln!(f, r#"{{"id":"log_{}","timestamp":{},"location":"builder.rs:587","message":"type mapping","data":{{"prop_name":"{}","oats_type_some":{}}},"sessionId":"debug-session","runId":"run1","hypothesisId":"K"}}"#,
+                                now.as_nanos(),
+                                now.as_millis(),
+                                prop_name, oats_type_opt.is_some())
+                        });
+                        if let Some(oats_type) = oats_type_opt {
+                            let _ = std::fs::OpenOptions::new().create(true).append(true).open(log_path).and_then(|mut f| {
+                                let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or(std::time::Duration::from_secs(0));
+                                writeln!(f, r#"{{"id":"log_{}","timestamp":{},"location":"builder.rs:590","message":"adding property","data":{{"prop_name":"{}"}},"sessionId":"debug-session","runId":"run1","hypothesisId":"K"}}"#,
+                                    now.as_nanos(),
+                                    now.as_millis(),
+                                    prop_name)
+                            });
+                            interface_props.push((prop_name.clone(), oats_type.clone()));
+                        }
+                        // Skip properties with unsupported types
                     }
-                    _ => {
-                        // Methods, index signatures, etc. are not yet stored
-                        // They can be added in the future if needed for type checking
-                    }
+                } else {
+                    // Methods, index signatures, etc. are not yet stored
+                    // They can be added in the future if needed for type checking
                 }
             }
 
             let _ = std::fs::OpenOptions::new().create(true).append(true).open(log_path).and_then(|mut f| {
+                let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or(std::time::Duration::from_secs(0));
                 writeln!(f, r#"{{"id":"log_{}","timestamp":{},"location":"builder.rs:604","message":"interface final","data":{{"interface_name":"{}","props_count":{}}},"sessionId":"debug-session","runId":"run1","hypothesisId":"K"}}"#,
-                    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
-                    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis(),
+                    now.as_nanos(),
+                    now.as_millis(),
                     interface_name, interface_props.len())
             });
 
@@ -976,36 +977,32 @@ pub fn run_from_args(
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("out");
-    
+
     // Determine if we should emit IR and object files
-    let emit_ir = options
-        .as_ref()
-        .map(|o| o.emit_ir)
-        .unwrap_or(false);
-    let emit_obj = options
-        .as_ref()
-        .map(|o| o.emit_obj)
-        .unwrap_or(false);
-    
-    let out_ll = format!("{}/{}.ll", out_dir, src_filename);
+    let emit_ir = options.as_ref().is_some_and(|o| o.emit_ir);
+    let emit_obj = options.as_ref().is_some_and(|o| o.emit_obj);
+
+    let out_ll = format!("{out_dir}/{src_filename}.ll");
     let out_exe = if let Some(ref opts) = options {
         if let Some(ref name) = opts.out_name {
-            format!("{}/{}", out_dir, name)
+            format!("{out_dir}/{name}")
         } else {
-            format!("{}/{}", out_dir, src_filename)
+            format!("{out_dir}/{src_filename}")
         }
     } else if let Ok(name) = std::env::var("OATS_OUT_NAME") {
-        format!("{}/{}", out_dir, name)
+        format!("{out_dir}/{name}")
     } else {
-        format!("{}/{}", out_dir, src_filename)
+        format!("{out_dir}/{src_filename}")
     };
-    
+
     // Determine object file path (only needed if emit_obj is true or for emit_object_only)
-    let out_obj = format!("{}/{}.o", out_dir, src_filename);
+    let out_obj = format!("{out_dir}/{src_filename}.o");
 
     // Ensure output directory exists (only needed if we're emitting files there)
-    if (emit_ir || emit_obj) && let Err(e) = std::fs::create_dir_all(&out_dir) {
-        anyhow::bail!("failed to create output directory {}: {}", out_dir, e);
+    if (emit_ir || emit_obj)
+        && let Err(e) = std::fs::create_dir_all(&out_dir)
+    {
+        anyhow::bail!("failed to create output directory {out_dir}: {e}");
     }
 
     // Write LLVM IR to file only if emit_ir is enabled
@@ -1090,21 +1087,21 @@ pub fn run_from_args(
 
     // If emit_obj is true, write object file to disk
     if emit_obj {
-        std::fs::write(&out_obj, &obj_bytes).map_err(|e| {
-            anyhow::anyhow!("Failed to write object file {}: {}", out_obj, e)
-        })?;
+        std::fs::write(&out_obj, &obj_bytes)
+            .map_err(|e| anyhow::anyhow!("Failed to write object file {out_obj}: {e}"))?;
     }
 
     // If requested, only emit the object and skip the final host linking step.
     if linking_config.emit_object_only {
         if emit_obj {
             eprintln!(
-                "OATS_EMIT_OBJECT_ONLY set; emitted {} and skipping link",
-                out_obj
+                "OATS_EMIT_OBJECT_ONLY set; emitted {out_obj} and skipping link"
             );
-            println!("{}", out_obj);
+            println!("{out_obj}");
         } else {
-            eprintln!("OATS_EMIT_OBJECT_ONLY set; object file compiled in memory (use --emit-obj to write to disk)");
+            eprintln!(
+                "OATS_EMIT_OBJECT_ONLY set; object file compiled in memory (use --emit-obj to write to disk)"
+            );
         }
         return Ok(if emit_obj { Some(out_obj) } else { None });
     }
@@ -1124,7 +1121,7 @@ pub fn run_from_args(
         let temp_filename = format!("oatsc_{}_{}.o", src_filename, std::process::id());
         let temp_path = temp_dir.join(temp_filename).to_string_lossy().to_string();
         std::fs::write(&temp_path, &obj_bytes).map_err(|e| {
-            anyhow::anyhow!("Failed to write temporary object file {}: {}", temp_path, e)
+            anyhow::anyhow!("Failed to write temporary object file {temp_path}: {e}")
         })?;
         (temp_path, true)
     };
@@ -1136,9 +1133,11 @@ pub fn run_from_args(
     // Clean up temporary object file if we created one
     if is_temp && let Err(e) = std::fs::remove_file(&link_obj_path) {
         // Log but don't fail - temp files will be cleaned up eventually
-        eprintln!("Warning: Failed to remove temporary object file {}: {}", link_obj_path, e);
+        eprintln!(
+            "Warning: Failed to remove temporary object file {link_obj_path}: {e}"
+        );
     }
 
-    println!("{}", final_exe);
+    println!("{final_exe}");
     Ok(Some(final_exe))
 }

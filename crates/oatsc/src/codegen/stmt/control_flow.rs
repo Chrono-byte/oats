@@ -2,7 +2,7 @@ use inkwell::values::FunctionValue;
 use std::collections::HashMap;
 
 use crate::types::OatsType;
-use oxc_ast::ast::*;
+use oxc_ast::ast::{IfStatement, ForStatement, ForStatementInit, Statement, WhileStatement, DoWhileStatement};
 
 #[allow(dead_code)]
 type LocalEntry<'a> = (

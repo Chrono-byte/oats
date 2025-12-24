@@ -8,8 +8,9 @@
 use crate::codegen::CodeGen;
 use crate::codegen::helpers::extract_basic_value_from_valuekind;
 use crate::diagnostics::{Diagnostic, Severity};
+use crate::types::SymbolTable;
 use inkwell::values::BasicValue;
-use oxc_ast::ast::*;
+use oxc_ast::ast::{Expression, BindingPatternKind, ClassElement, MethodDefinitionKind, PropertyKey, Statement};
 
 impl<'a> CodeGen<'a> {
     /// Specializes a generic type with concrete type arguments.
@@ -93,7 +94,7 @@ impl<'a> CodeGen<'a> {
         let mut key_parts = Vec::with_capacity(1 + type_args.len());
         key_parts.push(func_name.to_string());
         for arg in type_args {
-            key_parts.push(format!("{:?}", arg));
+            key_parts.push(format!("{arg:?}"));
         }
         let key = key_parts.join("_");
 
@@ -111,7 +112,7 @@ impl<'a> CodeGen<'a> {
             None => {
                 return Err(Diagnostic::simple_boxed(
                     Severity::Error,
-                    format!("Generic function '{}' not found", func_name),
+                    format!("Generic function '{func_name}' not found"),
                 ));
             }
         };
@@ -178,10 +179,10 @@ impl<'a> CodeGen<'a> {
         };
 
         // Build specialized name matching expected `_mono` pattern
-        let mut specialized_name = format!("{}_mono", func_name);
+        let mut specialized_name = format!("{func_name}_mono");
         for arg in type_args {
             specialized_name.push_str(
-                &format!("_{:?}", arg)
+                &format!("_{arg:?}")
                     .replace(' ', "")
                     .replace(['(', ')'], "")
                     .replace(',', "_"),
@@ -212,6 +213,209 @@ impl<'a> CodeGen<'a> {
         }
 
         Ok(specialized_name)
+    }
+
+    /// Monomorphizes a generic class with concrete type arguments.
+    ///
+    /// Returns the name of the specialized class. Caches results to avoid
+    /// regenerating the same specialization.
+    ///
+    /// # Parameters
+    /// - `class_name`: Name of the generic class to specialize
+    /// - `type_args`: Concrete type arguments to substitute
+    pub fn monomorphize_class(
+        &self,
+        class_name: &str,
+        type_args: &[crate::types::OatsType],
+    ) -> crate::diagnostics::DiagnosticResult<String> {
+        // Create a unique key for this monomorphization
+        let mut key_parts = Vec::with_capacity(1 + type_args.len());
+        key_parts.push(class_name.to_string());
+        for arg in type_args {
+            key_parts.push(format!("{arg:?}"));
+        }
+        let key = key_parts.join("_");
+
+        // Check cache
+        if let Some(existing_name) = self.monomorphized_map.borrow().get(&key) {
+            return Ok(existing_name.clone());
+        }
+
+        // Lookup the generic class AST and its type parameters
+        let nested_classes_borrow = self.nested_generic_classes.borrow();
+        let (class_ast, tp_names) = match nested_classes_borrow.get(class_name) {
+            Some((class_ast, tp_names)) => (*class_ast, tp_names.clone()),
+            None => {
+                return Err(Diagnostic::simple_boxed(
+                    Severity::Error,
+                    format!("Generic class '{class_name}' not found"),
+                ));
+            }
+        };
+
+        if tp_names.len() != type_args.len() {
+            return Err(Diagnostic::simple_boxed(
+                Severity::Error,
+                format!(
+                    "Expected {} type arguments for generic class '{}', got {}",
+                    tp_names.len(),
+                    class_name,
+                    type_args.len()
+                ),
+            ));
+        }
+
+        // Build substitution map name -> OatsType
+        let mut subst = std::collections::HashMap::with_capacity(tp_names.len());
+        for (n, t) in tp_names.iter().zip(type_args.iter()) {
+            subst.insert(n.clone(), t.clone());
+        }
+
+        // Build specialized name
+        let mut specialized_name = format!("{class_name}_mono");
+        for arg in type_args {
+            specialized_name.push_str(
+                &format!("_{arg:?}")
+                    .replace(' ', "")
+                    .replace(['(', ')'], "")
+                    .replace(',', "_"),
+            );
+        }
+
+        // Reserve mapping before emission to avoid recursion
+        self.monomorphized_map
+            .borrow_mut()
+            .insert(key.clone(), specialized_name.clone());
+
+        // Generate the specialized class IR
+        // We need to create a modified class AST with substituted types
+        // For now, we'll generate the class with the specialized name and handle type substitution in field resolution
+        self.gen_monomorphized_class_ir(&specialized_name, class_ast, &subst)?;
+
+        Ok(specialized_name)
+    }
+
+    /// Generates IR for a monomorphized class with type substitutions.
+    fn gen_monomorphized_class_ir(
+        &self,
+        specialized_name: &str,
+        class_ast: &'a oxc_ast::ast::Class<'a>,
+        subst: &std::collections::HashMap<String, crate::types::OatsType>,
+    ) -> crate::diagnostics::DiagnosticResult<()> {
+        // Create a temporary class AST with the specialized name
+        // This is a simplified implementation - in a full implementation we'd need to
+        // deep clone and modify the AST with type substitutions
+
+        let raw_name = specialized_name.to_string();
+
+        // Register in symbol table with original name as key, specialized name as value
+        self.symbol_table
+            .borrow_mut()
+            .insert_type(raw_name.clone(), specialized_name.to_string());
+
+        // 1. Record parent class (none for now)
+        let parent_name_opt = None;
+        self.class_parents
+            .borrow_mut()
+            .insert(specialized_name.to_string(), parent_name_opt.clone());
+
+        // 2. Scan members for fields and constructor
+        let mut fields = Vec::new();
+        let mut ctor_opt = None;
+
+        for member in &class_ast.body.body {
+            match member {
+                ClassElement::MethodDefinition(m) => {
+                    if m.kind == MethodDefinitionKind::Constructor {
+                        ctor_opt = Some(m);
+                    }
+                }
+                ClassElement::PropertyDefinition(p) => {
+                    // Extract field name and type with substitution
+                    let pname = match &p.key {
+                        PropertyKey::StaticIdentifier(id) => id.name.to_string(),
+                        PropertyKey::Identifier(id) => id.name.to_string(),
+                        PropertyKey::StringLiteral(s) => s.value.to_string(),
+                        _ => continue,
+                    };
+                    let ptype = if let Some(ann) = &p.type_annotation {
+                        // Apply type substitution
+                        if let Some(mapped) = crate::types::map_ts_type_with_subst_and_aliases(
+                            &ann.type_annotation,
+                            subst,
+                            Some(&*self.type_aliases.borrow()),
+                            Some(&*self.symbol_table.borrow()),
+                        ) {
+                            mapped
+                        } else {
+                            crate::types::OatsType::Number
+                        }
+                    } else {
+                        crate::types::OatsType::Number
+                    };
+                    fields.push((pname, ptype));
+                }
+                _ => {}
+            }
+        }
+
+        // Register fields
+        self.class_fields
+            .borrow_mut()
+            .insert(specialized_name.to_string(), fields.clone());
+
+        // 3. Generate methods and constructor
+        for member in &class_ast.body.body {
+            if let ClassElement::MethodDefinition(m) = member
+                && m.kind != MethodDefinitionKind::Constructor
+            {
+                let mname = match &m.key {
+                    PropertyKey::StaticIdentifier(id) => id.name.to_string(),
+                    PropertyKey::Identifier(id) => id.name.to_string(),
+                    PropertyKey::StringLiteral(s) => s.value.to_string(),
+                    _ => continue,
+                };
+
+                let method_func = &m.value;
+                let mut method_symbols = SymbolTable::new();
+                let (sig_opt, _) =
+                    crate::types::check_function_strictness(method_func, &mut method_symbols)
+                        .map_err(|e| Box::new(Diagnostic::error(e.to_string())))?;
+
+                if let Some(sig) = sig_opt {
+                    let mut params = Vec::new();
+                    params.push(crate::types::OatsType::NominalStruct(
+                        specialized_name.to_string(),
+                    ));
+                    params.extend(sig.params.into_iter());
+                    let ret = sig.ret;
+                    let fname = format!("{specialized_name}_{mname}");
+
+                    // Save current class parent for super calls
+                    let old_parent = self.current_class_parent.borrow().clone();
+                    *self.current_class_parent.borrow_mut() = parent_name_opt.clone();
+
+                    self.gen_function_ir(&fname, method_func, &params, &ret, Some("this"))?;
+
+                    *self.current_class_parent.borrow_mut() = old_parent;
+                }
+            }
+        }
+
+        if let Some(ctor) = ctor_opt {
+            // Save current class parent for constructor
+            let old_parent = self.current_class_parent.borrow().clone();
+            *self.current_class_parent.borrow_mut() = parent_name_opt;
+
+            self.gen_constructor_ir(specialized_name, ctor, &fields, None)?;
+
+            *self.current_class_parent.borrow_mut() = old_parent;
+        } else {
+            // Generate default constructor
+            self.gen_default_constructor_ir(specialized_name, &fields)?;
+        }
+
+        Ok(())
     }
 
     /// Infers the return type from an arrow function body.
@@ -342,15 +546,25 @@ impl<'a> CodeGen<'a> {
     ///
     /// Currently only handles literals; identifiers and complex expressions
     /// default to `Number`.
-    fn infer_type_from_expr(
+    pub(crate) fn infer_type_from_expr(
         &self,
         expr: &Expression<'_>,
     ) -> crate::diagnostics::DiagnosticResult<crate::types::OatsType> {
+        // Check if we already have type information from lowering
+        if let Some(ty) = self.last_expr_oats_type.borrow().as_ref() {
+            return Ok(ty.clone());
+        }
+
         match expr {
             Expression::NumericLiteral(_) => Ok(crate::types::OatsType::Number),
             Expression::StringLiteral(_) => Ok(crate::types::OatsType::String),
             Expression::BooleanLiteral(_) => Ok(crate::types::OatsType::Boolean),
-            Expression::Identifier(_) => Ok(crate::types::OatsType::Number), // default fallback - should be resolved by type inference
+            Expression::Identifier(id) => {
+                let _name = id.name.to_string();
+                // Try to infer type from context
+                // This is a simplified implementation - should check locals, params, etc.
+                Ok(crate::types::OatsType::Number) // default fallback
+            }
             _ => Ok(crate::types::OatsType::Number), // default for complex expr
         }
     }

@@ -213,9 +213,10 @@ fn test_interfaces() {
 
 #[test]
 fn test_unions() {
-    let code = r#" 
+    let code = r#"
         function printId(id: number | string): void {
-            console.log("ID: " + id);
+            console.log("ID:");
+            console.log(id);
         }
         export function main(): void {
             printId(101);

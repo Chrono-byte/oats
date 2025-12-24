@@ -14,7 +14,7 @@ fn test_parse_empty_file() {
     let code = "";
     let (parsed_mod_opt, diags) = parser::parse_oats_module(code, Some("empty.oats"))
         .expect("Should parse empty file without error");
-    
+
     // Empty file should parse but produce no content
     if let Some(parsed_mod) = parsed_mod_opt {
         assert!(parsed_mod.parsed.body.is_empty());
@@ -28,7 +28,7 @@ fn test_parse_whitespace_only() {
     let code = "   \n\t  \n  ";
     let (parsed_mod_opt, _diags) = parser::parse_oats_module(code, Some("whitespace.oats"))
         .expect("Should parse whitespace-only file");
-    
+
     if let Some(parsed_mod) = parsed_mod_opt {
         assert!(parsed_mod.parsed.body.is_empty());
     }
@@ -40,14 +40,14 @@ fn test_parse_variable_declarations() {
     assert_compiles("let x: number = 42;");
     assert_compiles("let y: string = 'hello';");
     assert_compiles("let z: boolean = true;");
-    
+
     // Test const declarations
     assert_compiles("const a: number = 10;");
     assert_compiles("const b = 20;");
-    
+
     // Test var declarations
     assert_compiles("var c: number = 30;");
-    
+
     // Test multiple declarations
     assert_compiles("let x = 1, y = 2, z = 3;");
 }
@@ -58,17 +58,17 @@ fn test_parse_function_declarations() {
     assert_compiles("function foo(): void {}");
     assert_compiles("function bar(x: number): number { return x; }");
     assert_compiles("function baz(x: number, y: string): void {}");
-    
+
     // Arrow function
     assert_compiles("let arrow = (x: number) => x + 1;");
     assert_compiles("let arrow2 = () => 42;");
-    
+
     // Async function
     assert_compiles("async function asyncFoo(): Promise<number> { return 1; }");
-    
+
     // Generator function
     assert_compiles("function* gen(): Generator<number> { yield 1; }");
-    
+
     // Function with type parameters
     assert_compiles("function generic<T>(x: T): T { return x; }");
 }
@@ -77,16 +77,16 @@ fn test_parse_function_declarations() {
 fn test_parse_class_declarations() {
     // Simple class
     assert_compiles("class Point { x: number; y: number; }");
-    
+
     // Class with constructor
     assert_compiles("class Point { constructor(public x: number, public y: number) {} }");
-    
+
     // Class with methods
     assert_compiles("class Point { getX(): number { return this.x; } }");
-    
+
     // Class with inheritance
     assert_compiles("class Child extends Parent {}");
-    
+
     // Class with multiple inheritance levels
     assert_compiles("class GrandChild extends Child {}");
 }
@@ -110,26 +110,26 @@ fn test_parse_control_flow_statements() {
     assert_compiles("if (true) { let x = 1; }");
     assert_compiles("if (true) { } else { }");
     assert_compiles("if (x) { } else if (y) { } else { }");
-    
+
     // While loops
     assert_compiles("while (true) { break; }");
-    
+
     // Do-while loops
     assert_compiles("do { } while (false);");
-    
+
     // For loops
     assert_compiles("for (let i = 0; i < 10; i++) { }");
     assert_compiles("for (;;) { break; }");
-    
+
     // For-in loops
     assert_compiles("for (let key in obj) { }");
-    
+
     // For-of loops
     assert_compiles("for (let item of arr) { }");
-    
+
     // Switch statements
     assert_compiles("switch (x) { case 1: break; default: break; }");
-    
+
     // Try-catch
     assert_compiles("try { } catch (e) { }");
     assert_compiles("try { } catch (e) { } finally { }");
@@ -151,38 +151,38 @@ fn test_parse_expressions() {
     assert_compiles("let x = 1 >= 2;");
     assert_compiles("let x = 1 && 2;");
     assert_compiles("let x = 1 || 2;");
-    
+
     // Unary operations
     assert_compiles("let x = -1;");
     assert_compiles("let x = +1;");
     assert_compiles("let x = !true;");
     assert_compiles("let x = ~1;");
-    
+
     // Function calls
     assert_compiles("foo();");
     assert_compiles("foo(1, 2, 3);");
     assert_compiles("obj.method();");
-    
+
     // Member access
     assert_compiles("obj.prop;");
     assert_compiles("obj['key'];");
     assert_compiles("obj[0];");
-    
+
     // New expressions
     assert_compiles("new Point(1, 2);");
-    
+
     // This/super
     assert_compiles("this.x;");
     assert_compiles("super.method();");
-    
+
     // Optional chaining
     assert_compiles("obj?.prop;");
     assert_compiles("obj?.['key'];");
     assert_compiles("obj?.method();");
-    
+
     // Ternary
     assert_compiles("let x = true ? 1 : 2;");
-    
+
     // Sequence expressions
     assert_compiles("let x = (1, 2, 3);");
 }
@@ -193,20 +193,20 @@ fn test_parse_literals() {
     assert_compiles("let x = 42;");
     assert_compiles("let x = 3.14;");
     assert_compiles("let x = 1e10;");
-    
+
     // String literals
     assert_compiles("let x = 'hello';");
     assert_compiles("let x = \"world\";");
     assert_compiles("let x = `template ${1 + 2}`;");
-    
+
     // Boolean literals
     assert_compiles("let x = true;");
     assert_compiles("let x = false;");
-    
+
     // Array literals
     assert_compiles("let x = [1, 2, 3];");
     assert_compiles("let x = [];");
-    
+
     // Object literals
     assert_compiles("let x = { a: 1, b: 2 };");
     assert_compiles("let x = {};");
@@ -237,10 +237,10 @@ fn test_parse_import_export() {
 fn test_parse_nested_structures() {
     // Deeply nested if
     assert_compiles("if (a) { if (b) { if (c) { } } }");
-    
+
     // Nested loops
     assert_compiles("for (let i = 0; i < 10; i++) { for (let j = 0; j < 10; j++) { } }");
-    
+
     // Nested functions
     assert_compiles("function outer() { function inner() { } }");
 }
@@ -265,11 +265,12 @@ fn test_parse_source_size_limit() {
     let large_content = "let x = 1;\n".repeat(1_000_000); // ~10MB
     let (parsed_mod_opt, diags) = parser::parse_oats_module(&large_content, Some("large.oats"))
         .expect("Should handle large file");
-    
+
     // Should either fail to parse or produce a diagnostic
     if parsed_mod_opt.is_none() {
         // Check that we got an error diagnostic
-        let errors: Vec<_> = diags.iter()
+        let errors: Vec<_> = diags
+            .iter()
             .filter(|d| d.severity == Severity::Error)
             .collect();
         assert!(!errors.is_empty(), "Should have error for oversized file");
@@ -288,9 +289,9 @@ fn test_parse_invalid_syntax_missing_semicolon() {
 fn test_parse_invalid_syntax_missing_brackets() {
     // Missing closing brace
     let code = "function foo() { let x = 1;";
-    let (_parsed_mod_opt, _diags) = parser::parse_oats_module(code, Some("test.oats"))
-        .expect("Parser should attempt to parse");
-    
+    let (_parsed_mod_opt, _diags) =
+        parser::parse_oats_module(code, Some("test.oats")).expect("Parser should attempt to parse");
+
     // Should produce diagnostics
     // Note: oxc_parser may recover or produce errors
 }
@@ -299,13 +300,13 @@ fn test_parse_invalid_syntax_missing_brackets() {
 fn test_parse_complex_expressions() {
     // Chained member access
     assert_compiles("obj.prop.method().result;");
-    
+
     // Complex binary expressions
     assert_compiles("let x = 1 + 2 * 3 - 4 / 5;");
-    
+
     // Nested function calls
     assert_compiles("foo(bar(baz(1)));");
-    
+
     // Array/object nesting
     assert_compiles("let x = [{ a: 1 }, { b: 2 }];");
 }
@@ -505,4 +506,3 @@ fn test_parse_namespace() {
 fn test_parse_module_declarations() {
     assert_compiles("declare module 'm' { export const x: number; }");
 }
-

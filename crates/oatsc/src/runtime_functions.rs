@@ -45,6 +45,39 @@ pub mod names {
     /// Convert number to string: `number_to_string(f64) -> i8*`
     pub const NUMBER_TO_STRING: &str = "number_to_string";
 
+    /// Check if number is NaN: `number_is_nan(f64) -> i64`
+    pub const NUMBER_IS_NAN: &str = "number_is_nan";
+
+    /// Check if number is finite: `number_is_finite(f64) -> i64`
+    pub const NUMBER_IS_FINITE: &str = "number_is_finite";
+
+    /// Check if number is infinite: `number_is_infinite(f64) -> i64`
+    pub const NUMBER_IS_INFINITE: &str = "number_is_infinite";
+
+    /// Parse string to number: `number_parse_float(i8*) -> f64`
+    pub const NUMBER_PARSE_FLOAT: &str = "number_parse_float";
+
+    /// Number.isNaN static method: `number_is_nan_static(f64) -> i64`
+    pub const NUMBER_IS_NAN_STATIC: &str = "number_is_nan_static";
+
+    /// Number.isFinite static method: `number_is_finite_static(f64) -> i64`
+    pub const NUMBER_IS_FINITE_STATIC: &str = "number_is_finite_static";
+
+    /// Number.isInteger static method: `number_is_integer(f64) -> i64`
+    pub const NUMBER_IS_INTEGER: &str = "number_is_integer";
+
+    /// Number.parseFloat static method: `number_parse_float_static(i8*) -> f64`
+    pub const NUMBER_PARSE_FLOAT_STATIC: &str = "number_parse_float_static";
+
+    /// Number.parseInt static method: `number_parse_int(i8*, i64) -> f64`
+    pub const NUMBER_PARSE_INT: &str = "number_parse_int";
+
+    /// Create Number object: `number_new(f64) -> i8*`
+    pub const NUMBER_NEW: &str = "number_new";
+
+    /// Get Number object value: `number_value(i8*) -> f64`
+    pub const NUMBER_VALUE: &str = "number_value";
+
     /// Box f64 into union: `union_box_f64(f64) -> i8*`
     pub const UNION_BOX_F64: &str = "union_box_f64";
 

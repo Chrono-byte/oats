@@ -53,16 +53,13 @@ pub fn runtime_malloc(size: size_t) -> *mut c_void {
         if size == 0 {
             return std::ptr::null_mut();
         }
-        let total = match size.checked_add(std::mem::size_of::<u64>()) {
-            Some(total) => total,
-            None => {
-                if RUNTIME_LOG.load(Ordering::Relaxed) {
-                    let _ = io::stderr().write_all(
-                        b"[oats runtime] runtime_malloc: integer overflow in allocation size\n",
-                    );
-                }
-                return std::ptr::null_mut();
+        let total = if let Some(total) = size.checked_add(std::mem::size_of::<u64>()) { total } else {
+            if RUNTIME_LOG.load(Ordering::Relaxed) {
+                let _ = io::stderr().write_all(
+                    b"[oats runtime] runtime_malloc: integer overflow in allocation size\n",
+                );
             }
+            return std::ptr::null_mut();
         };
         if total == 0 {
             return std::ptr::null_mut();
@@ -72,8 +69,7 @@ pub fn runtime_malloc(size: size_t) -> *mut c_void {
             if RUNTIME_LOG.load(Ordering::Relaxed) {
                 let _ = io::stderr().write_all(
                     format!(
-                        "[oats runtime] runtime_malloc: allocation of {} bytes denied (exceeds limits)\n",
-                        total
+                        "[oats runtime] runtime_malloc: allocation of {total} bytes denied (exceeds limits)\n"
                     )
                     .as_bytes(),
                 );
@@ -87,8 +83,7 @@ pub fn runtime_malloc(size: size_t) -> *mut c_void {
             if RUNTIME_LOG.load(Ordering::Relaxed) {
                 let _ = io::stderr().write_all(
                     format!(
-                        "[oats runtime] runtime_malloc: size {} exceeds reasonable limit\n",
-                        total
+                        "[oats runtime] runtime_malloc: size {total} exceeds reasonable limit\n"
                     )
                     .as_bytes(),
                 );
@@ -97,30 +92,26 @@ pub fn runtime_malloc(size: size_t) -> *mut c_void {
             return std::ptr::null_mut();
         }
 
-        let layout = match Layout::from_size_align(total, 8) {
-            Ok(layout) => layout,
-            Err(_) => {
-                if RUNTIME_LOG.load(Ordering::Relaxed) {
-                    let _ = io::stderr().write_all(
-                        format!(
-                            "[oats runtime] runtime_malloc: invalid layout for size {}\n",
-                            total
-                        )
-                        .as_bytes(),
-                    );
-                }
-                release_allocation(total as u64);
-                return std::ptr::null_mut();
+        let layout = if let Ok(layout) = Layout::from_size_align(total, 8) { layout } else {
+            if RUNTIME_LOG.load(Ordering::Relaxed) {
+                let _ = io::stderr().write_all(
+                    format!(
+                        "[oats runtime] runtime_malloc: invalid layout for size {total}\n"
+                    )
+                    .as_bytes(),
+                );
             }
+            release_allocation(total as u64);
+            return std::ptr::null_mut();
         };
         let base = std::alloc::alloc(layout);
         if base.is_null() {
             release_allocation(total as u64);
             return std::ptr::null_mut();
         }
-        let size_ptr = base as *mut u64;
+        let size_ptr = base.cast::<u64>();
         *size_ptr = total as u64;
-        base.add(std::mem::size_of::<u64>()) as *mut c_void
+        base.add(std::mem::size_of::<u64>()).cast::<c_void>()
     }
 }
 
@@ -137,21 +128,20 @@ pub unsafe fn runtime_free(p: *mut c_void) {
         if !crate::is_plausible_addr(p as usize) {
             return;
         }
-        let base = (p as *mut u8).sub(std::mem::size_of::<u64>());
+        let base = p.cast::<u8>().sub(std::mem::size_of::<u64>());
         // Validate base pointer is plausible before dereferencing
         if !crate::is_plausible_addr(base as usize) {
             if RUNTIME_LOG.load(Ordering::Relaxed) {
                 let _ = io::stderr().write_all(
                     format!(
-                        "[oats runtime] runtime_free: base pointer {:p} is not plausible\n",
-                        base
+                        "[oats runtime] runtime_free: base pointer {base:p} is not plausible\n"
                     )
                     .as_bytes(),
                 );
             }
             return;
         }
-        let size_ptr = base as *mut u64;
+        let size_ptr = base.cast::<u64>();
         let total = *size_ptr as usize;
         if total == 0 {
             return;
@@ -163,8 +153,7 @@ pub unsafe fn runtime_free(p: *mut c_void) {
             if RUNTIME_LOG.load(Ordering::Relaxed) {
                 let _ = io::stderr().write_all(
                     format!(
-                        "[oats runtime] runtime_free: size {} exceeds reasonable limit, skipping\n",
-                        total
+                        "[oats runtime] runtime_free: size {total} exceeds reasonable limit, skipping\n"
                     )
                     .as_bytes(),
                 );
@@ -181,8 +170,7 @@ pub unsafe fn runtime_free(p: *mut c_void) {
             if RUNTIME_LOG.load(Ordering::Relaxed) {
                 let _ = io::stderr().write_all(
                     format!(
-                        "[oats runtime] runtime_free: size {} is less than header size, skipping\n",
-                        total
+                        "[oats runtime] runtime_free: size {total} is less than header size, skipping\n"
                     )
                     .as_bytes(),
                 );

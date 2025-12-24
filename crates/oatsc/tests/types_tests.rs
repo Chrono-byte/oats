@@ -5,7 +5,7 @@
 
 mod test_utils;
 
-use oatsc::types::{OatsType, SymbolTable, Symbol, FunctionSig};
+use oatsc::types::{FunctionSig, OatsType, Symbol, SymbolTable};
 use test_utils::*;
 
 #[test]
@@ -82,11 +82,7 @@ fn test_oats_type_union() {
 
 #[test]
 fn test_oats_type_union_three_parts() {
-    let ty = OatsType::Union(vec![
-        OatsType::Number,
-        OatsType::String,
-        OatsType::Boolean,
-    ]);
+    let ty = OatsType::Union(vec![OatsType::Number, OatsType::String, OatsType::Boolean]);
     match ty {
         OatsType::Union(parts) => assert_eq!(parts.len(), 3),
         _ => panic!("Expected Union type"),
@@ -128,12 +124,10 @@ fn test_oats_type_promise() {
 fn test_oats_type_weak() {
     let ty = OatsType::Weak(Box::new(OatsType::NominalStruct("Point".to_string())));
     match ty {
-        OatsType::Weak(inner) => {
-            match *inner {
-                OatsType::NominalStruct(name) => assert_eq!(name, "Point"),
-                _ => panic!("Expected NominalStruct inside Weak"),
-            }
-        }
+        OatsType::Weak(inner) => match *inner {
+            OatsType::NominalStruct(name) => assert_eq!(name, "Point"),
+            _ => panic!("Expected NominalStruct inside Weak"),
+        },
         _ => panic!("Expected Weak type"),
     }
 }
@@ -188,7 +182,10 @@ fn test_oats_type_generic_instance() {
         type_args: vec![OatsType::Number],
     };
     match ty {
-        OatsType::GenericInstance { base_name, type_args } => {
+        OatsType::GenericInstance {
+            base_name,
+            type_args,
+        } => {
             assert_eq!(base_name, "Array");
             assert_eq!(type_args.len(), 1);
         }
@@ -198,7 +195,10 @@ fn test_oats_type_generic_instance() {
 
 #[test]
 fn test_oats_type_enum() {
-    let ty = OatsType::Enum("Color".to_string(), vec!["Red".to_string(), "Green".to_string()]);
+    let ty = OatsType::Enum(
+        "Color".to_string(),
+        vec!["Red".to_string(), "Green".to_string()],
+    );
     match ty {
         OatsType::Enum(name, variants) => {
             assert_eq!(name, "Color");
@@ -233,7 +233,7 @@ fn test_symbol_table_new() {
 fn test_symbol_table_insert_variable() {
     let mut table = SymbolTable::new();
     table.insert_variable("x".to_string(), OatsType::Number);
-    
+
     let symbol = table.get("x");
     assert!(symbol.is_some());
     match symbol {
@@ -251,11 +251,14 @@ fn test_symbol_table_insert_std_function() {
         ret: OatsType::Number,
     };
     table.insert_std_function("add".to_string(), "add_mangled".to_string(), sig.clone());
-    
+
     let symbol = table.get("add");
     assert!(symbol.is_some());
     match symbol {
-        Some(Symbol::StdFunction { mangled_name, sig: retrieved_sig }) => {
+        Some(Symbol::StdFunction {
+            mangled_name,
+            sig: retrieved_sig,
+        }) => {
             assert_eq!(mangled_name, "add_mangled");
             assert_eq!(retrieved_sig.params, sig.params);
         }
@@ -267,7 +270,7 @@ fn test_symbol_table_insert_std_function() {
 fn test_symbol_table_insert_type() {
     let mut table = SymbolTable::new();
     table.insert_type("Point".to_string(), "Point_mangled".to_string());
-    
+
     let symbol = table.get("Point");
     assert!(symbol.is_some());
     match symbol {
@@ -280,7 +283,7 @@ fn test_symbol_table_insert_type() {
 fn test_symbol_table_get_type() {
     let mut table = SymbolTable::new();
     table.insert_variable("x".to_string(), OatsType::Number);
-    
+
     let ty = table.get_type("x");
     assert_eq!(ty, Some(&OatsType::Number));
 }
@@ -298,11 +301,11 @@ fn test_symbol_table_scoping() {
     // the public API by inserting symbols and verifying lookup behavior
     let mut table = SymbolTable::new();
     table.insert_variable("x".to_string(), OatsType::Number);
-    
+
     // Verify we can retrieve the symbol
     let ty = table.get_type("x");
     assert_eq!(ty, Some(&OatsType::Number));
-    
+
     // Inserting again should shadow (implementation detail)
     table.insert_variable("x".to_string(), OatsType::String);
     let ty = table.get_type("x");
@@ -314,10 +317,10 @@ fn test_symbol_table_shadowing() {
     // Test that inserting the same name again shadows the previous value
     let mut table = SymbolTable::new();
     table.insert_variable("x".to_string(), OatsType::Number);
-    
+
     // Inserting again should update/shadow
     table.insert_variable("x".to_string(), OatsType::String);
-    
+
     // Should get the most recent value
     let ty = table.get_type("x");
     assert_eq!(ty, Some(&OatsType::String));
@@ -328,7 +331,7 @@ fn test_symbol_table_all_symbols() {
     let mut table = SymbolTable::new();
     table.insert_variable("x".to_string(), OatsType::Number);
     table.insert_variable("y".to_string(), OatsType::String);
-    
+
     let all = table.all_symbols();
     assert_eq!(all.len(), 2);
 }
@@ -340,7 +343,7 @@ fn test_function_sig_creation() {
         params: vec![OatsType::Number, OatsType::String],
         ret: OatsType::Boolean,
     };
-    
+
     assert_eq!(sig.type_params.len(), 1);
     assert_eq!(sig.params.len(), 2);
     assert_eq!(sig.ret, OatsType::Boolean);
@@ -353,7 +356,7 @@ fn test_function_sig_no_params() {
         params: vec![],
         ret: OatsType::Void,
     };
-    
+
     assert_eq!(sig.params.len(), 0);
     assert_eq!(sig.ret, OatsType::Void);
 }
@@ -396,12 +399,10 @@ fn test_deeply_nested_types() {
     // Array of arrays
     let ty = OatsType::Array(Box::new(OatsType::Array(Box::new(OatsType::Number))));
     match ty {
-        OatsType::Array(outer) => {
-            match *outer {
-                OatsType::Array(inner) => assert_eq!(*inner, OatsType::Number),
-                _ => panic!("Expected nested Array"),
-            }
-        }
+        OatsType::Array(outer) => match *outer {
+            OatsType::Array(inner) => assert_eq!(*inner, OatsType::Number),
+            _ => panic!("Expected nested Array"),
+        },
         _ => panic!("Expected Array type"),
     }
 }
@@ -436,12 +437,10 @@ fn test_generic_with_multiple_params() {
 fn test_promise_nested() {
     let ty = OatsType::Promise(Box::new(OatsType::Promise(Box::new(OatsType::Number))));
     match ty {
-        OatsType::Promise(outer) => {
-            match *outer {
-                OatsType::Promise(inner) => assert_eq!(*inner, OatsType::Number),
-                _ => panic!("Expected nested Promise"),
-            }
-        }
+        OatsType::Promise(outer) => match *outer {
+            OatsType::Promise(inner) => assert_eq!(*inner, OatsType::Number),
+            _ => panic!("Expected nested Promise"),
+        },
         _ => panic!("Expected Promise type"),
     }
 }
@@ -450,12 +449,10 @@ fn test_promise_nested() {
 fn test_weak_nested() {
     let ty = OatsType::Weak(Box::new(OatsType::Weak(Box::new(OatsType::String))));
     match ty {
-        OatsType::Weak(outer) => {
-            match *outer {
-                OatsType::Weak(inner) => assert_eq!(*inner, OatsType::String),
-                _ => panic!("Expected nested Weak"),
-            }
-        }
+        OatsType::Weak(outer) => match *outer {
+            OatsType::Weak(inner) => assert_eq!(*inner, OatsType::String),
+            _ => panic!("Expected nested Weak"),
+        },
         _ => panic!("Expected Weak type"),
     }
 }
@@ -464,12 +461,10 @@ fn test_weak_nested() {
 fn test_option_nested() {
     let ty = OatsType::Option(Box::new(OatsType::Option(Box::new(OatsType::Number))));
     match ty {
-        OatsType::Option(outer) => {
-            match *outer {
-                OatsType::Option(inner) => assert_eq!(*inner, OatsType::Number),
-                _ => panic!("Expected nested Option"),
-            }
-        }
+        OatsType::Option(outer) => match *outer {
+            OatsType::Option(inner) => assert_eq!(*inner, OatsType::Number),
+            _ => panic!("Expected nested Option"),
+        },
         _ => panic!("Expected Option type"),
     }
 }
@@ -499,12 +494,10 @@ fn test_array_of_unions() {
         OatsType::String,
     ])));
     match ty {
-        OatsType::Array(elem) => {
-            match *elem {
-                OatsType::Union(_) => {}
-                _ => panic!("Expected Union in array"),
-            }
-        }
+        OatsType::Array(elem) => match *elem {
+            OatsType::Union(_) => {}
+            _ => panic!("Expected Union in array"),
+        },
         _ => panic!("Expected Array type"),
     }
 }
@@ -515,7 +508,10 @@ fn test_struct_literal_complex() {
         ("x".to_string(), OatsType::Number),
         ("y".to_string(), OatsType::Number),
         ("name".to_string(), OatsType::String),
-        ("tags".to_string(), OatsType::Array(Box::new(OatsType::String))),
+        (
+            "tags".to_string(),
+            OatsType::Array(Box::new(OatsType::String)),
+        ),
     ]);
     match ty {
         OatsType::StructLiteral(fields) => assert_eq!(fields.len(), 4),
@@ -530,7 +526,7 @@ fn test_symbol_table_multiple_scopes() {
     table.insert_variable("a".to_string(), OatsType::Number);
     table.insert_variable("b".to_string(), OatsType::String);
     table.insert_variable("c".to_string(), OatsType::Boolean);
-    
+
     // All should be accessible
     assert_eq!(table.get_type("a"), Some(&OatsType::Number));
     assert_eq!(table.get_type("b"), Some(&OatsType::String));
@@ -550,7 +546,7 @@ fn test_symbol_table_insert_multiple() {
     table.insert_variable("x".to_string(), OatsType::Number);
     table.insert_variable("y".to_string(), OatsType::String);
     table.insert_variable("z".to_string(), OatsType::Boolean);
-    
+
     assert_eq!(table.get_type("x"), Some(&OatsType::Number));
     assert_eq!(table.get_type("y"), Some(&OatsType::String));
     assert_eq!(table.get_type("z"), Some(&OatsType::Boolean));
@@ -563,7 +559,7 @@ fn test_function_sig_generic() {
         params: vec![OatsType::Number],
         ret: OatsType::String,
     };
-    
+
     assert_eq!(sig.type_params.len(), 2);
     assert_eq!(sig.type_params[0], "T");
     assert_eq!(sig.type_params[1], "U");
@@ -581,7 +577,7 @@ fn test_function_sig_complex_params() {
         ],
         ret: OatsType::Void,
     };
-    
+
     assert_eq!(sig.params.len(), 4);
 }
 
@@ -601,4 +597,3 @@ fn test_enum_with_many_variants() {
         _ => panic!("Expected Enum type"),
     }
 }
-

@@ -13,7 +13,7 @@ use crate::types::OatsType;
 
 /// Reference counting operation helpers
 pub mod rc {
-    use super::*;
+    use super::{CodeGen, PointerValue};
 
     /// Increment reference count for a pointer value
     pub fn rc_inc_value<'a>(codegen: &CodeGen<'a>, ptr: PointerValue<'a>, name: &str) {
@@ -31,24 +31,27 @@ pub mod rc {
 /// Type checking utilities for LLVM types
 pub mod types {
     /// Check if an LLVM value is a pointer type (heap allocated)
-    pub fn is_pointer_type<'a>(value: &inkwell::values::BasicValueEnum<'a>) -> bool {
+    #[must_use] 
+    pub fn is_pointer_type(value: &inkwell::values::BasicValueEnum<'_>) -> bool {
         value.get_type().is_pointer_type()
     }
 
     /// Check if an LLVM value is a float type
-    pub fn is_float_type<'a>(value: &inkwell::values::BasicValueEnum<'a>) -> bool {
+    #[must_use] 
+    pub fn is_float_type(value: &inkwell::values::BasicValueEnum<'_>) -> bool {
         value.get_type().is_float_type()
     }
 
     /// Check if an LLVM value is an integer type
-    pub fn is_int_type<'a>(value: &inkwell::values::BasicValueEnum<'a>) -> bool {
+    #[must_use] 
+    pub fn is_int_type(value: &inkwell::values::BasicValueEnum<'_>) -> bool {
         value.get_type().is_int_type()
     }
 }
 
 /// Runtime function access helpers
 pub mod runtime {
-    use super::*;
+    use super::{CodeGen, Diagnostic, Severity};
 
     /// Get the array allocation function
     pub fn get_array_alloc<'a>(codegen: &CodeGen<'a>) -> inkwell::values::FunctionValue<'a> {
@@ -78,7 +81,7 @@ pub mod runtime {
 
 /// Memory allocation helpers
 pub mod memory {
-    use super::*;
+    use super::{CodeGen, PointerValue, Diagnostic, Severity};
 
     /// Allocate memory using the runtime malloc function
     pub fn allocate_memory<'a>(
@@ -105,7 +108,7 @@ pub mod memory {
         Ok(ptr)
     }
 
-    /// Allocate an array using the runtime array_alloc function
+    /// Allocate an array using the runtime `array_alloc` function
     pub fn allocate_array<'a>(
         codegen: &CodeGen<'a>,
         length: inkwell::values::IntValue<'a>,
@@ -133,7 +136,7 @@ pub mod memory {
 
 /// LLVM constant creation helpers
 pub mod constants {
-    use super::*;
+    use super::CodeGen;
 
     /// Create an i32 constant
     pub fn i32_const<'a>(codegen: &CodeGen<'a>, value: u64) -> inkwell::values::IntValue<'a> {
@@ -158,7 +161,7 @@ pub mod constants {
 
 /// Variable resolution helpers
 pub mod variables {
-    use super::*;
+    use super::{PointerValue, OatsType, CodeGen, HashMap, FunctionValue, BasicValueEnum};
 
     /// Information about a local variable in the codegen context
     type LocalVarInfo<'a> = (

@@ -5,7 +5,7 @@
 //!
 //! # Compilation Pipeline
 //!
-//! 1. **Parsing**: Converts source text to AST using the oats_parser
+//! 1. **Parsing**: Converts source text to AST using the `oats_parser`
 //! 2. **Type Analysis**: Performs type checking and validates function signatures
 //! 3. **Code Generation**: Emits LLVM IR for all functions and top-level constructs
 //! 4. **Object Compilation**: Compiles IR to native object files via LLVM
@@ -36,7 +36,7 @@ struct Cli {
     /// Source file to compile
     src_file: String,
 
-    /// External module dependencies: <import_path>=<meta_file>
+    /// External module dependencies: <`import_path`>=<`meta_file`>
     /// Format: --extern-oats "./module=/path/to/module.oats.meta"
     #[arg(long = "extern-oats", value_name = "PATH=META")]
     extern_oats: Vec<String>,

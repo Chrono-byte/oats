@@ -89,7 +89,7 @@ impl Config {
         }
 
         let content = toml::to_string_pretty(self)
-            .map_err(|e| ToastyError::other(format!("Failed to serialize config: {}", e)))?;
+            .map_err(|e| ToastyError::other(format!("Failed to serialize config: {e}")))?;
 
         std::fs::write(&config_path, content).map_err(|e| ToastyError::io(&config_path, e))?;
 

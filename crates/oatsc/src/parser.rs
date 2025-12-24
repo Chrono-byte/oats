@@ -1,13 +1,13 @@
 //! Oats parser utilities
 //!
-//! This module uses oxc_parser to parse Oats source code and returns
+//! This module uses `oxc_parser` to parse Oats source code and returns
 //! oxc AST types directly for use by the compiler.
 
 use crate::diagnostics;
 use crate::types::{FunctionSig, OatsType};
 use anyhow::Result;
 use oxc_allocator::Allocator;
-use oxc_ast::ast::*;
+use oxc_ast::ast::{Program, Statement, ForStatementInit, ForStatementLeft};
 use oxc_parser::Parser;
 use oxc_span::SourceType;
 
@@ -225,7 +225,7 @@ fn collect_declared_fns(stmt: &Statement, out: &mut Vec<String>) {
     }
 }
 
-/// Convert declared function names to DeclaredFn with FunctionSig
+/// Convert declared function names to `DeclaredFn` with `FunctionSig`
 fn convert_declared_fns(functions: Vec<String>) -> Vec<DeclaredFn> {
     functions
         .into_iter()
@@ -277,7 +277,7 @@ pub fn parse_oats_module_with_options(
                 source_without_bom.len(),
                 max_size
             ),
-            file: file_path.map(|s| s.to_string()),
+            file: file_path.map(std::string::ToString::to_string),
             labels: vec![diagnostics::Label {
                 span: diagnostics::Span {
                     start: 0,
@@ -309,16 +309,16 @@ pub fn parse_oats_module_with_options(
                 let message = error.to_string();
                 // Extract span from error labels if available
                 let span = if let Some(labels) = &error.labels {
-                    if !labels.is_empty() {
+                    if labels.is_empty() {
+                        diagnostics::Span {
+                            start: 0,
+                            end: source_without_bom.len(),
+                        }
+                    } else {
                         let label = &labels[0];
                         diagnostics::Span {
                             start: label.offset(),
                             end: (label.offset() + label.len()),
-                        }
-                    } else {
-                        diagnostics::Span {
-                            start: 0,
-                            end: source_without_bom.len(),
                         }
                     }
                 } else {
@@ -331,7 +331,7 @@ pub fn parse_oats_module_with_options(
                     severity: diagnostics::Severity::Error,
                     code: None,
                     message,
-                    file: file_path.map(|s| s.to_string()),
+                    file: file_path.map(std::string::ToString::to_string),
                     labels: vec![diagnostics::Label {
                         span,
                         message: "parse error".to_string(),

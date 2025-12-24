@@ -24,7 +24,7 @@ pub fn invoke_oatsc(options: &CompileOptions) -> Result<Option<PathBuf>> {
     // Handle output path: if both out_dir and out_name are specified,
     // compute the full path and pass via -o flag
     if let (Some(out_dir), Some(out_name)) = (&options.out_dir, &options.out_name) {
-        let output_path = std::path::Path::new(out_dir).join(format!("{}.o", out_name));
+        let output_path = std::path::Path::new(out_dir).join(format!("{out_name}.o"));
         args.push(crate::cli_flags::flags::OUTPUT.to_string());
         args.push(output_path.to_string_lossy().to_string());
     } else if let Some(out_name) = &options.out_name {
@@ -43,15 +43,15 @@ pub fn invoke_oatsc(options: &CompileOptions) -> Result<Option<PathBuf>> {
     // Package metadata files are passed as extern-oats with the package name as the import path
     for (pkg_name, meta_path) in &options.extern_pkg {
         // Use package name as import path (e.g., "./mylib" -> meta_path)
-        let import_path = format!("./{}", pkg_name);
+        let import_path = format!("./{pkg_name}");
         args.push(crate::cli_flags::flags::EXTERN_OATS.to_string());
-        args.push(format!("{}={}", import_path, meta_path));
+        args.push(format!("{import_path}={meta_path}"));
     }
 
     // Add external oats modules
     for (path, symbols) in &options.extern_oats {
         args.push(crate::cli_flags::flags::EXTERN_OATS.to_string());
-        args.push(format!("{}={}", path, symbols));
+        args.push(format!("{path}={symbols}"));
     }
 
     // Add build profile
@@ -97,15 +97,14 @@ pub fn invoke_oatsc(options: &CompileOptions) -> Result<Option<PathBuf>> {
 
     // Execute command
     if std::env::var("TOASTY_VERBOSE").is_ok() {
-        eprintln!("Executing oatsc: {} {:?}", oatsc_path, args);
+        eprintln!("Executing oatsc: {oatsc_path} {args:?}");
     }
     let output = std::process::Command::new(&oatsc_path)
         .args(&args)
         .output()
         .map_err(|e| {
             ToastyError::other(format!(
-                "Failed to execute oatsc command: {} {:?}: {}",
-                oatsc_path, args, e
+                "Failed to execute oatsc command: {oatsc_path} {args:?}: {e}"
             ))
         })?;
 
@@ -120,8 +119,7 @@ pub fn invoke_oatsc(options: &CompileOptions) -> Result<Option<PathBuf>> {
 
         return Err(ToastyError::CompilerInternalError {
             message: format!(
-                "oatsc compilation failed:\nSTDOUT:\n{}\n\nSTDERR:\n{}",
-                stdout, stderr
+                "oatsc compilation failed:\nSTDOUT:\n{stdout}\n\nSTDERR:\n{stderr}"
             ),
         });
     }

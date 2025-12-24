@@ -2,12 +2,12 @@
 //!
 //! Super expressions (`super`, `super.prop`, `super.method()`) are used to
 //! access parent class members. This module handles standalone `super` expressions,
-//! while `super.prop` and `super.method()` are handled in member_access.rs and calls.rs.
+//! while `super.prop` and `super.method()` are handled in `member_access.rs` and calls.rs.
 
 use crate::codegen::CodeGen;
 use crate::diagnostics::{Diagnostic, Severity};
 use inkwell::values::{BasicValue, BasicValueEnum, FunctionValue};
-use oxc_ast::ast::*;
+use oxc_ast::ast::Super;
 use std::collections::HashMap;
 
 #[allow(dead_code)]
@@ -27,7 +27,7 @@ impl<'a> CodeGen<'a> {
     ///
     /// Standalone `super` expressions return the `this` pointer, which can then
     /// be used for member access or method calls. In practice, `super` is usually
-    /// used as `super.prop` or `super.method()`, which are handled by member_access
+    /// used as `super.prop` or `super.method()`, which are handled by `member_access`
     /// and calls modules respectively.
     #[allow(clippy::result_large_err)]
     pub(super) fn lower_super_expr(

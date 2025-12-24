@@ -5,7 +5,7 @@
 
 use crate::diagnostics::{Diagnostic, Severity};
 use inkwell::values::{BasicValueEnum, FunctionValue};
-use oxc_ast::ast::*;
+use oxc_ast::ast::{ForInStatement, ForStatementLeft, BindingPatternKind, Expression, Statement};
 use std::collections::HashMap;
 
 #[allow(dead_code)]
@@ -115,7 +115,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 } else {
                     return Err(Diagnostic::simple_with_span_boxed(
                         Severity::Error,
-                        format!("class '{}' has no registered fields", class_name),
+                        format!("class '{class_name}' has no registered fields"),
                         for_in.span.start as usize,
                     ));
                 }
@@ -141,7 +141,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             // Create loop variable (string pointer)
             let loop_var_alloca = self
                 .builder
-                .build_alloca(self.i8ptr_t, &format!("for_in_{}", loop_var_name))
+                .build_alloca(self.i8ptr_t, &format!("for_in_{loop_var_name}"))
                 .map_err(|_| Diagnostic::error("alloca failed for for-in loop variable"))?;
             let null_ptr = self.i8ptr_t.const_null();
             let _ = self.builder.build_store(loop_var_alloca, null_ptr);

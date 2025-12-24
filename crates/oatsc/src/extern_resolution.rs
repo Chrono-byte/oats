@@ -37,7 +37,7 @@ pub fn resolve_external_dependencies<'ctx>(
         let meta_content = match std::fs::read_to_string(meta_path) {
             Ok(content) => content,
             Err(e) => {
-                eprintln!("Warning: Failed to read metadata file {}: {}", meta_path, e);
+                eprintln!("Warning: Failed to read metadata file {meta_path}: {e}");
                 continue;
             }
         };
@@ -47,7 +47,7 @@ pub fn resolve_external_dependencies<'ctx>(
         for line in meta_content.lines() {
             let line = line.trim();
             if line.starts_with("function ")
-                && line.ends_with(";")
+                && line.ends_with(';')
                 && let Some((name, func_sig)) = parse_function_signature_from_metadata(line)
             {
                 external_function_signatures.insert(name, (func_sig.params, func_sig.ret));
@@ -78,31 +78,28 @@ pub fn resolve_external_dependencies<'ctx>(
                 .map(|ty| map_oats_type_to_llvm(context, ty))
                 .collect();
 
-            let fn_type = match ret_type {
-                OatsType::Void => {
-                    let void_t = context.void_type();
-                    void_t.fn_type(&llvm_param_types, false)
-                }
-                _ => {
-                    // Convert BasicMetadataTypeEnum to BasicTypeEnum for fn_type
-                    let ret_basic_type: BasicTypeEnum =
-                        match map_oats_type_to_llvm(context, &ret_type) {
-                            inkwell::types::BasicMetadataTypeEnum::FloatType(ft) => ft.into(),
-                            inkwell::types::BasicMetadataTypeEnum::IntType(it) => it.into(),
-                            inkwell::types::BasicMetadataTypeEnum::PointerType(pt) => pt.into(),
-                            inkwell::types::BasicMetadataTypeEnum::ArrayType(at) => at.into(),
-                            inkwell::types::BasicMetadataTypeEnum::VectorType(vt) => vt.into(),
-                            inkwell::types::BasicMetadataTypeEnum::StructType(st) => st.into(),
-                            inkwell::types::BasicMetadataTypeEnum::ScalableVectorType(svt) => {
-                                svt.into()
-                            }
-                            inkwell::types::BasicMetadataTypeEnum::MetadataType(_) => {
-                                // Metadata types can't be return types, default to f64
-                                context.f64_type().into()
-                            }
-                        };
-                    ret_basic_type.fn_type(&llvm_param_types, false)
-                }
+            let fn_type = if ret_type == OatsType::Void {
+                let void_t = context.void_type();
+                void_t.fn_type(&llvm_param_types, false)
+            } else {
+                // Convert BasicMetadataTypeEnum to BasicTypeEnum for fn_type
+                let ret_basic_type: BasicTypeEnum =
+                    match map_oats_type_to_llvm(context, &ret_type) {
+                        inkwell::types::BasicMetadataTypeEnum::FloatType(ft) => ft.into(),
+                        inkwell::types::BasicMetadataTypeEnum::IntType(it) => it.into(),
+                        inkwell::types::BasicMetadataTypeEnum::PointerType(pt) => pt.into(),
+                        inkwell::types::BasicMetadataTypeEnum::ArrayType(at) => at.into(),
+                        inkwell::types::BasicMetadataTypeEnum::VectorType(vt) => vt.into(),
+                        inkwell::types::BasicMetadataTypeEnum::StructType(st) => st.into(),
+                        inkwell::types::BasicMetadataTypeEnum::ScalableVectorType(svt) => {
+                            svt.into()
+                        }
+                        inkwell::types::BasicMetadataTypeEnum::MetadataType(_) => {
+                            // Metadata types can't be return types, default to f64
+                            context.f64_type().into()
+                        }
+                    };
+                ret_basic_type.fn_type(&llvm_param_types, false)
             };
             module.add_function(&symbol, fn_type, None);
         }
@@ -111,7 +108,7 @@ pub fn resolve_external_dependencies<'ctx>(
     Ok(external_function_signatures)
 }
 
-/// Maps an OatsType to the corresponding LLVM BasicMetadataTypeEnum.
+/// Maps an `OatsType` to the corresponding LLVM `BasicMetadataTypeEnum`.
 fn map_oats_type_to_llvm<'ctx>(
     context: &'ctx Context,
     ty: &OatsType,
@@ -136,7 +133,8 @@ fn map_oats_type_to_llvm<'ctx>(
 /// * `line` - Line containing the function signature
 ///
 /// # Returns
-/// Tuple of (function name, FunctionSig) if parsing succeeds
+/// Tuple of (function name, `FunctionSig`) if parsing succeeds
+#[must_use] 
 pub fn parse_function_signature_from_metadata(line: &str) -> Option<(String, FunctionSig)> {
     let line = line.trim().strip_suffix(';')?;
     if !line.starts_with("function ") {

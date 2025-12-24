@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use inkwell::builder::Builder;
 use inkwell::types::BasicTypeEnum;
 use inkwell::values::{BasicValue, PointerValue};
-use oxc_ast::ast::*;
+use oxc_ast::ast::{Expression, UnaryOperator, BinaryOperator};
 
 // LocalEntry now includes an Option<String> for an optional nominal type name
 // LocalEntry now includes an Option<OatsType> for union tracking
@@ -79,13 +79,14 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 }
             }
         }
-
         // Lower left operand and capture its origin (whether it came from a local)
         let l = self.lower_expr(&bin.left, function, param_map, locals)?;
         let left_origin = self.last_expr_origin_local.borrow().clone();
+        let left_type = self.last_expr_oats_type.borrow().clone();
         // Lower right operand and capture its origin
         let r = self.lower_expr(&bin.right, function, param_map, locals)?;
         let right_origin = self.last_expr_origin_local.borrow().clone();
+        let right_type = self.last_expr_oats_type.borrow().clone();
 
         // Handle string concatenation BEFORE numeric coercion
         // If op is Add and at least one operand is a pointer (string), treat as string concat
@@ -120,23 +121,162 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 }
             };
 
+            // Helper to get a string pointer from a value, handling unions
+            let get_string_ptr =
+                |val: BasicValueEnum<'a>,
+                 val_type: Option<crate::types::OatsType>|
+                 -> crate::diagnostics::DiagnosticResult<PointerValue<'a>> {
+                    match val {
+                        BasicValueEnum::PointerValue(pv) => {
+                            // Check if this is a union that needs unboxing
+                            if matches!(val_type, Some(crate::types::OatsType::Union(_))) {
+                                // This is a union - we need to unbox it properly
+                                // Check discriminant: 0 = number, 1 = string
+                                let get_disc = self.get_union_get_discriminant();
+                                let disc = self
+                                    .builder
+                                    .build_call(get_disc, &[pv.into()], "get_union_disc_concat")
+                                    .map_err(|_| {
+                                        Diagnostic::simple_boxed(
+                                            Severity::Error,
+                                            "failed to get union discriminant for string concat",
+                                        )
+                                    })?;
+
+                                let disc_val = match disc.try_as_basic_value() {
+                                    inkwell::values::ValueKind::Basic(bv) => bv.into_int_value(),
+                                    _ => {
+                                        return Err(Diagnostic::simple_boxed(
+                                            Severity::Error,
+                                            "union discriminant must be basic value",
+                                        ));
+                                    }
+                                };
+
+                                // Check if it's a string (discriminant == 1 for pointer/string)
+                                let is_string = self
+                                    .builder
+                                    .build_int_compare(
+                                        inkwell::IntPredicate::EQ,
+                                        disc_val,
+                                        self.i64_t.const_int(1, false),
+                                        "is_union_string",
+                                    )
+                                    .map_err(|_| {
+                                        Diagnostic::simple_boxed(
+                                            Severity::Error,
+                                            "failed to compare union discriminant",
+                                        )
+                                    })?;
+
+                                // Unbox as string
+                                let unbox_str = self.get_union_unbox_ptr();
+                                let str_result = self
+                                    .builder
+                                    .build_call(unbox_str, &[pv.into()], "union_unbox_str_concat")
+                                    .map_err(|_| {
+                                        Diagnostic::simple_boxed(
+                                            Severity::Error,
+                                            "failed to unbox union string",
+                                        )
+                                    })?;
+                                let str_ptr = match str_result.try_as_basic_value() {
+                                    inkwell::values::ValueKind::Basic(
+                                        BasicValueEnum::PointerValue(p),
+                                    ) => p,
+                                    _ => {
+                                        return Err(Diagnostic::simple_boxed(
+                                            Severity::Error,
+                                            "union_unbox_ptr returned non-pointer",
+                                        ));
+                                    }
+                                };
+
+                                // Unbox as number and convert to string
+                                let unbox_num = self.get_union_unbox_f64();
+                                let num_result = self
+                                    .builder
+                                    .build_call(unbox_num, &[pv.into()], "union_unbox_num_concat")
+                                    .map_err(|_| {
+                                        Diagnostic::simple_boxed(
+                                            Severity::Error,
+                                            "failed to unbox union number",
+                                        )
+                                    })?;
+                                let num_val = match num_result.try_as_basic_value() {
+                                    inkwell::values::ValueKind::Basic(
+                                        BasicValueEnum::FloatValue(f),
+                                    ) => f,
+                                    _ => {
+                                        return Err(Diagnostic::simple_boxed(
+                                            Severity::Error,
+                                            "union_unbox_f64 returned non-float",
+                                        ));
+                                    }
+                                };
+                                let num_str = num_to_string(BasicValueEnum::FloatValue(num_val))
+                                    .map_err(|_| {
+                                        Diagnostic::simple_boxed(
+                                            Severity::Error,
+                                            "failed to convert number to string",
+                                        )
+                                    })?;
+
+                                // Use select to choose between string and number->string
+                                let result_ptr = self
+                                    .builder
+                                    .build_select(
+                                        is_string,
+                                        str_ptr,
+                                        num_str,
+                                        "union_string_select",
+                                    )
+                                    .map_err(|_| {
+                                        Diagnostic::simple_boxed(
+                                            Severity::Error,
+                                            "failed to select union string",
+                                        )
+                                    })?;
+
+                                match result_ptr {
+                                    BasicValueEnum::PointerValue(p) => Ok(p),
+                                    _ => Err(Diagnostic::simple_boxed(
+                                        Severity::Error,
+                                        "select returned non-pointer",
+                                    )),
+                                }
+                            } else {
+                                // Not a union, use directly as string pointer
+                                Ok(pv)
+                            }
+                        }
+                        _ => {
+                            // Not a pointer, must be a number - convert to string
+                            num_to_string(val)
+                        }
+                    }
+                };
+
             if let Some((left_str, right_str)) = match (l, r) {
-                (BasicValueEnum::PointerValue(lp), BasicValueEnum::PointerValue(rp)) => {
-                    // Both are already strings
-                    Some((lp, rp))
-                }
-                (BasicValueEnum::PointerValue(lp), _) => {
-                    // Left is string, right is number - convert right to string
-                    match num_to_string(r) {
-                        Ok(rp) => Some((lp, rp)),
-                        Err(e) => return Err(e),
+                (BasicValueEnum::PointerValue(_), BasicValueEnum::PointerValue(_)) => {
+                    // Both could be strings or unions - use helper to handle both
+                    match (get_string_ptr(l, left_type), get_string_ptr(r, right_type)) {
+                        (Ok(lp), Ok(rp)) => Some((lp, rp)),
+                        (Err(e), _) | (_, Err(e)) => return Err(e),
                     }
                 }
-                (_, BasicValueEnum::PointerValue(rp)) => {
-                    // Left is number, right is string - convert left to string
-                    match num_to_string(l) {
-                        Ok(lp) => Some((lp, rp)),
-                        Err(e) => return Err(e),
+                (BasicValueEnum::PointerValue(_), _) => {
+                    // Left is string/union, right is number - convert right to string
+                    match (get_string_ptr(l, left_type), num_to_string(r)) {
+                        (Ok(lp), Ok(rp)) => Some((lp, rp)),
+                        (Err(e), _) | (_, Err(e)) => return Err(e),
+                    }
+                }
+                (_, BasicValueEnum::PointerValue(_)) => {
+                    // Left is number, right is string/union - convert left to string
+                    match (num_to_string(l), get_string_ptr(r, right_type)) {
+                        (Ok(lp), Ok(rp)) => Some((lp, rp)),
+                        (Err(e), _) | (_, Err(e)) => return Err(e),
                     }
                 }
                 _ => {
@@ -189,12 +329,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             ));
                         }
                     }
-                } else {
-                    return Err(Diagnostic::simple_boxed(
-                        Severity::Error,
-                        "string concatenation helper `str_concat` not found",
-                    ));
                 }
+                return Err(Diagnostic::simple_boxed(
+                    Severity::Error,
+                    "string concatenation helper `str_concat` not found",
+                ));
             }
         }
 
@@ -390,14 +529,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 BinaryOperator::Exponential => {
                     // Exponentiation: use standard library pow function
                     // Declare pow(double, double) -> double if not already declared
-                    let pow_fn = match self.module.get_function("pow") {
-                        Some(f) => f,
-                        None => {
-                            let fn_type = self
-                                .f64_t
-                                .fn_type(&[self.f64_t.into(), self.f64_t.into()], false);
-                            self.module.add_function("pow", fn_type, None)
-                        }
+                    let pow_fn = if let Some(f) = self.module.get_function("pow") { f } else {
+                        let fn_type = self
+                            .f64_t
+                            .fn_type(&[self.f64_t.into(), self.f64_t.into()], false);
+                        self.module.add_function("pow", fn_type, None)
                     };
 
                     // Call pow(base, exponent)

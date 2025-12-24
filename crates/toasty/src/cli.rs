@@ -27,6 +27,7 @@ pub struct CompileOptions {
 }
 
 impl CompileOptions {
+    #[must_use] 
     pub fn new(src_file: String) -> Self {
         Self {
             src_file,
@@ -47,6 +48,7 @@ impl CompileOptions {
         }
     }
 
+    #[must_use] 
     pub fn with_modules(entry_point: String) -> Self {
         Self {
             src_file: entry_point,
@@ -82,24 +84,24 @@ pub struct Cli {
 pub enum Commands {
     /// Build a .oats file into a native executable (like `cargo build`)
     Build {
-        /// Path to the source .oats file to compile. If omitted, OATS_SRC_FILE env var is used.
+        /// Path to the source .oats file to compile. If omitted, `OATS_SRC_FILE` env var is used.
         src: Option<String>,
 
-        /// Output directory for compilation artifacts (defaults to current directory or OATS_OUT_DIR)
+        /// Output directory for compilation artifacts (defaults to current directory or `OATS_OUT_DIR`)
         #[arg(short, long)]
         out_dir: Option<String>,
         /// Override the produced executable name (without path)
         #[arg(long = "out-name")]
         out_name: Option<String>,
 
-        /// Explicit linker to use for final binary (sets OATS_LINKER)
+        /// Explicit linker to use for final binary (sets `OATS_LINKER`)
         #[arg(long)]
         linker: Option<String>,
         /// Build in release mode (enables optimizations/LTO)
         #[arg(long)]
         release: bool,
 
-        /// Emit object only and skip final host linking (sets OATS_EMIT_OBJECT_ONLY)
+        /// Emit object only and skip final host linking (sets `OATS_EMIT_OBJECT_ONLY`)
         #[arg(long = "emit-object-only")]
         emit_object_only: bool,
 
@@ -107,23 +109,23 @@ pub enum Commands {
         #[arg(long = "no-link-runtime")]
         no_link_runtime: bool,
 
-        /// Set opt level: none, default, aggressive (also OATS_OPT_LEVEL)
+        /// Set opt level: none, default, aggressive (also `OATS_OPT_LEVEL`)
         #[arg(long = "opt-level")]
         opt_level: Option<String>,
 
-        /// LTO mode: none, thin, full (also OATS_LTO)
+        /// LTO mode: none, thin, full (also `OATS_LTO`)
         #[arg(long = "lto")]
         lto: Option<String>,
 
-        /// Target triple to pass to LLVM (sets OATS_TARGET_TRIPLE)
+        /// Target triple to pass to LLVM (sets `OATS_TARGET_TRIPLE`)
         #[arg(long = "target-triple")]
         target_triple: Option<String>,
 
-        /// Target CPU to use for TargetMachine (sets OATS_TARGET_CPU)
+        /// Target CPU to use for `TargetMachine` (sets `OATS_TARGET_CPU`)
         #[arg(long = "target-cpu")]
         target_cpu: Option<String>,
 
-        /// Target features to enable (sets OATS_TARGET_FEATURES)
+        /// Target features to enable (sets `OATS_TARGET_FEATURES`)
         #[arg(long = "target-features")]
         target_features: Option<String>,
         /// Suppress progress output
@@ -136,7 +138,7 @@ pub enum Commands {
 
     /// Build then run the produced executable (like `cargo run`)
     Run {
-        /// Path to the source .oats file to compile. If omitted, OATS_SRC_FILE env var is used.
+        /// Path to the source .oats file to compile. If omitted, `OATS_SRC_FILE` env var is used.
         src: Option<String>,
 
         /// Arguments to pass to the executed program (after `--`)

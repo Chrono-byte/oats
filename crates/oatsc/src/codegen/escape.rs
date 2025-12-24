@@ -1,4 +1,4 @@
-use oxc_ast::ast::*;
+use oxc_ast::ast::{Function, BindingPattern, BindingPatternKind, Statement, ForStatementInit, VariableDeclaration, BlockStatement, Expression, Argument, SimpleAssignmentTarget, ObjectPropertyKind};
 use std::collections::{HashMap, HashSet};
 
 /// Escape analysis results for a function.
@@ -22,11 +22,13 @@ pub struct EscapeInfo {
 
 impl EscapeInfo {
     /// Creates a new, empty `EscapeInfo`.
+    #[must_use] 
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Returns whether `name` escapes the function.
+    #[must_use] 
     pub fn escapes(&self, name: &str) -> bool {
         self.escapes.contains(name)
     }
@@ -64,6 +66,7 @@ impl EscapeInfo {
     }
 
     /// Returns whether `name` is captured by closures.
+    #[must_use] 
     pub fn is_captured(&self, name: &str) -> bool {
         self.captured.contains(name)
     }
@@ -164,7 +167,7 @@ impl EscapeAnalyzer {
 
     /// Analyzes a statement for escape patterns.
     fn analyze_stmt(&mut self, stmt: &Statement) {
-        self.analyze_stmt_with_depth(stmt, 0)
+        self.analyze_stmt_with_depth(stmt, 0);
     }
 
     /// Internal helper with recursion depth tracking to prevent stack overflow.
@@ -177,7 +180,7 @@ impl EscapeAnalyzer {
 
         match stmt {
             Statement::ExpressionStatement(expr_stmt) => {
-                self.analyze_expr_with_depth(&expr_stmt.expression, depth + 1)
+                self.analyze_expr_with_depth(&expr_stmt.expression, depth + 1);
             }
             Statement::ReturnStatement(ret) => {
                 if let Some(arg) = &ret.argument {
@@ -219,13 +222,13 @@ impl EscapeAnalyzer {
                 if let Some(init) = &for_stmt.init {
                     match init {
                         ForStatementInit::VariableDeclaration(vd) => {
-                            self.analyze_var_decl_with_depth(vd, depth + 1)
+                            self.analyze_var_decl_with_depth(vd, depth + 1);
                         }
                         _ => {
                             // ForStatementInit can be various expression types
                             // Use as_expression() to get the expression if available
                             if let Some(e) = init.as_expression() {
-                                self.analyze_expr_with_depth(e, depth + 1)
+                                self.analyze_expr_with_depth(e, depth + 1);
                             }
                         }
                     }
@@ -361,7 +364,7 @@ impl EscapeAnalyzer {
                 } else if let Some(_pattern) = assign.left.as_assignment_target_pattern() {
                     // For pattern assignments, we need to handle AssignmentTargetPattern
                     // which is different from BindingPattern - for now, skip detailed analysis
-                };
+                }
                 self.analyze_expr_with_depth(&assign.right, depth + 1);
             }
             Expression::BinaryExpression(bin) => {
@@ -369,7 +372,7 @@ impl EscapeAnalyzer {
                 self.analyze_expr_with_depth(&bin.right, depth + 1);
             }
             Expression::UnaryExpression(unary) => {
-                self.analyze_expr_with_depth(&unary.argument, depth + 1)
+                self.analyze_expr_with_depth(&unary.argument, depth + 1);
             }
             Expression::ConditionalExpression(cond) => {
                 self.analyze_expr_with_depth(&cond.test, depth + 1);
@@ -377,7 +380,7 @@ impl EscapeAnalyzer {
                 self.analyze_expr_with_depth(&cond.alternate, depth + 1);
             }
             Expression::ArrayExpression(arr) => {
-                for elem in arr.elements.iter() {
+                for elem in &arr.elements {
                     if let Some(expr) = elem.as_expression() {
                         self.analyze_expr_with_depth(expr, depth + 1);
                     }
@@ -387,7 +390,7 @@ impl EscapeAnalyzer {
                 for prop in &obj.properties {
                     match prop {
                         ObjectPropertyKind::SpreadProperty(spread) => {
-                            self.analyze_expr_with_depth(&spread.argument, depth + 1)
+                            self.analyze_expr_with_depth(&spread.argument, depth + 1);
                         }
                         ObjectPropertyKind::ObjectProperty(prop) => {
                             self.analyze_expr_with_depth(&prop.value, depth + 1);
@@ -404,10 +407,10 @@ impl EscapeAnalyzer {
                 }
             }
             Expression::AwaitExpression(await_expr) => {
-                self.analyze_expr_with_depth(&await_expr.argument, depth + 1)
+                self.analyze_expr_with_depth(&await_expr.argument, depth + 1);
             }
             Expression::ParenthesizedExpression(paren) => {
-                self.analyze_expr_with_depth(&paren.expression, depth + 1)
+                self.analyze_expr_with_depth(&paren.expression, depth + 1);
             }
             Expression::ArrowFunctionExpression(arrow) => {
                 // Analyze arrow function body for captured variables
@@ -454,7 +457,7 @@ impl EscapeAnalyzer {
 
     /// Recursively collects all variable names from an expression.
     fn collect_vars_from_expr(expr: &Expression, vars: &mut HashSet<String>) {
-        Self::collect_vars_from_expr_with_depth(expr, vars, 0)
+        Self::collect_vars_from_expr_with_depth(expr, vars, 0);
     }
 
     fn collect_vars_from_expr_with_depth(
@@ -506,7 +509,7 @@ impl EscapeAnalyzer {
                 Self::collect_vars_from_expr_with_depth(&bin.right, vars, depth + 1);
             }
             Expression::UnaryExpression(unary) => {
-                Self::collect_vars_from_expr_with_depth(&unary.argument, vars, depth + 1)
+                Self::collect_vars_from_expr_with_depth(&unary.argument, vars, depth + 1);
             }
             Expression::ConditionalExpression(cond) => {
                 Self::collect_vars_from_expr_with_depth(&cond.test, vars, depth + 1);
@@ -514,17 +517,17 @@ impl EscapeAnalyzer {
                 Self::collect_vars_from_expr_with_depth(&cond.alternate, vars, depth + 1);
             }
             Expression::ArrayExpression(arr) => {
-                for elem in arr.elements.iter() {
+                for elem in &arr.elements {
                     if let Some(expr) = elem.as_expression() {
                         Self::collect_vars_from_expr_with_depth(expr, vars, depth + 1);
                     }
                 }
             }
             Expression::AssignmentExpression(assign) => {
-                Self::collect_vars_from_expr_with_depth(&assign.right, vars, depth + 1)
+                Self::collect_vars_from_expr_with_depth(&assign.right, vars, depth + 1);
             }
             Expression::ParenthesizedExpression(paren) => {
-                Self::collect_vars_from_expr_with_depth(&paren.expression, vars, depth + 1)
+                Self::collect_vars_from_expr_with_depth(&paren.expression, vars, depth + 1);
             }
             _ => {}
         }

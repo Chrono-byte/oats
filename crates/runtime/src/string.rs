@@ -15,20 +15,16 @@ use crate::{RUNTIME_LOG, rc_dec, rc_inc};
 /// the lifetime of the returned pointer. The returned pointer must be freed
 /// using appropriate reference counting mechanisms.
 pub unsafe extern "C" fn heap_str_alloc(str_len: size_t) -> *mut c_void {
-    let total_size = match 16usize.checked_add(str_len).and_then(|s| s.checked_add(1)) {
-        Some(total) => total,
-        None => {
-            if RUNTIME_LOG.load(Ordering::Relaxed) {
-                let _ = io::stderr().write_all(
-                    format!(
-                        "[oats runtime] heap_str_alloc: integer overflow (str_len={})\n",
-                        str_len
-                    )
-                    .as_bytes(),
-                );
-            }
-            return ptr::null_mut();
+    let total_size = if let Some(total) = 16usize.checked_add(str_len).and_then(|s| s.checked_add(1)) { total } else {
+        if RUNTIME_LOG.load(Ordering::Relaxed) {
+            let _ = io::stderr().write_all(
+                format!(
+                    "[oats runtime] heap_str_alloc: integer overflow (str_len={str_len})\n"
+                )
+                .as_bytes(),
+            );
         }
+        return ptr::null_mut();
     };
 
     let p = crate::runtime_malloc(total_size);
@@ -36,11 +32,11 @@ pub unsafe extern "C" fn heap_str_alloc(str_len: size_t) -> *mut c_void {
         return ptr::null_mut();
     }
 
-    let header_ptr = p as *mut u64;
+    let header_ptr = p.cast::<u64>();
     unsafe {
         *header_ptr = make_heap_header(1);
 
-        let len_ptr = (p as *mut u8).add(8) as *mut u64;
+        let len_ptr = p.cast::<u8>().add(8).cast::<u64>();
         *len_ptr = str_len as u64;
     }
 
@@ -63,8 +59,8 @@ pub unsafe extern "C" fn heap_str_from_cstr(s: *const c_char) -> *mut c_char {
         if obj.is_null() {
             return ptr::null_mut();
         }
-        let data_ptr = (obj as *mut u8).add(16) as *mut c_char;
-        ptr::copy_nonoverlapping(bytes.as_ptr(), data_ptr as *mut u8, bytes.len());
+        let data_ptr = obj.cast::<u8>().add(16).cast::<c_char>();
+        ptr::copy_nonoverlapping(bytes.as_ptr(), data_ptr.cast::<u8>(), bytes.len());
         data_ptr
     }
 }
@@ -73,6 +69,7 @@ pub unsafe extern "C" fn heap_str_from_cstr(s: *const c_char) -> *mut c_char {
 ///
 /// `s` must be a valid pointer to a null-terminated C string, or null.
 /// If non-null, the string must remain valid for the duration of this call.
+#[must_use] 
 pub unsafe fn heap_str_from_cstr_pub(s: *const c_char) -> *mut c_char {
     unsafe { heap_str_from_cstr(s) }
 }
@@ -82,11 +79,12 @@ pub unsafe fn heap_str_from_cstr_pub(s: *const c_char) -> *mut c_char {
 /// `data` must be a pointer to string data previously returned by this runtime.
 /// The pointer must point to valid string data with the expected memory layout.
 #[inline]
+#[must_use] 
 pub unsafe fn heap_str_to_obj(data: *const c_char) -> *mut c_void {
     if data.is_null() {
         return ptr::null_mut();
     }
-    unsafe { (data as *mut u8).sub(16) as *mut c_void }
+    unsafe { (data as *mut u8).sub(16).cast::<c_void>() }
 }
 
 #[unsafe(no_mangle)]
@@ -147,12 +145,12 @@ pub unsafe fn str_dup(s: *const c_char) -> *mut c_char {
         return ptr::null_mut();
     }
     let len = unsafe { libc::strlen(s) } + 1;
-    let dst = crate::runtime_malloc(len) as *mut c_char;
+    let dst = crate::runtime_malloc(len).cast::<c_char>();
     if dst.is_null() {
         return ptr::null_mut();
     }
     unsafe {
-        ptr::copy_nonoverlapping(s as *const u8, dst as *mut u8, len);
+        ptr::copy_nonoverlapping(s.cast::<u8>(), dst.cast::<u8>(), len);
     }
     dst
 }
@@ -169,20 +167,16 @@ pub unsafe fn str_concat(a: *const c_char, b: *const c_char) -> *mut c_char {
         let la = CStr::from_ptr(a).to_bytes().len();
         let lb = CStr::from_ptr(b).to_bytes().len();
 
-        let total_len = match la.checked_add(lb) {
-            Some(len) => len,
-            None => {
-                if RUNTIME_LOG.load(Ordering::Relaxed) {
-                    let _ = io::stderr().write_all(
-                        format!(
-                            "[oats runtime] str_concat: integer overflow (len_a={}, len_b={})\n",
-                            la, lb
-                        )
-                        .as_bytes(),
-                    );
-                }
-                return ptr::null_mut();
+        let total_len = if let Some(len) = la.checked_add(lb) { len } else {
+            if RUNTIME_LOG.load(Ordering::Relaxed) {
+                let _ = io::stderr().write_all(
+                    format!(
+                        "[oats runtime] str_concat: integer overflow (len_a={la}, len_b={lb})\n"
+                    )
+                    .as_bytes(),
+                );
             }
+            return ptr::null_mut();
         };
 
         let obj = heap_str_alloc(total_len);
@@ -190,12 +184,12 @@ pub unsafe fn str_concat(a: *const c_char, b: *const c_char) -> *mut c_char {
             return ptr::null_mut();
         }
 
-        let data_ptr = (obj as *mut u8).add(16) as *mut c_char;
+        let data_ptr = obj.cast::<u8>().add(16).cast::<c_char>();
 
         let aslice = CStr::from_ptr(a).to_bytes();
         let bslice = CStr::from_ptr(b).to_bytes();
-        ptr::copy_nonoverlapping(aslice.as_ptr(), data_ptr as *mut u8, la);
-        ptr::copy_nonoverlapping(bslice.as_ptr(), data_ptr.add(la) as *mut u8, lb);
+        ptr::copy_nonoverlapping(aslice.as_ptr(), data_ptr.cast::<u8>(), la);
+        ptr::copy_nonoverlapping(bslice.as_ptr(), data_ptr.add(la).cast::<u8>(), lb);
 
         *data_ptr.add(la + lb) = 0;
 
@@ -207,9 +201,125 @@ pub unsafe fn str_concat(a: *const c_char, b: *const c_char) -> *mut c_char {
 /// Returns a heap-allocated Oats string.
 #[unsafe(no_mangle)]
 pub extern "C" fn number_to_string(num: f64) -> *mut c_char {
-    let s = format!("{}", num);
-    // TODO: formatting to match JS/Oats spec (e.g. NaN, Infinity)
+    let s = if num.is_nan() {
+        "NaN".to_string()
+    } else if num.is_infinite() {
+        if num.is_sign_positive() {
+            "Infinity".to_string()
+        } else {
+            "-Infinity".to_string()
+        }
+    } else {
+        // JavaScript-style formatting for regular numbers
+        format_js_number(num)
+    };
     let c_str = CString::new(s).unwrap_or_default();
     // SAFETY: c_str.as_ptr() is valid for the duration of this call
     unsafe { heap_str_from_cstr(c_str.as_ptr()) }
+}
+
+/// Format a number according to JavaScript's `toString()` behavior
+fn format_js_number(num: f64) -> String {
+    // Handle special cases first
+    if num == 0.0 {
+        return "0".to_string();
+    }
+    if num == -0.0 {
+        return "0".to_string(); // JavaScript normalizes -0 to 0
+    }
+
+    // Use scientific notation for very large/small numbers
+    let abs_num = num.abs();
+    if abs_num >= 1e21 || (abs_num < 1e-6 && abs_num > 0.0) {
+        return format!("{num:.14e}");
+    }
+
+    // For other numbers, use fixed-point notation
+    // JavaScript typically shows up to 15 significant digits
+    let formatted = if num.fract() == 0.0 {
+        format!("{}", num as i64)
+    } else {
+        format!("{num:.15}")
+    };
+
+    // Remove trailing zeros after decimal point, but keep at least one digit
+    if formatted.contains('.') {
+        let trimmed = formatted.trim_end_matches('0').trim_end_matches('.');
+        if trimmed.is_empty() {
+            "0".to_string()
+        } else {
+            trimmed.to_string()
+        }
+    } else {
+        formatted
+    }
+}
+
+/// Check if a number is NaN.
+/// Returns 1 if NaN, 0 otherwise.
+#[unsafe(no_mangle)]
+pub extern "C" fn number_is_nan(num: f64) -> i64 {
+    i64::from(num.is_nan())
+}
+
+/// Check if a number is finite.
+/// Returns 1 if finite, 0 if infinite or NaN.
+#[unsafe(no_mangle)]
+pub extern "C" fn number_is_finite(num: f64) -> i64 {
+    i64::from(num.is_finite())
+}
+
+/// Check if a number is infinite.
+/// Returns 1 if positive infinity, -1 if negative infinity, 0 otherwise.
+#[unsafe(no_mangle)]
+pub extern "C" fn number_is_infinite(num: f64) -> i64 {
+    if num.is_infinite() {
+        if num.is_sign_positive() { 1 } else { -1 }
+    } else {
+        0
+    }
+}
+
+/// Parse a string to a number.
+/// Returns NaN if parsing fails.
+///
+/// # Safety
+///
+/// `str_ptr` must be a valid pointer to a null-terminated C string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn number_parse_float(str_ptr: *const c_char) -> f64 {
+    if str_ptr.is_null() {
+        return f64::NAN;
+    }
+
+    // SAFETY: We assume the string is valid UTF-8 as per Oats string encoding
+    let c_str = unsafe { CStr::from_ptr(str_ptr) };
+    let str_slice = match c_str.to_str() {
+        Ok(s) => s,
+        Err(_) => return f64::NAN,
+    };
+
+    // Handle hexadecimal notation (0x, 0X)
+    if str_slice.starts_with("0x") || str_slice.starts_with("0X") {
+        // Parse as hex
+        match u64::from_str_radix(&str_slice[2..], 16) {
+            Ok(n) => n as f64,
+            Err(_) => f64::NAN,
+        }
+    } else if str_slice.starts_with("0o") || str_slice.starts_with("0O") {
+        // Parse as octal
+        match u64::from_str_radix(&str_slice[2..], 8) {
+            Ok(n) => n as f64,
+            Err(_) => f64::NAN,
+        }
+    } else if str_slice.starts_with("0b") || str_slice.starts_with("0B") {
+        // Parse as binary
+        match u64::from_str_radix(&str_slice[2..], 2) {
+            Ok(n) => n as f64,
+            Err(_) => f64::NAN,
+        }
+    } else {
+        // Parse as decimal (float)
+        str_slice.parse::<f64>().unwrap_or(f64::NAN)
+    }
 }

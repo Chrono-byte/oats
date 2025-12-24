@@ -59,10 +59,10 @@ pub fn report_error(
 
     if let Some(path) = file {
         let sanitized_path = sanitize_file_path(path);
-        eprintln!("{}{}{}: {}", color, title, reset, message);
-        eprintln!("  --> {}", sanitized_path);
+        eprintln!("{color}{title}{reset}: {message}");
+        eprintln!("  --> {sanitized_path}");
     } else {
-        eprintln!("{}{}{}: {}", color, title, reset, message);
+        eprintln!("{color}{title}{reset}: {message}");
     }
 
     if let Some(src) = source {
@@ -75,15 +75,14 @@ pub fn report_error(
     if let Some(note) = note {
         // Use ANSI blue escape sequence for note highlighting
         let blue = "\x1b[34m";
-        eprintln!("{}note{}: {}", blue, reset, note);
+        eprintln!("{blue}note{reset}: {note}");
     }
 
     // Provide helpful suggestion for common syntax errors
     if message.contains("missing semicolon") {
         let green = "\x1b[32m";
         eprintln!(
-            "{}help{}: try adding a trailing ';' to this statement",
-            green, reset
+            "{green}help{reset}: try adding a trailing ';' to this statement"
         );
     }
 }
@@ -110,7 +109,7 @@ pub fn report_error_and_bail<T>(
     note: Option<&str>,
 ) -> anyhow::Result<T> {
     report_error("error", "\x1b[31m", file, source, message, note);
-    Err(anyhow::anyhow!("{}", message))
+    Err(anyhow::anyhow!("{message}"))
 }
 
 /// Prints a span-aware diagnostic with caret highlighting at the error location.
@@ -126,12 +125,14 @@ pub fn report_error_and_bail<T>(
 /// * `file` - Optional file path to display in the diagnostic header
 /// * `source` - Source text containing the error (required for span calculation)
 /// * `span_start` - Zero-based byte index of the error location
+/// * `span_end` - Zero-based byte index of the end of the error span
 /// * `message` - Primary error message to display
 /// * `note` - Optional additional diagnostic note
 ///
 /// # Behavior
 /// The function converts the byte offset to line:column coordinates and displays
 /// the relevant source line with a caret (^) marker positioned under the error.
+/// If the span spans multiple characters, multiple carets or tildes are shown.
 /// If the span calculation fails, fallback coordinates are used to ensure
 /// graceful degradation.
 pub fn report_error_span(
@@ -140,6 +141,7 @@ pub fn report_error_span(
     file: Option<&str>,
     source: &str,
     span_start: usize,
+    span_end: usize,
     message: &str,
     note: Option<&str>,
 ) {
@@ -149,29 +151,54 @@ pub fn report_error_span(
     let mut byte_idx = 0usize;
     let mut line_no = 1usize;
     let mut col = 0usize;
-    let mut found = false;
+    let mut end_line_no = 1usize;
+    let mut end_col = 0usize;
+    let mut start_found = false;
+    let mut end_found = false;
+
     for (lineno, line) in source.lines().enumerate() {
         let line_len = line.len() + 1; // Account for newline character
-        if span_start >= byte_idx && span_start < byte_idx + line_len {
+
+        if !start_found && span_start >= byte_idx && span_start < byte_idx + line_len {
             line_no = lineno + 1;
             col = span_start - byte_idx;
-            found = true;
+            start_found = true;
+        }
+
+        if !end_found && span_end >= byte_idx && span_end < byte_idx + line_len {
+            end_line_no = lineno + 1;
+            end_col = span_end - byte_idx;
+            end_found = true;
+        }
+
+        if start_found && end_found {
             break;
         }
+
         byte_idx += line_len;
     }
-    if !found {
+
+    if !start_found {
         // Use fallback coordinates if span calculation fails
         line_no = source.lines().count();
         col = 0;
+        end_line_no = line_no;
+        end_col = col;
+    } else if !end_found {
+        end_line_no = line_no;
+        end_col = col;
     }
 
     if let Some(path) = file {
         let sanitized_path = sanitize_file_path(path);
-        eprintln!("{}{}{}: {}", color, title, reset, message);
-        eprintln!("  --> {}:{}:{}", sanitized_path, line_no, col + 1);
+        eprintln!("{color}{title}{reset}: {message}");
+        if line_no == end_line_no {
+            eprintln!("  --> {}:{}:{}", sanitized_path, line_no, col + 1);
+        } else {
+            eprintln!("  --> {}:{}:{}", sanitized_path, line_no, col + 1);
+        }
     } else {
-        eprintln!("{}{}{}: {}", color, title, reset, message);
+        eprintln!("{color}{title}{reset}: {message}");
     }
 
     // Display context lines with the error line highlighted
@@ -179,31 +206,66 @@ pub fn report_error_span(
     let total = lines.len();
     let idx = if line_no == 0 { 0 } else { line_no - 1 };
     let start = idx.saturating_sub(1);
-    let end = if idx + 1 < total { idx + 1 } else { total - 1 };
+    let end_idx = if end_line_no == 0 { 0 } else { end_line_no - 1 };
+    let end = if end_idx + 1 < total {
+        end_idx + 1
+    } else {
+        total - 1
+    };
 
     for (i, line) in lines.iter().enumerate().take(end + 1).skip(start) {
         eprintln!("{:4} | {}", i + 1, line);
-        if i == idx {
-            // Position caret marker under the error column
+
+        if i == idx || (line_no != end_line_no && i >= idx && i <= end_idx) {
             let mut caret = String::new();
-            for _ in 0..col {
-                caret.push(' ');
+
+            if i == idx {
+                // First line - position spaces to the start column
+                for _ in 0..col {
+                    caret.push(' ');
+                }
             }
-            caret.push('^');
-            eprintln!("     | {}", caret);
+
+            if line_no == end_line_no {
+                // Single line span - show carets/tildes for the range
+                let span_len = if end_col > col { end_col - col } else { 1 };
+                caret.push('^');
+                for _ in 1..span_len {
+                    caret.push('~');
+                }
+            } else if i == idx {
+                // First line of multi-line span - show carets to end of line
+                if col < lines[idx].len() {
+                    caret.push('^');
+                    for _ in (col + 1)..lines[idx].len() {
+                        caret.push('~');
+                    }
+                }
+            } else if i == end_idx {
+                // Last line of multi-line span - show carets from start to end_col
+                for _ in 0..end_col {
+                    caret.push('~');
+                }
+            } else {
+                // Middle line of multi-line span - show tildes across the whole line
+                for _ in 0..lines[i].len() {
+                    caret.push('~');
+                }
+            }
+
+            eprintln!("     | {caret}");
         }
     }
 
     if let Some(note) = note {
         let blue = "\x1b[34m";
-        eprintln!("{}note{}: {}", blue, reset, note);
+        eprintln!("{blue}note{reset}: {note}");
     }
 
     if message.contains("missing semicolon") {
         let green = "\x1b[32m";
         eprintln!(
-            "{}help{}: add a trailing ';' to the highlighted statement",
-            green, reset
+            "{green}help{reset}: add a trailing ';' to the highlighted statement"
         );
     }
 }
@@ -219,6 +281,7 @@ pub fn report_error_span(
 /// * `file` - Optional file path for diagnostic context
 /// * `source` - Source text containing the error location
 /// * `span_start` - Zero-based byte index of the error location
+/// * `span_end` - Zero-based byte index of the end of the error span
 /// * `message` - Primary error message
 /// * `note` - Optional additional diagnostic note
 ///
@@ -228,16 +291,19 @@ pub fn report_error_span_and_bail<T>(
     file: Option<&str>,
     source: &str,
     span_start: usize,
+    span_end: usize,
     message: &str,
     note: Option<&str>,
 ) -> anyhow::Result<T> {
-    report_error_span("error", "\x1b[31m", file, source, span_start, message, note);
+    report_error_span(
+        "error", "\x1b[31m", file, source, span_start, span_end, message, note,
+    );
     // Enhance error text with contextual hints for test assertion compatibility
     let mut err_text = message.to_string();
     if message.contains("missing semicolon") {
         err_text.push_str(" -- hint: add a trailing ';' to this statement");
     }
-    Err(anyhow::anyhow!("{}", err_text))
+    Err(anyhow::anyhow!("{err_text}"))
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -256,7 +322,7 @@ pub struct Label {
 ///
 /// This struct holds all the info for a diagnostic message, like severity, message, file, etc.
 /// We use it to collect errors before printing them out.
-/// The optional span_start helps point to exact locations in the code.
+/// The optional `span_start` helps point to exact locations in the code.
 #[derive(Debug, Clone)]
 pub struct Diagnostic {
     /// The severity level of the diagnostic
@@ -386,6 +452,7 @@ impl Diagnostic {
     ///
     /// # Returns
     /// A mutable reference to `self` for chaining
+    #[must_use] 
     pub fn with_label(mut self, label: Label) -> Self {
         self.labels.push(label);
         self
@@ -454,6 +521,7 @@ pub fn emit_diagnostic(d: &Diagnostic, source: Option<&str>) {
             d.file.as_deref(),
             src,
             label.span.start,
+            label.span.end,
             &d.message,
             d.note.as_deref(),
         );
@@ -472,7 +540,7 @@ pub fn emit_diagnostic(d: &Diagnostic, source: Option<&str>) {
     if let Some(help) = &d.help {
         let green = "\x1b[32m";
         let reset = "\x1b[0m";
-        eprintln!("{}help{}: {}", green, reset, help);
+        eprintln!("{green}help{reset}: {help}");
     }
 }
 

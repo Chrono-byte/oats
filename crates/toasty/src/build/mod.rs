@@ -32,6 +32,7 @@ pub struct CompileOptions {
 }
 
 impl CompileOptions {
+    #[must_use] 
     pub fn for_package(package_root: std::path::PathBuf) -> Self {
         Self {
             src_file: String::new(), // Will be set later
@@ -215,7 +216,7 @@ fn compile_package(
 
         if !needs_rebuild {
             if config.verbose {
-                eprintln!("  Skipping compilation - {} is up to date", obj_filename);
+                eprintln!("  Skipping compilation - {obj_filename} is up to date");
             }
 
             // Generate metadata file (may still need updating)
@@ -249,7 +250,7 @@ fn compile_package(
                         manifest.package.name, manifest.package.version, manifest.package.entry
                     )
                 } else {
-                    format!("name = \"{}\"\n", pkg_name)
+                    format!("name = \"{pkg_name}\"\n")
                 };
 
                 std::fs::write(&meta_file, manifest_info)
@@ -297,7 +298,7 @@ fn compile_package(
             manifest.package.name, manifest.package.version, manifest.package.entry
         )
     } else {
-        format!("name = \"{}\"\n", pkg_name)
+        format!("name = \"{pkg_name}\"\n")
     };
 
     std::fs::write(&meta_file, manifest_info).map_err(|e| ToastyError::io(&meta_file, e))?;
@@ -417,8 +418,8 @@ fn compile_package_modules(
 
             let ll_file = std::path::Path::new(&source_stem).with_extension("ll");
             let o_file = std::path::Path::new(&source_stem).with_extension("o");
-            let target_ll = std::path::Path::new(out_dir).join(format!("{}.ll", source_stem));
-            let target_o = std::path::Path::new(out_dir).join(format!("{}.o", source_stem));
+            let target_ll = std::path::Path::new(out_dir).join(format!("{source_stem}.ll"));
+            let target_o = std::path::Path::new(out_dir).join(format!("{source_stem}.o"));
 
             // Move .ll file if it exists
             if ll_file.exists() {
@@ -477,12 +478,12 @@ fn link_package_modules(
     }
 
     if config.verbose {
-        eprintln!("Package link command: {:?}", link_cmd);
+        eprintln!("Package link command: {link_cmd:?}");
     }
 
     let output = link_cmd
         .output()
-        .map_err(|e| ToastyError::other(format!("Failed to run linker: {}", e)))?;
+        .map_err(|e| ToastyError::other(format!("Failed to run linker: {e}")))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
@@ -546,7 +547,9 @@ fn link_packages(
     } else {
         // Look for std in current directory or standard locations
         let std_lib = PathBuf::from("liboats_std.a");
-        if !std_lib.exists() {
+        if std_lib.exists() {
+            std_lib
+        } else {
             let std_lib = PathBuf::from("target/release/liboats_std.a");
             if !std_lib.exists() {
                 return Err(ToastyError::io(
@@ -554,8 +557,6 @@ fn link_packages(
                     std::io::Error::new(std::io::ErrorKind::NotFound, "Std library not found"),
                 ));
             }
-            std_lib
-        } else {
             std_lib
         }
     };
@@ -583,12 +584,12 @@ fn link_packages(
     }
 
     if config.verbose {
-        eprintln!("Link command: {:?}", link_cmd);
+        eprintln!("Link command: {link_cmd:?}");
     }
 
     let output = link_cmd
         .output()
-        .map_err(|e| ToastyError::other(format!("Failed to run clang linker: {}", e)))?;
+        .map_err(|e| ToastyError::other(format!("Failed to run clang linker: {e}")))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
@@ -606,7 +607,7 @@ fn link_packages(
 }
 
 /// Create a CACHEDIR.TAG file in the specified directory to mark it as a cache directory.
-/// This follows the CACHEDIR.TAG specification: https://bford.info/cachedir/
+/// This follows the CACHEDIR.TAG specification: <https://bford.info/cachedir>/
 fn create_cache_dir_tag(dir_path: &str) -> Result<()> {
     use std::io::Write;
 

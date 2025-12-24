@@ -5,7 +5,7 @@
 
 mod test_utils;
 
-use oatsc::diagnostics::{Diagnostic, Severity, Label, Span};
+use oatsc::diagnostics::{Diagnostic, Label, Severity, Span};
 
 #[test]
 fn test_diagnostic_simple() {
@@ -149,16 +149,20 @@ fn test_label_creation() {
 
 #[test]
 fn test_diagnostic_collection() {
-    let diags = [Box::new(Diagnostic::error("Error 1")),
+    let diags = [
+        Box::new(Diagnostic::error("Error 1")),
         Box::new(Diagnostic::error("Error 2")),
-        Box::new(Diagnostic::warning("Warning 1"))];
-    
-    let errors: Vec<_> = diags.iter()
+        Box::new(Diagnostic::warning("Warning 1")),
+    ];
+
+    let errors: Vec<_> = diags
+        .iter()
         .filter(|d| d.severity == Severity::Error)
         .collect();
     assert_eq!(errors.len(), 2);
-    
-    let warnings: Vec<_> = diags.iter()
+
+    let warnings: Vec<_> = diags
+        .iter()
         .filter(|d| d.severity == Severity::Warning)
         .collect();
     assert_eq!(warnings.len(), 1);
@@ -168,7 +172,10 @@ fn test_diagnostic_collection() {
 fn test_diagnostic_file_path() {
     let mut diag = Diagnostic::error("Error");
     diag.file = Some("path/to/file.oats".to_string());
-    assert_eq!(diag.file.as_ref().unwrap(), "path/to/file.oats");
+    assert_eq!(
+        diag.file.as_ref().expect("file should be set"),
+        "path/to/file.oats"
+    );
 }
 
 #[test]
@@ -224,4 +231,3 @@ fn test_diagnostic_zero_length_span() {
     // Zero-length span (start == end)
     assert_eq!(diag.labels[0].span.start, diag.labels[0].span.end);
 }
-

@@ -4,7 +4,7 @@ use crate::types::OatsType;
 use inkwell::AddressSpace;
 use inkwell::types::BasicTypeEnum;
 use inkwell::values::{BasicValue, BasicValueEnum, FunctionValue, PointerValue, ValueKind};
-use oxc_ast::ast::*;
+use oxc_ast::ast::Expression;
 use std::collections::HashMap;
 
 // LocalEntry now includes an Option<String> for an optional nominal type name
@@ -376,13 +376,12 @@ impl<'a> CodeGen<'a> {
                             ));
                         }
                     }
-                } else {
-                    return Err(Diagnostic::simple_with_span_boxed(
-                        Severity::Error,
-                        "computed member access on non-pointer object",
-                        computed.span.start as usize,
-                    ));
                 }
+                return Err(Diagnostic::simple_with_span_boxed(
+                    Severity::Error,
+                    "computed member access on non-pointer object",
+                    computed.span.start as usize,
+                ));
             }
             Expression::StaticMemberExpression(static_member) => {
                 // dot-member access like obj.prop
@@ -416,13 +415,12 @@ impl<'a> CodeGen<'a> {
                         // Return the enum value as a constant integer (0-based index)
                         let enum_value = self.i64_t.const_int(member_index as u64, false);
                         return Ok(enum_value.as_basic_value_enum());
-                    } else {
-                        return Err(Diagnostic::simple_with_span_boxed(
-                            Severity::Error,
-                            format!("enum '{}' has no member '{}'", ident_name, field_name),
-                            static_member.span.start as usize,
-                        ));
                     }
+                    return Err(Diagnostic::simple_with_span_boxed(
+                        Severity::Error,
+                        format!("enum '{ident_name}' has no member '{field_name}'"),
+                        static_member.span.start as usize,
+                    ));
                 }
 
                 // Special-case: `arr.length` for array-like receivers. Load i64 length from array header (+8)
@@ -469,9 +467,9 @@ impl<'a> CodeGen<'a> {
                         return Ok(loaded.as_basic_value_enum());
                     }
                 }
-                let lower_result = self.lower_expr(&static_member.object, function, param_map, locals);
-                if let Ok(BasicValueEnum::PointerValue(obj_ptr)) = lower_result
-                {
+                let lower_result =
+                    self.lower_expr(&static_member.object, function, param_map, locals);
+                if let Ok(BasicValueEnum::PointerValue(obj_ptr)) = lower_result {
                     // Determine nominal class name if obj is the `this` parameter
                     // or if function param types carry nominal info.
                     // Check if the object is a param named in param_map
@@ -495,10 +493,10 @@ impl<'a> CodeGen<'a> {
                             {
                                 match &param_types[0] {
                                     crate::types::OatsType::NominalStruct(n) => {
-                                        class_name_opt = Some(n.clone())
+                                        class_name_opt = Some(n.clone());
                                     }
                                     crate::types::OatsType::StructLiteral(f) => {
-                                        struct_literal_fields = Some(f.clone())
+                                        struct_literal_fields = Some(f.clone());
                                     }
                                     _ => {}
                                 }
@@ -511,10 +509,10 @@ impl<'a> CodeGen<'a> {
                                 if idx < param_types.len() {
                                     match &param_types[idx] {
                                         crate::types::OatsType::NominalStruct(n) => {
-                                            class_name_opt = Some(n.clone())
+                                            class_name_opt = Some(n.clone());
                                         }
                                         crate::types::OatsType::StructLiteral(f) => {
-                                            struct_literal_fields = Some(f.clone())
+                                            struct_literal_fields = Some(f.clone());
                                         }
                                         _ => {}
                                     }
@@ -545,10 +543,10 @@ impl<'a> CodeGen<'a> {
                         {
                             match &param_types[0] {
                                 crate::types::OatsType::NominalStruct(n) => {
-                                    class_name_opt = Some(n.clone())
+                                    class_name_opt = Some(n.clone());
                                 }
                                 crate::types::OatsType::StructLiteral(f) => {
-                                    struct_literal_fields = Some(f.clone())
+                                    struct_literal_fields = Some(f.clone());
                                 }
                                 _ => {}
                             }
@@ -575,9 +573,7 @@ impl<'a> CodeGen<'a> {
                         let interface_borrow = self.interface_fields.borrow();
                         let class_result = fields_borrow.get(&class_name);
                         let interface_result = interface_borrow.get(&class_name);
-                        class_result
-                            .or(interface_result)
-                            .cloned()
+                        class_result.or(interface_result).cloned()
                     } else {
                         struct_literal_fields
                     };
@@ -681,7 +677,7 @@ impl<'a> CodeGen<'a> {
                                         if let Some(obj_orig) =
                                             self.last_expr_origin_local.borrow().clone()
                                         {
-                                            let field_key = format!("{}.{}", obj_orig, field_name);
+                                            let field_key = format!("{obj_orig}.{field_name}");
                                             if self
                                                 .closure_local_rettype
                                                 .borrow()
@@ -727,7 +723,7 @@ impl<'a> CodeGen<'a> {
                                     if let Some(obj_orig) =
                                         self.last_expr_origin_local.borrow().clone()
                                     {
-                                        let field_key = format!("{}.{}", obj_orig, field_name);
+                                        let field_key = format!("{obj_orig}.{field_name}");
                                         if self
                                             .closure_local_rettype
                                             .borrow()
@@ -873,7 +869,7 @@ impl<'a> CodeGen<'a> {
         let fields = fields.get(&parent).ok_or_else(|| {
             Diagnostic::simple_boxed(
                 Severity::Error,
-                format!("parent class '{}' not found in class fields", parent),
+                format!("parent class '{parent}' not found in class fields"),
             )
         })?;
 
@@ -884,7 +880,7 @@ impl<'a> CodeGen<'a> {
             .ok_or_else(|| {
                 Diagnostic::simple_boxed(
                     Severity::Error,
-                    format!("parent class '{}' has no field '{}'", parent, field_name),
+                    format!("parent class '{parent}' has no field '{field_name}'"),
                 )
             })?;
 

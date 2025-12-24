@@ -6,7 +6,7 @@
 use crate::codegen::CodeGen;
 use crate::diagnostics::Diagnostic;
 use inkwell::values::{BasicValueEnum, FunctionValue};
-use oxc_ast::ast::*;
+use oxc_ast::ast::SequenceExpression;
 use std::collections::HashMap;
 
 #[allow(dead_code)]

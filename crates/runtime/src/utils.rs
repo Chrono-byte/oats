@@ -6,6 +6,7 @@ use std::ffi::CStr;
 use crate::{MAX_RECURSION_DEPTH, is_plausible_addr};
 
 /// Helper: stringify an arbitrary pointer-or-raw-8-bytes value with depth guard.
+#[must_use] 
 pub fn stringify_value_raw(val_raw: u64, depth: usize) -> String {
     if depth > MAX_RECURSION_DEPTH {
         return "...".to_string();
@@ -25,11 +26,10 @@ pub fn stringify_value_raw(val_raw: u64, depth: usize) -> String {
                     crate::rc_dec_str(s_ptr);
                 }
                 return res;
-            } else {
-                // Invalid pointer, clean up and continue
-                unsafe {
-                    crate::rc_dec_str(s_ptr);
-                }
+            }
+            // Invalid pointer, clean up and continue
+            unsafe {
+                crate::rc_dec_str(s_ptr);
             }
         }
         // Fallback: try to interpret as a C string
@@ -39,14 +39,14 @@ pub fn stringify_value_raw(val_raw: u64, depth: usize) -> String {
             // but we've validated the pointer is in a reasonable address range
             let maybe = unsafe { CStr::from_ptr(p as *const c_char) };
             if let Ok(st) = maybe.to_str() {
-                return format!("\"{}\"", st);
+                return format!("\"{st}\"");
             }
         }
-        return format!("<ptr {:p}>", p);
+        return format!("<ptr {p:p}>");
     }
     // Otherwise interpret as f64 bits
     let f = f64::from_bits(val_raw);
-    format!("{}", f)
+    format!("{f}")
 }
 
 #[allow(unused_imports)]

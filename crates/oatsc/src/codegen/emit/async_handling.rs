@@ -6,7 +6,7 @@
 use crate::diagnostics::Severity;
 use crate::{codegen::helpers::extract_basic_value_from_valuekind, diagnostics::Diagnostic};
 use inkwell::values::{BasicValue, FunctionValue};
-use oxc_ast::ast::*;
+use oxc_ast::ast::Function;
 use std::collections::{HashMap, HashSet};
 
 impl<'a> crate::codegen::CodeGen<'a> {
@@ -17,7 +17,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
     ///   collecting encountered `Expr` nodes into a flat vector.
     /// - Record the indices of `Await` expressions in that vector.
     /// - For each await index, collect all identifier names that appear in
-    ///   any expression after that index. The result is a Vec of HashSets
+    ///   any expression after that index. The result is a Vec of `HashSets`
     ///   where each entry corresponds to the nth await in lexical order.
     ///
     /// Notes: we intentionally do NOT traverse into nested function/arrow
@@ -35,12 +35,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
         fn flatten_expr(e: &oxc_ast::ast::Expression<'_>, out: &mut Vec<Node>) {
             match e {
                 oxc_ast::ast::Expression::Identifier(id) => {
-                    out.push(Node::Ident(id.name.to_string()))
+                    out.push(Node::Ident(id.name.to_string()));
                 }
                 oxc_ast::ast::Expression::CallExpression(c) => {
                     // Handle callee - it's an Expression, so recurse
                     flatten_expr(&c.callee, out);
-                    for a in c.arguments.iter() {
+                    for a in &c.arguments {
                         if let Some(expr) = a.as_expression() {
                             flatten_expr(expr, out);
                         } else if let oxc_ast::ast::Argument::SpreadElement(spread) = a {
@@ -71,10 +71,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     out.push(Node::AwaitMarker);
                 }
                 oxc_ast::ast::Expression::ParenthesizedExpression(p) => {
-                    flatten_expr(&p.expression, out)
+                    flatten_expr(&p.expression, out);
                 }
                 oxc_ast::ast::Expression::ArrayExpression(arr) => {
-                    for el in arr.elements.iter() {
+                    for el in &arr.elements {
                         if let Some(expr) = el.as_expression() {
                             flatten_expr(expr, out);
                         }
@@ -82,7 +82,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 }
                 oxc_ast::ast::Expression::NewExpression(n) => {
                     flatten_expr(&n.callee, out);
-                    for a in n.arguments.iter() {
+                    for a in &n.arguments {
                         if let Some(expr) = a.as_expression() {
                             flatten_expr(expr, out);
                         } else if let oxc_ast::ast::Argument::SpreadElement(spread) = a {
@@ -120,7 +120,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         fn flatten_stmt(s: &oxc_ast::ast::Statement<'_>, out: &mut Vec<Node>) {
             match s {
                 oxc_ast::ast::Statement::ExpressionStatement(es) => {
-                    flatten_expr(&es.expression, out)
+                    flatten_expr(&es.expression, out);
                 }
                 oxc_ast::ast::Statement::ReturnStatement(r) => {
                     if let Some(arg) = r.argument.as_ref() {
@@ -128,7 +128,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     }
                 }
                 oxc_ast::ast::Statement::VariableDeclaration(vd) => {
-                    for decl in vd.declarations.iter() {
+                    for decl in &vd.declarations {
                         if let Some(init) = decl.init.as_ref() {
                             flatten_expr(init, out);
                         }
@@ -142,7 +142,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     }
                 }
                 oxc_ast::ast::Statement::BlockStatement(b) => {
-                    for st in b.body.iter() {
+                    for st in &b.body {
                         flatten_stmt(st, out);
                     }
                 }
@@ -154,7 +154,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     if let Some(init) = &f.init {
                         match init {
                             oxc_ast::ast::ForStatementInit::VariableDeclaration(vd) => {
-                                for decl in vd.declarations.iter() {
+                                for decl in &vd.declarations {
                                     if let Some(init_expr) = decl.init.as_ref() {
                                         flatten_expr(init_expr, out);
                                     }
@@ -175,7 +175,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 flatten_expr(&e.expression, out);
                             }
                             oxc_ast::ast::ForStatementInit::ArrayExpression(e) => {
-                                for el in e.elements.iter() {
+                                for el in &e.elements {
                                     if let Some(expr) = el.as_expression() {
                                         flatten_expr(expr, out);
                                     }
@@ -183,7 +183,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             }
                             oxc_ast::ast::ForStatementInit::NewExpression(e) => {
                                 flatten_expr(&e.callee, out);
-                                for a in e.arguments.iter() {
+                                for a in &e.arguments {
                                     if let Some(expr) = a.as_expression() {
                                         flatten_expr(expr, out);
                                     }
@@ -296,7 +296,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         };
 
         // Emit a poll function: `fn <name>_poll(state: i8*, out: i8*) -> i32`
-        let poll_name = format!("{}_poll", func_name);
+        let poll_name = format!("{func_name}_poll");
         let poll_ft = self
             .i32_t
             .fn_type(&[self.i8ptr_t.into(), self.i8ptr_t.into()], false);
@@ -311,7 +311,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         let await_live_sets = self.compute_await_live_sets(func_decl);
         let mut all_live_names: HashSet<String> = HashSet::new();
         for s in &await_live_sets {
-            for n in s.iter() {
+            for n in s {
                 all_live_names.insert(n.clone());
             }
         }
@@ -325,11 +325,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
         for i in 0..await_live_sets.len() {
             resume_blocks.push(
                 self.context
-                    .append_basic_block(poll_f, &format!("resume_{}", i)),
+                    .append_basic_block(poll_f, &format!("resume_{i}")),
             );
             cont_blocks.push(
                 self.context
-                    .append_basic_block(poll_f, &format!("cont_{}", i)),
+                    .append_basic_block(poll_f, &format!("cont_{i}")),
             );
         }
 
@@ -340,7 +340,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         let mut names: Vec<String> = all_live_names.clone().into_iter().collect();
         names.sort();
         let mut idx = param_count;
-        for name in names.into_iter() {
+        for name in names {
             local_name_to_slot.insert(name, idx);
             idx += 1;
         }
@@ -523,33 +523,30 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 nullp.as_basic_value_enum()
             } else {
                 // For implicit return, use default value
-                match *inner_ret {
-                    OatsType::Number => {
-                        let zero = self.f64_t.const_float(0.0);
-                        let box_fn = self.get_union_box_f64();
-                        let cs = self
-                            .builder
-                            .build_call(box_fn, &[zero.into()], "box_default")
-                            .map_err(|_| {
-                                crate::diagnostics::Diagnostic::simple_boxed(
-                                    Severity::Error,
-                                    "boxing failed",
-                                )
-                            })?;
-                        match extract_basic_value_from_valuekind(cs.try_as_basic_value()) {
-                            Some(bv) => bv,
-                            None => {
-                                return Err(crate::diagnostics::Diagnostic::simple_boxed(
-                                    Severity::Error,
-                                    "boxing returned no value",
-                                ));
-                            }
+                if *inner_ret == OatsType::Number {
+                    let zero = self.f64_t.const_float(0.0);
+                    let box_fn = self.get_union_box_f64();
+                    let cs = self
+                        .builder
+                        .build_call(box_fn, &[zero.into()], "box_default")
+                        .map_err(|_| {
+                            crate::diagnostics::Diagnostic::simple_boxed(
+                                Severity::Error,
+                                "boxing failed",
+                            )
+                        })?;
+                    match extract_basic_value_from_valuekind(cs.try_as_basic_value()) {
+                        Some(bv) => bv,
+                        None => {
+                            return Err(crate::diagnostics::Diagnostic::simple_boxed(
+                                Severity::Error,
+                                "boxing returned no value",
+                            ));
                         }
                     }
-                    _ => {
-                        let nullp = self.i8ptr_t.const_null();
-                        nullp.as_basic_value_enum()
-                    }
+                } else {
+                    let nullp = self.i8ptr_t.const_null();
+                    nullp.as_basic_value_enum()
                 }
             };
 
@@ -585,7 +582,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         let await_live_sets = self.compute_await_live_sets(func_decl);
         let mut all_live_names: HashSet<String> = HashSet::new();
         for s in &await_live_sets {
-            for n in s.iter() {
+            for n in s {
                 all_live_names.insert(n.clone());
             }
         }
@@ -647,7 +644,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 let obj_ptr_int = match self.builder.build_ptr_to_int(
                     state_ptr_wrapper,
                     self.i64_t,
-                    &format!("state_addr_store_{}", i),
+                    &format!("state_addr_store_{i}"),
                 ) {
                     Ok(v) => v,
                     Err(_) => {
@@ -661,7 +658,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 let field_addr = match self.builder.build_int_add(
                     obj_ptr_int,
                     off_const,
-                    &format!("slot_addr_store_{}", i),
+                    &format!("slot_addr_store_{i}"),
                 ) {
                     Ok(v) => v,
                     Err(_) => {
@@ -678,7 +675,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 let slot_ptr = match self.builder.build_int_to_ptr(
                     field_addr,
                     self.i8ptr_t,
-                    &format!("slot_ptr_store_{}", i),
+                    &format!("slot_ptr_store_{i}"),
                 ) {
                     Ok(p) => p,
                     Err(_) => {
@@ -710,7 +707,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         let cs = match self.builder.build_call(
                             box_fn,
                             &[fv.into()],
-                            &format!("box_f64_store_{}", i),
+                            &format!("box_f64_store_{i}"),
                         ) {
                             Ok(cs) => cs,
                             Err(_) => {
@@ -824,7 +821,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 let cont_bb = cont_vec[i];
                 self.builder.position_at_end(*rb);
                 if let Some(live_set) = live_sets.get(i) {
-                    for name in live_set.iter() {
+                    for name in live_set {
                         if let Some(slot_idx) = local_map.get(name) {
                             // locate the alloca for the local in poll_locals
                             let mut target_alloca: Option<(
@@ -883,7 +880,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 let loaded_slot = match self.builder.build_load(
                                     self.i8ptr_t,
                                     slot_ptr,
-                                    &format!("slot_load_{}", name),
+                                    &format!("slot_load_{name}"),
                                 ) {
                                     Ok(v) => v,
                                     Err(_) => {
@@ -894,62 +891,59 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     }
                                 };
                                 // store into alloca (unbox for floats)
-                                match ty {
-                                    inkwell::types::BasicTypeEnum::FloatType(_) => {
-                                        let unbox_fn = self.get_union_unbox_f64();
-                                        let cs = match self.builder.build_call(
-                                            unbox_fn,
-                                            &[loaded_slot.into()],
-                                            "unbox_resume",
-                                        ) {
-                                            Ok(c) => c,
-                                            Err(_) => {
-                                                return Err(
-                                                    crate::diagnostics::Diagnostic::simple_boxed(
-                                                        Severity::Error,
-                                                        "union_unbox_f64 call failed when resuming locals",
-                                                    ),
-                                                );
-                                            }
-                                        };
-                                        let fv = match extract_basic_value_from_valuekind(
-                                            cs.try_as_basic_value(),
-                                        ) {
-                                            Some(bv) => bv.into_float_value(),
-                                            None => {
-                                                return Err(
-                                                    crate::diagnostics::Diagnostic::simple_boxed(
-                                                        Severity::Error,
-                                                        "unbox returned no value when resuming locals",
-                                                    ),
-                                                );
-                                            }
-                                        };
-                                        let _ = self
-                                            .builder
-                                            .build_store(alloca_ptr, fv.as_basic_value_enum());
-                                    }
-                                    _ => {
-                                        let slot_ptr_val = loaded_slot.into_pointer_value();
-                                        let casted = match self.builder.build_pointer_cast(
-                                            slot_ptr_val,
-                                            alloca_ptr.get_type(),
-                                            "cast_resume",
-                                        ) {
-                                            Ok(c) => c,
-                                            Err(_) => {
-                                                return Err(
-                                                    crate::diagnostics::Diagnostic::simple_boxed(
-                                                        Severity::Error,
-                                                        "pointer cast failed when resuming locals",
-                                                    ),
-                                                );
-                                            }
-                                        };
-                                        let _ = self
-                                            .builder
-                                            .build_store(alloca_ptr, casted.as_basic_value_enum());
-                                    }
+                                if let inkwell::types::BasicTypeEnum::FloatType(_) = ty {
+                                    let unbox_fn = self.get_union_unbox_f64();
+                                    let cs = match self.builder.build_call(
+                                        unbox_fn,
+                                        &[loaded_slot.into()],
+                                        "unbox_resume",
+                                    ) {
+                                        Ok(c) => c,
+                                        Err(_) => {
+                                            return Err(
+                                                crate::diagnostics::Diagnostic::simple_boxed(
+                                                    Severity::Error,
+                                                    "union_unbox_f64 call failed when resuming locals",
+                                                ),
+                                            );
+                                        }
+                                    };
+                                    let fv = match extract_basic_value_from_valuekind(
+                                        cs.try_as_basic_value(),
+                                    ) {
+                                        Some(bv) => bv.into_float_value(),
+                                        None => {
+                                            return Err(
+                                                crate::diagnostics::Diagnostic::simple_boxed(
+                                                    Severity::Error,
+                                                    "unbox returned no value when resuming locals",
+                                                ),
+                                            );
+                                        }
+                                    };
+                                    let _ = self
+                                        .builder
+                                        .build_store(alloca_ptr, fv.as_basic_value_enum());
+                                } else {
+                                    let slot_ptr_val = loaded_slot.into_pointer_value();
+                                    let casted = match self.builder.build_pointer_cast(
+                                        slot_ptr_val,
+                                        alloca_ptr.get_type(),
+                                        "cast_resume",
+                                    ) {
+                                        Ok(c) => c,
+                                        Err(_) => {
+                                            return Err(
+                                                crate::diagnostics::Diagnostic::simple_boxed(
+                                                    Severity::Error,
+                                                    "pointer cast failed when resuming locals",
+                                                ),
+                                            );
+                                        }
+                                    };
+                                    let _ = self
+                                        .builder
+                                        .build_store(alloca_ptr, casted.as_basic_value_enum());
                                 }
                             }
                         }

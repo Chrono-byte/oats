@@ -38,7 +38,7 @@ pub struct LinkingConfig {
 pub fn compile_to_object_bytes(module: &Module, config: &LinkingConfig) -> Result<Vec<u8>> {
     // Initialize native target
     Target::initialize_native(&InitializationConfig::default())
-        .map_err(|e| anyhow::anyhow!("Failed to initialize LLVM target: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("Failed to initialize LLVM target: {e}"))?;
 
     // Get target triple
     let triple = if let Some(ref triple_str) = config.target_triple {
@@ -57,7 +57,7 @@ pub fn compile_to_object_bytes(module: &Module, config: &LinkingConfig) -> Resul
 
     // Get the target from the triple
     let target = Target::from_triple(&triple)
-        .map_err(|e| anyhow::anyhow!("Failed to get target from triple: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("Failed to get target from triple: {e}"))?;
 
     // Create TargetMachine, trying CPU candidates in order
     let mut tm = None;
@@ -82,8 +82,7 @@ pub fn compile_to_object_bytes(module: &Module, config: &LinkingConfig) -> Resul
         .write_to_memory_buffer(module, FileType::Object)
         .map_err(|e| {
             anyhow::anyhow!(
-                "TargetMachine failed to emit object file to memory: {:?}",
-                e
+                "TargetMachine failed to emit object file to memory: {e:?}"
             )
         })?;
 
@@ -115,20 +114,15 @@ pub fn compile_to_object(module: &Module, config: &LinkingConfig) -> Result<Stri
     })?;
 
     // Write bytes to file
-    std::fs::write(&config.out_obj, obj_bytes).map_err(|e| {
-        anyhow::anyhow!(
-            "Failed to write object file {}: {}",
-            config.out_obj,
-            e
-        )
-    })?;
+    std::fs::write(&config.out_obj, obj_bytes)
+        .map_err(|e| anyhow::anyhow!("Failed to write object file {}: {}", config.out_obj, e))?;
 
     Ok(config.out_obj.clone())
 }
 
 /// Returns paths to the runtime libraries (runtime and std).
 ///
-/// Respects OATS_RUNTIME_PATH and OATS_STD_PATH env vars.
+/// Respects `OATS_RUNTIME_PATH` and `OATS_STD_PATH` env vars.
 /// If not set, builds them using cargo.
 pub fn get_runtime_libraries() -> Result<Vec<String>> {
     let mut libs = Vec::new();
@@ -152,9 +146,8 @@ pub fn get_runtime_libraries() -> Result<Vec<String>> {
             Err(e) => {
                 if e.kind() == std::io::ErrorKind::NotFound {
                     anyhow::bail!("cargo not found in PATH");
-                } else {
-                    return Err(e.into());
                 }
+                return Err(e.into());
             }
         }
         libs.push("target/release/libruntime.a".to_string());
@@ -179,9 +172,8 @@ pub fn get_runtime_libraries() -> Result<Vec<String>> {
             Err(e) => {
                 if e.kind() == std::io::ErrorKind::NotFound {
                     anyhow::bail!("cargo not found in PATH");
-                } else {
-                    return Err(e.into());
                 }
+                return Err(e.into());
             }
         }
         libs.push("target/release/liboats_std.a".to_string());
@@ -197,7 +189,7 @@ pub fn get_runtime_libraries() -> Result<Vec<String>> {
 /// * `emitted_host_main` - Whether host main was emitted into the module
 ///
 /// # Returns
-/// Path to rt_main.o, or empty string if not needed
+/// Path to `rt_main.o`, or empty string if not needed
 pub fn locate_rt_main(out_dir: &str, emitted_host_main: bool) -> Result<String> {
     if emitted_host_main {
         return Ok(String::new());
@@ -208,7 +200,7 @@ pub fn locate_rt_main(out_dir: &str, emitted_host_main: bool) -> Result<String> 
     }
 
     if Path::new("crates/runtime/rt_main/src/main.rs").exists() {
-        let rt_main_obj = format!("{}/rt_main.o", out_dir);
+        let rt_main_obj = format!("{out_dir}/rt_main.o");
         let mut rustc_cmd = Command::new("rustc");
         rustc_cmd
             .arg("--crate-type")
@@ -229,9 +221,8 @@ pub fn locate_rt_main(out_dir: &str, emitted_host_main: bool) -> Result<String> 
                     anyhow::bail!(
                         "`rustc` not found in PATH; please install Rust toolchain or ensure `rustc` is available"
                     );
-                } else {
-                    return Err(e.into());
                 }
+                return Err(e.into());
             }
         }
         return Ok(rt_main_obj);
@@ -248,7 +239,7 @@ pub fn locate_rt_main(out_dir: &str, emitted_host_main: bool) -> Result<String> 
 /// * `config` - Linking configuration
 /// * `out_obj` - Path to the main object file
 /// * `rust_libs` - Paths to the runtime libraries
-/// * `rt_main_obj` - Path to rt_main.o (empty if not needed)
+/// * `rt_main_obj` - Path to `rt_main.o` (empty if not needed)
 ///
 /// # Returns
 /// Path to the generated executable
@@ -319,7 +310,7 @@ pub fn link_executable(
                 if status.success() {
                     linked_ok = true;
                 } else {
-                    anyhow::bail!("{} failed to link final binary", linker);
+                    anyhow::bail!("{linker} failed to link final binary");
                 }
             }
             Err(e) => link_run_err = Some(e),
@@ -339,11 +330,11 @@ pub fn link_executable(
         // Add LTO flags (only if LTO is enabled, skip for "none")
         let lto_mode = config.lto.as_deref().unwrap_or("none");
         if lto_mode != "none" {
-            cmd.arg(format!("-flto={}", lto_mode));
+            cmd.arg(format!("-flto={lto_mode}"));
         }
 
         if let Some(ref lld) = lld_candidate {
-            cmd.arg(format!("-fuse-ld={}", lld));
+            cmd.arg(format!("-fuse-ld={lld}"));
         }
 
         if !rt_main_obj.is_empty() {
@@ -367,7 +358,7 @@ pub fn link_executable(
                 if status.success() {
                     linked_ok = true;
                 } else {
-                    anyhow::bail!("{} failed to link final binary", clang_bin);
+                    anyhow::bail!("{clang_bin} failed to link final binary");
                 }
             }
             Err(e) => link_run_err = Some(e),
@@ -396,7 +387,7 @@ pub fn link_executable(
                 if status.success() {
                     linked_ok = true;
                 } else {
-                    anyhow::bail!("{} failed to link final binary", lld_bin);
+                    anyhow::bail!("{lld_bin} failed to link final binary");
                 }
             }
             Err(e) => link_run_err = Some(e),
@@ -413,12 +404,10 @@ pub fn link_executable(
                 anyhow::bail!(
                     "linker not found in PATH; install clang or lld, or set OATS_LINKER to a path"
                 );
-            } else {
-                return Err(e.into());
             }
-        } else {
-            anyhow::bail!("failed to link final binary");
+            return Err(e.into());
         }
+        anyhow::bail!("failed to link final binary");
     }
 
     Ok(config.out_exe.clone())

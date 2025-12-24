@@ -29,7 +29,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         locals: &mut LocalsStackLocal<'a>,
     ) -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
         // Handle unary operators: -, +, !, ~, typeof
-        use oxc_ast::ast::*;
+        use oxc_ast::ast::UnaryOperator;
 
         // Short-circuit typeof since it returns a string literal based on runtime kind
         if matches!(unary.operator, UnaryOperator::Typeof) {
@@ -223,7 +223,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
     ) -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
         // Handle update operators: ++, --
         // These modify the variable and return the old (postfix) or new (prefix) value
-        use oxc_ast::ast::*;
+        use oxc_ast::ast::UpdateOperator;
 
         // Only simple identifier updates are supported at present.
         if let oxc_ast::ast::SimpleAssignmentTarget::AssignmentTargetIdentifier(ident) =

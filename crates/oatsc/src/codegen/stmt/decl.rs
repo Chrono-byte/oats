@@ -2,7 +2,7 @@ use crate::diagnostics::{Diagnostic, Severity};
 use inkwell::AddressSpace;
 use inkwell::types::BasicType;
 use inkwell::values::{BasicValue, BasicValueEnum, FunctionValue};
-use oxc_ast::ast::*;
+use oxc_ast::ast::{VariableDeclaration, VariableDeclarator, TSType, Expression, VariableDeclarationKind, ObjectPropertyKind, PropertyKey, ArrayPattern, BindingPatternKind, ObjectPattern};
 use std::collections::HashMap;
 
 #[allow(dead_code)]
@@ -232,18 +232,15 @@ impl<'a> crate::codegen::CodeGen<'a> {
             // type for member-call lowering that appears
             // after this declaration.
             let allocated_ty = self.i8ptr_t.as_basic_type_enum();
-            let alloca = match self.builder.build_alloca(allocated_ty, name) {
-                Ok(a) => a,
-                Err(_) => {
-                    crate::diagnostics::emit_diagnostic(
-                        &crate::diagnostics::Diagnostic::simple_boxed(
-                            Severity::Error,
-                            "alloca failed for local variable",
-                        ),
-                        Some(self.source),
-                    );
-                    return Ok(false);
-                }
+            let alloca = if let Ok(a) = self.builder.build_alloca(allocated_ty, name) { a } else {
+                crate::diagnostics::emit_diagnostic(
+                    &crate::diagnostics::Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "alloca failed for local variable",
+                    ),
+                    Some(self.source),
+                );
+                return Ok(false);
             };
             // Insert local early as uninitialized; we'll store to it below
             self.insert_local_current_scope(
@@ -293,7 +290,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         // Register field list under class_fields as ("0", type0), ...
         let mut fields: Vec<(String, crate::types::OatsType)> = Vec::new();
         for (i, et) in elem_types.iter().enumerate() {
-            fields.push((format!("{}", i), et.clone()));
+            fields.push((format!("{i}"), et.clone()));
         }
         self.class_fields
             .borrow_mut()
@@ -381,18 +378,15 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
         // Create an alloca for the local and store the tuple pointer
         let allocated_ty = self.i8ptr_t.as_basic_type_enum();
-        let alloca = match self.builder.build_alloca(allocated_ty, &var_ctx.name) {
-            Ok(a) => a,
-            Err(_) => {
-                crate::diagnostics::emit_diagnostic(
-                    &crate::diagnostics::Diagnostic::simple_boxed(
-                        Severity::Error,
-                        "alloca failed for local variable",
-                    ),
-                    Some(self.source),
-                );
-                return Ok(false);
-            }
+        let alloca = if let Ok(a) = self.builder.build_alloca(allocated_ty, &var_ctx.name) { a } else {
+            crate::diagnostics::emit_diagnostic(
+                &crate::diagnostics::Diagnostic::simple_boxed(
+                    Severity::Error,
+                    "alloca failed for local variable",
+                ),
+                Some(self.source),
+            );
+            return Ok(false);
         };
         // increment rc for stored pointer (unless elided)
         if !self.should_elide_rc_for_local(&var_ctx.name) {
@@ -734,7 +728,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         // The loaded value is the nested array element, recursively destructure it
                         if let BasicValueEnum::PointerValue(nested_arr_ptr) = elem_val {
                             // Create a temporary variable to hold the nested array
-                            let temp_name = format!("__nested_arr_elem_{}", idx);
+                            let temp_name = format!("__nested_arr_elem_{idx}");
                             let temp_alloca = self
                                 .builder
                                 .build_alloca(self.i8ptr_t.as_basic_type_enum(), &temp_name)
@@ -742,8 +736,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     Diagnostic::simple_boxed(
                                         Severity::Error,
                                         format!(
-                                            "alloca failed for nested array element at index {}",
-                                            idx
+                                            "alloca failed for nested array element at index {idx}"
                                         ),
                                     )
                                 })?;
@@ -753,7 +746,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             let _ = self.builder.build_call(
                                 rc_inc,
                                 &[nested_arr_ptr.into()],
-                                &format!("rc_inc_nested_arr_elem_{}", idx),
+                                &format!("rc_inc_nested_arr_elem_{idx}"),
                             );
 
                             // Store the loaded nested array
@@ -783,22 +776,20 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 Severity::Error,
                                 "Nested array destructuring with temporaries not yet supported - needs refactoring",
                             ));
-                        } else {
-                            return Err(Diagnostic::simple_boxed(
-                                Severity::Error,
-                                format!(
-                                    "Nested array destructuring requires array type for element at index {}",
-                                    idx
-                                ),
-                            ));
                         }
+                        return Err(Diagnostic::simple_boxed(
+                            Severity::Error,
+                            format!(
+                                "Nested array destructuring requires array type for element at index {idx}"
+                            ),
+                        ));
                     }
                     BindingPatternKind::ObjectPattern(_nested_obj_pat) => {
                         // Nested object destructuring: let [{a, b}, c] = arr
                         // The loaded value is the nested object element, recursively destructure it
                         if let BasicValueEnum::PointerValue(nested_obj_ptr) = elem_val {
                             // Create a temporary variable to hold the nested object
-                            let temp_name = format!("__nested_obj_elem_{}", idx);
+                            let temp_name = format!("__nested_obj_elem_{idx}");
                             let temp_alloca = self
                                 .builder
                                 .build_alloca(self.i8ptr_t.as_basic_type_enum(), &temp_name)
@@ -806,8 +797,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     Diagnostic::simple_boxed(
                                         Severity::Error,
                                         format!(
-                                            "alloca failed for nested object element at index {}",
-                                            idx
+                                            "alloca failed for nested object element at index {idx}"
                                         ),
                                     )
                                 })?;
@@ -817,7 +807,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             let _ = self.builder.build_call(
                                 rc_inc,
                                 &[nested_obj_ptr.into()],
-                                &format!("rc_inc_nested_obj_elem_{}", idx),
+                                &format!("rc_inc_nested_obj_elem_{idx}"),
                             );
 
                             // Store the loaded nested object
@@ -844,15 +834,13 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 Severity::Error,
                                 "Nested object destructuring with temporaries not yet supported - needs refactoring",
                             ));
-                        } else {
-                            return Err(Diagnostic::simple_boxed(
-                                Severity::Error,
-                                format!(
-                                    "Nested object destructuring requires object type for element at index {}",
-                                    idx
-                                ),
-                            ));
                         }
+                        return Err(Diagnostic::simple_boxed(
+                            Severity::Error,
+                            format!(
+                                "Nested object destructuring requires object type for element at index {idx}"
+                            ),
+                        ));
                     }
                     // Rest pattern handling - ArrayPattern has a separate rest field
                     // This case shouldn't be reached as rest is handled separately
@@ -1217,7 +1205,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         let field_list = fields.get(&class_name).ok_or_else(|| {
             Diagnostic::simple_boxed(
                 Severity::Error,
-                format!("Class '{}' has no registered fields", class_name),
+                format!("Class '{class_name}' has no registered fields"),
             )
         })?;
 
@@ -1259,7 +1247,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 .ok_or_else(|| {
                     Diagnostic::simple_boxed(
                         Severity::Error,
-                        format!("Class '{}' has no field '{}'", class_name, prop_name),
+                        format!("Class '{class_name}' has no field '{prop_name}'"),
                     )
                 })?;
 
@@ -1270,11 +1258,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
             // Get field pointer using byte offset
             let field_i8ptr = self
-                .offset_i8_ptr(obj_ptr, field_offset, &format!("field_{}_i8ptr", prop_name))
+                .offset_i8_ptr(obj_ptr, field_offset, &format!("field_{prop_name}_i8ptr"))
                 .map_err(|_| {
                     Diagnostic::simple_boxed(
                         Severity::Error,
-                        format!("failed to compute field pointer for '{}'", prop_name),
+                        format!("failed to compute field pointer for '{prop_name}'"),
                     )
                 })?;
 
@@ -1284,12 +1272,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 .build_pointer_cast(
                     field_i8ptr,
                     self.i8ptr_t,
-                    &format!("field_{}_ptr", prop_name),
+                    &format!("field_{prop_name}_ptr"),
                 )
                 .map_err(|_| {
                     Diagnostic::simple_boxed(
                         Severity::Error,
-                        format!("failed to cast field pointer for '{}'", prop_name),
+                        format!("failed to cast field pointer for '{prop_name}'"),
                     )
                 })?;
 
@@ -1298,12 +1286,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 .build_load(
                     self.i8ptr_t,
                     field_ptr,
-                    &format!("field_{}_load", prop_name),
+                    &format!("field_{prop_name}_load"),
                 )
                 .map_err(|_| {
                     Diagnostic::simple_boxed(
                         Severity::Error,
-                        format!("failed to load field '{}'", prop_name),
+                        format!("failed to load field '{prop_name}'"),
                     )
                 })?;
 
@@ -1318,7 +1306,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         let _ = self.builder.build_call(
                             rc_inc,
                             &[loaded_ptr.into()],
-                            &format!("rc_inc_{}", binding_name),
+                            &format!("rc_inc_{binding_name}"),
                         );
                     }
 
@@ -1329,7 +1317,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         .map_err(|_| {
                             Diagnostic::simple_boxed(
                                 Severity::Error,
-                                format!("alloca failed for '{}'", binding_name),
+                                format!("alloca failed for '{binding_name}'"),
                             )
                         })?;
 
@@ -1358,14 +1346,14 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     if let BasicValueEnum::PointerValue(nested_obj_ptr) = loaded {
                         // Create a temporary variable to hold the nested object
                         // This allows us to reuse the existing destructuring logic
-                        let temp_name = format!("__nested_obj_{}", prop_name);
+                        let temp_name = format!("__nested_obj_{prop_name}");
                         let temp_alloca = self
                             .builder
                             .build_alloca(self.i8ptr_t.as_basic_type_enum(), &temp_name)
                             .map_err(|_| {
                                 Diagnostic::simple_boxed(
                                     Severity::Error,
-                                    format!("alloca failed for nested object '{}'", prop_name),
+                                    format!("alloca failed for nested object '{prop_name}'"),
                                 )
                             })?;
 
@@ -1374,7 +1362,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         let _ = self.builder.build_call(
                             rc_inc,
                             &[nested_obj_ptr.into()],
-                            &format!("rc_inc_nested_{}", prop_name),
+                            &format!("rc_inc_nested_{prop_name}"),
                         );
 
                         // Store the loaded nested object
@@ -1412,29 +1400,27 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             Severity::Error,
                             "Nested object destructuring with temporaries not yet supported - needs refactoring",
                         ));
-                    } else {
-                        return Err(Diagnostic::simple_boxed(
-                            Severity::Error,
-                            format!(
-                                "Nested object destructuring requires object type for field '{}'",
-                                prop_name
-                            ),
-                        ));
                     }
+                    return Err(Diagnostic::simple_boxed(
+                        Severity::Error,
+                        format!(
+                            "Nested object destructuring requires object type for field '{prop_name}'"
+                        ),
+                    ));
                 }
                 BindingPatternKind::ArrayPattern(_nested_arr_pat) => {
                     // Nested array destructuring: let {a: [b, c]} = obj
                     // The loaded value is the nested array, recursively destructure it
                     if let BasicValueEnum::PointerValue(nested_arr_ptr) = loaded {
                         // Create a temporary variable to hold the nested array
-                        let temp_name = format!("__nested_arr_{}", prop_name);
+                        let temp_name = format!("__nested_arr_{prop_name}");
                         let temp_alloca = self
                             .builder
                             .build_alloca(self.i8ptr_t.as_basic_type_enum(), &temp_name)
                             .map_err(|_| {
                                 Diagnostic::simple_boxed(
                                     Severity::Error,
-                                    format!("alloca failed for nested array '{}'", prop_name),
+                                    format!("alloca failed for nested array '{prop_name}'"),
                                 )
                             })?;
 
@@ -1443,7 +1429,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         let _ = self.builder.build_call(
                             rc_inc,
                             &[nested_arr_ptr.into()],
-                            &format!("rc_inc_nested_arr_{}", prop_name),
+                            &format!("rc_inc_nested_arr_{prop_name}"),
                         );
 
                         // Store the loaded nested array
@@ -1473,15 +1459,13 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             Severity::Error,
                             "Nested array destructuring with temporaries not yet supported - needs refactoring",
                         ));
-                    } else {
-                        return Err(Diagnostic::simple_boxed(
-                            Severity::Error,
-                            format!(
-                                "Nested array destructuring requires array type for field '{}'",
-                                prop_name
-                            ),
-                        ));
                     }
+                    return Err(Diagnostic::simple_boxed(
+                        Severity::Error,
+                        format!(
+                            "Nested array destructuring requires array type for field '{prop_name}'"
+                        ),
+                    ));
                 }
                 // Rest patterns in object destructuring are handled at the property level
                 _ => {
@@ -1582,7 +1566,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     .offset_i8_ptr(
                         obj_ptr,
                         src_field_offset,
-                        &format!("src_field_{}_i8ptr", field_name),
+                        &format!("src_field_{field_name}_i8ptr"),
                     )
                     .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "gep failed"))?;
 
@@ -1591,7 +1575,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     .build_pointer_cast(
                         src_field_i8ptr,
                         self.i8ptr_t,
-                        &format!("src_field_{}_ptr", field_name),
+                        &format!("src_field_{field_name}_ptr"),
                     )
                     .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "cast failed"))?;
 
@@ -1600,7 +1584,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     .build_load(
                         self.i8ptr_t,
                         src_field_ptr,
-                        &format!("src_field_{}_load", field_name),
+                        &format!("src_field_{field_name}_load"),
                     )
                     .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "load failed"))?;
 
@@ -1612,7 +1596,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         .build_call(
                             rc_inc,
                             &[src_pv.into()],
-                            &format!("rc_inc_rest_{}", field_name),
+                            &format!("rc_inc_rest_{field_name}"),
                         )
                         .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "rc_inc failed"))?;
                 }
@@ -1623,7 +1607,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     .offset_i8_ptr(
                         rest_obj_ptr,
                         rest_field_offset,
-                        &format!("rest_field_{}_i8ptr", field_name),
+                        &format!("rest_field_{field_name}_i8ptr"),
                     )
                     .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "gep failed"))?;
 
@@ -1632,7 +1616,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     .build_pointer_cast(
                         rest_field_i8ptr,
                         self.i8ptr_t,
-                        &format!("rest_field_{}_ptr", field_name),
+                        &format!("rest_field_{field_name}_ptr"),
                     )
                     .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "cast failed"))?;
 
@@ -1851,20 +1835,15 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         )) = &maybe_existing
                         {
                             *existing_ptr
-                        } else {
-                            match self.builder.build_alloca(allocated_ty, &name) {
-                                Ok(a) => a,
-                                Err(_) => {
-                                    crate::diagnostics::emit_diagnostic(
-                                        &crate::diagnostics::Diagnostic::simple_boxed(
-                                            Severity::Error,
-                                            "alloca failed for local variable",
-                                        ),
-                                        Some(self.source),
-                                    );
-                                    return Ok(false);
-                                }
-                            }
+                        } else if let Ok(a) = self.builder.build_alloca(allocated_ty, &name) { a } else {
+                            crate::diagnostics::emit_diagnostic(
+                                &crate::diagnostics::Diagnostic::simple_boxed(
+                                    Severity::Error,
+                                    "alloca failed for local variable",
+                                ),
+                                Some(self.source),
+                            );
+                            return Ok(false);
                         };
                         // Always store the initializer into the slot and
                         // perform RC increment for pointer-like values.
@@ -1950,18 +1929,15 @@ impl<'a> crate::codegen::CodeGen<'a> {
         } else {
             self.i64_t.as_basic_type_enum()
         };
-        let alloca = match self.builder.build_alloca(ty, &var_ctx.name) {
-            Ok(a) => a,
-            Err(_) => {
-                crate::diagnostics::emit_diagnostic(
-                    &crate::diagnostics::Diagnostic::simple_boxed(
-                        Severity::Error,
-                        "alloca failed for uninitialized var",
-                    ),
-                    Some(self.source),
-                );
-                return Ok(());
-            }
+        let alloca = if let Ok(a) = self.builder.build_alloca(ty, &var_ctx.name) { a } else {
+            crate::diagnostics::emit_diagnostic(
+                &crate::diagnostics::Diagnostic::simple_boxed(
+                    Severity::Error,
+                    "alloca failed for uninitialized var",
+                ),
+                Some(self.source),
+            );
+            return Ok(());
         };
         self.insert_local_current_scope(
             locals_stack,

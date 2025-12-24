@@ -58,6 +58,7 @@ impl Collector {
     ///
     /// # Returns
     /// An `Arc<Collector>` suitable for sharing between threads
+    #[must_use] 
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
             queue: Mutex::new(Vec::new()),
@@ -197,8 +198,7 @@ impl Collector {
                                 if crate::COLLECTOR_LOG.load(Ordering::Relaxed) {
                                     let _ = io::stderr().write_all(
                                         format!(
-                                            "[oats runtime] collector: array length {} exceeds limit, skipping\n",
-                                            len
+                                            "[oats runtime] collector: array length {len} exceeds limit, skipping\n"
                                         )
                                         .as_bytes(),
                                     );
@@ -207,22 +207,17 @@ impl Collector {
                             }
                             for i in 0..len {
                                 // Validate element offset calculation to prevent overflow
-                                let elem_offset = match i
-                                    .checked_mul(std::mem::size_of::<*mut std::ffi::c_void>())
-                                {
-                                    Some(offset) => offset,
-                                    None => {
-                                        if crate::COLLECTOR_LOG.load(Ordering::Relaxed) {
-                                            let _ = io::stderr().write_all(
-                                                format!(
-                                                    "[oats runtime] collector: integer overflow in element offset (i={})\n",
-                                                    i
-                                                )
-                                                .as_bytes(),
-                                            );
-                                        }
-                                        break; // Skip remaining elements
+                                let elem_offset = if let Some(offset) = i
+                                    .checked_mul(std::mem::size_of::<*mut std::ffi::c_void>()) { offset } else {
+                                    if crate::COLLECTOR_LOG.load(Ordering::Relaxed) {
+                                        let _ = io::stderr().write_all(
+                                            format!(
+                                                "[oats runtime] collector: integer overflow in element offset (i={i})\n"
+                                            )
+                                            .as_bytes(),
+                                        );
                                     }
+                                    break; // Skip remaining elements
                                 };
                                 let elem_ptr =
                                     data_start.add(elem_offset) as *const *mut std::ffi::c_void;
@@ -287,8 +282,7 @@ impl Collector {
                     if crate::COLLECTOR_LOG.load(Ordering::Relaxed) {
                         let _ = io::stderr().write_all(
                             format!(
-                                "[oats runtime] collector: metadata length {} exceeds limit, skipping\n",
-                                len
+                                "[oats runtime] collector: metadata length {len} exceeds limit, skipping\n"
                             )
                             .as_bytes(),
                         );
@@ -313,8 +307,7 @@ impl Collector {
                         if crate::COLLECTOR_LOG.load(Ordering::Relaxed) {
                             let _ = io::stderr().write_all(
                                 format!(
-                                    "[oats runtime] collector: field offset {} exceeds limit\n",
-                                    off
+                                    "[oats runtime] collector: field offset {off} exceeds limit\n"
                                 )
                                 .as_bytes(),
                             );
@@ -482,7 +475,7 @@ impl Collector {
             let mut candidates_queue: VecDeque<usize> =
                 VecDeque::with_capacity(estimated_candidates);
             let mut in_candidates: HashSet<usize> = HashSet::with_capacity(estimated_candidates);
-            for (&o, &sim_rc) in simulated.iter() {
+            for (&o, &sim_rc) in &simulated {
                 if sim_rc <= 0 {
                     candidates_queue.push_back(o);
                     in_candidates.insert(o);
@@ -545,137 +538,133 @@ impl Collector {
                     }
 
                     let new = old | crate::HEADER_CLAIM_BIT;
-                    match (*header_ptr).compare_exchange_weak(
+                    if (*header_ptr).compare_exchange_weak(
                         old,
                         new,
                         std::sync::atomic::Ordering::AcqRel,
                         std::sync::atomic::Ordering::Relaxed,
-                    ) {
-                        Ok(_) => {
-                            // We successfully claimed the object. Re-load header
-                            // to capture any concurrent mutations that may have
-                            // changed flags or type-tag (but claim remains set).
-                            let claimed_header = (*header_ptr).load(Ordering::Acquire);
-                            // Re-check strong count; if it became non-zero, give up.
-                            let strong_after = claimed_header & crate::HEADER_RC_MASK;
-                            if strong_after != 0 {
-                                // Unclaim the object by clearing the claim bit.
-                                let _ = (*header_ptr)
-                                    .fetch_and(!crate::HEADER_CLAIM_BIT, Ordering::AcqRel);
-                                continue;
-                            }
+                    ).is_ok() {
+                        // We successfully claimed the object. Re-load header
+                        // to capture any concurrent mutations that may have
+                        // changed flags or type-tag (but claim remains set).
+                        let claimed_header = (*header_ptr).load(Ordering::Acquire);
+                        // Re-check strong count; if it became non-zero, give up.
+                        let strong_after = claimed_header & crate::HEADER_RC_MASK;
+                        if strong_after != 0 {
+                            // Unclaim the object by clearing the claim bit.
+                            let _ = (*header_ptr)
+                                .fetch_and(!crate::HEADER_CLAIM_BIT, Ordering::AcqRel);
+                            continue;
+                        }
 
-                            // At this point we hold the claim bit and strong==0.
-                            let type_tag = crate::header_type_tag(claimed_header) as u32;
-                            if type_tag == 1 {
-                                let dtor_ptr_ptr = (o as *mut u8).add(std::mem::size_of::<u64>())
-                                    as *mut *mut std::ffi::c_void;
-                                let dtor_raw = *dtor_ptr_ptr;
-                                if !dtor_raw.is_null() {
-                                    // Check recursion depth to prevent stack overflow
-                                    let dtor_depth = COLLECTOR_DTOR_DEPTH.with(|d| {
-                                        let mut depth = d.borrow_mut();
-                                        *depth += 1;
-                                        *depth
+                        // At this point we hold the claim bit and strong==0.
+                        let type_tag = crate::header_type_tag(claimed_header) as u32;
+                        if type_tag == 1 {
+                            let dtor_ptr_ptr = (o as *mut u8).add(std::mem::size_of::<u64>()).cast::<*mut std::ffi::c_void>();
+                            let dtor_raw = *dtor_ptr_ptr;
+                            if !dtor_raw.is_null() {
+                                // Check recursion depth to prevent stack overflow
+                                let dtor_depth = COLLECTOR_DTOR_DEPTH.with(|d| {
+                                    let mut depth = d.borrow_mut();
+                                    *depth += 1;
+                                    *depth
+                                });
+
+                                if dtor_depth > crate::MAX_RECURSION_DEPTH {
+                                    // Defer destructor call - re-add to queue for later
+                                    if crate::COLLECTOR_LOG.load(Ordering::Relaxed) {
+                                        let _ = io::stderr().write_all(
+                                            format!(
+                                                "[oats runtime] collector: destructor depth {} exceeded, deferring obj={:p}\n",
+                                                dtor_depth, o as *mut std::ffi::c_void
+                                            ).as_bytes(),
+                                        );
+                                    }
+                                    COLLECTOR_DTOR_DEPTH.with(|d| {
+                                        *d.borrow_mut() -= 1;
                                     });
+                                    // Re-add to candidates for later processing
+                                    next_round.push(o);
+                                    continue;
+                                }
 
-                                    if dtor_depth > crate::MAX_RECURSION_DEPTH {
-                                        // Defer destructor call - re-add to queue for later
-                                        if crate::COLLECTOR_LOG.load(Ordering::Relaxed) {
-                                            let _ = io::stderr().write_all(
-                                                format!(
-                                                    "[oats runtime] collector: destructor depth {} exceeded, deferring obj={:p}\n",
-                                                    dtor_depth, o as *mut std::ffi::c_void
-                                                ).as_bytes(),
-                                            );
-                                        }
+                                // Use guard to ensure depth is decremented
+                                struct DtorDepthGuard;
+                                impl Drop for DtorDepthGuard {
+                                    fn drop(&mut self) {
                                         COLLECTOR_DTOR_DEPTH.with(|d| {
                                             *d.borrow_mut() -= 1;
                                         });
-                                        // Re-add to candidates for later processing
-                                        next_round.push(o);
-                                        continue;
                                     }
+                                }
+                                let _guard = DtorDepthGuard;
 
-                                    // Use guard to ensure depth is decremented
-                                    struct DtorDepthGuard;
-                                    impl Drop for DtorDepthGuard {
-                                        fn drop(&mut self) {
-                                            COLLECTOR_DTOR_DEPTH.with(|d| {
-                                                *d.borrow_mut() -= 1;
-                                            });
-                                        }
-                                    }
-                                    let _guard = DtorDepthGuard;
-
-                                    // Validate function pointer before transmute
-                                    let dtor_addr = dtor_raw as usize;
-                                    if crate::is_plausible_addr(dtor_addr) {
-                                        // Additional validation: check alignment
-                                        const MIN_FN_ALIGN: usize = 1;
-                                        if dtor_addr.is_multiple_of(MIN_FN_ALIGN) {
-                                            if crate::COLLECTOR_LOG.load(Ordering::Relaxed) {
-                                                let _ = io::stderr().write_all(
-                                                    format!(
-                                                        "[oats runtime] collector: calling destructor for obj={:p} (depth={})\n",
-                                                        o as *mut std::ffi::c_void, dtor_depth
-                                                    ).as_bytes(),
-                                                );
-                                            }
-                                            // SAFETY: We've validated the pointer is in a plausible address range and aligned.
-                                            // The pointer was stored by the code generator and should be a valid function pointer.
-                                            // However, if the memory is corrupted, this could still be invalid. The is_plausible_addr
-                                            // check provides defense-in-depth but cannot guarantee the pointer is actually executable.
-                                            // In practice, destructor pointers are set by the code generator and should be valid.
-                                            let dtor: extern "C" fn(*mut std::ffi::c_void) =
-                                                std::mem::transmute(dtor_raw);
-                                            dtor(o as *mut std::ffi::c_void);
-                                        } else if crate::COLLECTOR_LOG.load(Ordering::Relaxed) {
+                                // Validate function pointer before transmute
+                                let dtor_addr = dtor_raw as usize;
+                                if crate::is_plausible_addr(dtor_addr) {
+                                    // Additional validation: check alignment
+                                    const MIN_FN_ALIGN: usize = 1;
+                                    if dtor_addr.is_multiple_of(MIN_FN_ALIGN) {
+                                        if crate::COLLECTOR_LOG.load(Ordering::Relaxed) {
                                             let _ = io::stderr().write_all(
                                                 format!(
-                                                    "[oats runtime] collector: destructor pointer {:p} has invalid alignment for obj={:p}, skipping\n",
-                                                    dtor_raw, o as *mut std::ffi::c_void
+                                                    "[oats runtime] collector: calling destructor for obj={:p} (depth={})\n",
+                                                    o as *mut std::ffi::c_void, dtor_depth
                                                 ).as_bytes(),
                                             );
                                         }
+                                        // SAFETY: We've validated the pointer is in a plausible address range and aligned.
+                                        // The pointer was stored by the code generator and should be a valid function pointer.
+                                        // However, if the memory is corrupted, this could still be invalid. The is_plausible_addr
+                                        // check provides defense-in-depth but cannot guarantee the pointer is actually executable.
+                                        // In practice, destructor pointers are set by the code generator and should be valid.
+                                        let dtor: extern "C" fn(*mut std::ffi::c_void) =
+                                            std::mem::transmute(dtor_raw);
+                                        dtor(o as *mut std::ffi::c_void);
                                     } else if crate::COLLECTOR_LOG.load(Ordering::Relaxed) {
                                         let _ = io::stderr().write_all(
                                             format!(
-                                                "[oats runtime] collector: invalid destructor pointer {:p} for obj={:p}, skipping\n",
+                                                "[oats runtime] collector: destructor pointer {:p} has invalid alignment for obj={:p}, skipping\n",
                                                 dtor_raw, o as *mut std::ffi::c_void
                                             ).as_bytes(),
                                         );
                                     }
+                                } else if crate::COLLECTOR_LOG.load(Ordering::Relaxed) {
+                                    let _ = io::stderr().write_all(
+                                        format!(
+                                            "[oats runtime] collector: invalid destructor pointer {:p} for obj={:p}, skipping\n",
+                                            dtor_raw, o as *mut std::ffi::c_void
+                                        ).as_bytes(),
+                                    );
                                 }
                             }
+                        }
 
-                            // Check weak count before deciding whether to free
-                            let weak_count = crate::header_get_weak_bits(claimed_header);
-                            if weak_count == 0 {
-                                // No weak references, free immediately
-                                // Clear claim bit before freeing (it's already set, so this is safe)
-                                std::sync::atomic::fence(Ordering::Acquire);
-                                let header_atomic = o as *mut std::sync::atomic::AtomicU64;
-                                let _ = (*header_atomic)
-                                    .fetch_and(!crate::HEADER_CLAIM_BIT, Ordering::AcqRel);
-                                crate::runtime_free(o as *mut std::ffi::c_void);
-                                // Object is freed, don't try to access it again
-                            } else {
-                                // There are weak references - object stays allocated until
-                                // the last weak reference is dropped. rc_weak_dec will free
-                                // the object when it's called for the last weak reference.
-                                // We don't call rc_weak_dec here because that would incorrectly
-                                // decrement the weak count.
-                                // Clear claim bit since we're not freeing here
-                                let _ = (*header_ptr)
-                                    .fetch_and(!crate::HEADER_CLAIM_BIT, Ordering::AcqRel);
-                            }
+                        // Check weak count before deciding whether to free
+                        let weak_count = crate::header_get_weak_bits(claimed_header);
+                        if weak_count == 0 {
+                            // No weak references, free immediately
+                            // Clear claim bit before freeing (it's already set, so this is safe)
+                            std::sync::atomic::fence(Ordering::Acquire);
+                            let header_atomic = o as *mut std::sync::atomic::AtomicU64;
+                            let _ = (*header_atomic)
+                                .fetch_and(!crate::HEADER_CLAIM_BIT, Ordering::AcqRel);
+                            crate::runtime_free(o as *mut std::ffi::c_void);
+                            // Object is freed, don't try to access it again
+                        } else {
+                            // There are weak references - object stays allocated until
+                            // the last weak reference is dropped. rc_weak_dec will free
+                            // the object when it's called for the last weak reference.
+                            // We don't call rc_weak_dec here because that would incorrectly
+                            // decrement the weak count.
+                            // Clear claim bit since we're not freeing here
+                            let _ = (*header_ptr)
+                                .fetch_and(!crate::HEADER_CLAIM_BIT, Ordering::AcqRel);
                         }
-                        Err(_) => {
-                            // header changed under us; retry later
-                            next_round.push(o);
-                            continue;
-                        }
+                    } else {
+                        // header changed under us; retry later
+                        next_round.push(o);
+                        continue;
                     }
                 }
                 to_try = next_round;

@@ -18,7 +18,7 @@
 //! The analysis results are consumed by the code generator to perform optimizations.
 
 use crate::parser::ParsedModule;
-use oxc_ast::ast::*;
+use oxc_ast::ast::{Statement, Expression, ClassElement, Argument, PropertyKey, Function, ForStatementInit};
 use std::collections::{HashMap, HashSet, VecDeque};
 
 /// Represents the class hierarchy as a directed graph.
@@ -36,7 +36,7 @@ pub type LiveClasses = HashSet<String>;
 pub type LiveMethods = HashMap<String, HashSet<String>>;
 
 /// Call graph representing method calls
-/// Key: caller method (class::method), Value: list of potential callees
+/// Key: caller method (`class::method`), Value: list of potential callees
 pub type CallGraph = HashMap<String, Vec<String>>;
 
 /// Main RTA analysis result
@@ -49,6 +49,7 @@ pub struct RTAResults {
 
 impl RTAResults {
     /// Check if a class is live (instantiated at runtime).
+    #[must_use] 
     pub fn is_class_live(&self, class_name: &str) -> bool {
         if self.live_classes.is_empty() {
             return true;
@@ -64,6 +65,7 @@ impl RTAResults {
     ///
     /// # Returns
     /// `true` if the method is live, `false` otherwise
+    #[must_use] 
     pub fn is_method_live(&self, class_name: &str, method_name: &str) -> bool {
         if self.live_methods.is_empty() {
             return true;
@@ -87,6 +89,7 @@ impl RTAResults {
     ///
     /// # Returns
     /// `true` if the function is live, `false` otherwise
+    #[must_use] 
     pub fn is_function_live(&self, function_name: &str) -> bool {
         // Entry points: main and exported functions are always live
         if function_name == "main" {
@@ -108,7 +111,7 @@ impl RTAResults {
 
         // Also consider all class constructors as entry points
         for class_name in &self.live_classes {
-            let ctor_name = format!("{}_ctor", class_name);
+            let ctor_name = format!("{class_name}_ctor");
             if !visited.contains(&ctor_name) {
                 worklist.push_back(ctor_name.clone());
                 visited.insert(ctor_name);
@@ -142,7 +145,7 @@ impl RTAResults {
         true
     }
 
-    /// Split a method name in format "class_method" into (class, method).
+    /// Split a method name in format "`class_method`" into (class, method).
     /// Returns None if it's not a method name.
     fn split_method_name(&self, name: &str) -> Option<(String, String)> {
         if let Some(last_underscore) = name.rfind('_')
@@ -168,6 +171,7 @@ impl RTAResults {
     ///
     /// # Returns
     /// `Some(target_method_name)` if devirtualization is possible, `None` otherwise
+    #[must_use] 
     pub fn can_devirtualize(&self, class_name: &str, method_name: &str) -> Option<String> {
         // Check if this method is only implemented in one class
         // For now, we do a simple check: if the method is only in one live class
@@ -205,20 +209,21 @@ impl RTAResults {
     /// * `method_name` - Name of the method
     ///
     /// # Returns
-    /// Vector of possible target method names in format "class_method"
+    /// Vector of possible target method names in format "`class_method`"
+    #[must_use] 
     pub fn get_method_call_targets(&self, class_name: &str, method_name: &str) -> Vec<String> {
         let mut targets = Vec::new();
 
         // Check if the method exists in the class
         if self.is_method_live(class_name, method_name) {
-            targets.push(format!("{}_{}", class_name, method_name));
+            targets.push(format!("{class_name}_{method_name}"));
         }
 
         // Check subclasses
         if let Some(subclasses) = self.hierarchy.get(class_name) {
             for subclass in subclasses {
                 if self.is_method_live(subclass, method_name) {
-                    targets.push(format!("{}_{}", subclass, method_name));
+                    targets.push(format!("{subclass}_{method_name}"));
                 }
             }
         }
@@ -227,12 +232,13 @@ impl RTAResults {
     }
 
     /// Get all live methods for a class.
+    #[must_use] 
     pub fn get_live_methods(&self, class_name: &str) -> Option<&HashSet<String>> {
         self.live_methods.get(class_name)
     }
 }
 
-/// Extracts the class name from a method name in format "class_method"
+/// Extracts the class name from a method name in format "`class_method`"
 /// Returns None if it's not a method name (doesn't contain underscore)
 fn extract_class_from_method_name(method_name: &str) -> Option<String> {
     if let Some(last_underscore) = method_name.rfind('_') {
@@ -247,7 +253,8 @@ fn extract_class_from_method_name(method_name: &str) -> Option<String> {
 }
 
 /// Performs Rapid Type Analysis on the given modules
-pub fn analyze(modules: &HashMap<String, ParsedModule>) -> RTAResults {
+#[must_use] 
+pub fn analyze(modules: &HashMap<String, &ParsedModule>) -> RTAResults {
     let (hierarchy, _parent_map) = build_class_hierarchy(modules);
     let live_classes = find_instantiations(modules);
     let methods = collect_methods(modules);
@@ -271,7 +278,7 @@ pub fn analyze(modules: &HashMap<String, ParsedModule>) -> RTAResults {
 
 /// Builds the class hierarchy by traversing all class declarations
 /// Returns both the hierarchy (parent -> subclasses) and parent map (class -> parent)
-fn build_class_hierarchy(modules: &HashMap<String, ParsedModule>) -> (ClassHierarchy, ParentMap) {
+fn build_class_hierarchy(modules: &HashMap<String, &ParsedModule>) -> (ClassHierarchy, ParentMap) {
     let mut hierarchy: ClassHierarchy = HashMap::new();
     let mut parent_map: ParentMap = HashMap::new();
 
@@ -307,7 +314,7 @@ fn build_class_hierarchy(modules: &HashMap<String, ParsedModule>) -> (ClassHiera
 }
 
 /// Finds all explicit class instantiations to form the initial live set
-fn find_instantiations(modules: &HashMap<String, ParsedModule>) -> LiveClasses {
+fn find_instantiations(modules: &HashMap<String, &ParsedModule>) -> LiveClasses {
     let mut live_classes = HashSet::new();
 
     for module in modules.values() {
@@ -322,7 +329,7 @@ fn find_instantiations(modules: &HashMap<String, ParsedModule>) -> LiveClasses {
 fn visit_stmt_for_instantiations(stmt: &Statement, live_classes: &mut LiveClasses) {
     match stmt {
         Statement::ExpressionStatement(expr_stmt) => {
-            visit_expr_for_instantiations(&expr_stmt.expression, live_classes)
+            visit_expr_for_instantiations(&expr_stmt.expression, live_classes);
         }
         Statement::VariableDeclaration(vd) => {
             for decl in &vd.declarations {
@@ -374,7 +381,7 @@ fn visit_expr_for_instantiations(expr: &Expression, live_classes: &mut LiveClass
 }
 
 /// Collects all defined methods for each class
-fn collect_methods(modules: &HashMap<String, ParsedModule>) -> HashMap<String, HashSet<String>> {
+fn collect_methods(modules: &HashMap<String, &ParsedModule>) -> HashMap<String, HashSet<String>> {
     let mut methods: HashMap<String, HashSet<String>> = HashMap::new();
 
     for module in modules.values() {
@@ -402,7 +409,7 @@ fn collect_methods(modules: &HashMap<String, ParsedModule>) -> HashMap<String, H
 
 /// Builds a call graph by analyzing all functions and methods
 fn build_call_graph(
-    modules: &HashMap<String, ParsedModule>,
+    modules: &HashMap<String, &ParsedModule>,
     methods: &HashMap<String, HashSet<String>>,
 ) -> CallGraph {
     let mut call_graph: CallGraph = HashMap::new();
@@ -422,13 +429,13 @@ fn build_call_graph(
             if let Some(class_methods) = methods.get(&class_name)
                 && class_methods.contains(&method_name)
             {
-                let callee_name = format!("{}_{}", class_name, method_name);
+                let callee_name = format!("{class_name}_{method_name}");
                 callees.push(callee_name);
             }
         }
 
         if !callees.is_empty() {
-            call_graph.insert(caller_name.to_string(), callees);
+            call_graph.insert(caller_name.clone(), callees);
         }
     }
 
@@ -436,9 +443,9 @@ fn build_call_graph(
 }
 
 /// Collects all function and method ASTs for worklist processing
-fn collect_function_asts(
-    modules: &HashMap<String, ParsedModule>,
-) -> HashMap<String, &Function<'static>> {
+fn collect_function_asts<'a>(
+    modules: &'a HashMap<String, &'a ParsedModule>,
+) -> HashMap<String, &'a Function<'a>> {
     let mut functions = HashMap::new();
 
     for module in modules.values() {
@@ -490,7 +497,7 @@ fn run_worklist<'a>(
     for class in live_classes {
         if let Some(meths) = methods.get(class) {
             for method in meths {
-                let fname = format!("{}_{}", class, method);
+                let fname = format!("{class}_{method}");
                 let methods = live_methods.entry(class.clone()).or_default();
                 if !methods.contains(method.as_str()) {
                     methods.insert(method.clone());
@@ -507,7 +514,7 @@ fn run_worklist<'a>(
                 let methods = live_methods.entry(class.clone()).or_default();
                 if !methods.contains(method.as_str()) {
                     methods.insert(method.clone());
-                    let fname = format!("{}_{}", class, method);
+                    let fname = format!("{class}_{method}");
                     worklist.push_back(fname);
                 }
             }
@@ -541,7 +548,7 @@ fn find_method_calls_in_stmt_with_depth(
 
     match stmt {
         Statement::ExpressionStatement(expr_stmt) => {
-            find_method_calls_in_expr_with_depth(&expr_stmt.expression, calls, depth + 1)
+            find_method_calls_in_expr_with_depth(&expr_stmt.expression, calls, depth + 1);
         }
         Statement::VariableDeclaration(var_decl) => {
             for decl in &var_decl.declarations {

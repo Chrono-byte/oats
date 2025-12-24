@@ -66,7 +66,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             if case.test.is_some() {
                 let case_bb = self
                     .context
-                    .append_basic_block(function, &format!("switch.case.{}", i));
+                    .append_basic_block(function, &format!("switch.case.{i}"));
                 case_blocks.push((i, case_bb));
             }
         }

@@ -3,7 +3,7 @@ use crate::diagnostics::{Diagnostic, Severity};
 use crate::types::OatsType;
 use inkwell::types::{BasicType, BasicTypeEnum};
 use inkwell::values::{BasicValue, BasicValueEnum, FunctionValue};
-use oxc_ast::ast::*;
+use oxc_ast::ast::{ArrowFunctionExpression, Expression, Statement, ObjectPropertyKind, BindingPatternKind};
 use std::collections::HashMap;
 
 // LocalEntry now includes an Option<String> for an optional nominal type name
@@ -174,19 +174,16 @@ impl<'a> CodeGen<'a> {
 
         // Remove arrow params from used
         for param in &arrow.params.items {
-            match &param.pattern.kind {
-                BindingPatternKind::BindingIdentifier(ident) => {
-                    used.remove(&ident.name.to_string());
-                }
-                _ => {
-                    // Destructuring parameters not yet supported in capture analysis
-                }
+            if let BindingPatternKind::BindingIdentifier(ident) = &param.pattern.kind {
+                used.remove(&ident.name.to_string());
+            } else {
+                // Destructuring parameters not yet supported in capture analysis
             }
         }
 
         // Any remaining identifiers that exist in outer_names are captures
         let mut captures: Vec<String> = Vec::new();
-        for name in used.into_iter() {
+        for name in used {
             if outer_names.contains(&name) {
                 captures.push(name);
             }
@@ -261,18 +258,15 @@ impl<'a> CodeGen<'a> {
         // shift user parameters by +1.
         let mut arrow_param_map = HashMap::new();
         for (idx, param) in arrow.params.items.iter().enumerate() {
-            match &param.pattern.kind {
-                BindingPatternKind::BindingIdentifier(ident) => {
-                    let mapped_idx = if !captures.is_empty() {
-                        (idx as u32) + 1
-                    } else {
-                        idx as u32
-                    };
-                    arrow_param_map.insert(ident.name.to_string(), mapped_idx);
-                }
-                _ => {
-                    // Destructuring parameters not yet supported in arrow function parameter mapping
-                }
+            if let BindingPatternKind::BindingIdentifier(ident) = &param.pattern.kind {
+                let mapped_idx = if captures.is_empty() {
+                    idx as u32
+                } else {
+                    (idx as u32) + 1
+                };
+                arrow_param_map.insert(ident.name.to_string(), mapped_idx);
+            } else {
+                // Destructuring parameters not yet supported in arrow function parameter mapping
             }
         }
 
@@ -308,13 +302,13 @@ impl<'a> CodeGen<'a> {
                     .map_err(|_| Diagnostic::error("int_to_ptr failed"))?;
                 let loaded = self
                     .builder
-                    .build_load(self.i8ptr_t, field_ptr, &format!("cap_load_{}", cname))
+                    .build_load(self.i8ptr_t, field_ptr, &format!("cap_load_{cname}"))
                     .map_err(|_| Diagnostic::error("load failed"))?;
 
                 // Create an alloca for the captured local inside the arrow function and store the loaded value
                 let alloca = self
                     .builder
-                    .build_alloca(self.i8ptr_t, &format!("cap_{}", cname))
+                    .build_alloca(self.i8ptr_t, &format!("cap_{cname}"))
                     .map_err(|_| Diagnostic::error("alloca failed"))?;
                 let _ = self.builder.build_store(alloca, loaded);
                 // Insert into arrow_locals so later identifier lookups resolve to this alloca
@@ -448,7 +442,7 @@ impl<'a> CodeGen<'a> {
                     let loaded = match self.builder.build_load(
                         ty,
                         alloca_ptr,
-                        &format!("cap_load_{}", cname),
+                        &format!("cap_load_{cname}"),
                     ) {
                         Ok(v) => v,
                         Err(_) => {
@@ -461,7 +455,7 @@ impl<'a> CodeGen<'a> {
                     // If pointer, use directly. If float/int, box into union object.
                     match loaded {
                         BasicValueEnum::PointerValue(_) => {
-                            captured_vals.push((loaded, is_weak_flag))
+                            captured_vals.push((loaded, is_weak_flag));
                         }
                         BasicValueEnum::FloatValue(fv) => {
                             let box_fn = self.get_union_box_f64();
@@ -527,7 +521,7 @@ impl<'a> CodeGen<'a> {
                 .map_err(|_| Diagnostic::error("failed to allocate env object"))?;
 
             // Emit field_map global for env and store pointer into env.meta slot
-            let env_gv_name = format!("{}_env_field_map", arrow_fn_name);
+            let env_gv_name = format!("{arrow_fn_name}_env_field_map");
             // offsets are header + meta_slot + idx*8
             let mut env_offsets: Vec<u64> = Vec::new();
             let header_size = 8u64;
@@ -582,7 +576,7 @@ impl<'a> CodeGen<'a> {
             };
 
             // Emit field_map for closure object (two pointer fields at offsets 16 and 24)
-            let closure_gv_name = format!("{}_closure_field_map", arrow_fn_name);
+            let closure_gv_name = format!("{arrow_fn_name}_closure_field_map");
             // fields start after header + meta_slot; fn_ptr at idx 0, env_ptr at idx 1
             let closure_offsets: Vec<u64> =
                 vec![header_size + meta_slot, header_size + meta_slot + 8];
@@ -734,12 +728,11 @@ impl<'a> CodeGen<'a> {
                     }
                 };
                 return Ok(loaded);
-            } else {
-                return Err(Diagnostic::simple_boxed(
-                    Severity::Error,
-                    "closure tmp missing",
-                ));
             }
+            return Err(Diagnostic::simple_boxed(
+                Severity::Error,
+                "closure tmp missing",
+            ));
         }
 
         // No captures: return the function pointer as a value

@@ -206,10 +206,7 @@ fn test_builder_compile_options_new() {
 
 #[test]
 fn test_builder_compile_options_with_modules() {
-    let opts = CompileOptions::with_modules(
-        "main.oats".to_string(),
-        vec!["util.oats".to_string()],
-    );
+    let opts = CompileOptions::with_modules("main.oats".to_string(), vec!["util.oats".to_string()]);
     assert_eq!(opts.src_file, "main.oats");
     assert_eq!(opts.additional_src_files.len(), 1);
 }
@@ -221,4 +218,3 @@ fn test_builder_compile_options_for_package() {
     assert!(opts.package_root.is_some());
     assert!(opts.emit_object_only);
 }
-

@@ -28,7 +28,7 @@ fn compute_sha256(path: &Path) -> Result<String> {
     let mut hasher = Sha256::new();
     std::io::copy(&mut file, &mut hasher)?;
     let hash = hasher.finalize();
-    Ok(format!("{:x}", hash))
+    Ok(format!("{hash:x}"))
 }
 
 /// Get the oats home directory for binaries and libraries
@@ -60,8 +60,7 @@ fn get_artifact_name(artifact_type: ArtifactType) -> &'static str {
             ("windows", "x86_64") => "oatsc-windows-x86_64.exe",
             _ => {
                 eprintln!(
-                    "Warning: Unsupported platform {}-{}, will build locally",
-                    os, arch
+                    "Warning: Unsupported platform {os}-{arch}, will build locally"
                 );
                 "oatsc-unsupported"
             }
@@ -73,8 +72,7 @@ fn get_artifact_name(artifact_type: ArtifactType) -> &'static str {
             ("macos", "aarch64") => "libruntime-macos-aarch64.a",
             _ => {
                 eprintln!(
-                    "Warning: Unsupported platform {}-{}, will build locally",
-                    os, arch
+                    "Warning: Unsupported platform {os}-{arch}, will build locally"
                 );
                 "libruntime-unsupported.a"
             }
@@ -85,20 +83,19 @@ fn get_artifact_name(artifact_type: ArtifactType) -> &'static str {
 /// Fetch the latest release tag for a given artifact type from GitHub
 fn get_latest_tag(artifact_type: ArtifactType) -> Result<String> {
     let url = format!(
-        "https://api.github.com/repos/{}/{}/releases",
-        GITHUB_OWNER, GITHUB_REPO
+        "https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/releases"
     );
 
     let response = ureq::get(&url)
         .call()
-        .map_err(|e| ToastyError::other(format!("Failed to fetch releases: {}", e)))?;
+        .map_err(|e| ToastyError::other(format!("Failed to fetch releases: {e}")))?;
 
     let body = response
         .into_body()
         .read_to_string()
-        .map_err(|e| ToastyError::other(format!("Failed to read response body: {}", e)))?;
+        .map_err(|e| ToastyError::other(format!("Failed to read response body: {e}")))?;
     let releases: serde_json::Value = serde_json::from_str(&body)
-        .map_err(|e| ToastyError::other(format!("Failed to parse releases JSON: {}", e)))?;
+        .map_err(|e| ToastyError::other(format!("Failed to parse releases JSON: {e}")))?;
 
     // Find the latest release matching the artifact type
     if let Some(releases_array) = releases.as_array() {
@@ -131,13 +128,12 @@ fn download_artifact(
     make_executable: bool,
 ) -> Result<()> {
     let url = format!(
-        "https://github.com/{}/{}/releases/download/{}/{}",
-        GITHUB_OWNER, GITHUB_REPO, tag, artifact_name
+        "https://github.com/{GITHUB_OWNER}/{GITHUB_REPO}/releases/download/{tag}/{artifact_name}"
     );
 
     let verbose = std::env::var("TOASTY_VERBOSE").is_ok();
     if verbose {
-        eprintln!("Downloading {} from: {}", artifact_name, url);
+        eprintln!("Downloading {artifact_name} from: {url}");
     } else {
         eprintln!(
             "Downloading pre-built {}...",
@@ -153,7 +149,7 @@ fn download_artifact(
 
     let response = ureq::get(&url)
         .call()
-        .map_err(|e| ToastyError::other(format!("Failed to download {}: {}", artifact_name, e)))?;
+        .map_err(|e| ToastyError::other(format!("Failed to download {artifact_name}: {e}")))?;
 
     let total_size = response
         .headers()
@@ -165,7 +161,7 @@ fn download_artifact(
     let body_string = response
         .into_body()
         .read_to_string()
-        .map_err(|e| ToastyError::other(format!("Failed to read response body: {}", e)))?;
+        .map_err(|e| ToastyError::other(format!("Failed to read response body: {e}")))?;
     let body_bytes = body_string.as_bytes();
     let bytes_written = body_bytes.len() as u64;
 
@@ -189,21 +185,20 @@ fn download_artifact(
 
     // Fetch digest from GitHub API for verification
     let api_url = format!(
-        "https://api.github.com/repos/{}/{}/releases/tags/{}",
-        GITHUB_OWNER, GITHUB_REPO, tag
+        "https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/releases/tags/{tag}"
     );
     let agent = ureq::agent();
     let release_resp = agent
         .get(&api_url)
         .call()
-        .map_err(|e| ToastyError::other(format!("Failed to fetch release metadata: {}", e)))?;
+        .map_err(|e| ToastyError::other(format!("Failed to fetch release metadata: {e}")))?;
     let body = String::new();
     release_resp
         .into_body()
         .read_to_string()
-        .map_err(|e| ToastyError::other(format!("Failed to read response body: {}", e)))?;
+        .map_err(|e| ToastyError::other(format!("Failed to read response body: {e}")))?;
     let release_json: serde_json::Value = serde_json::from_str(&body)
-        .map_err(|e| ToastyError::other(format!("Failed to parse release metadata: {}", e)))?;
+        .map_err(|e| ToastyError::other(format!("Failed to parse release metadata: {e}")))?;
     let mut expected_hash = None;
     if let Some(assets) = release_json.get("assets").and_then(|a| a.as_array()) {
         for asset in assets {
@@ -219,8 +214,7 @@ fn download_artifact(
     if let Some(expected_hash) = expected_hash {
         if computed_hash != expected_hash {
             eprintln!(
-                "Warning: Hash mismatch for {} asset (expected {}, got {}). Marking as unusable.",
-                artifact_name, expected_hash, computed_hash
+                "Warning: Hash mismatch for {artifact_name} asset (expected {expected_hash}, got {computed_hash}). Marking as unusable."
             );
             // Move unusable asset to quarantine folder
             let quarantine_dir = get_oats_home()?.join("quarantine");
@@ -240,12 +234,11 @@ fn download_artifact(
         }
     } else {
         eprintln!(
-            "Warning: No digest found for {} asset. Skipping hash verification.",
-            artifact_name
+            "Warning: No digest found for {artifact_name} asset. Skipping hash verification."
         );
     }
     if verbose {
-        eprintln!("Downloaded {} bytes", bytes_written);
+        eprintln!("Downloaded {bytes_written} bytes");
     }
     Ok(())
 }
@@ -325,7 +318,7 @@ fn try_fetch_artifact(artifact_type: ArtifactType, skip_env_var: &str) -> Option
             dir
         }
         Err(e) => {
-            eprintln!("Warning: Failed to get cache directory: {}", e);
+            eprintln!("Warning: Failed to get cache directory: {e}");
             return None;
         }
     };
@@ -393,7 +386,7 @@ fn try_fetch_artifact(artifact_type: ArtifactType, skip_env_var: &str) -> Option
     };
 
     match download_result {
-        Ok(_) => {
+        Ok(()) => {
             eprintln!(
                 "Successfully downloaded {} to: {}",
                 match artifact_type {
@@ -419,11 +412,13 @@ fn try_fetch_artifact(artifact_type: ArtifactType, skip_env_var: &str) -> Option
 }
 
 /// Try to fetch pre-built compiler from GitHub releases
+#[must_use] 
 pub fn try_fetch_compiler() -> Option<PathBuf> {
     try_fetch_artifact(ArtifactType::Compiler, "OATS_NO_REMOTE_COMPILER")
 }
 
 /// Try to fetch pre-built runtime from GitHub releases
+#[must_use] 
 pub fn try_fetch_runtime() -> Option<PathBuf> {
     try_fetch_artifact(ArtifactType::Runtime, "OATS_NO_REMOTE_RUNTIME")
 }
@@ -431,20 +426,19 @@ pub fn try_fetch_runtime() -> Option<PathBuf> {
 /// List all available versions for a given artifact type from GitHub releases
 fn list_available_versions(artifact_type: ArtifactType) -> Result<Vec<String>> {
     let url = format!(
-        "https://api.github.com/repos/{}/{}/releases",
-        GITHUB_OWNER, GITHUB_REPO
+        "https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/releases"
     );
 
     let response = ureq::get(&url)
         .call()
-        .map_err(|e| ToastyError::other(format!("Failed to fetch releases: {}", e)))?;
+        .map_err(|e| ToastyError::other(format!("Failed to fetch releases: {e}")))?;
 
     let body = response
         .into_body()
         .read_to_string()
-        .map_err(|e| ToastyError::other(format!("Failed to read response body: {}", e)))?;
+        .map_err(|e| ToastyError::other(format!("Failed to read response body: {e}")))?;
     let releases: serde_json::Value = serde_json::from_str(&body)
-        .map_err(|e| ToastyError::other(format!("Failed to parse releases JSON: {}", e)))?;
+        .map_err(|e| ToastyError::other(format!("Failed to parse releases JSON: {e}")))?;
 
     let mut versions = Vec::new();
     if let Some(releases_array) = releases.as_array() {
@@ -604,11 +598,13 @@ fn get_selected_artifact_path(artifact_type: ArtifactType) -> Option<PathBuf> {
 }
 
 /// Get the path to the currently selected compiler
+#[must_use] 
 pub fn get_selected_compiler_path() -> Option<PathBuf> {
     get_selected_artifact_path(ArtifactType::Compiler)
 }
 
 /// Get the path to the currently selected runtime
+#[must_use] 
 pub fn get_selected_runtime_path() -> Option<PathBuf> {
     get_selected_artifact_path(ArtifactType::Runtime)
 }
@@ -627,7 +623,7 @@ fn current_artifact_version(artifact_type: ArtifactType) -> Result<String> {
     } else {
         // If no version is selected, try to get the latest
         match get_latest_tag(artifact_type) {
-            Ok(tag) => Ok(format!("{} (latest)", tag)),
+            Ok(tag) => Ok(format!("{tag} (latest)")),
             Err(_) => Ok("none selected".to_string()),
         }
     }

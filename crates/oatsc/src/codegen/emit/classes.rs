@@ -5,7 +5,7 @@
 
 use crate::diagnostics::Diagnostic;
 use crate::types::SymbolTable;
-use oxc_ast::ast::*;
+use oxc_ast::ast::{Class, Expression, ClassElement, MethodDefinitionKind, PropertyKey, BindingPatternKind};
 
 impl<'a> crate::codegen::CodeGen<'a> {
     /// Generates IR for a class declaration.
@@ -19,12 +19,47 @@ impl<'a> crate::codegen::CodeGen<'a> {
             let mangled = if prefix.is_empty() {
                 rname.clone()
             } else {
-                format!("{}_{}", prefix, rname)
+                format!("{prefix}_{rname}")
             };
             (mangled, rname)
         } else {
             return Ok(());
         };
+
+        // Check if this is a generic class
+        let type_params = if let Some(tp) = &c.type_parameters {
+            tp.params
+                .iter()
+                .map(|p| p.name.name.to_string())
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+
+        // If generic, create a substitution that replaces type parameters with unions
+        let subst = if type_params.is_empty() {
+            None
+        } else {
+            let mut s = std::collections::HashMap::new();
+            for tp in &type_params {
+                // Replace all type parameters with a union of number and string
+                s.insert(
+                    tp.clone(),
+                    crate::types::OatsType::Union(vec![
+                        crate::types::OatsType::Number,
+                        crate::types::OatsType::String,
+                    ]),
+                );
+            }
+            Some(s)
+        };
+
+        // Store generic classes for potential future use
+        if !type_params.is_empty() {
+            self.nested_generic_classes
+                .borrow_mut()
+                .insert(raw_name.clone(), (c, type_params));
+        }
 
         // Register in symbol table
         self.symbol_table
@@ -54,7 +89,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         let mut fields = Vec::new();
         let mut ctor_opt = None;
 
-        for member in c.body.body.iter() {
+        for member in &c.body.body {
             match member {
                 ClassElement::MethodDefinition(m) => {
                     if m.kind == MethodDefinitionKind::Constructor {
@@ -70,11 +105,20 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         _ => continue,
                     };
                     let ptype = if let Some(ann) = &p.type_annotation {
-                        crate::types::map_ts_type_with_aliases(
-                            &ann.type_annotation,
-                            Some(&*self.type_aliases.borrow()),
-                            Some(&*self.symbol_table.borrow()),
-                        )
+                        if let Some(ref s) = subst {
+                            crate::types::map_ts_type_with_subst_and_aliases(
+                                &ann.type_annotation,
+                                s,
+                                Some(&*self.type_aliases.borrow()),
+                                Some(&*self.symbol_table.borrow()),
+                            )
+                        } else {
+                            crate::types::map_ts_type_with_aliases(
+                                &ann.type_annotation,
+                                Some(&*self.type_aliases.borrow()),
+                                Some(&*self.symbol_table.borrow()),
+                            )
+                        }
                         .unwrap_or(crate::types::OatsType::Number)
                     } else {
                         crate::types::OatsType::Number
@@ -92,11 +136,20 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     let pname = ident.name.to_string();
                     if !fields.iter().any(|(n, _)| n == &pname) {
                         let ptype = if let Some(ann) = &param.pattern.type_annotation {
-                            crate::types::map_ts_type_with_aliases(
-                                &ann.type_annotation,
-                                Some(&*self.type_aliases.borrow()),
-                                Some(&*self.symbol_table.borrow()),
-                            )
+                            if let Some(ref s) = subst {
+                                crate::types::map_ts_type_with_subst_and_aliases(
+                                    &ann.type_annotation,
+                                    s,
+                                    Some(&*self.type_aliases.borrow()),
+                                    Some(&*self.symbol_table.borrow()),
+                                )
+                            } else {
+                                crate::types::map_ts_type_with_aliases(
+                                    &ann.type_annotation,
+                                    Some(&*self.type_aliases.borrow()),
+                                    Some(&*self.symbol_table.borrow()),
+                                )
+                            }
                             .unwrap_or(crate::types::OatsType::Number)
                         } else {
                             crate::types::OatsType::Number
@@ -113,7 +166,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             .insert(class_name.clone(), fields.clone());
 
         // 3. Generate methods and constructor
-        for member in c.body.body.iter() {
+        for member in &c.body.body {
             if let ClassElement::MethodDefinition(m) = member
                 && m.kind != MethodDefinitionKind::Constructor
             {
@@ -142,7 +195,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     params.push(crate::types::OatsType::NominalStruct(class_name.clone()));
                     params.extend(sig.params.into_iter());
                     let ret = sig.ret;
-                    let fname = format!("{}_{}", class_name, mname);
+                    let fname = format!("{class_name}_{mname}");
 
                     // Save current class parent for super calls
                     let old_parent = self.current_class_parent.borrow().clone();

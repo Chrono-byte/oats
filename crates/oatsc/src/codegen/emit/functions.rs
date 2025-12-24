@@ -109,7 +109,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         for (i, p) in param_types_owned.iter_mut().enumerate() {
             if let crate::types::OatsType::StructLiteral(fields) = p {
                 // Create a generated nominal name like <func_name>_param_struct_<i>
-                let gen_name = format!("{}_param_struct_{}", func_name, i);
+                let gen_name = format!("{func_name}_param_struct_{i}");
                 // Insert into class_fields for lowering
                 self.class_fields
                     .borrow_mut()
@@ -281,7 +281,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 Statement::FunctionDeclaration(f) => {
                     if let Some(id) = &f.id {
                         let name = id.name.to_string();
-                        let mangled_name = format!("{}_{}", prefix, name);
+                        let mangled_name = format!("{prefix}_{name}");
 
                         let mut nested_symbols = crate::types::SymbolTable::new();
                         let (sig_opt, type_diags) =
@@ -289,7 +289,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 .map_err(|e| {
                                     crate::diagnostics::Diagnostic::simple_boxed(
                                         crate::diagnostics::Severity::Error,
-                                        format!("Type checking failed for nested function: {}", e),
+                                        format!("Type checking failed for nested function: {e}"),
                                     )
                                 })?;
 
@@ -329,7 +329,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             && let Expression::ArrowFunctionExpression(arrow) = init
                         {
                             let name = id.name.to_string();
-                            let mangled_name = format!("{}_{}", prefix, name);
+                            let mangled_name = format!("{prefix}_{name}");
 
                             // For arrows, we need to infer the signature if missing
                             // For now, assume it's annotated or use a simple inference

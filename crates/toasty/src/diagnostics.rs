@@ -98,6 +98,7 @@ impl ToastyError {
     ///
     /// Returns `true` if the error is `CompilationFailed`, which means oatsc
     /// has already printed the actual error diagnostics to the user.
+    #[must_use] 
     pub fn is_user_code_error(&self) -> bool {
         matches!(self, ToastyError::CompilationFailed)
     }
@@ -222,12 +223,12 @@ impl fmt::Display for ToastyWarn {
                 removal_version,
                 alternative,
             } => {
-                write!(f, "Warning: Feature '{}' is deprecated", feature)?;
+                write!(f, "Warning: Feature '{feature}' is deprecated")?;
                 if let Some(version) = removal_version {
-                    write!(f, " and will be removed in version {}", version)?;
+                    write!(f, " and will be removed in version {version}")?;
                 }
                 if let Some(alt) = alternative {
-                    write!(f, ". Consider using '{}' instead", alt)?;
+                    write!(f, ". Consider using '{alt}' instead")?;
                 }
                 Ok(())
             }
@@ -236,10 +237,10 @@ impl fmt::Display for ToastyWarn {
                 impact,
                 install_hint,
             } => {
-                write!(f, "Warning: Optional tool '{}' is not available", tool)?;
-                write!(f, ". This affects: {}", impact)?;
+                write!(f, "Warning: Optional tool '{tool}' is not available")?;
+                write!(f, ". This affects: {impact}")?;
                 if let Some(hint) = install_hint {
-                    write!(f, ". To install: {}", hint)?;
+                    write!(f, ". To install: {hint}")?;
                 }
                 Ok(())
             }
@@ -251,32 +252,31 @@ impl fmt::Display for ToastyWarn {
             } => {
                 write!(
                     f,
-                    "Warning: Configuration '{}' has value '{}' - {}",
-                    key, value, issue
+                    "Warning: Configuration '{key}' has value '{value}' - {issue}"
                 )?;
                 if let Some(sugg) = suggestion {
-                    write!(f, ". Suggestion: {}", sugg)?;
+                    write!(f, ". Suggestion: {sugg}")?;
                 }
                 Ok(())
             }
             ToastyWarn::Performance { issue, suggestion } => {
-                write!(f, "Performance warning: {}", issue)?;
+                write!(f, "Performance warning: {issue}")?;
                 if let Some(sugg) = suggestion {
-                    write!(f, ". Suggestion: {}", sugg)?;
+                    write!(f, ". Suggestion: {sugg}")?;
                 }
                 Ok(())
             }
             ToastyWarn::BuildWarning { issue, context } => {
-                write!(f, "Build warning: {}", issue)?;
+                write!(f, "Build warning: {issue}")?;
                 if let Some(ctx) = context {
-                    write!(f, " (in {})", ctx)?;
+                    write!(f, " (in {ctx})")?;
                 }
                 Ok(())
             }
             ToastyWarn::MissingCompiler { install_hint } => {
                 write!(f, "Warning: Oats compiler (oatsc) not found")?;
                 if let Some(hint) = install_hint {
-                    write!(f, ". To install: {}", hint)?;
+                    write!(f, ". To install: {hint}")?;
                 } else {
                     write!(
                         f,
@@ -300,6 +300,7 @@ pub struct WarningCollector {
 
 impl WarningCollector {
     /// Create a new empty warning collector
+    #[must_use] 
     pub fn new() -> Self {
         Self::default()
     }
@@ -310,11 +311,13 @@ impl WarningCollector {
     }
 
     /// Check if any warnings have been collected
+    #[must_use] 
     pub fn has_warnings(&self) -> bool {
         !self.warnings.is_empty()
     }
 
     /// Get the number of warnings
+    #[must_use] 
     pub fn count(&self) -> usize {
         self.warnings.len()
     }
@@ -332,7 +335,7 @@ impl WarningCollector {
     /// Print all warnings to stderr with appropriate formatting
     pub fn print_all(&self) {
         for warning in &self.warnings {
-            eprintln!("⚠️  {}", warning);
+            eprintln!("⚠️  {warning}");
         }
     }
 

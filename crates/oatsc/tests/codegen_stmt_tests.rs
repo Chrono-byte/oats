@@ -391,4 +391,3 @@ fn test_codegen_finally_with_return() {
     let code = "function f(): number { try { return 1; } finally { } }";
     assert_compiles(code);
 }
-

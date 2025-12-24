@@ -49,7 +49,7 @@ struct CliBuildOptions {
     link_runtime: bool,
 }
 
-/// Helper function to set common CompileOptions fields from CLI parameters
+/// Helper function to set common `CompileOptions` fields from CLI parameters
 fn set_compile_options_from_cli(
     mut options: CompileOptions,
     cli_opts: CliBuildOptions,
@@ -234,7 +234,7 @@ pub fn handle_build(cli: &Cli, opts: BuildCommandOptions) -> Result<()> {
             CompileOptions::new(module_path.clone()),
             CliBuildOptions {
                 out_dir: out_dir.clone(),
-                out_name: Some(format!("{}_module", i)),
+                out_name: Some(format!("{i}_module")),
                 linker: opts.linker.clone(),
                 opt_level: opts.opt_level.clone(),
                 lto: opts.lto.clone(),
@@ -256,7 +256,7 @@ pub fn handle_build(cli: &Cli, opts: BuildCommandOptions) -> Result<()> {
                 let import_path = match std::path::Path::new(prev_module)
                     .file_stem()
                     .and_then(|s| s.to_str())
-                    .map(|s| format!("./{}", s))
+                    .map(|s| format!("./{s}"))
                 {
                     Some(path) => path,
                     None => "./module".to_string(),
@@ -270,7 +270,7 @@ pub fn handle_build(cli: &Cli, opts: BuildCommandOptions) -> Result<()> {
                         .and_then(|s| s.to_str())
                         .unwrap_or("module");
                     let potential_meta = std::path::Path::new(out_dir)
-                        .join(format!("{}_pkg.oats.meta", module_stem));
+                        .join(format!("{module_stem}_pkg.oats.meta"));
 
                     if potential_meta.exists() {
                         Some(potential_meta.to_string_lossy().to_string())
@@ -279,16 +279,18 @@ pub fn handle_build(cli: &Cli, opts: BuildCommandOptions) -> Result<()> {
                         if let Ok(exported_symbols) =
                             crate::build::extract_exported_symbols(prev_module)
                         {
-                            if !exported_symbols.is_empty() {
+                            if exported_symbols.is_empty() {
+                                None
+                            } else {
                                 // Generate metadata file with function signatures
                                 let meta_content = exported_symbols
                                     .iter()
-                                    .map(|name| format!("function {}(): number;", name))
+                                    .map(|name| format!("function {name}(): number;"))
                                     .collect::<Vec<_>>()
                                     .join("\n");
 
                                 let meta_file = std::path::Path::new(out_dir)
-                                    .join(format!("{}.oats.meta", module_stem));
+                                    .join(format!("{module_stem}.oats.meta"));
 
                                 if let Err(e) = std::fs::write(&meta_file, meta_content) {
                                     eprintln!(
@@ -300,8 +302,6 @@ pub fn handle_build(cli: &Cli, opts: BuildCommandOptions) -> Result<()> {
                                 } else {
                                     Some(meta_file.to_string_lossy().to_string())
                                 }
-                            } else {
-                                None
                             }
                         } else {
                             None
@@ -423,7 +423,9 @@ pub fn handle_run(
 
     // Ensure output directory exists
     std::fs::create_dir_all(&out_dir).map_err(|e| {
-        ToastyError::other(format!("Failed to create output directory {}: {}", out_dir, e))
+        ToastyError::other(format!(
+            "Failed to create output directory {out_dir}: {e}"
+        ))
     })?;
 
     // Build compile options with all discovered modules
@@ -450,14 +452,14 @@ pub fn handle_run(
     let _out_exe = if let Some(p) = _build_res {
         p
     } else {
-        PathBuf::from(format!("{}/{}", out_dir, exe_name))
+        PathBuf::from(format!("{out_dir}/{exe_name}"))
     };
 
     // Allow overriding output name with OATS_OUT_NAME
     let out_exe = if let Ok(name) = std::env::var("OATS_OUT_NAME") {
-        format!("{}/{}", out_dir, name)
+        format!("{out_dir}/{name}")
     } else {
-        format!("{}/{}", out_dir, src_filename)
+        format!("{out_dir}/{src_filename}")
     };
 
     // Execute the binary with provided args
@@ -467,14 +469,14 @@ pub fn handle_run(
     }
 
     if !quiet && (verbose || cfg!(debug_assertions)) {
-        eprintln!("{}", format!("Running `{}`", out_exe).green());
+        eprintln!("{}", format!("Running `{out_exe}`").green());
     }
     let output = cmd.output()?;
-    
+
     // Forward stdout and stderr from the executed program
     std::io::stdout().write_all(&output.stdout)?;
     std::io::stderr().write_all(&output.stderr)?;
-    
+
     if !output.status.success() {
         return Err(ToastyError::other(
             "Executed program returned non-zero exit code",
@@ -490,8 +492,7 @@ pub fn handle_new(name: String, lib: bool, quiet: bool) -> Result<()> {
 
     if project_path.exists() {
         return Err(ToastyError::other(format!(
-            "Directory '{}' already exists",
-            name
+            "Directory '{name}' already exists"
         )));
     }
 
@@ -501,15 +502,14 @@ pub fn handle_new(name: String, lib: bool, quiet: bool) -> Result<()> {
     // Create Oats.toml
     let manifest_content = format!(
         r#"[package]
-name = "{}"
+name = "{name}"
 version = "0.1.0"
 authors = ["Your Name <your.email@example.com>"]
 description = "An Oats project"
 license = "MIT"
 
 [dependencies]
-"#,
-        name
+"#
     );
 
     std::fs::write(project_path.join("Oats.toml"), manifest_content)?;
@@ -521,26 +521,24 @@ license = "MIT"
     // Create main.oats or lib.oats
     let main_content = if lib {
         format!(
-            r#"// {}/src/lib.oats
+            r#"// {name}/src/lib.oats
 // Library entry point
 
 export function hello(): string {{
-    return "Hello from {}!";
+    return "Hello from {name}!";
 }}
-"#,
-            name, name
+"#
         )
     } else {
         format!(
-            r#"// {}/src/main.oats
+            r#"// {name}/src/main.oats
 // Executable entry point
 
 export function main(): number {{
-    println("Hello, {}!");
+    println("Hello, {name}!");
     return 0;
 }}
-"#,
-            name, name
+"#
         )
     };
 
@@ -548,11 +546,11 @@ export function main(): number {{
     std::fs::write(src_dir.join(main_file), main_content)?;
 
     if !quiet {
-        eprintln!("{}", format!("Created new Oats project '{}'", name).green());
+        eprintln!("{}", format!("Created new Oats project '{name}'").green());
         eprintln!("  {}", project_path.display());
-        eprintln!("Run 'cd {} && toasty build' to build", name);
+        eprintln!("Run 'cd {name} && toasty build' to build");
         if !lib {
-            eprintln!("Run 'cd {} && toasty run' to run", name);
+            eprintln!("Run 'cd {name} && toasty run' to run");
         }
     }
 
@@ -584,11 +582,11 @@ fn handle_version_commands(action: VersionCommands, artifact_type: &str) -> Resu
                 }
             };
             if versions.is_empty() {
-                println!("No {} versions found.", artifact_type);
+                println!("No {artifact_type} versions found.");
             } else {
-                println!("Available {} versions:", artifact_type);
+                println!("Available {artifact_type} versions:");
                 for version in versions {
-                    println!("  - {}", version);
+                    println!("  - {version}");
                 }
             }
             Ok(())
@@ -603,7 +601,7 @@ fn handle_version_commands(action: VersionCommands, artifact_type: &str) -> Resu
                         "Invalid artifact type",
                     ));
                 }
-            };
+            }
             println!(
                 "{} version {} installed successfully.",
                 capitalize_first(artifact_type),
@@ -621,8 +619,8 @@ fn handle_version_commands(action: VersionCommands, artifact_type: &str) -> Resu
                         "Invalid artifact type",
                     ));
                 }
-            };
-            println!("Switched to {} version {}.", artifact_type, version);
+            }
+            println!("Switched to {artifact_type} version {version}.");
             Ok(())
         }
         VersionCommands::Current => {
@@ -636,7 +634,7 @@ fn handle_version_commands(action: VersionCommands, artifact_type: &str) -> Resu
                     ));
                 }
             };
-            println!("Current {} version: {}", artifact_type, current_version);
+            println!("Current {artifact_type} version: {current_version}");
             Ok(())
         }
         VersionCommands::Uninstall { version } => {
@@ -649,7 +647,7 @@ fn handle_version_commands(action: VersionCommands, artifact_type: &str) -> Resu
                         "Invalid artifact type",
                     ));
                 }
-            };
+            }
             println!(
                 "{} version {} uninstalled successfully.",
                 capitalize_first(artifact_type),
@@ -700,8 +698,7 @@ fn determine_source_file(src: Option<String>, quiet: bool, verbose: bool) -> Res
             )))
         }
         Err(e) => Err(ToastyError::other(format!(
-            "Failed to load manifest: {}\n\nTo build a project:\n  • Fix the Oats.toml manifest\n  • Or specify a source file: toasty build main.oats",
-            e
+            "Failed to load manifest: {e}\n\nTo build a project:\n  • Fix the Oats.toml manifest\n  • Or specify a source file: toasty build main.oats"
         ))),
     }
 }

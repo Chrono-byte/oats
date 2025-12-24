@@ -42,6 +42,17 @@ impl<'a> crate::codegen::CodeGen<'a> {
             self.last_expr_origin_local
                 .borrow_mut()
                 .replace(name.clone());
+
+            // Also set the Oats type for the parameter
+            let fname = function.get_name().to_str().unwrap_or_default();
+            if let Some(param_types) = self.fn_param_types.borrow().get(fname)
+                && let Some(param_type) = param_types.get(*idx as usize)
+            {
+                self.last_expr_oats_type
+                    .borrow_mut()
+                    .replace(param_type.clone());
+            }
+
             return Ok(pv);
         }
 
@@ -50,8 +61,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             return Err(Diagnostic::simple_boxed(
                 Severity::Error,
                 format!(
-                    "'{}' is an enum type and cannot be used as a value. Use 'enum.member' syntax instead.",
-                    name
+                    "'{name}' is an enum type and cannot be used as a value. Use 'enum.member' syntax instead."
                 ),
             ));
         }
@@ -59,7 +69,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         // const_eval removed - const items are no longer handled specially
 
         // If not a parameter, then it must be a local variable (`let` or `const`).
-        if let Some((ptr, ty, initialized, _is_const, _extra, _nominal, _oats_type)) =
+        if let Some((ptr, ty, initialized, _is_const, _extra, _nominal, oats_type)) =
             self.find_local(locals, &name)
         {
             // If not initialized -> TDZ: generate a trap (unreachable).
@@ -89,12 +99,16 @@ impl<'a> crate::codegen::CodeGen<'a> {
             self.last_expr_origin_local
                 .borrow_mut()
                 .replace(name.clone());
+            // Also record the Oats type if available (important for union handling)
+            if let Some(ref otype) = oats_type {
+                self.last_expr_oats_type.borrow_mut().replace(otype.clone());
+            }
             return Ok(loaded);
         }
 
         Err(Diagnostic::simple_boxed(
             Severity::Error,
-            format!("undefined identifier '{}'", name),
+            format!("undefined identifier '{name}'"),
         ))
     }
 }

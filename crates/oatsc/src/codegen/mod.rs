@@ -113,9 +113,9 @@ pub struct CodeGen<'a> {
     pub bool_t: inkwell::types::IntType<'a>,
     /// Cached LLVM type: i8*
     pub i8ptr_t: inkwell::types::PointerType<'a>,
-    /// Runtime function: print_f64
+    /// Runtime function: `print_f64`
     pub fn_print_f64: RefCell<Option<FunctionValue<'a>>>,
-    /// Runtime function: print_str
+    /// Runtime function: `print_str`
     pub fn_print_str: RefCell<Option<FunctionValue<'a>>>,
     /// Runtime function: strlen
     pub fn_strlen: RefCell<Option<FunctionValue<'a>>>,
@@ -125,29 +125,49 @@ pub struct CodeGen<'a> {
     pub fn_memcpy: RefCell<Option<FunctionValue<'a>>>,
     /// Runtime function: free
     pub fn_free: RefCell<Option<FunctionValue<'a>>>,
-    /// Runtime function: array_alloc
+    /// Runtime function: `array_alloc`
     pub fn_array_alloc: RefCell<Option<FunctionValue<'a>>>,
-    /// Runtime function: rc_inc
+    /// Runtime function: `rc_inc`
     pub fn_rc_inc: RefCell<Option<FunctionValue<'a>>>,
-    /// Runtime function: rc_dec
+    /// Runtime function: `rc_dec`
     pub fn_rc_dec: RefCell<Option<FunctionValue<'a>>>,
-    /// Runtime function: number_to_string
+    /// Runtime function: `number_to_string`
     pub fn_number_to_string: RefCell<Option<FunctionValue<'a>>>,
-    /// Runtime function: union_box_f64
+    /// Runtime function: `number_is_nan`
+    pub fn_number_is_nan: RefCell<Option<FunctionValue<'a>>>,
+    /// Runtime function: `number_is_finite`
+    pub fn_number_is_finite: RefCell<Option<FunctionValue<'a>>>,
+    /// Runtime function: `number_is_infinite`
+    pub fn_number_is_infinite: RefCell<Option<FunctionValue<'a>>>,
+    /// Runtime function: `number_parse_float`
+    pub fn_number_parse_float: RefCell<Option<FunctionValue<'a>>>,
+    /// Runtime function: `number_new`
+    pub fn_number_new: RefCell<Option<FunctionValue<'a>>>,
+    /// Runtime function: `number_is_nan_static`
+    pub fn_number_is_nan_static: RefCell<Option<FunctionValue<'a>>>,
+    /// Runtime function: `number_is_finite_static`
+    pub fn_number_is_finite_static: RefCell<Option<FunctionValue<'a>>>,
+    /// Runtime function: `number_is_integer`
+    pub fn_number_is_integer: RefCell<Option<FunctionValue<'a>>>,
+    /// Runtime function: `number_parse_float_static`
+    pub fn_number_parse_float_static: RefCell<Option<FunctionValue<'a>>>,
+    /// Runtime function: `number_parse_int`
+    pub fn_number_parse_int: RefCell<Option<FunctionValue<'a>>>,
+    /// Runtime function: `union_box_f64`
     pub fn_union_box_f64: RefCell<Option<FunctionValue<'a>>>,
-    /// Runtime function: union_box_ptr
+    /// Runtime function: `union_box_ptr`
     pub fn_union_box_ptr: RefCell<Option<FunctionValue<'a>>>,
-    /// Runtime function: union_unbox_f64
+    /// Runtime function: `union_unbox_f64`
     pub fn_union_unbox_f64: RefCell<Option<FunctionValue<'a>>>,
-    /// Runtime function: union_unbox_ptr
+    /// Runtime function: `union_unbox_ptr`
     pub fn_union_unbox_ptr: RefCell<Option<FunctionValue<'a>>>,
-    /// Runtime function: union_get_discriminant
+    /// Runtime function: `union_get_discriminant`
     pub fn_union_get_discriminant: RefCell<Option<FunctionValue<'a>>>,
-    /// Runtime function: rc_weak_inc
+    /// Runtime function: `rc_weak_inc`
     pub fn_rc_weak_inc: RefCell<Option<FunctionValue<'a>>>,
-    /// Runtime function: rc_weak_dec
+    /// Runtime function: `rc_weak_dec`
     pub fn_rc_weak_dec: RefCell<Option<FunctionValue<'a>>>,
-    /// Runtime function: rc_weak_upgrade
+    /// Runtime function: `rc_weak_upgrade`
     pub fn_rc_weak_upgrade: RefCell<Option<FunctionValue<'a>>>,
     /// Class name -> (field name, field type) pairs
     pub class_fields: RefCell<HashMap<String, Vec<(String, crate::types::OatsType)>>>,
@@ -157,7 +177,7 @@ pub struct CodeGen<'a> {
     pub enum_variants: RefCell<EnumVariantMap>,
     /// Class name -> parent class name (None if no parent)
     pub class_parents: RefCell<HashMap<String, Option<String>>>,
-    /// Type alias name -> (type parameters, aliased type). None type_params for non-generic aliases
+    /// Type alias name -> (type parameters, aliased type). None `type_params` for non-generic aliases
     pub type_aliases: RefCell<TypeAliasMap<'a>>,
     /// Function name -> parameter types
     pub fn_param_types: RefCell<HashMap<String, Vec<crate::types::OatsType>>>,
@@ -171,6 +191,8 @@ pub struct CodeGen<'a> {
     pub closure_local_rettype: RefCell<HashMap<String, crate::types::OatsType>>,
     /// Last expression's origin local name (for closure type propagation)
     pub last_expr_origin_local: RefCell<Option<String>>,
+    /// Last expression's `OatsType` (for union unboxing decisions)
+    pub last_expr_oats_type: RefCell<Option<crate::types::OatsType>>,
     /// Async: live variable sets per await point
     pub async_await_live_sets: RefCell<Option<Vec<std::collections::HashSet<String>>>>,
     /// Async: local name -> slot index mapping
@@ -209,7 +231,7 @@ pub struct CodeGen<'a> {
     pub generator_next_locals: RefCell<Option<LocalsStackLocal<'a>>>,
     /// Source code being compiled
     pub source: &'a str,
-    /// Byte indices of `mut` VarDecl nodes (from parser)
+    /// Byte indices of `mut` `VarDecl` nodes (from parser)
     pub mut_var_decls: std::collections::HashSet<usize>,
     /// Current function's return type (for union boxing)
     pub current_function_return_type: RefCell<Option<crate::types::OatsType>>,
@@ -222,7 +244,7 @@ pub struct CodeGen<'a> {
     pub symbol_table: RefCell<crate::types::SymbolTable>,
     /// Cache of declared external std functions
     pub external_std_fns: RefCell<HashMap<String, FunctionValue<'a>>>,
-    /// Compile-time const items: name -> ConstValue
+    /// Compile-time const items: name -> `ConstValue`
     /// Emitted LLVM globals for const heap objects
     pub const_globals: RefCell<HashMap<String, PointerValue<'a>>>,
     /// Interned const values: stable key -> global pointer
@@ -232,6 +254,9 @@ pub struct CodeGen<'a> {
     /// Nested generic functions: name -> (AST, signature)
     pub nested_generic_fns:
         RefCell<HashMap<String, (&'a oxc_ast::ast::Function<'a>, crate::types::FunctionSig)>>,
+    /// Nested generic classes: name -> (AST, `type_params`)
+    pub nested_generic_classes:
+        RefCell<HashMap<String, (&'a oxc_ast::ast::Class<'a>, Vec<String>)>>,
     /// Monomorphization cache: key -> specialized function name
     pub monomorphized_map: RefCell<HashMap<String, String>>,
     /// Rapid Type Analysis results for optimization
@@ -372,6 +397,156 @@ impl<'a> CodeGen<'a> {
         f
     }
 
+    fn get_number_is_nan(&self) -> FunctionValue<'a> {
+        if let Some(f) = *self.fn_number_is_nan.borrow() {
+            return f;
+        }
+        // number_is_nan(f64) -> i64
+        let fn_type = self.i64_t.fn_type(&[self.f64_t.into()], false);
+        let f = self.module.add_function(
+            crate::runtime_functions::names::NUMBER_IS_NAN,
+            fn_type,
+            None,
+        );
+        *self.fn_number_is_nan.borrow_mut() = Some(f);
+        f
+    }
+
+    fn get_number_is_finite(&self) -> FunctionValue<'a> {
+        if let Some(f) = *self.fn_number_is_finite.borrow() {
+            return f;
+        }
+        // number_is_finite(f64) -> i64
+        let fn_type = self.i64_t.fn_type(&[self.f64_t.into()], false);
+        let f = self.module.add_function(
+            crate::runtime_functions::names::NUMBER_IS_FINITE,
+            fn_type,
+            None,
+        );
+        *self.fn_number_is_finite.borrow_mut() = Some(f);
+        f
+    }
+
+    fn get_number_is_infinite(&self) -> FunctionValue<'a> {
+        if let Some(f) = *self.fn_number_is_infinite.borrow() {
+            return f;
+        }
+        // number_is_infinite(f64) -> i64
+        let fn_type = self.i64_t.fn_type(&[self.f64_t.into()], false);
+        let f = self.module.add_function(
+            crate::runtime_functions::names::NUMBER_IS_INFINITE,
+            fn_type,
+            None,
+        );
+        *self.fn_number_is_infinite.borrow_mut() = Some(f);
+        f
+    }
+
+    fn get_number_parse_float(&self) -> FunctionValue<'a> {
+        if let Some(f) = *self.fn_number_parse_float.borrow() {
+            return f;
+        }
+        // number_parse_float(i8*) -> f64
+        let fn_type = self.f64_t.fn_type(&[self.i8ptr_t.into()], false);
+        let f = self.module.add_function(
+            crate::runtime_functions::names::NUMBER_PARSE_FLOAT,
+            fn_type,
+            None,
+        );
+        *self.fn_number_parse_float.borrow_mut() = Some(f);
+        f
+    }
+
+    fn get_number_new(&self) -> FunctionValue<'a> {
+        if let Some(f) = *self.fn_number_new.borrow() {
+            return f;
+        }
+        // number_new(f64) -> i8*
+        let fn_type = self.i8ptr_t.fn_type(&[self.f64_t.into()], false);
+        let f =
+            self.module
+                .add_function(crate::runtime_functions::names::NUMBER_NEW, fn_type, None);
+        *self.fn_number_new.borrow_mut() = Some(f);
+        f
+    }
+
+    fn get_number_is_nan_static(&self) -> FunctionValue<'a> {
+        if let Some(f) = *self.fn_number_is_nan_static.borrow() {
+            return f;
+        }
+        // number_is_nan_static(f64) -> i64
+        let fn_type = self.i64_t.fn_type(&[self.f64_t.into()], false);
+        let f = self.module.add_function(
+            crate::runtime_functions::names::NUMBER_IS_NAN_STATIC,
+            fn_type,
+            None,
+        );
+        *self.fn_number_is_nan_static.borrow_mut() = Some(f);
+        f
+    }
+
+    fn get_number_is_finite_static(&self) -> FunctionValue<'a> {
+        if let Some(f) = *self.fn_number_is_finite_static.borrow() {
+            return f;
+        }
+        // number_is_finite_static(f64) -> i64
+        let fn_type = self.i64_t.fn_type(&[self.f64_t.into()], false);
+        let f = self.module.add_function(
+            crate::runtime_functions::names::NUMBER_IS_FINITE_STATIC,
+            fn_type,
+            None,
+        );
+        *self.fn_number_is_finite_static.borrow_mut() = Some(f);
+        f
+    }
+
+    fn get_number_is_integer(&self) -> FunctionValue<'a> {
+        if let Some(f) = *self.fn_number_is_integer.borrow() {
+            return f;
+        }
+        // number_is_integer(f64) -> i64
+        let fn_type = self.i64_t.fn_type(&[self.f64_t.into()], false);
+        let f = self.module.add_function(
+            crate::runtime_functions::names::NUMBER_IS_INTEGER,
+            fn_type,
+            None,
+        );
+        *self.fn_number_is_integer.borrow_mut() = Some(f);
+        f
+    }
+
+    fn get_number_parse_float_static(&self) -> FunctionValue<'a> {
+        if let Some(f) = *self.fn_number_parse_float_static.borrow() {
+            return f;
+        }
+        // number_parse_float_static(i8*) -> f64
+        let fn_type = self.f64_t.fn_type(&[self.i8ptr_t.into()], false);
+        let f = self.module.add_function(
+            crate::runtime_functions::names::NUMBER_PARSE_FLOAT_STATIC,
+            fn_type,
+            None,
+        );
+        *self.fn_number_parse_float_static.borrow_mut() = Some(f);
+        f
+    }
+
+    fn get_number_parse_int(&self) -> FunctionValue<'a> {
+        if let Some(f) = *self.fn_number_parse_int.borrow() {
+            return f;
+        }
+        // number_parse_int(i8*, f64) -> f64
+        let fn_type = self
+            .f64_t
+            .fn_type(&[self.i8ptr_t.into(), self.f64_t.into()], false);
+        let f = self.module.add_function(
+            crate::runtime_functions::names::NUMBER_PARSE_INT,
+            fn_type,
+            None,
+        );
+        *self.fn_number_parse_int.borrow_mut() = Some(f);
+        f
+    }
+
     fn get_union_box_f64(&self) -> FunctionValue<'a> {
         if let Some(f) = *self.fn_union_box_f64.borrow() {
             return f;
@@ -491,55 +666,43 @@ impl<'a> CodeGen<'a> {
     }
 
     fn get_array_get_f64(&self) -> FunctionValue<'a> {
-        match self.module.get_function("array_get_f64") {
-            Some(f) => f,
-            None => {
-                let fn_type = self
-                    .f64_t
-                    .fn_type(&[self.i8ptr_t.into(), self.i64_t.into()], false);
-                self.module.add_function("array_get_f64", fn_type, None)
-            }
+        if let Some(f) = self.module.get_function("array_get_f64") { f } else {
+            let fn_type = self
+                .f64_t
+                .fn_type(&[self.i8ptr_t.into(), self.i64_t.into()], false);
+            self.module.add_function("array_get_f64", fn_type, None)
         }
     }
 
     fn get_array_get_ptr(&self) -> FunctionValue<'a> {
-        match self.module.get_function("array_get_ptr") {
-            Some(f) => f,
-            None => {
-                let fn_type = self
-                    .i8ptr_t
-                    .fn_type(&[self.i8ptr_t.into(), self.i64_t.into()], false);
-                self.module.add_function("array_get_ptr", fn_type, None)
-            }
+        if let Some(f) = self.module.get_function("array_get_ptr") { f } else {
+            let fn_type = self
+                .i8ptr_t
+                .fn_type(&[self.i8ptr_t.into(), self.i64_t.into()], false);
+            self.module.add_function("array_get_ptr", fn_type, None)
         }
     }
 
     fn get_array_get_length(&self) -> FunctionValue<'a> {
-        match self.module.get_function("array_get_length") {
-            Some(f) => f,
-            None => {
-                // array_get_length(arr_ptr: i8*) -> i64
-                let fn_type = self.i64_t.fn_type(&[self.i8ptr_t.into()], false);
-                self.module.add_function("array_get_length", fn_type, None)
-            }
+        if let Some(f) = self.module.get_function("array_get_length") { f } else {
+            // array_get_length(arr_ptr: i8*) -> i64
+            let fn_type = self.i64_t.fn_type(&[self.i8ptr_t.into()], false);
+            self.module.add_function("array_get_length", fn_type, None)
         }
     }
 
     fn get_array_set_ptr(&self) -> FunctionValue<'a> {
-        match self.module.get_function("array_set_ptr") {
-            Some(f) => f,
-            None => {
-                // array_set_ptr(arr_ptr: i8**, idx: i64, p: i8*) -> void
-                // Takes pointer-to-pointer to allow reallocation
-                // Represent i8** as pointer-to (i8*) type
-                // Build i8** by asking the Context for a pointer type in the default address space
-                let ptr_ptr_t = self.context.ptr_type(AddressSpace::default());
-                let fn_type = self.context.void_type().fn_type(
-                    &[ptr_ptr_t.into(), self.i64_t.into(), self.i8ptr_t.into()],
-                    false,
-                );
-                self.module.add_function("array_set_ptr", fn_type, None)
-            }
+        if let Some(f) = self.module.get_function("array_set_ptr") { f } else {
+            // array_set_ptr(arr_ptr: i8**, idx: i64, p: i8*) -> void
+            // Takes pointer-to-pointer to allow reallocation
+            // Represent i8** as pointer-to (i8*) type
+            // Build i8** by asking the Context for a pointer type in the default address space
+            let ptr_ptr_t = self.context.ptr_type(AddressSpace::default());
+            let fn_type = self.context.void_type().fn_type(
+                &[ptr_ptr_t.into(), self.i64_t.into(), self.i8ptr_t.into()],
+                false,
+            );
+            self.module.add_function("array_set_ptr", fn_type, None)
         }
     }
 

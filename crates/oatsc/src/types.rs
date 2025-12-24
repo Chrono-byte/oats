@@ -8,7 +8,7 @@
 
 use crate::diagnostics::{Diagnostic, Label, Span};
 use anyhow::Result;
-use oxc_ast::ast::*;
+use oxc_ast::ast::{TSTupleElement, TSType, TSTypeName, TSSignature, PropertyKey, Function, BindingPatternKind, Expression};
 use oxc_span::Span as OxcSpan;
 use std::collections::HashMap;
 
@@ -43,6 +43,8 @@ pub type LocalsStack = Vec<HashMap<String, OatsType>>;
 pub enum OatsType {
     // Number type
     Number,
+    // Number object type (boxed number with methods)
+    NumberObject,
     // Boolean type
     Boolean,
     // Character type
@@ -133,6 +135,7 @@ impl SymbolTable {
     /// The symbol table begins with a single scope representing the global
     /// namespace. Additional scopes can be pushed and popped to handle
     /// lexical scoping during compilation.
+    #[must_use] 
     pub fn new() -> Self {
         Self {
             scopes: vec![HashMap::new()],
@@ -150,6 +153,7 @@ impl SymbolTable {
     ///
     /// # Returns
     /// The `Symbol` if found, or `None` if not present
+    #[must_use] 
     pub fn get(&self, name: &str) -> Option<&Symbol> {
         for scope in self.scopes.iter().rev() {
             if let Some(symbol) = scope.get(name) {
@@ -161,7 +165,7 @@ impl SymbolTable {
 
     /// Retrieves the type of a variable symbol from the symbol table.
     ///
-    /// This is a convenience method for getting the OatsType of a variable.
+    /// This is a convenience method for getting the `OatsType` of a variable.
     /// For std functions, this returns None.
     ///
     /// # Arguments
@@ -169,6 +173,7 @@ impl SymbolTable {
     ///
     /// # Returns
     /// The `OatsType` for the symbol if it's a variable, or `None` otherwise
+    #[must_use] 
     pub fn get_type(&self, name: &str) -> Option<&OatsType> {
         self.get(name).and_then(|symbol| match symbol {
             Symbol::Variable { ty } => Some(ty),
@@ -224,6 +229,7 @@ impl SymbolTable {
     ///
     /// # Returns
     /// A vector of (name, symbol) pairs for all symbols in the table
+    #[must_use] 
     pub fn all_symbols(&self) -> Vec<(String, Symbol)> {
         self.scopes
             .iter()
@@ -232,7 +238,7 @@ impl SymbolTable {
     }
 }
 
-/// Helper to extract TSType from TSTupleElement
+/// Helper to extract `TSType` from `TSTupleElement`
 fn tuple_elem_to_ts_type<'a>(elem: &'a TSTupleElement<'a>) -> Option<&'a TSType<'a>> {
     match elem {
         TSTupleElement::TSOptionalType(opt) => Some(&opt.type_annotation),
@@ -243,7 +249,7 @@ fn tuple_elem_to_ts_type<'a>(elem: &'a TSTupleElement<'a>) -> Option<&'a TSType<
     }
 }
 
-/// Helper to get span from a TSType
+/// Helper to get span from a `TSType`
 fn ts_type_span(ty: &TSType<'_>) -> OxcSpan {
     match ty {
         TSType::TSNumberKeyword(kw) => kw.span,
@@ -281,15 +287,17 @@ fn ts_type_span(ty: &TSType<'_>) -> OxcSpan {
 /// - Union types (converted to `OatsType::Union`)
 /// - Array types with element type inference
 /// - Function types with parameter and return type mapping
+#[must_use] 
 pub fn map_ts_type(ty: &TSType<'_>) -> Option<OatsType> {
     map_ts_type_with_aliases(ty, None, None)
 }
 
-/// Maps an Oats AST type annotation to OatsType, with optional type alias resolution.
+/// Maps an Oats AST type annotation to `OatsType`, with optional type alias resolution.
 ///
 /// If `type_aliases` is provided, type references will be resolved through the alias map.
 /// For generic type aliases, type arguments are substituted into the aliased type.
 type TypeAliasMap<'a> = HashMap<String, (Option<Vec<String>>, &'a TSType<'a>)>;
+#[must_use] 
 pub fn map_ts_type_with_aliases(
     ty: &TSType<'_>,
     type_aliases: Option<&TypeAliasMap<'_>>,
@@ -313,6 +321,8 @@ pub fn map_ts_type_with_aliases(
                     "boolean" => return Some(OatsType::Boolean),
                     "string" => return Some(OatsType::String),
                     "char" => return Some(OatsType::Char),
+                    // Number constructor
+                    "Number" => return Some(OatsType::NumberObject),
                     // Process-related types
                     "ProcessId" => return Some(OatsType::ProcessId),
                     "MonitorRef" => return Some(OatsType::MonitorRef),
@@ -557,10 +567,31 @@ pub fn map_ts_type_with_aliases(
     }
 }
 
-/// Map an Oats AST type to an OatsType while applying a substitution
+/// Map an Oats AST type to an `OatsType` while applying both type substitution
+/// and type alias resolution.
+#[must_use] 
+pub fn map_ts_type_with_subst_and_aliases(
+    ty: &TSType<'_>,
+    subst: &HashMap<String, OatsType>,
+    type_aliases: Option<&TypeAliasMap<'_>>,
+    symbols: Option<&SymbolTable>,
+) -> Option<OatsType> {
+    // First apply substitution
+    if let Some(substituted) = map_ts_type_with_subst(ty, subst) {
+        // If substitution changed the type, return it directly
+        // (substitution already handles the type structure)
+        Some(substituted)
+    } else {
+        // If substitution didn't apply, fall back to alias resolution
+        map_ts_type_with_aliases(ty, type_aliases, symbols)
+    }
+}
+
+/// Map an Oats AST type to an `OatsType` while applying a substitution
 /// map for type-parameters. The `subst` map maps type-parameter identifier
-/// names (e.g. "T") to concrete `OatsType` values. When a TSTypeReference refers
+/// names (e.g. "T") to concrete `OatsType` values. When a `TSTypeReference` refers
 /// to a name present in `subst` it will be replaced with the mapped type.
+#[must_use] 
 pub fn map_ts_type_with_subst(
     ty: &TSType<'_>,
     subst: &HashMap<String, OatsType>,
@@ -826,28 +857,27 @@ pub fn check_function_strictness(
                     {
                         param_types.push(mapped);
                         continue;
-                    } else {
-                        // Type annotation present but unsupported
-                        diagnostics.push(
-                            Diagnostic::error("Unsupported parameter type")
-                                .with_code("E1003")
-                                .with_label(Label {
-                                    span: {
-                                        let r = ts_type_span(&type_ann.type_annotation);
-                                        Span {
-                                            start: r.start as usize,
-                                            end: r.end as usize,
-                                        }
-                                    },
-                                    message: format!(
-                                        "Parameter '{}' has unsupported type",
-                                        ident.name
-                                    ),
-                                }),
-                        );
-                        // Continue with default to allow compilation to proceed
-                        param_types.push(OatsType::Number);
                     }
+                    // Type annotation present but unsupported
+                    diagnostics.push(
+                        Diagnostic::error("Unsupported parameter type")
+                            .with_code("E1003")
+                            .with_label(Label {
+                                span: {
+                                    let r = ts_type_span(&type_ann.type_annotation);
+                                    Span {
+                                        start: r.start as usize,
+                                        end: r.end as usize,
+                                    }
+                                },
+                                message: format!(
+                                    "Parameter '{}' has unsupported type",
+                                    ident.name
+                                ),
+                            }),
+                    );
+                    // Continue with default to allow compilation to proceed
+                    param_types.push(OatsType::Number);
                 } else {
                     // Missing type annotation - emit warning but allow compilation
                     diagnostics.push(
@@ -1018,6 +1048,7 @@ pub fn check_function_strictness(
 ///
 /// Note: Expression-based inference is currently limited. For full inference,
 /// use the codegen-level inference functions.
+#[must_use] 
 pub fn infer_type(ts_type: Option<&TSType<'_>>, _expr: Option<&Expression<'_>>) -> OatsType {
     // First priority: explicit Oats type annotation
     if let Some(ts_ty) = ts_type
@@ -1056,6 +1087,7 @@ pub fn infer_type(ts_type: Option<&TSType<'_>>, _expr: Option<&Expression<'_>>) 
 /// # Fallback Behavior
 /// When no inferred types are available, generic placeholders default to
 /// `Number` type as the most conservative choice for the Oats type system.
+#[must_use] 
 pub fn apply_inferred_subst(ty: &OatsType, inferred: &[OatsType]) -> OatsType {
     apply_inferred_subst_depth(ty, inferred, 0)
 }
@@ -1070,18 +1102,18 @@ fn apply_inferred_subst_depth(ty: &OatsType, inferred: &[OatsType], depth: usize
 
     match ty {
         OatsType::Generic(_) => {
-            if !inferred.is_empty() {
-                inferred[0].clone()
-            } else {
+            if inferred.is_empty() {
                 OatsType::Number
+            } else {
+                inferred[0].clone()
             }
         }
         OatsType::Option(inner) => match &**inner {
             OatsType::Generic(_) => {
-                if !inferred.is_empty() {
-                    OatsType::Option(Box::new(inferred[0].clone()))
-                } else {
+                if inferred.is_empty() {
                     OatsType::Option(Box::new(OatsType::Number))
+                } else {
+                    OatsType::Option(Box::new(inferred[0].clone()))
                 }
             }
             other => OatsType::Option(Box::new(apply_inferred_subst_depth(
@@ -1145,11 +1177,13 @@ fn apply_inferred_subst_depth(ty: &OatsType, inferred: &[OatsType], depth: usize
 
 impl OatsType {
     /// Check if this type is a Promise
+    #[must_use] 
     pub fn is_promise(&self) -> bool {
         matches!(self, OatsType::Promise(_))
     }
 
     /// Unwrap the inner type of a Promise, if this is a Promise type
+    #[must_use] 
     pub fn unwrap_promise_inner(&self) -> Option<&OatsType> {
         match self {
             OatsType::Promise(inner) => Some(inner),
@@ -1158,6 +1192,7 @@ impl OatsType {
     }
 
     /// Create a Promise wrapping the given type
+    #[must_use] 
     pub fn wrap_in_promise(inner: OatsType) -> Self {
         OatsType::Promise(Box::new(inner))
     }

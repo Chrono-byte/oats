@@ -9,7 +9,7 @@ use std::ffi::{CStr, CString};
 ///
 /// `format` must be a valid pointer to a null-terminated C string.
 /// `args` must be a valid pointer to an array of `args_len` pointers to null-terminated C strings.
-/// #[oats_export]
+/// #[`oats_export`]
 #[no_mangle]
 pub unsafe extern "C" fn oats_std_format_string(
     format: *const c_char,
@@ -60,7 +60,7 @@ pub unsafe extern "C" fn oats_std_format_string(
 /// # Safety
 ///
 /// `format` must be a valid pointer to a null-terminated C string.
-/// #[oats_export]
+/// #[`oats_export`]
 #[no_mangle]
 pub unsafe extern "C" fn oats_std_format_number(format: *const c_char, value: f64) -> *mut c_char {
     if format.is_null() {
@@ -85,7 +85,7 @@ pub unsafe extern "C" fn oats_std_format_number(format: *const c_char, value: f6
 /// # Safety
 ///
 /// `format` must be a valid pointer to a null-terminated C string.
-/// #[oats_export]
+/// #[`oats_export`]
 #[no_mangle]
 pub unsafe extern "C" fn oats_std_format_int(format: *const c_char, value: i64) -> *mut c_char {
     if format.is_null() {

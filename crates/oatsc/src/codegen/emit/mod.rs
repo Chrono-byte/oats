@@ -12,7 +12,7 @@
 //!   math-heavy unions efficient while still supporting heap objects.
 //! - Constructors return `i8*` (object base pointer). The runtime expects the
 //!   object layout described below and the codegen relies on the runtime's
-//!   helpers (rc_inc/rc_dec, box/unbox) to manage lifetimes.
+//!   helpers (`rc_inc/rc_dec`, box/unbox) to manage lifetimes.
 
 pub mod async_handling;
 pub mod classes;

@@ -6,7 +6,7 @@
 use crate::codegen::helpers::extract_basic_value_from_valuekind;
 use crate::diagnostics::Severity;
 use inkwell::values::{BasicValue, FunctionValue};
-use oxc_ast::ast::*;
+use oxc_ast::ast::Function;
 use std::collections::{HashMap, HashSet};
 
 impl<'a> crate::codegen::CodeGen<'a> {
@@ -143,7 +143,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
     ///   collecting encountered `Expr` nodes into a flat vector.
     /// - Record the indices of `Yield` expressions in that vector.
     /// - For each yield index, collect all identifier names that appear in
-    ///   any expression after that index. The result is a Vec of HashSets
+    ///   any expression after that index. The result is a Vec of `HashSets`
     ///   where each entry corresponds to the nth yield in lexical order.
     pub fn compute_yield_live_sets(&self, func: &Function) -> Vec<HashSet<String>> {
         enum Node {
@@ -154,7 +154,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         fn flatten_expr(e: &oxc_ast::ast::Expression, out: &mut Vec<Node>) {
             match e {
                 oxc_ast::ast::Expression::Identifier(id) => {
-                    out.push(Node::Ident(id.name.to_string()))
+                    out.push(Node::Ident(id.name.to_string()));
                 }
                 oxc_ast::ast::Expression::CallExpression(c) => {
                     // Handle callee - it's an Expression, so recurse
@@ -189,10 +189,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     out.push(Node::YieldMarker);
                 }
                 oxc_ast::ast::Expression::ParenthesizedExpression(p) => {
-                    flatten_expr(&p.expression, out)
+                    flatten_expr(&p.expression, out);
                 }
                 oxc_ast::ast::Expression::ArrayExpression(arr) => {
-                    for el in arr.elements.iter() {
+                    for el in &arr.elements {
                         if let Some(expr) = el.as_expression() {
                             flatten_expr(expr, out);
                         }
@@ -235,7 +235,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         fn flatten_stmt(s: &oxc_ast::ast::Statement, out: &mut Vec<Node>) {
             match s {
                 oxc_ast::ast::Statement::ExpressionStatement(es) => {
-                    flatten_expr(&es.expression, out)
+                    flatten_expr(&es.expression, out);
                 }
                 oxc_ast::ast::Statement::ReturnStatement(r) => {
                     if let Some(arg) = &r.argument {
@@ -341,7 +341,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
         // Emit a next function: `fn <name>_next(state: i8*, out: i8*) -> i32`
         // Returns: 0 = done, 1 = yielded value available in out
-        let next_name = format!("{}_next", func_name);
+        let next_name = format!("{func_name}_next");
         let next_ft = self
             .i32_t
             .fn_type(&[self.i8ptr_t.into(), self.i8ptr_t.into()], false);
@@ -356,7 +356,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         let yield_live_sets = self.compute_yield_live_sets(func_decl);
         let mut all_live_names: HashSet<String> = HashSet::new();
         for s in &yield_live_sets {
-            for n in s.iter() {
+            for n in s {
                 all_live_names.insert(n.clone());
             }
         }
@@ -367,11 +367,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
         for i in 0..yield_live_sets.len() {
             resume_blocks.push(
                 self.context
-                    .append_basic_block(next_f, &format!("resume_{}", i)),
+                    .append_basic_block(next_f, &format!("resume_{i}")),
             );
             cont_blocks.push(
                 self.context
-                    .append_basic_block(next_f, &format!("cont_{}", i)),
+                    .append_basic_block(next_f, &format!("cont_{i}")),
             );
         }
 
@@ -380,7 +380,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         let mut names: Vec<String> = all_live_names.clone().into_iter().collect();
         names.sort();
         let mut idx = param_count;
-        for name in names.into_iter() {
+        for name in names {
             local_name_to_slot.insert(name, idx);
             idx += 1;
         }
@@ -559,7 +559,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 oxc_ast::ast::BindingPatternKind::BindingIdentifier(id) => id.name.to_string(),
                 _ => {
                     // Destructuring parameters not yet supported in codegen
-                    format!("_param_{}", i)
+                    format!("_param_{i}")
                 }
             };
             param_map.insert(param_name.clone(), i as u32);
@@ -567,7 +567,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             // Compute slot offset: after header (8) + state (4) + padding (4) = 16, then param slots
             let slot_offset = 16 + (i * 8) as u64;
             let param_i8ptr = self
-                .offset_i8_ptr(state_ptr, slot_offset, &format!("param_{}_i8ptr", i))
+                .offset_i8_ptr(state_ptr, slot_offset, &format!("param_{i}_i8ptr"))
                 .map_err(|_| {
                     crate::diagnostics::Diagnostic::simple_boxed(
                         Severity::Error,
@@ -592,7 +592,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
             let param_alloca = self
                 .builder
-                .build_alloca(llvm_ty, &format!("param_{}", i))
+                .build_alloca(llvm_ty, &format!("param_{i}"))
                 .map_err(|_| {
                     crate::diagnostics::Diagnostic::simple_boxed(
                         Severity::Error,
@@ -612,71 +612,68 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     )
                 })?;
 
-            let loaded = match llvm_ty_meta {
-                inkwell::types::BasicMetadataTypeEnum::FloatType(ft) => {
-                    // Cast slot_ptr to generic pointer type for loading
-                    let f64_ptr = self
-                        .builder
-                        .build_pointer_cast(
-                            slot_ptr,
-                            self.context.ptr_type(inkwell::AddressSpace::default()),
-                            "f64_ptr",
+            let loaded = if let inkwell::types::BasicMetadataTypeEnum::FloatType(ft) = llvm_ty_meta {
+                // Cast slot_ptr to generic pointer type for loading
+                let f64_ptr = self
+                    .builder
+                    .build_pointer_cast(
+                        slot_ptr,
+                        self.context.ptr_type(inkwell::AddressSpace::default()),
+                        "f64_ptr",
+                    )
+                    .map_err(|_| {
+                        crate::diagnostics::Diagnostic::simple_boxed(
+                            Severity::Error,
+                            "f64 ptr cast failed",
                         )
-                        .map_err(|_| {
-                            crate::diagnostics::Diagnostic::simple_boxed(
-                                Severity::Error,
-                                "f64 ptr cast failed",
-                            )
-                        })?;
-                    // Load the float value - ft is used here to specify the load type
-                    self.builder
-                        .build_load(ft, f64_ptr, &format!("param_{}_load", i))
-                        .map_err(|_| {
-                            crate::diagnostics::Diagnostic::simple_boxed(
-                                Severity::Error,
-                                "param load failed",
-                            )
-                        })?
-                        .as_basic_value_enum()
-                }
-                _ => {
-                    // Pointer types
-                    let ptr_ptr = self
-                        .builder
-                        .build_pointer_cast(
-                            slot_ptr,
-                            self.context.ptr_type(inkwell::AddressSpace::default()),
-                            "ptr_ptr",
+                    })?;
+                // Load the float value - ft is used here to specify the load type
+                self.builder
+                    .build_load(ft, f64_ptr, &format!("param_{i}_load"))
+                    .map_err(|_| {
+                        crate::diagnostics::Diagnostic::simple_boxed(
+                            Severity::Error,
+                            "param load failed",
                         )
-                        .map_err(|_| {
-                            crate::diagnostics::Diagnostic::simple_boxed(
-                                Severity::Error,
-                                "ptr cast failed",
-                            )
-                        })?;
-                    let ptr_ptr_typed = self
-                        .builder
-                        .build_pointer_cast(
-                            ptr_ptr,
-                            self.context.ptr_type(inkwell::AddressSpace::default()),
-                            "ptr_ptr_typed",
+                    })?
+                    .as_basic_value_enum()
+            } else {
+                // Pointer types
+                let ptr_ptr = self
+                    .builder
+                    .build_pointer_cast(
+                        slot_ptr,
+                        self.context.ptr_type(inkwell::AddressSpace::default()),
+                        "ptr_ptr",
+                    )
+                    .map_err(|_| {
+                        crate::diagnostics::Diagnostic::simple_boxed(
+                            Severity::Error,
+                            "ptr cast failed",
                         )
-                        .map_err(|_| {
-                            crate::diagnostics::Diagnostic::simple_boxed(
-                                Severity::Error,
-                                "ptr typed cast failed",
-                            )
-                        })?;
-                    self.builder
-                        .build_load(self.i8ptr_t, ptr_ptr_typed, &format!("param_{}_load", i))
-                        .map_err(|_| {
-                            crate::diagnostics::Diagnostic::simple_boxed(
-                                Severity::Error,
-                                "param load failed",
-                            )
-                        })?
-                        .as_basic_value_enum()
-                }
+                    })?;
+                let ptr_ptr_typed = self
+                    .builder
+                    .build_pointer_cast(
+                        ptr_ptr,
+                        self.context.ptr_type(inkwell::AddressSpace::default()),
+                        "ptr_ptr_typed",
+                    )
+                    .map_err(|_| {
+                        crate::diagnostics::Diagnostic::simple_boxed(
+                            Severity::Error,
+                            "ptr typed cast failed",
+                        )
+                    })?;
+                self.builder
+                    .build_load(self.i8ptr_t, ptr_ptr_typed, &format!("param_{i}_load"))
+                    .map_err(|_| {
+                        crate::diagnostics::Diagnostic::simple_boxed(
+                            Severity::Error,
+                            "param load failed",
+                        )
+                    })?
+                    .as_basic_value_enum()
             };
 
             let _ = self.builder.build_store(param_alloca, loaded);
@@ -771,7 +768,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     .offset_i8_ptr(
                                         state_ptr,
                                         slot_offset,
-                                        &format!("restore_{}_i8ptr", live_name),
+                                        &format!("restore_{live_name}_i8ptr"),
                                     )
                                     .map_err(|_| {
                                         crate::diagnostics::Diagnostic::simple_boxed(
@@ -793,66 +790,63 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         )
                                     })?;
 
-                                let restored_val = match local_ty {
-                                    inkwell::types::BasicTypeEnum::FloatType(ft) => {
-                                        // Cast slot_ptr to generic pointer type for loading
-                                        let f64_ptr = self
-                                            .builder
-                                            .build_pointer_cast(
-                                                slot_ptr,
-                                                self.context
-                                                    .ptr_type(inkwell::AddressSpace::default()),
-                                                "f64_ptr",
+                                let restored_val = if let inkwell::types::BasicTypeEnum::FloatType(ft) = local_ty {
+                                    // Cast slot_ptr to generic pointer type for loading
+                                    let f64_ptr = self
+                                        .builder
+                                        .build_pointer_cast(
+                                            slot_ptr,
+                                            self.context
+                                                .ptr_type(inkwell::AddressSpace::default()),
+                                            "f64_ptr",
+                                        )
+                                        .map_err(|_| {
+                                            crate::diagnostics::Diagnostic::simple_boxed(
+                                                Severity::Error,
+                                                "f64 ptr cast failed",
                                             )
-                                            .map_err(|_| {
-                                                crate::diagnostics::Diagnostic::simple_boxed(
-                                                    Severity::Error,
-                                                    "f64 ptr cast failed",
-                                                )
-                                            })?;
-                                        // Load the float value - ft is used here to specify the load type
-                                        self.builder
-                                            .build_load(
-                                                ft,
-                                                f64_ptr,
-                                                &format!("restore_{}", live_name),
+                                        })?;
+                                    // Load the float value - ft is used here to specify the load type
+                                    self.builder
+                                        .build_load(
+                                            ft,
+                                            f64_ptr,
+                                            &format!("restore_{live_name}"),
+                                        )
+                                        .map_err(|_| {
+                                            crate::diagnostics::Diagnostic::simple_boxed(
+                                                Severity::Error,
+                                                "load failed",
                                             )
-                                            .map_err(|_| {
-                                                crate::diagnostics::Diagnostic::simple_boxed(
-                                                    Severity::Error,
-                                                    "load failed",
-                                                )
-                                            })?
-                                    }
-                                    _ => {
-                                        // Pointer types
-                                        let ptr_ptr = self
-                                            .builder
-                                            .build_pointer_cast(
-                                                slot_ptr,
-                                                self.context
-                                                    .ptr_type(inkwell::AddressSpace::default()),
-                                                "ptr_ptr",
+                                        })?
+                                } else {
+                                    // Pointer types
+                                    let ptr_ptr = self
+                                        .builder
+                                        .build_pointer_cast(
+                                            slot_ptr,
+                                            self.context
+                                                .ptr_type(inkwell::AddressSpace::default()),
+                                            "ptr_ptr",
+                                        )
+                                        .map_err(|_| {
+                                            crate::diagnostics::Diagnostic::simple_boxed(
+                                                Severity::Error,
+                                                "ptr cast failed",
                                             )
-                                            .map_err(|_| {
-                                                crate::diagnostics::Diagnostic::simple_boxed(
-                                                    Severity::Error,
-                                                    "ptr cast failed",
-                                                )
-                                            })?;
-                                        self.builder
-                                            .build_load(
-                                                self.i8ptr_t,
-                                                ptr_ptr,
-                                                &format!("restore_{}", live_name),
+                                        })?;
+                                    self.builder
+                                        .build_load(
+                                            self.i8ptr_t,
+                                            ptr_ptr,
+                                            &format!("restore_{live_name}"),
+                                        )
+                                        .map_err(|_| {
+                                            crate::diagnostics::Diagnostic::simple_boxed(
+                                                Severity::Error,
+                                                "load failed",
                                             )
-                                            .map_err(|_| {
-                                                crate::diagnostics::Diagnostic::simple_boxed(
-                                                    Severity::Error,
-                                                    "load failed",
-                                                )
-                                            })?
-                                    }
+                                        })?
                                 };
 
                                 // Store to local alloca
@@ -1056,7 +1050,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 .offset_i8_ptr(
                     state_ptr_wrapper,
                     slot_offset,
-                    &format!("param_{}_slot_i8ptr", i),
+                    &format!("param_{i}_slot_i8ptr"),
                 )
                 .map_err(|_| {
                     crate::diagnostics::Diagnostic::simple_boxed(
@@ -1078,76 +1072,73 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 })?;
 
             let llvm_ty_meta = llvm_param_types[i];
-            match llvm_ty_meta {
-                inkwell::types::BasicMetadataTypeEnum::FloatType(_) => {
-                    // Box f64 into union
-                    let fv = param_val.into_float_value();
-                    let box_fn = self.get_union_box_f64();
-                    let cs = self
-                        .builder
-                        .build_call(box_fn, &[fv.into()], &format!("box_param_{}", i))
-                        .map_err(|_| {
-                            crate::diagnostics::Diagnostic::simple_boxed(
-                                Severity::Error,
-                                "union_box_f64 call failed",
-                            )
-                        })?;
-                    let boxed_ptr =
-                        match extract_basic_value_from_valuekind(cs.try_as_basic_value()) {
-                            Some(bv) => bv.into_pointer_value(),
-                            None => {
-                                return Err(crate::diagnostics::Diagnostic::simple_boxed(
-                                    Severity::Error,
-                                    "boxing returned no value",
-                                ));
-                            }
-                        };
-                    let f64_ptr = self
-                        .builder
-                        .build_pointer_cast(
-                            slot_ptr,
-                            self.context.ptr_type(inkwell::AddressSpace::default()),
-                            "f64_ptr",
+            if let inkwell::types::BasicMetadataTypeEnum::FloatType(_) = llvm_ty_meta {
+                // Box f64 into union
+                let fv = param_val.into_float_value();
+                let box_fn = self.get_union_box_f64();
+                let cs = self
+                    .builder
+                    .build_call(box_fn, &[fv.into()], &format!("box_param_{i}"))
+                    .map_err(|_| {
+                        crate::diagnostics::Diagnostic::simple_boxed(
+                            Severity::Error,
+                            "union_box_f64 call failed",
                         )
-                        .map_err(|_| {
-                            crate::diagnostics::Diagnostic::simple_boxed(
+                    })?;
+                let boxed_ptr =
+                    match extract_basic_value_from_valuekind(cs.try_as_basic_value()) {
+                        Some(bv) => bv.into_pointer_value(),
+                        None => {
+                            return Err(crate::diagnostics::Diagnostic::simple_boxed(
                                 Severity::Error,
-                                "f64 ptr cast failed",
-                            )
-                        })?;
-                    let _ = self
-                        .builder
-                        .build_store(f64_ptr, boxed_ptr.as_basic_value_enum());
-                }
-                _ => {
-                    // Pointer types - store directly
-                    let ptr_ptr = self
-                        .builder
-                        .build_pointer_cast(
-                            slot_ptr,
-                            self.context.ptr_type(inkwell::AddressSpace::default()),
-                            "ptr_ptr",
+                                "boxing returned no value",
+                            ));
+                        }
+                    };
+                let f64_ptr = self
+                    .builder
+                    .build_pointer_cast(
+                        slot_ptr,
+                        self.context.ptr_type(inkwell::AddressSpace::default()),
+                        "f64_ptr",
+                    )
+                    .map_err(|_| {
+                        crate::diagnostics::Diagnostic::simple_boxed(
+                            Severity::Error,
+                            "f64 ptr cast failed",
                         )
-                        .map_err(|_| {
-                            crate::diagnostics::Diagnostic::simple_boxed(
-                                Severity::Error,
-                                "ptr cast failed",
-                            )
-                        })?;
-                    let param_ptr = param_val.into_pointer_value();
-                    let param_i8ptr = self
-                        .builder
-                        .build_pointer_cast(param_ptr, self.i8ptr_t, "param_i8ptr")
-                        .map_err(|_| {
-                            crate::diagnostics::Diagnostic::simple_boxed(
-                                Severity::Error,
-                                "param pointer cast failed",
-                            )
-                        })?;
-                    let _ = self
-                        .builder
-                        .build_store(ptr_ptr, param_i8ptr.as_basic_value_enum());
-                }
+                    })?;
+                let _ = self
+                    .builder
+                    .build_store(f64_ptr, boxed_ptr.as_basic_value_enum());
+            } else {
+                // Pointer types - store directly
+                let ptr_ptr = self
+                    .builder
+                    .build_pointer_cast(
+                        slot_ptr,
+                        self.context.ptr_type(inkwell::AddressSpace::default()),
+                        "ptr_ptr",
+                    )
+                    .map_err(|_| {
+                        crate::diagnostics::Diagnostic::simple_boxed(
+                            Severity::Error,
+                            "ptr cast failed",
+                        )
+                    })?;
+                let param_ptr = param_val.into_pointer_value();
+                let param_i8ptr = self
+                    .builder
+                    .build_pointer_cast(param_ptr, self.i8ptr_t, "param_i8ptr")
+                    .map_err(|_| {
+                        crate::diagnostics::Diagnostic::simple_boxed(
+                            Severity::Error,
+                            "param pointer cast failed",
+                        )
+                    })?;
+                let _ = self
+                    .builder
+                    .build_store(ptr_ptr, param_i8ptr.as_basic_value_enum());
             }
         }
 

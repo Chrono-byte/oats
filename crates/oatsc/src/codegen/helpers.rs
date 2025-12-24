@@ -17,11 +17,11 @@ use inkwell::types::BasicTypeEnum;
 use inkwell::values::{BasicValue, BasicValueEnum, ValueKind};
 use std::collections::HashMap;
 
-/// Helper function to extract BasicValueEnum from ValueKind
-/// ValueKind is an enum in inkwell that can be Basic or CallSite
-pub(crate) fn extract_basic_value_from_valuekind<'a>(
-    vk: ValueKind<'a>,
-) -> Option<BasicValueEnum<'a>> {
+/// Helper function to extract `BasicValueEnum` from `ValueKind`
+/// `ValueKind` is an enum in inkwell that can be Basic or `CallSite`
+pub(crate) fn extract_basic_value_from_valuekind(
+    vk: ValueKind<'_>,
+) -> Option<BasicValueEnum<'_>> {
     match vk {
         ValueKind::Basic(bv) => Some(bv),
         _ => None,
@@ -199,10 +199,11 @@ impl<'a> super::CodeGen<'a> {
                 // Generic instances are specialized, so treat as pointer types
                 self.i8ptr_t.as_basic_type_enum()
             }
+            OatsType::NumberObject => self.i8ptr_t.as_basic_type_enum(),
         }
     }
 
-    /// Try to coerce a `BasicValueEnum` into an `f64` FloatValue.
+    /// Try to coerce a `BasicValueEnum` into an `f64` `FloatValue`.
     ///
     /// Supported inputs:
     /// - `FloatValue` -> returned as-is
@@ -266,7 +267,7 @@ impl<'a> super::CodeGen<'a> {
         }
     }
 
-    /// Coerce an int/bool/float value to an `i64` IntValue when possible.
+    /// Coerce an int/bool/float value to an `i64` `IntValue` when possible.
     ///
     /// This is used when building phi nodes or integer comparisons where a
     /// canonical `i64` representation is convenient.
@@ -645,7 +646,7 @@ impl<'a> super::CodeGen<'a> {
         let rc_dec = self.get_rc_dec();
         let rc_weak_dec = self.get_rc_weak_dec();
         for scope in locals.iter().rev() {
-            for (_name, (ptr, ty, init, _is_const, is_weak, _nominal, oats_type)) in scope.iter() {
+            for (ptr, ty, init, _is_const, is_weak, _nominal, oats_type) in scope.values() {
                 if *init && let inkwell::types::BasicTypeEnum::PointerType(_) = ty {
                     // Skip RC operations for unowned references
                     if let Some(crate::types::OatsType::Unowned(_)) = oats_type {
@@ -689,7 +690,7 @@ impl<'a> super::CodeGen<'a> {
         // iterate from innermost scope down to start_index
         let rc_weak_dec = self.get_rc_weak_dec();
         for scope in locals.iter().rev().take(locals.len() - start_index) {
-            for (_name, (ptr, ty, init, _is_const, is_weak, _nominal, oats_type)) in scope.iter() {
+            for (ptr, ty, init, _is_const, is_weak, _nominal, oats_type) in scope.values() {
                 if *init
                     && let inkwell::types::BasicTypeEnum::PointerType(_) = ty
                     && let Ok(loaded) = self.builder.build_load(*ty, *ptr, "drop_load")
@@ -973,7 +974,7 @@ impl<'a> super::CodeGen<'a> {
     ) -> crate::diagnostics::DiagnosticResult<inkwell::values::PointerValue<'a>> {
         // Pre-allocate with known capacity
         let mut vec = Vec::with_capacity(field_ptrs.len());
-        for v in field_ptrs.iter() {
+        for v in field_ptrs {
             vec.push((*v, false));
         }
         self.heap_alloc_with_ptr_fields(vec.as_slice())
@@ -1124,5 +1125,82 @@ impl<'a> super::CodeGen<'a> {
             .build_store(ret_ptr, ret_const.as_basic_value_enum());
 
         Ok(obj_ptr)
+    }
+
+    /// Coerce an argument value to match the expected parameter type.
+    /// Handles union boxing when a concrete type needs to be boxed into a union.
+    pub(crate) fn coerce_argument_to_parameter_type(
+        &self,
+        arg_val: inkwell::values::BasicValueEnum<'a>,
+        param_type: &crate::types::OatsType,
+    ) -> crate::diagnostics::DiagnosticResult<inkwell::values::BasicValueEnum<'a>> {
+        use crate::types::OatsType;
+
+        // Check if we need to box based on LLVM type mismatch
+        let arg_llvm_type = arg_val.get_type();
+        let param_llvm_type = self.map_type_to_llvm(param_type);
+
+        // If argument is float but parameter expects a union, box the float
+        if arg_llvm_type.is_float_type() && matches!(param_type, OatsType::Union(_)) {
+            let union_box_f64 = self.get_union_box_f64();
+            let call = self
+                .builder
+                .build_call(union_box_f64, &[arg_val.into()], "union_box_number")
+                .map_err(|_| {
+                    crate::diagnostics::Diagnostic::simple_boxed(
+                        crate::diagnostics::Severity::Error,
+                        "failed to box number into union",
+                    )
+                })?;
+            match call.try_as_basic_value() {
+                inkwell::values::ValueKind::Basic(bv) => Ok(bv),
+                _ => Ok(self.f64_t.const_float(0.0).as_basic_value_enum()),
+            }
+        }
+        // Also handle case where LLVM type is pointer but we need to check if it's a union
+        else if arg_llvm_type.is_float_type() && param_llvm_type.is_pointer_type() {
+            // This might be a union parameter - check the OatsType
+            if matches!(param_type, OatsType::Union(_)) {
+                let union_box_f64 = self.get_union_box_f64();
+                let call = self
+                    .builder
+                    .build_call(union_box_f64, &[arg_val.into()], "union_box_number")
+                    .map_err(|_| {
+                        crate::diagnostics::Diagnostic::simple_boxed(
+                            crate::diagnostics::Severity::Error,
+                            "failed to box number into union",
+                        )
+                    })?;
+                match call.try_as_basic_value() {
+                    inkwell::values::ValueKind::Basic(bv) => Ok(bv),
+                    _ => Ok(self.f64_t.const_float(0.0).as_basic_value_enum()),
+                }
+            } else {
+                Ok(arg_val)
+            }
+        }
+        // If argument is pointer but parameter expects pointer (union), and param is union, box the pointer
+        else if arg_llvm_type.is_pointer_type()
+            && param_llvm_type.is_pointer_type()
+            && matches!(param_type, OatsType::Union(_))
+        {
+            let union_box_ptr = self.get_union_box_ptr();
+            let call = self
+                .builder
+                .build_call(union_box_ptr, &[arg_val.into()], "union_box_string")
+                .map_err(|_| {
+                    crate::diagnostics::Diagnostic::simple_boxed(
+                        crate::diagnostics::Severity::Error,
+                        "failed to box pointer into union",
+                    )
+                })?;
+            match call.try_as_basic_value() {
+                inkwell::values::ValueKind::Basic(bv) => Ok(bv),
+                _ => Ok(self.f64_t.const_float(0.0).as_basic_value_enum()),
+            }
+        } else {
+            // No coercion needed
+            Ok(arg_val)
+        }
     }
 }

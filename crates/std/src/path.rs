@@ -10,7 +10,7 @@ use std::path::Path;
 ///
 /// `base` and `component` must be valid pointers to null-terminated C strings, or null.
 /// If non-null, the strings must remain valid for the duration of this call.
-/// #[oats_export]
+/// #[`oats_export`]
 #[no_mangle]
 pub unsafe extern "C" fn oats_std_path_join(
     base: *const c_char,
@@ -45,7 +45,7 @@ pub unsafe extern "C" fn oats_std_path_join(
 ///
 /// `path` must be a valid pointer to a null-terminated C string, or null.
 /// If non-null, the string must remain valid for the duration of this call.
-/// #[oats_export]
+/// #[`oats_export`]
 #[no_mangle]
 pub unsafe extern "C" fn oats_std_path_file_name(path: *const c_char) -> *mut c_char {
     if path.is_null() {
@@ -75,7 +75,7 @@ pub unsafe extern "C" fn oats_std_path_file_name(path: *const c_char) -> *mut c_
 ///
 /// `path` must be a valid pointer to a null-terminated C string, or null.
 /// If non-null, the string must remain valid for the duration of this call.
-/// #[oats_export]
+/// #[`oats_export`]
 #[no_mangle]
 pub unsafe extern "C" fn oats_std_path_is_absolute(path: *const c_char) -> libc::c_int {
     if path.is_null() {
@@ -87,11 +87,7 @@ pub unsafe extern "C" fn oats_std_path_is_absolute(path: *const c_char) -> libc:
         Err(_) => return 0,
     };
 
-    if Path::new(path_str).is_absolute() {
-        1
-    } else {
-        0
-    }
+    i32::from(Path::new(path_str).is_absolute())
 }
 
 /// Get directory name from path (caller must free result)
@@ -99,7 +95,7 @@ pub unsafe extern "C" fn oats_std_path_is_absolute(path: *const c_char) -> libc:
 /// # Safety
 ///
 /// `path` must be a valid pointer to a null-terminated C string, or null.
-/// #[oats_export]
+/// #[`oats_export`]
 #[no_mangle]
 pub unsafe extern "C" fn oats_std_path_dir_name(path: *const c_char) -> *mut c_char {
     if path.is_null() {
@@ -128,7 +124,7 @@ pub unsafe extern "C" fn oats_std_path_dir_name(path: *const c_char) -> *mut c_c
 /// # Safety
 ///
 /// `path` must be a valid pointer to a null-terminated C string, or null.
-/// #[oats_export]
+/// #[`oats_export`]
 #[no_mangle]
 pub unsafe extern "C" fn oats_std_path_extension(path: *const c_char) -> *mut c_char {
     if path.is_null() {
@@ -157,7 +153,7 @@ pub unsafe extern "C" fn oats_std_path_extension(path: *const c_char) -> *mut c_
 /// # Safety
 ///
 /// `path` must be a valid pointer to a null-terminated C string, or null.
-/// #[oats_export]
+/// #[`oats_export`]
 #[no_mangle]
 pub unsafe extern "C" fn oats_std_path_stem(path: *const c_char) -> *mut c_char {
     if path.is_null() {
@@ -186,7 +182,7 @@ pub unsafe extern "C" fn oats_std_path_stem(path: *const c_char) -> *mut c_char 
 /// # Safety
 ///
 /// `path` must be a valid pointer to a null-terminated C string, or null.
-/// #[oats_export]
+/// #[`oats_export`]
 #[no_mangle]
 pub unsafe extern "C" fn oats_std_path_normalize(path: *const c_char) -> *mut c_char {
     if path.is_null() {

@@ -21,7 +21,7 @@ use std::io::{self, Read, Write};
 ///     runtime_free_cstring(line);
 /// }
 /// ```
-/// #[oats_export]
+/// #[`oats_export`]
 #[no_mangle]
 pub extern "C" fn oats_std_io_read_line() -> *mut c_char {
     let mut buffer = String::new();
@@ -43,7 +43,7 @@ pub extern "C" fn oats_std_io_read_line() -> *mut c_char {
 /// # Safety
 ///
 /// `buffer` must be a valid pointer to at least `len` bytes of writable memory.
-/// #[oats_export]
+/// #[`oats_export`]
 #[no_mangle]
 pub unsafe extern "C" fn oats_std_io_read_bytes(buffer: *mut u8, len: usize) -> i64 {
     if buffer.is_null() || len == 0 {
@@ -62,7 +62,7 @@ pub unsafe extern "C" fn oats_std_io_read_bytes(buffer: *mut u8, len: usize) -> 
 /// # Safety
 ///
 /// `buffer` must be a valid pointer to at least `len` bytes of readable memory.
-/// #[oats_export]
+/// #[`oats_export`]
 #[no_mangle]
 pub unsafe extern "C" fn oats_std_io_write_bytes(buffer: *const u8, len: usize) -> i64 {
     if buffer.is_null() || len == 0 {
@@ -71,17 +71,17 @@ pub unsafe extern "C" fn oats_std_io_write_bytes(buffer: *const u8, len: usize) 
 
     let slice = unsafe { std::slice::from_raw_parts(buffer, len) };
     match io::stdout().write_all(slice) {
-        Ok(_) => len as i64,
+        Ok(()) => len as i64,
         Err(_) => -1,
     }
 }
 
 /// Flush stdout
-/// #[oats_export]
+/// #[`oats_export`]
 #[no_mangle]
 pub extern "C" fn oats_std_io_flush() -> libc::c_int {
     match io::stdout().flush() {
-        Ok(_) => 0,
+        Ok(()) => 0,
         Err(_) => -1,
     }
 }
@@ -92,7 +92,7 @@ pub extern "C" fn oats_std_io_flush() -> libc::c_int {
 ///
 /// `path` must be a valid pointer to a null-terminated C string.
 /// `buffer` must be a valid pointer to at least `len` bytes of writable memory.
-/// #[oats_export]
+/// #[`oats_export`]
 #[no_mangle]
 pub unsafe extern "C" fn oats_std_io_read_file_bytes(
     path: *const c_char,
@@ -124,7 +124,7 @@ pub unsafe extern "C" fn oats_std_io_read_file_bytes(
 ///
 /// `path` must be a valid pointer to a null-terminated C string.
 /// `buffer` must be a valid pointer to at least `len` bytes of readable memory.
-/// #[oats_export]
+/// #[`oats_export`]
 #[no_mangle]
 pub unsafe extern "C" fn oats_std_io_write_file_bytes(
     path: *const c_char,
@@ -143,7 +143,7 @@ pub unsafe extern "C" fn oats_std_io_write_file_bytes(
     let slice = unsafe { std::slice::from_raw_parts(buffer, len) };
     match std::fs::File::create(path_str) {
         Ok(mut file) => match file.write_all(slice) {
-            Ok(_) => len as i64,
+            Ok(()) => len as i64,
             Err(_) => -1,
         },
         Err(_) => -1,

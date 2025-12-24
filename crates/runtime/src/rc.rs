@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 // Import header helpers from sibling module (parent has already imported header)
 use crate::MAX_RECURSION_DEPTH;
-use crate::header::*;
+use crate::header::{HEADER_STATIC_BIT, HEADER_RC_MASK, HEADER_FLAGS_MASK, HEADER_TYPE_TAG_SHIFT, header_get_weak_bits, HEADER_CLAIM_BIT, HEADER_CYCLE_BIT, header_with_weak};
 
 // Thread-local recursion depth counter for rc_dec destructor calls
 thread_local! {
@@ -33,7 +33,7 @@ pub unsafe extern "C" fn rc_inc(p: *mut c_void) {
             return;
         }
 
-        let header = obj_ptr as *mut AtomicU64;
+        let header = obj_ptr.cast::<AtomicU64>();
 
         // Optimized CAS loop: reduce redundant loads by reusing the initial load
         // Use Acquire ordering for consistency with rc_dec
@@ -54,8 +54,7 @@ pub unsafe extern "C" fn rc_inc(p: *mut c_void) {
                 if crate::RUNTIME_LOG.load(Ordering::Relaxed) {
                     let _ = io::stderr().write_all(
                         format!(
-                            "[oats runtime] rc_inc: reference count {} exceeds safe limit\n",
-                            rc
+                            "[oats runtime] rc_inc: reference count {rc} exceeds safe limit\n"
                         )
                         .as_bytes(),
                     );
@@ -63,16 +62,13 @@ pub unsafe extern "C" fn rc_inc(p: *mut c_void) {
                 break;
             }
             // Use checked arithmetic to prevent overflow
-            let new_rc = match rc.checked_add(1) {
-                Some(nrc) => nrc & HEADER_RC_MASK,
-                None => {
-                    if crate::RUNTIME_LOG.load(Ordering::Relaxed) {
-                        let _ = io::stderr().write_all(
-                            b"[oats runtime] rc_inc: integer overflow in reference count\n",
-                        );
-                    }
-                    break;
+            let new_rc = if let Some(nrc) = rc.checked_add(1) { nrc & HEADER_RC_MASK } else {
+                if crate::RUNTIME_LOG.load(Ordering::Relaxed) {
+                    let _ = io::stderr().write_all(
+                        b"[oats runtime] rc_inc: integer overflow in reference count\n",
+                    );
                 }
+                break;
             };
             let new_header = (old_header & HEADER_FLAGS_MASK) | new_rc;
             match (*header).compare_exchange_weak(
@@ -191,7 +187,7 @@ pub unsafe extern "C" fn rc_dec(p: *mut c_void) {
 
         if should_log {
             let _ = io::stdout()
-                .write_all(format!("[oats runtime] rc_dec called p={:p}\n", p).as_bytes());
+                .write_all(format!("[oats runtime] rc_dec called p={p:p}\n").as_bytes());
             let _ = io::stdout().flush();
         }
 
@@ -199,7 +195,7 @@ pub unsafe extern "C" fn rc_dec(p: *mut c_void) {
         if !crate::is_plausible_addr(p_addr) {
             if should_log {
                 let _ = io::stdout().write_all(
-                    format!("[oats runtime] rc_dec: implausible p={:p}, ignoring\n", p).as_bytes(),
+                    format!("[oats runtime] rc_dec: implausible p={p:p}, ignoring\n").as_bytes(),
                 );
                 let _ = io::stdout().flush();
             }
@@ -210,7 +206,7 @@ pub unsafe extern "C" fn rc_dec(p: *mut c_void) {
             return;
         }
 
-        let header = obj_ptr as *mut AtomicU64;
+        let header = obj_ptr.cast::<AtomicU64>();
 
         // Optimized CAS loop: reuse loaded values
         let mut old_header = (*header).load(Ordering::Acquire);
@@ -255,8 +251,7 @@ pub unsafe extern "C" fn rc_dec(p: *mut c_void) {
                             if should_log {
                                 let _ = io::stderr().write_all(
                                     format!(
-                                        "[oats runtime] rc_dec: recursion depth {} exceeded limit {}, deferring destructor for obj={:p}\n",
-                                        depth, MAX_RECURSION_DEPTH, obj_ptr
+                                        "[oats runtime] rc_dec: recursion depth {depth} exceeded limit {MAX_RECURSION_DEPTH}, deferring destructor for obj={obj_ptr:p}\n"
                                     ).as_bytes(),
                                 );
                                 let _ = io::stderr().flush();
@@ -286,8 +281,7 @@ pub unsafe extern "C" fn rc_dec(p: *mut c_void) {
 
                         let type_tag = (old_header >> HEADER_TYPE_TAG_SHIFT) as u32;
                         if type_tag == 1 {
-                            let dtor_ptr_ptr = (obj_ptr as *mut u8).add(std::mem::size_of::<u64>())
-                                as *mut *mut c_void;
+                            let dtor_ptr_ptr = obj_ptr.cast::<u8>().add(std::mem::size_of::<u64>()).cast::<*mut c_void>();
                             let dtor_raw = *dtor_ptr_ptr;
                             if !dtor_raw.is_null() {
                                 // Validate function pointer before transmute
@@ -312,8 +306,7 @@ pub unsafe extern "C" fn rc_dec(p: *mut c_void) {
                                     } else if should_log {
                                         let _ = io::stderr().write_all(
                                             format!(
-                                                "[oats runtime] rc_dec: destructor pointer {:p} has invalid alignment, skipping\n",
-                                                dtor_raw
+                                                "[oats runtime] rc_dec: destructor pointer {dtor_raw:p} has invalid alignment, skipping\n"
                                             ).as_bytes(),
                                         );
                                         let _ = io::stderr().flush();
@@ -321,8 +314,7 @@ pub unsafe extern "C" fn rc_dec(p: *mut c_void) {
                                 } else if should_log {
                                     let _ = io::stderr().write_all(
                                         format!(
-                                            "[oats runtime] rc_dec: invalid destructor pointer {:p}, skipping\n",
-                                            dtor_raw
+                                            "[oats runtime] rc_dec: invalid destructor pointer {dtor_raw:p}, skipping\n"
                                         ).as_bytes(),
                                     );
                                     let _ = io::stderr().flush();
@@ -339,7 +331,7 @@ pub unsafe extern "C" fn rc_dec(p: *mut c_void) {
                         if weak_count == 0 {
                             // No weak references, free immediately
                             std::sync::atomic::fence(Ordering::Acquire);
-                            let header_atomic = obj_ptr as *mut AtomicU64;
+                            let header_atomic = obj_ptr.cast::<AtomicU64>();
                             let _ = (*header_atomic).fetch_and(!HEADER_CLAIM_BIT, Ordering::AcqRel);
                             crate::runtime_free(obj_ptr);
                         } else {
@@ -395,7 +387,7 @@ pub unsafe extern "C" fn rc_weak_inc(p: *mut c_void) {
         if obj_ptr.is_null() {
             return;
         }
-        let header = obj_ptr as *mut AtomicU64;
+        let header = obj_ptr.cast::<AtomicU64>();
         let mut old_header = (*header).load(Ordering::Relaxed);
 
         // Early exit for static objects
@@ -412,8 +404,7 @@ pub unsafe extern "C" fn rc_weak_inc(p: *mut c_void) {
                 if crate::RUNTIME_LOG.load(Ordering::Relaxed) {
                     let _ = io::stderr().write_all(
                         format!(
-                            "[oats runtime] rc_weak_inc: weak reference count {} exceeds safe limit\n",
-                            weak
+                            "[oats runtime] rc_weak_inc: weak reference count {weak} exceeds safe limit\n"
                         )
                         .as_bytes(),
                     );
@@ -421,16 +412,13 @@ pub unsafe extern "C" fn rc_weak_inc(p: *mut c_void) {
                 break;
             }
             // Use checked arithmetic to prevent overflow
-            let new_weak = match weak.checked_add(1) {
-                Some(nw) => nw & 0xffffu64,
-                None => {
-                    if crate::RUNTIME_LOG.load(Ordering::Relaxed) {
-                        let _ = io::stderr().write_all(
-                            b"[oats runtime] rc_weak_inc: integer overflow in weak reference count\n",
-                        );
-                    }
-                    break;
+            let new_weak = if let Some(nw) = weak.checked_add(1) { nw & 0xffffu64 } else {
+                if crate::RUNTIME_LOG.load(Ordering::Relaxed) {
+                    let _ = io::stderr().write_all(
+                        b"[oats runtime] rc_weak_inc: integer overflow in weak reference count\n",
+                    );
                 }
+                break;
             };
             let new_header = header_with_weak(old_header, new_weak);
             match (*header).compare_exchange_weak(
@@ -469,7 +457,7 @@ pub unsafe extern "C" fn rc_weak_dec(p: *mut c_void) {
         if obj_ptr.is_null() {
             return;
         }
-        let header = obj_ptr as *mut AtomicU64;
+        let header = obj_ptr.cast::<AtomicU64>();
         let mut old_header = (*header).load(Ordering::Acquire);
 
         // Early exit for static objects
@@ -497,7 +485,7 @@ pub unsafe extern "C" fn rc_weak_dec(p: *mut c_void) {
                     let weak_after = header_get_weak_bits(new_header);
                     if strong == 0 && weak_after == 0 {
                         std::sync::atomic::fence(Ordering::Acquire);
-                        let header_atomic = obj_ptr as *mut AtomicU64;
+                        let header_atomic = obj_ptr.cast::<AtomicU64>();
                         let _ = (*header_atomic).fetch_and(!HEADER_CLAIM_BIT, Ordering::AcqRel);
                         crate::runtime_free(obj_ptr);
                     }
@@ -529,7 +517,7 @@ pub unsafe extern "C" fn rc_weak_upgrade(p: *mut c_void) -> *mut c_void {
             return ptr::null_mut();
         }
 
-        let header = obj_ptr as *mut AtomicU64;
+        let header = obj_ptr.cast::<AtomicU64>();
         let mut old_header = (*header).load(Ordering::Acquire);
 
         // Optimized loop: reuse loaded values
@@ -547,8 +535,7 @@ pub unsafe extern "C" fn rc_weak_upgrade(p: *mut c_void) -> *mut c_void {
                 if crate::RUNTIME_LOG.load(Ordering::Relaxed) {
                     let _ = io::stderr().write_all(
                         format!(
-                            "[oats runtime] rc_weak_upgrade: reference count {} exceeds safe limit\n",
-                            strong
+                            "[oats runtime] rc_weak_upgrade: reference count {strong} exceeds safe limit\n"
                         )
                         .as_bytes(),
                     );
@@ -556,16 +543,13 @@ pub unsafe extern "C" fn rc_weak_upgrade(p: *mut c_void) -> *mut c_void {
                 return ptr::null_mut();
             }
             // Use checked arithmetic to prevent overflow
-            let new_strong = match strong.checked_add(1) {
-                Some(ns) => ns & HEADER_RC_MASK,
-                None => {
-                    if crate::RUNTIME_LOG.load(Ordering::Relaxed) {
-                        let _ = io::stderr().write_all(
-                            b"[oats runtime] rc_weak_upgrade: integer overflow in reference count\n",
-                        );
-                    }
-                    return ptr::null_mut();
+            let new_strong = if let Some(ns) = strong.checked_add(1) { ns & HEADER_RC_MASK } else {
+                if crate::RUNTIME_LOG.load(Ordering::Relaxed) {
+                    let _ = io::stderr().write_all(
+                        b"[oats runtime] rc_weak_upgrade: integer overflow in reference count\n",
+                    );
                 }
+                return ptr::null_mut();
             };
             let new_header = (old_header & HEADER_FLAGS_MASK) | new_strong;
             match (*header).compare_exchange_weak(

@@ -160,7 +160,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         "failed to branch to cont from ready",
                     ));
                 }
-            };
+            }
 
             // pending: suspend if async lowering context exists by
             // saving live locals into the heap state and setting the
@@ -194,7 +194,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         && let Some(local_map) = &*self.async_local_name_to_slot.borrow()
                         && let Some(live_set) = live_sets.get((resume_idx - 1) as usize)
                     {
-                        for name in live_set.iter() {
+                        for name in live_set {
                             if let Some(slot_idx) = local_map.get(name)
                                 && let Some((
                                     alloca_ptr,
@@ -209,7 +209,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 let loaded = match self.builder.build_load(
                                     ty,
                                     alloca_ptr,
-                                    &format!("save_{}", name),
+                                    &format!("save_{name}"),
                                 ) {
                                     Ok(v) => v,
                                     Err(_) => {
@@ -303,12 +303,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     }
 
                     // Save the awaited promise into its slot so we can re-poll on resume
-                    let param_count = self.async_param_count.get() as u64;
+                    let param_count = u64::from(self.async_param_count.get());
                     let local_slot_count = self.async_local_slot_count.get() as u64;
                     let await_slot_offset = 16
                         + (param_count * 8)
                         + (local_slot_count * 8)
-                        + ((resume_idx as u64 - 1) * 8);
+                        + ((u64::from(resume_idx) - 1) * 8);
                     let base_int = match self.builder.build_ptr_to_int(
                         state_ptr,
                         self.i64_t,
@@ -393,7 +393,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             ));
                         }
                     };
-                    let resume_val = self.i32_t.const_int(resume_idx as u64, false);
+                    let resume_val = self.i32_t.const_int(u64::from(resume_idx), false);
                     let _ = self.builder.build_store(state_field_ptr, resume_val);
 
                     // return 0 (pending)

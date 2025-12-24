@@ -154,6 +154,7 @@ pub struct PackageNode {
 
 impl PackageNode {
     /// Get the absolute path to the package entry point
+    #[must_use] 
     pub fn entry_point(&self) -> PathBuf {
         self.manifest.entry_point(&self.root_dir)
     }
@@ -232,24 +233,21 @@ impl Manifest {
                 Dependency::Detailed(spec) => {
                     if spec.path.is_none() && spec.version.is_none() {
                         return Err(ToastyError::other(format!(
-                            "Dependency '{}' must specify either 'path' or 'version'",
-                            name
+                            "Dependency '{name}' must specify either 'path' or 'version'"
                         )));
                     }
                     if let Some(version) = &spec.version
                         && !is_valid_semver(version)
                     {
                         return Err(ToastyError::other(format!(
-                            "Dependency '{}' version '{}' is not a valid semantic version",
-                            name, version
+                            "Dependency '{name}' version '{version}' is not a valid semantic version"
                         )));
                     }
                 }
                 Dependency::Version(version) => {
                     if !is_valid_semver(version) {
                         return Err(ToastyError::other(format!(
-                            "Dependency '{}' version '{}' is not a valid semantic version",
-                            name, version
+                            "Dependency '{name}' version '{version}' is not a valid semantic version"
                         )));
                     }
                 }
@@ -260,6 +258,7 @@ impl Manifest {
     }
 
     /// Get the absolute path to the entry point for this package
+    #[must_use] 
     pub fn entry_point(&self, manifest_dir: &Path) -> PathBuf {
         manifest_dir.join(&self.package.entry)
     }
@@ -284,6 +283,7 @@ impl Manifest {
 /// 2. **Directory resolution**: Attempts `index.oats` for directories
 /// 3. **Index fallbacks**: Additional index file patterns for compatibility
 /// 4. **Security check**: Ensures resolved path is within project root
+#[must_use] 
 pub fn resolve_relative_import(from: &str, spec: &str, project_root: &Path) -> Option<String> {
     // Canonicalize the project root to ensure consistent path comparison
     let canonical_root = match std::fs::canonicalize(project_root) {
@@ -371,8 +371,7 @@ pub fn load_modules_with_verbosity(
     // Validate entry path exists and is readable
     if !std::path::Path::new(entry_path).exists() {
         return Err(ToastyError::other(format!(
-            "Entry file not found: {}",
-            entry_path
+            "Entry file not found: {entry_path}"
         )));
     }
 
@@ -391,7 +390,7 @@ pub fn load_modules_with_verbosity(
     // Compile regex once outside the loop
     use regex::Regex;
     let import_re = Regex::new(r#"import\s+.*?\s+from\s+["']([^"']+)["']"#).map_err(|e| {
-        ToastyError::other(format!("Failed to compile import regex pattern: {}", e))
+        ToastyError::other(format!("Failed to compile import regex pattern: {e}"))
     })?;
 
     // PHASE 1: Transitive module loading and dependency resolution
@@ -401,27 +400,23 @@ pub fn load_modules_with_verbosity(
         }
 
         if verbose {
-            eprintln!("Loading module: {}", path);
+            eprintln!("Loading module: {path}");
         }
 
         let src = std::fs::read_to_string(&path)
-            .map_err(|e| ToastyError::other(format!("Failed to read file {}: {}", path, e)))?;
+            .map_err(|e| ToastyError::other(format!("Failed to read file {path}: {e}")))?;
         let (parsed_opt, parse_diags) = oatsc::parser::parse_oats_module(&src, Some(&path))
-            .map_err(|e| ToastyError::other(format!("Failed to parse module {}: {}", path, e)))?;
+            .map_err(|e| ToastyError::other(format!("Failed to parse module {path}: {e}")))?;
 
         // Check if parsing was successful
-        let parsed = match parsed_opt {
-            Some(pm) => pm,
-            None => {
-                // Emit diagnostics for parsing failure
-                for diag in parse_diags {
-                    eprintln!("Parse error in {}: {}", path, diag.message);
-                }
-                return Err(ToastyError::other(format!(
-                    "Failed to parse module {}",
-                    path
-                )));
+        let parsed = if let Some(pm) = parsed_opt { pm } else {
+            // Emit diagnostics for parsing failure
+            for diag in parse_diags {
+                eprintln!("Parse error in {}: {}", path, diag.message);
             }
+            return Err(ToastyError::other(format!(
+                "Failed to parse module {path}"
+            )));
         };
 
         // Discover and enqueue relative imports from this module
@@ -437,7 +432,7 @@ pub fn load_modules_with_verbosity(
                     && !modules.contains_key(&imported_path)
                 {
                     if verbose {
-                        eprintln!("  Discovered new dependency: {}", imported_path);
+                        eprintln!("  Discovered new dependency: {imported_path}");
                     }
                     queue.push_back(imported_path);
                 }
@@ -470,8 +465,7 @@ pub fn build_dependency_graph(
     // Validate entry path exists
     if !std::path::Path::new(entry_path).exists() {
         return Err(ToastyError::other(format!(
-            "Entry file not found: {}",
-            entry_path
+            "Entry file not found: {entry_path}"
         )));
     }
 
@@ -494,41 +488,37 @@ pub fn build_dependency_graph(
     // Compile regex once outside the loop
     use regex::Regex;
     let import_re = Regex::new(r#"import\s+.*?\s+from\s+["']([^"']+)["']"#).map_err(|e| {
-        ToastyError::other(format!("Failed to compile import regex pattern: {}", e))
+        ToastyError::other(format!("Failed to compile import regex pattern: {e}"))
     })?;
 
     // PHASE 1: Build dependency graph
     while let Some(current_path) = queue.pop_front() {
         if verbose {
-            eprintln!("Analyzing dependencies for: {}", current_path);
+            eprintln!("Analyzing dependencies for: {current_path}");
         }
 
         // Parse the current file to discover imports
         let source = std::fs::read_to_string(&current_path).map_err(|e| {
-            ToastyError::other(format!("Failed to read file {}: {}", current_path, e))
+            ToastyError::other(format!("Failed to read file {current_path}: {e}"))
         })?;
         let (parsed_opt, parse_diags) =
             oatsc::parser::parse_oats_module(&source, Some(&current_path)).map_err(|e| {
-                ToastyError::other(format!("Failed to parse module {}: {}", current_path, e))
+                ToastyError::other(format!("Failed to parse module {current_path}: {e}"))
             })?;
 
         // Check if parsing was successful
-        let parsed = match parsed_opt {
-            Some(pm) => pm,
-            None => {
-                // Emit diagnostics for parsing failure
-                for diag in parse_diags {
-                    eprintln!("Parse error in {}: {}", current_path, diag.message);
-                }
-                continue;
+        let parsed = if let Some(pm) = parsed_opt { pm } else {
+            // Emit diagnostics for parsing failure
+            for diag in parse_diags {
+                eprintln!("Parse error in {}: {}", current_path, diag.message);
             }
+            continue;
         };
 
         // Get current node (verify it exists)
         let current_node = *node_indices.get(&current_path).ok_or_else(|| {
             ToastyError::other(format!(
-                "Internal error: node not found in dependency graph for path: {}",
-                current_path
+                "Internal error: node not found in dependency graph for path: {current_path}"
             ))
         })?;
 
@@ -552,7 +542,7 @@ pub fn build_dependency_graph(
                             node_indices.insert(imported_path.clone(), new_node);
                             queue.push_back(imported_path.clone());
                             if verbose {
-                                eprintln!("  Discovered new dependency: {}", imported_path);
+                                eprintln!("  Discovered new dependency: {imported_path}");
                             }
                             new_node
                         };
@@ -566,8 +556,7 @@ pub fn build_dependency_graph(
 
     let entry_node_index = *node_indices.get(&entry_str).ok_or_else(|| {
         ToastyError::other(format!(
-            "Internal error: entry node not found in dependency graph for path: {}",
-            entry_str
+            "Internal error: entry node not found in dependency graph for path: {entry_str}"
         ))
     })?;
     Ok((graph, node_indices, entry_node_index))
@@ -602,8 +591,7 @@ pub fn topological_sort(
             // Try to extract cycle information
             let cycle_info = format!("Cycle detected involving node {:?}", cycle.node_id());
             Err(ToastyError::other(format!(
-                "Dependency cycle: {}",
-                cycle_info
+                "Dependency cycle: {cycle_info}"
             )))
         }
     }
@@ -664,13 +652,13 @@ pub fn build_package_graph(
         let current_name = current_manifest.package.name.clone();
 
         if verbose {
-            eprintln!("Processing package: {}", current_name);
+            eprintln!("Processing package: {current_name}");
         }
 
         // Process each dependency
         for (dep_name, dep_spec) in &current_manifest.dependencies {
             if verbose {
-                eprintln!("  Checking dependency: {}", dep_name);
+                eprintln!("  Checking dependency: {dep_name}");
             }
 
             // Resolve dependency path
@@ -680,15 +668,13 @@ pub fn build_package_graph(
                         current_dir.join(path)
                     } else {
                         return Err(ToastyError::other(format!(
-                            "Dependency '{}' in package '{}' has no path specified (external dependencies not yet supported)",
-                            dep_name, current_name
+                            "Dependency '{dep_name}' in package '{current_name}' has no path specified (external dependencies not yet supported)"
                         )));
                     }
                 }
                 Dependency::Version(_) => {
                     return Err(ToastyError::other(format!(
-                        "External dependencies not yet supported (dependency '{}' in package '{}')",
-                        dep_name, current_name
+                        "External dependencies not yet supported (dependency '{dep_name}' in package '{current_name}')"
                     )));
                 }
             };

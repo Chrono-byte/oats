@@ -56,6 +56,7 @@ pub mod array;
 pub mod ffi;
 pub mod header;
 pub mod heap;
+pub mod number;
 pub mod object;
 pub mod rc;
 pub mod string;
@@ -97,11 +98,11 @@ pub static COLLECTOR_LOG: AtomicBool = AtomicBool::new(false);
 // Configurable via environment variables at runtime initialization.
 
 /// Maximum total heap allocation in bytes (default: 1 GB)
-/// Override with OATS_MAX_HEAP_BYTES environment variable
+/// Override with `OATS_MAX_HEAP_BYTES` environment variable
 static MAX_HEAP_BYTES: AtomicU64 = AtomicU64::new(1024 * 1024 * 1024);
 
 /// Maximum size for a single allocation in bytes (default: 256 MB)
-/// Override with OATS_MAX_ALLOC_BYTES environment variable
+/// Override with `OATS_MAX_ALLOC_BYTES` environment variable
 static MAX_ALLOC_BYTES: AtomicU64 = AtomicU64::new(256 * 1024 * 1024);
 
 /// Current total allocated bytes (tracked atomically)
@@ -182,7 +183,7 @@ pub fn add_root_candidate(p: *mut c_void) {
 }
 
 /// Validate a metadata block pointer: must be plausibly aligned/non-null and
-/// contain a reasonable length value (1..=max_len). Also check each offset is
+/// contain a reasonable length value (`1..=max_len`). Also check each offset is
 /// an 8-byte aligned positive value within a pragmatic object-size bound.
 ///
 /// Where to use:
@@ -196,6 +197,7 @@ pub fn add_root_candidate(p: *mut c_void) {
 /// `meta` must be a valid pointer to readable memory for at least the size of one `u64`,
 /// plus `max_len * sizeof(i32)` bytes if the header is valid. This function ensures
 /// that if it returns `true`, the full metadata block can be safely read.
+#[must_use] 
 pub unsafe fn validate_meta_block(meta: *const u64, max_len: usize) -> bool {
     unsafe {
         // Reject null pointers
@@ -228,7 +230,7 @@ pub unsafe fn validate_meta_block(meta: *const u64, max_len: usize) -> bool {
         const MIN_OFFSET: usize = 16; // header (8) + meta_slot (8)
 
         // Calculate the offsets array pointer and total required size
-        let offsets_ptr = meta.add(1) as *const i32;
+        let offsets_ptr = meta.add(1).cast::<i32>();
 
         // Check for arithmetic overflow in required size
         // let header_size = std::mem::size_of::<u64>();
@@ -314,7 +316,7 @@ pub use crate::object::{
 
 // --- Union helpers ---
 
-/// Minimal promise helpers (MVP): promise_resolve + promise_poll_into.
+/// Minimal promise helpers (MVP): `promise_resolve` + `promise_poll_into`.
 ///
 /// These are simple helpers to allow compiler wiring and initial testing of
 /// `async` lowering. They are intentionally minimal: `promise_resolve`
@@ -327,22 +329,22 @@ pub extern "C" fn promise_resolve(ptr: *mut std::ffi::c_void) -> *mut std::ffi::
     unsafe {
         // Allocate a tiny box to hold the pointer and a tag; use libc malloc
         let size = std::mem::size_of::<*mut std::ffi::c_void>() + 8;
-        let mem = runtime_malloc(size) as *mut u8;
+        let mem = runtime_malloc(size).cast::<u8>();
         if mem.is_null() {
             return std::ptr::null_mut();
         }
         // Store a magic sentinel (usize::MAX) at offset 0 to mark this as a resolved promise
-        let header_ptr = mem as *mut usize;
+        let header_ptr = mem.cast::<usize>();
         *header_ptr = usize::MAX; // Magic value to distinguish from wrapper/state
         // store the payload pointer at offset 8
-        let payload_ptr = mem.add(8) as *mut *mut std::ffi::c_void;
+        let payload_ptr = mem.add(8).cast::<*mut std::ffi::c_void>();
         *payload_ptr = ptr;
-        mem as *mut std::ffi::c_void
+        mem.cast::<std::ffi::c_void>()
     }
 }
 
 /// Poll a promise into `out_ptr`. Returns 1 if ready (and writes the
-/// resolved value into out_ptr as a pointer), or 0 if pending.
+/// resolved value into `out_ptr` as a pointer), or 0 if pending.
 #[unsafe(no_mangle)]
 pub extern "C" fn promise_poll_into(
     promise: *mut std::ffi::c_void,
@@ -364,7 +366,7 @@ pub extern "C" fn promise_poll_into(
         //    second word as the payload and return it as ready.
 
         // Read the first word
-        let first_ptr = promise as *mut *mut std::ffi::c_void;
+        let first_ptr = promise.cast::<*mut std::ffi::c_void>();
         let first_word = *first_ptr;
 
         // Check for resolved promise magic sentinel (usize::MAX)
@@ -372,9 +374,9 @@ pub extern "C" fn promise_poll_into(
         if first_as_usize == usize::MAX {
             // This is a resolved promise: [usize::MAX, payload]
             // Read payload at offset 8 and return it as ready
-            let payload_ptr = (promise as *mut u8).add(8) as *mut *mut std::ffi::c_void;
+            let payload_ptr = promise.cast::<u8>().add(8).cast::<*mut std::ffi::c_void>();
             let payload = *payload_ptr;
-            let out_slot = out_ptr as *mut *mut std::ffi::c_void;
+            let out_slot = out_ptr.cast::<*mut std::ffi::c_void>();
             *out_slot = payload;
             return 1;
         }
@@ -387,7 +389,7 @@ pub extern "C" fn promise_poll_into(
         }
 
         // Read second word at offset 8
-        let second_ptr = (promise as *mut u8).add(8) as *mut *mut std::ffi::c_void;
+        let second_ptr = promise.cast::<u8>().add(8).cast::<*mut std::ffi::c_void>();
         let second_word = *second_ptr;
         if second_word.is_null() {
             // Nothing useful; treat as pending
@@ -397,7 +399,7 @@ pub extern "C" fn promise_poll_into(
         // If the second word points to a state whose first word is a poll
         // function pointer, dispatch to it: this is the promise wrapper case
         // where promise -> [null, state_ptr].
-        let state_first = second_word as *mut *mut std::ffi::c_void;
+        let state_first = second_word.cast::<*mut std::ffi::c_void>();
         let state_first_word = *state_first;
         if !state_first_word.is_null() {
             let poll_fn: extern "C" fn(*mut std::ffi::c_void, *mut std::ffi::c_void) -> i32 =
@@ -408,7 +410,7 @@ pub extern "C" fn promise_poll_into(
         // Otherwise, treat second_word as a resolved payload (tiny resolver
         // format used by promise_resolve): write payload into out_ptr and
         // return ready.
-        let out_slot = out_ptr as *mut *mut std::ffi::c_void;
+        let out_slot = out_ptr.cast::<*mut std::ffi::c_void>();
         *out_slot = second_word;
         1
     }
@@ -428,15 +430,15 @@ pub extern "C" fn promise_new_from_state(
     // offset 8. Layout: [reserved/null (8)] [state_ptr (8)].
     unsafe {
         let size = std::mem::size_of::<*mut std::ffi::c_void>() * 2;
-        let mem = runtime_malloc(size) as *mut u8;
+        let mem = runtime_malloc(size).cast::<u8>();
         if mem.is_null() {
             return std::ptr::null_mut();
         }
-        let first = mem as *mut *mut std::ffi::c_void;
+        let first = mem.cast::<*mut std::ffi::c_void>();
         *first = std::ptr::null_mut();
-        let second = mem.add(8) as *mut *mut std::ffi::c_void;
+        let second = mem.add(8).cast::<*mut std::ffi::c_void>();
         *second = state_ptr;
-        mem as *mut std::ffi::c_void
+        mem.cast::<std::ffi::c_void>()
     }
 }
 
@@ -464,11 +466,11 @@ pub extern "C" fn executor_run() {
         let p = p_addr as *mut std::ffi::c_void;
         drop(q);
         unsafe {
-            let out_mem = runtime_malloc(std::mem::size_of::<*mut c_void>()) as *mut u8;
+            let out_mem = runtime_malloc(std::mem::size_of::<*mut c_void>()).cast::<u8>();
             if out_mem.is_null() {
                 continue;
             }
-            let ready = promise_poll_into(p, out_mem as *mut std::ffi::c_void);
+            let ready = promise_poll_into(p, out_mem.cast::<std::ffi::c_void>());
             if ready == 0 {
                 // not ready: re-enqueue
                 let Ok(mut q2) = exec.queue.lock() else {
@@ -477,7 +479,7 @@ pub extern "C" fn executor_run() {
                 q2.push_back(p as usize);
                 exec.cv.notify_one();
             } else {
-                runtime_free(out_mem as *mut c_void);
+                runtime_free(out_mem.cast::<c_void>());
                 // We don't free `p` because it may be the state object owned by the generator
             }
         }
@@ -524,18 +526,18 @@ fn init_executor() -> std::sync::Arc<Exec> {
                         let p = p_addr as *mut std::ffi::c_void;
                         unsafe {
                             let out_mem =
-                                runtime_malloc(std::mem::size_of::<*mut c_void>()) as *mut u8;
+                                runtime_malloc(std::mem::size_of::<*mut c_void>()).cast::<u8>();
                             if out_mem.is_null() {
                                 continue;
                             }
-                            let ready = promise_poll_into(p, out_mem as *mut std::ffi::c_void);
+                            let ready = promise_poll_into(p, out_mem.cast::<std::ffi::c_void>());
                             if ready == 0 {
                                 // not ready; re-enqueue
                                 let Ok(mut q2) = w.queue.lock() else { continue };
                                 q2.push_back(p as usize);
                                 w.cv.notify_one();
                             } else {
-                                runtime_free(out_mem as *mut c_void);
+                                runtime_free(out_mem.cast::<c_void>());
                             }
                         }
                     }
@@ -557,15 +559,15 @@ pub extern "C" fn waker_create_for_task(_task: *mut std::ffi::c_void) -> *mut st
     unsafe {
         // layout: [reserved 8][task_ptr 8]
         let size = std::mem::size_of::<*mut std::ffi::c_void>() * 2;
-        let mem = runtime_malloc(size) as *mut u8;
+        let mem = runtime_malloc(size).cast::<u8>();
         if mem.is_null() {
             return std::ptr::null_mut();
         }
-        let first = mem as *mut *mut std::ffi::c_void;
+        let first = mem.cast::<*mut std::ffi::c_void>();
         *first = std::ptr::null_mut();
-        let second = mem.add(8) as *mut *mut std::ffi::c_void;
+        let second = mem.add(8).cast::<*mut std::ffi::c_void>();
         *second = _task;
-        mem as *mut std::ffi::c_void
+        mem.cast::<std::ffi::c_void>()
     }
 }
 
@@ -575,7 +577,7 @@ pub extern "C" fn waker_wake(_w: *mut std::ffi::c_void) {
         return;
     }
     unsafe {
-        let task_ptr_ptr = (_w as *mut u8).add(8) as *mut *mut std::ffi::c_void;
+        let task_ptr_ptr = _w.cast::<u8>().add(8).cast::<*mut std::ffi::c_void>();
         let task = *task_ptr_ptr;
         if task.is_null() {
             return;

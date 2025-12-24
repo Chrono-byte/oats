@@ -12,7 +12,7 @@ use inkwell::values::BasicValue;
 use inkwell::values::BasicValueEnum;
 
 use crate::codegen::utils;
-use oxc_ast::ast::*;
+use oxc_ast::ast::Expression;
 
 /// Lower a literal expression (number, boolean, string, null)
 #[allow(clippy::result_large_err)]
@@ -52,7 +52,7 @@ pub fn lower_lit<'a>(
 
             // generate a unique global name for this string literal
             let id = codegen.next_str_id.get();
-            let name = format!("strlit.{}", id);
+            let name = format!("strlit.{id}");
             codegen
                 .next_str_id
                 .set(codegen.next_str_id.get().wrapping_add(1));
@@ -86,7 +86,7 @@ pub fn lower_lit<'a>(
         }
         Expression::BooleanLiteral(lit) => {
             let b = lit.value;
-            let iv = codegen.bool_t.const_int(if b { 1 } else { 0 }, false);
+            let iv = codegen.bool_t.const_int(u64::from(b), false);
             Ok(iv.as_basic_value_enum())
         }
         Expression::NullLiteral(_) => {
@@ -97,7 +97,7 @@ pub fn lower_lit<'a>(
         }
         _ => Err(Diagnostic::simple_boxed(
             Severity::Error,
-            format!("Unsupported literal type: {:?}", expr),
+            format!("Unsupported literal type: {expr:?}"),
         )),
     }
 }
@@ -330,7 +330,7 @@ pub fn lower_array<'a>(
                                 "operation failed",
                             ));
                         }
-                    };
+                    }
                 }
                 BasicValueEnum::IntValue(iv) => {
                     // store integer as-is into pointer slot (coerce as i8*)
@@ -374,7 +374,7 @@ pub fn lower_array<'a>(
                                 "operation failed",
                             ));
                         }
-                    };
+                    }
                     // The runtime increments the stored pointer. We must
                     // release our temporary ownership returned by
                     // `union_box_f64` to avoid leaking one refcount.
@@ -606,8 +606,7 @@ pub fn lower_object<'a>(
                                     return Err(Diagnostic::simple_with_span_boxed(
                                         Severity::Error,
                                         format!(
-                                            "unsupported field type in spread for field '{}'",
-                                            field_name
+                                            "unsupported field type in spread for field '{field_name}'"
                                         ),
                                         spread.span.start as usize,
                                     ));
@@ -618,7 +617,7 @@ pub fn lower_object<'a>(
                     } else {
                         return Err(Diagnostic::simple_with_span_boxed(
                             Severity::Error,
-                            format!("class '{}' has no registered fields", class_name),
+                            format!("class '{class_name}' has no registered fields"),
                             spread.span.start as usize,
                         ));
                     }
@@ -768,7 +767,7 @@ pub fn lower_template<'a>(
                 .struct_type(&[header_ty.into(), len_ty.into(), data_ty.into()], false);
 
             let id = codegen.next_str_id.get();
-            let name = format!("strlit.{}", id);
+            let name = format!("strlit.{id}");
             codegen.next_str_id.set(id.wrapping_add(1));
             let gv = codegen.module.add_global(struct_ty, None, &name);
 

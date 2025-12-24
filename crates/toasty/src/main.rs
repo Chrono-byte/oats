@@ -78,21 +78,20 @@ fn main_wrapper() -> i32 {
         let green = "\x1b[32;1m";
         let reset = "\x1b[0m";
 
-        eprintln!("{}error:{} {}", red, reset, err);
+        eprintln!("{red}error:{reset} {err}");
 
         // Provide context-specific help messages
         match &err {
             ToastyError::ManifestNotFound { path: _ } => {
                 eprintln!(
-                    "  {}help:{} Ensure you are in the root of an Oats project with Oats.toml",
-                    green, reset
+                    "  {green}help:{reset} Ensure you are in the root of an Oats project with Oats.toml"
                 );
                 eprintln!("         Or specify a source file directly");
             }
             ToastyError::LinkerFailed { stderr, .. } => {
-                eprintln!("  {}note:{} Linker output:", yellow, reset);
+                eprintln!("  {yellow}note:{reset} Linker output:");
                 for line in stderr.lines().take(10) {
-                    eprintln!("    {}", line);
+                    eprintln!("    {line}");
                 }
                 if stderr.lines().count() > 10 {
                     eprintln!("    ... (truncated)");
@@ -101,8 +100,7 @@ fn main_wrapper() -> i32 {
             ToastyError::Io { path: _, source } => {
                 if source.kind() == std::io::ErrorKind::NotFound {
                     eprintln!(
-                        "  {}help:{} Check that the file exists and the path is correct",
-                        green, reset
+                        "  {green}help:{reset} Check that the file exists and the path is correct"
                     );
                 }
             }

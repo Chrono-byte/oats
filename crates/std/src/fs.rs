@@ -27,7 +27,7 @@ use std::fs;
 ///     runtime_free_cstring(content);
 /// }
 /// ```
-/// #[oats_export]
+/// #[`oats_export`]
 #[no_mangle]
 pub unsafe extern "C" fn oats_std_fs_read_file(path: *const c_char) -> *mut c_char {
     if path.is_null() {
@@ -54,7 +54,7 @@ pub unsafe extern "C" fn oats_std_fs_read_file(path: *const c_char) -> *mut c_ch
 ///
 /// `path` and `content` must be valid pointers to null-terminated C strings, or null.
 /// If non-null, the strings must remain valid for the duration of this call.
-/// #[oats_export]
+/// #[`oats_export`]
 #[no_mangle]
 pub unsafe extern "C" fn oats_std_fs_write_file(
     path: *const c_char,
@@ -72,7 +72,7 @@ pub unsafe extern "C" fn oats_std_fs_write_file(
     let content_str = unsafe { CStr::from_ptr(content).to_string_lossy() };
 
     match fs::write(path_str, content_str.as_bytes()) {
-        Ok(_) => 0,
+        Ok(()) => 0,
         Err(e) => match e.kind() {
             std::io::ErrorKind::NotFound => -2,
             std::io::ErrorKind::PermissionDenied => -3,
@@ -87,7 +87,7 @@ pub unsafe extern "C" fn oats_std_fs_write_file(
 ///
 /// `path` must be a valid pointer to a null-terminated C string, or null.
 /// If non-null, the string must remain valid for the duration of this call.
-/// #[oats_export]
+/// #[`oats_export`]
 #[no_mangle]
 pub unsafe extern "C" fn oats_std_fs_file_exists(path: *const c_char) -> libc::c_int {
     if path.is_null() {
@@ -99,11 +99,7 @@ pub unsafe extern "C" fn oats_std_fs_file_exists(path: *const c_char) -> libc::c
         Err(_) => return 0,
     };
 
-    if std::path::Path::new(path_str).exists() {
-        1
-    } else {
-        0
-    }
+    i32::from(std::path::Path::new(path_str).exists())
 }
 
 /// Create directory recursively
@@ -112,7 +108,7 @@ pub unsafe extern "C" fn oats_std_fs_file_exists(path: *const c_char) -> libc::c
 ///
 /// `path` must be a valid pointer to a null-terminated C string, or null.
 /// If non-null, the string must remain valid for the duration of this call.
-/// #[oats_export]
+/// #[`oats_export`]
 #[no_mangle]
 pub unsafe extern "C" fn oats_std_fs_create_dir_all(path: *const c_char) -> libc::c_int {
     if path.is_null() {
@@ -125,7 +121,7 @@ pub unsafe extern "C" fn oats_std_fs_create_dir_all(path: *const c_char) -> libc
     };
 
     match fs::create_dir_all(path_str) {
-        Ok(_) => 0,
+        Ok(()) => 0,
         Err(e) => match e.kind() {
             std::io::ErrorKind::NotFound => -2,
             std::io::ErrorKind::PermissionDenied => -3,
@@ -140,7 +136,7 @@ pub unsafe extern "C" fn oats_std_fs_create_dir_all(path: *const c_char) -> libc
 ///
 /// `path` must be a valid pointer to a null-terminated C string, or null.
 /// If non-null, the string must remain valid for the duration of this call.
-/// #[oats_export]
+/// #[`oats_export`]
 #[no_mangle]
 pub unsafe extern "C" fn oats_std_fs_remove_file(path: *const c_char) -> libc::c_int {
     if path.is_null() {
@@ -153,7 +149,7 @@ pub unsafe extern "C" fn oats_std_fs_remove_file(path: *const c_char) -> libc::c
     };
 
     match fs::remove_file(path_str) {
-        Ok(_) => 0,
+        Ok(()) => 0,
         Err(e) => match e.kind() {
             std::io::ErrorKind::NotFound => -2,
             std::io::ErrorKind::PermissionDenied => -3,
@@ -168,7 +164,7 @@ pub unsafe extern "C" fn oats_std_fs_remove_file(path: *const c_char) -> libc::c
 ///
 /// `path` must be a valid pointer to a null-terminated C string, or null.
 /// If non-null, the string must remain valid for the duration of this call.
-/// #[oats_export]
+/// #[`oats_export`]
 #[no_mangle]
 pub unsafe extern "C" fn oats_std_fs_remove_dir(path: *const c_char) -> libc::c_int {
     if path.is_null() {
@@ -181,7 +177,7 @@ pub unsafe extern "C" fn oats_std_fs_remove_dir(path: *const c_char) -> libc::c_
     };
 
     match fs::remove_dir(path_str) {
-        Ok(_) => 0,
+        Ok(()) => 0,
         Err(e) => match e.kind() {
             std::io::ErrorKind::NotFound => -2,
             std::io::ErrorKind::PermissionDenied => -3,
@@ -196,7 +192,7 @@ pub unsafe extern "C" fn oats_std_fs_remove_dir(path: *const c_char) -> libc::c_
 ///
 /// `path` must be a valid pointer to a null-terminated C string, or null.
 /// If non-null, the string must remain valid for the duration of this call.
-/// #[oats_export]
+/// #[`oats_export`]
 #[no_mangle]
 pub unsafe extern "C" fn oats_std_fs_remove_dir_all(path: *const c_char) -> libc::c_int {
     if path.is_null() {
@@ -209,7 +205,7 @@ pub unsafe extern "C" fn oats_std_fs_remove_dir_all(path: *const c_char) -> libc
     };
 
     match fs::remove_dir_all(path_str) {
-        Ok(_) => 0,
+        Ok(()) => 0,
         Err(e) => match e.kind() {
             std::io::ErrorKind::NotFound => -2,
             std::io::ErrorKind::PermissionDenied => -3,
@@ -223,7 +219,7 @@ pub unsafe extern "C" fn oats_std_fs_remove_dir_all(path: *const c_char) -> libc
 /// # Safety
 ///
 /// `path` must be a valid pointer to a null-terminated C string, or null.
-/// #[oats_export]
+/// #[`oats_export`]
 #[no_mangle]
 pub unsafe extern "C" fn oats_std_fs_is_dir(path: *const c_char) -> libc::c_int {
     if path.is_null() {
@@ -235,11 +231,7 @@ pub unsafe extern "C" fn oats_std_fs_is_dir(path: *const c_char) -> libc::c_int 
         Err(_) => return 0,
     };
 
-    if std::path::Path::new(path_str).is_dir() {
-        1
-    } else {
-        0
-    }
+    i32::from(std::path::Path::new(path_str).is_dir())
 }
 
 /// Check if path is a file
@@ -247,7 +239,7 @@ pub unsafe extern "C" fn oats_std_fs_is_dir(path: *const c_char) -> libc::c_int 
 /// # Safety
 ///
 /// `path` must be a valid pointer to a null-terminated C string, or null.
-/// #[oats_export]
+/// #[`oats_export`]
 #[no_mangle]
 pub unsafe extern "C" fn oats_std_fs_is_file(path: *const c_char) -> libc::c_int {
     if path.is_null() {
@@ -259,11 +251,7 @@ pub unsafe extern "C" fn oats_std_fs_is_file(path: *const c_char) -> libc::c_int
         Err(_) => return 0,
     };
 
-    if std::path::Path::new(path_str).is_file() {
-        1
-    } else {
-        0
-    }
+    i32::from(std::path::Path::new(path_str).is_file())
 }
 
 /// Get file size in bytes
@@ -271,7 +259,7 @@ pub unsafe extern "C" fn oats_std_fs_is_file(path: *const c_char) -> libc::c_int
 /// # Safety
 ///
 /// `path` must be a valid pointer to a null-terminated C string, or null.
-/// #[oats_export]
+/// #[`oats_export`]
 #[no_mangle]
 pub unsafe extern "C" fn oats_std_fs_file_size(path: *const c_char) -> i64 {
     if path.is_null() {
@@ -294,7 +282,7 @@ pub unsafe extern "C" fn oats_std_fs_file_size(path: *const c_char) -> i64 {
 /// # Safety
 ///
 /// `path` must be a valid pointer to a null-terminated C string, or null.
-/// #[oats_export]
+/// #[`oats_export`]
 #[no_mangle]
 pub unsafe extern "C" fn oats_std_fs_read_dir(path: *const c_char) -> *mut *mut c_char {
     if path.is_null() {
@@ -326,7 +314,7 @@ pub unsafe extern "C" fn oats_std_fs_read_dir(path: *const c_char) -> *mut *mut 
 
     // Allocate array of pointers using runtime allocator for consistency
     let ptr_size = std::mem::size_of::<*mut c_char>();
-    let array_ptr = runtime_malloc((count + 1) * ptr_size) as *mut *mut c_char;
+    let array_ptr = runtime_malloc((count + 1) * ptr_size).cast::<*mut c_char>();
 
     if array_ptr.is_null() {
         return std::ptr::null_mut();
@@ -339,24 +327,21 @@ pub unsafe extern "C" fn oats_std_fs_read_dir(path: *const c_char) -> *mut *mut 
 
     // Convert each entry to CString and store pointer
     for (i, entry) in entries.iter().enumerate() {
-        match CString::new(entry.as_str()) {
-            Ok(cstring) => unsafe {
-                *array_ptr.add(i + 1) = cstring.into_raw();
-            },
-            Err(_) => {
-                // Cleanup on error - free CStrings and array
-                unsafe {
-                    for j in 0..i {
-                        let cstr_ptr = *array_ptr.add(j + 1);
-                        if !cstr_ptr.is_null() {
-                            // CString::from_raw will take ownership and free on drop
-                            let _ = CString::from_raw(cstr_ptr);
-                        }
+        if let Ok(cstring) = CString::new(entry.as_str()) { unsafe {
+            *array_ptr.add(i + 1) = cstring.into_raw();
+        } } else {
+            // Cleanup on error - free CStrings and array
+            unsafe {
+                for j in 0..i {
+                    let cstr_ptr = *array_ptr.add(j + 1);
+                    if !cstr_ptr.is_null() {
+                        // CString::from_raw will take ownership and free on drop
+                        let _ = CString::from_raw(cstr_ptr);
                     }
-                    runtime_free(array_ptr as *mut std::ffi::c_void);
                 }
-                return std::ptr::null_mut();
+                runtime_free(array_ptr.cast::<std::ffi::c_void>());
             }
+            return std::ptr::null_mut();
         }
     }
 
@@ -418,6 +403,6 @@ pub unsafe extern "C" fn oats_std_fs_read_dir_free(dir_result: *mut *mut c_char)
                 let _ = CString::from_raw(ptr);
             }
         }
-        runtime_free(dir_result as *mut std::ffi::c_void);
+        runtime_free(dir_result.cast::<std::ffi::c_void>());
     }
 }

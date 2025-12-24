@@ -3,12 +3,12 @@
 //! This module provides helper functions for creating test CodeGen instances,
 //! compiling code snippets, and asserting compilation results.
 
+use inkwell::context::Context;
+use inkwell::targets::{InitializationConfig, Target};
 use oatsc::codegen::CodeGen;
 use oatsc::diagnostics::{Diagnostic, Severity};
 use oatsc::parser;
-use oatsc::types::{OatsType, SymbolTable, FunctionSig};
-use inkwell::context::Context;
-use inkwell::targets::{InitializationConfig, Target};
+use oatsc::types::{FunctionSig, OatsType, SymbolTable};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
@@ -17,15 +17,13 @@ use std::collections::HashMap;
 /// This helper sets up a minimal CodeGen context with an LLVM module,
 /// suitable for unit testing individual codegen components.
 #[allow(dead_code)]
-pub fn create_test_codegen<'a>(
-    context: &'a Context,
-    source: &'a str,
-) -> CodeGen<'a> {
+pub fn create_test_codegen<'a>(context: &'a Context, source: &'a str) -> CodeGen<'a> {
     let module = context.create_module("test");
     let builder = context.create_builder();
 
     // Initialize LLVM targets
-    Target::initialize_native(&InitializationConfig::default()).unwrap();
+    Target::initialize_native(&InitializationConfig::default())
+        .expect("failed to initialize LLVM targets");
 
     use inkwell::AddressSpace;
 
@@ -53,6 +51,16 @@ pub fn create_test_codegen<'a>(
         fn_rc_inc: RefCell::new(None),
         fn_rc_dec: RefCell::new(None),
         fn_number_to_string: RefCell::new(None),
+        fn_number_is_nan: RefCell::new(None),
+        fn_number_is_finite: RefCell::new(None),
+        fn_number_is_infinite: RefCell::new(None),
+        fn_number_parse_float: RefCell::new(None),
+        fn_number_new: RefCell::new(None),
+        fn_number_is_nan_static: RefCell::new(None),
+        fn_number_is_finite_static: RefCell::new(None),
+        fn_number_is_integer: RefCell::new(None),
+        fn_number_parse_float_static: RefCell::new(None),
+        fn_number_parse_int: RefCell::new(None),
         fn_union_box_f64: RefCell::new(None),
         fn_union_box_ptr: RefCell::new(None),
         fn_union_unbox_f64: RefCell::new(None),
@@ -104,6 +112,8 @@ pub fn create_test_codegen<'a>(
         rta_results: None,
         uses_async: Cell::new(false),
         current_label: RefCell::new(None),
+        last_expr_oats_type: RefCell::new(None),
+        nested_generic_classes: RefCell::new(HashMap::new()),
     }
 }
 
@@ -114,12 +124,7 @@ pub fn parse_snippet(
     code: &str,
 ) -> Result<(parser::ParsedModule, Vec<Diagnostic>), Box<Diagnostic>> {
     let (parsed_mod_opt, diags) = parser::parse_oats_module(code, Some("test.oats"))
-        .map_err(|e| {
-            Diagnostic::simple_boxed(
-                Severity::Error,
-                format!("Parse error: {}", e),
-            )
-        })?;
+        .map_err(|e| Diagnostic::simple_boxed(Severity::Error, format!("Parse error: {}", e)))?;
 
     match parsed_mod_opt {
         Some(parsed_mod) => Ok((parsed_mod, diags)),
@@ -135,8 +140,7 @@ pub fn parse_snippet(
 /// Panics if compilation fails or produces errors.
 #[allow(dead_code)]
 pub fn assert_compiles(code: &str) {
-    let (parsed_mod, diags) = parse_snippet(code)
-        .expect("Code should parse successfully");
+    let (parsed_mod, diags) = parse_snippet(code).expect("Code should parse successfully");
 
     // Check for diagnostics
     let errors: Vec<_> = diags
@@ -178,10 +182,7 @@ pub fn assert_compilation_error(code: &str, expected_error: &str) {
                 );
             }
 
-            let error_messages: Vec<String> = errors
-                .iter()
-                .map(|d| d.message.clone())
-                .collect();
+            let error_messages: Vec<String> = errors.iter().map(|d| d.message.clone()).collect();
 
             let found = error_messages
                 .iter()
@@ -246,10 +247,7 @@ pub fn assert_diagnostic(
 
 /// Helper to create a test function signature.
 #[allow(dead_code)]
-pub fn create_test_function_sig(
-    params: Vec<OatsType>,
-    ret: OatsType,
-) -> FunctionSig {
+pub fn create_test_function_sig(params: Vec<OatsType>, ret: OatsType) -> FunctionSig {
     FunctionSig {
         type_params: vec![],
         params,
@@ -282,4 +280,3 @@ pub fn compile_to_ir(code: &str) -> Result<String, Box<Diagnostic>> {
     // Full compilation would require running the full builder pipeline
     Ok(get_llvm_ir(&codegen))
 }
-

@@ -45,7 +45,7 @@ Oats is an AOT compiler for TypeScript/JavaScript with low-level control. Curren
 - Arrow functions, loops, modules
 - ✅ Array destructuring patterns (`let [a, b, c] = arr`)
 - ✅ Object destructuring patterns (`{a, b}`, `{a: x, b: y}`, `{...rest}`)
-- ✅ Compound assignment operators (`+=`, `-=`, `*=`, `/=`, `%=`, `<<=`, `>>=`, `>>>=`, `&=`, `|=`, `^=`, `**=`)
+- ✅ Compound assignment operators (`+=`, `-=`, `*=`, `/=`, `%=`, `<<=`, `>>>=`, `&=`, `|=`, `^=`, `**=`)
 - ✅ Type aliases (`type Name<T> = Type`)
 - ✅ Interfaces (`interface Name extends Base? { members }`)
 - ✅ Enums (`enum Name { Variant = value? }`)
@@ -56,9 +56,15 @@ Oats is an AOT compiler for TypeScript/JavaScript with low-level control. Curren
 - ✅ Super expressions (`super.prop`, `super.method()`, `super(...)`)
 - ✅ Type literal types (`{ prop: type, method(): type }`)
 - ✅ Import/Export statements (AST and parser complete)
+- ✅ Switch statements (`switch (expr) { case ... default }`)
+- ✅ Try/Catch/Finally statements (`try { } catch (e) { } finally { }`)
 
 ### TODO
 
+- Enum codegen (AST/parser complete, needs runtime generation)
+- Generic class monomorphization (test_generics fails - requires type param handling)
+- Union unboxing for string concatenation (test_unions fails - needs union handling in binary_ops)
+- Super property/method access (test needed)
 - Advanced generics
 - Mapped/conditional types
 - Utility types
@@ -163,11 +169,16 @@ The following advanced TypeScript type system features are not yet implemented:
 ### Next Weeks
 
 - ✅ Enum AST/parser (complete)
-- Enum codegen
+- ✅ Switch statements (codegen complete)
+- ✅ Try/Catch/Finally statements (codegen complete)
+- ✅ Optional chaining (codegen complete)
+- Enum codegen (AST/parser complete)
 - Generic constraints
 - Access modifiers
 - Memory primitives
-- Codegen for newly added features (interfaces, type aliases, namespaces, etc.)
+- Codegen for newly added features (super property/method access)
+- Generic class monomorphization (test_generics fails)
+- Union unboxing for string concatenation (test_unions fails)
 
 ### Months
 

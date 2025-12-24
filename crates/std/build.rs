@@ -1,7 +1,7 @@
-//! Build script for oats_std
+//! Build script for `oats_std`
 //!
 //! This script automatically generates Oats type definitions (.d.ts files)
-//! from the Rust source code by parsing #[oats_export] attributes.
+//! from the Rust source code by parsing #[`oats_export`] attributes.
 
 use std::fs;
 use std::path::Path;
@@ -9,7 +9,7 @@ use std::path::Path;
 fn main() {
     // Create dist directory
     if let Err(e) = fs::create_dir_all("dist") {
-        eprintln!("Failed to create dist directory: {}", e);
+        eprintln!("Failed to create dist directory: {e}");
         std::process::exit(1);
     }
 
@@ -18,7 +18,7 @@ fn main() {
 
     // Write the type definitions to dist/lib.d.oats
     if let Err(e) = fs::write("dist/lib.d.oats", type_defs) {
-        eprintln!("Failed to write type definitions: {}", e);
+        eprintln!("Failed to write type definitions: {e}");
         std::process::exit(1);
     }
 
@@ -50,7 +50,7 @@ fn generate_type_definitions() -> String {
             if let Ok(content) = fs::read_to_string(file_path) {
                 let module_defs = parse_module(&content, module_name);
                 if !module_defs.is_empty() {
-                    output.push_str(&format!("declare namespace {} {{\n", module_name));
+                    output.push_str(&format!("declare namespace {module_name} {{\n"));
                     output.push_str(&module_defs);
                     output.push_str("}\n\n");
                 }
@@ -147,7 +147,7 @@ fn parse_function_signature(line: &str) -> Option<String> {
     };
 
     // Parse parameters
-    let params: Vec<&str> = params_str.split(',').map(|p| p.trim()).collect();
+    let params: Vec<&str> = params_str.split(',').map(str::trim).collect();
     let mut ts_params = Vec::new();
 
     for param in params {
@@ -158,7 +158,7 @@ fn parse_function_signature(line: &str) -> Option<String> {
         let param_name = param[..colon_pos].trim();
         let param_type = param[colon_pos + 1..].trim();
         let ts_type = rust_type_to_oats_type(param_type);
-        ts_params.push(format!("{}: {}", param_name, ts_type));
+        ts_params.push(format!("{param_name}: {ts_type}"));
     }
 
     let ts_return = rust_type_to_oats_type(return_type);

@@ -52,7 +52,7 @@ fn next_random() -> u64 {
 }
 
 /// Seed the random number generator
-/// #[oats_export]
+/// #[`oats_export`]
 #[no_mangle]
 pub extern "C" fn oats_std_random_seed(seed: u64) {
     RNG_STATE.with(|state| {
@@ -68,7 +68,7 @@ pub extern "C" fn oats_std_random_seed(seed: u64) {
 }
 
 /// Generate a random integer between 0 and max (exclusive)
-/// #[oats_export]
+/// #[`oats_export`]
 #[no_mangle]
 pub extern "C" fn oats_std_random_int(max: u64) -> u64 {
     if max == 0 {
@@ -79,16 +79,16 @@ pub extern "C" fn oats_std_random_int(max: u64) -> u64 {
 }
 
 /// Generate a random floating point number between 0.0 and 1.0
-/// #[oats_export]
+/// #[`oats_export`]
 #[no_mangle]
 pub extern "C" fn oats_std_random_float() -> c_double {
     init_rng();
     let r = next_random();
-    (r as c_double) / (0x7fffffff as c_double)
+    (r as c_double) / c_double::from(0x7fffffff)
 }
 
 /// Generate a random floating point number between min and max
-/// #[oats_export]
+/// #[`oats_export`]
 #[no_mangle]
 pub extern "C" fn oats_std_random_float_range(min: c_double, max: c_double) -> c_double {
     if max <= min {
@@ -99,12 +99,8 @@ pub extern "C" fn oats_std_random_float_range(min: c_double, max: c_double) -> c
 }
 
 /// Generate a random boolean
-/// #[oats_export]
+/// #[`oats_export`]
 #[no_mangle]
 pub extern "C" fn oats_std_random_bool() -> libc::c_int {
-    if oats_std_random_float() < 0.5 {
-        0
-    } else {
-        1
-    }
+    i32::from(oats_std_random_float() >= 0.5)
 }

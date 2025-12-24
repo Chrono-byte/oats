@@ -345,4 +345,3 @@ fn test_escape_promise_resolve() {
     "#;
     assert_compiles(code);
 }
-

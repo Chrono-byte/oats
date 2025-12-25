@@ -8,7 +8,7 @@ use inkwell::values::{BasicValue, PointerValue};
 
 // LocalEntry now includes an Option<String> for an optional nominal type name
 // LocalEntry now includes an Option<OatsType> for union tracking
-#[allow(dead_code)]
+
 type LocalEntry<'a> = (
     PointerValue<'a>,
     BasicTypeEnum<'a>,
@@ -21,7 +21,6 @@ type LocalEntry<'a> = (
 type LocalsStackLocal<'a> = Vec<HashMap<String, LocalEntry<'a>>>;
 
 impl<'a> crate::codegen::CodeGen<'a> {
-    #[allow(clippy::result_large_err)]
     pub(super) fn lower_await_expr(
         &self,
         await_expr: &oxc_ast::ast::AwaitExpression<'_>,
@@ -118,12 +117,13 @@ impl<'a> crate::codegen::CodeGen<'a> {
             let pending_bb = self.context.append_basic_block(function, "await_pending");
 
             // Use the pre-created cont block for this await (cont_0, cont_1, etc.)
-            let cont_bb = if let Some(cont_blocks) = &*self.async_cont_blocks.borrow() {
-                cont_blocks[(resume_idx - 1) as usize]
-            } else {
-                // Fallback: create local cont block if no async context
-                self.context.append_basic_block(function, "await_cont")
-            };
+            let cont_bb = self.async_cont_blocks.borrow().as_ref().map_or_else(
+                || {
+                    // Fallback: create local cont block if no async context
+                    self.context.append_basic_block(function, "await_cont")
+                },
+                |cont_blocks| cont_blocks[(resume_idx - 1) as usize],
+            );
 
             match self
                 .builder

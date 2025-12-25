@@ -11,7 +11,7 @@ use inkwell::values::PointerValue;
 
 // LocalEntry now includes an Option<String> for an optional nominal type name
 // LocalEntry now includes an Option<OatsType> for union tracking
-#[allow(dead_code)]
+
 type LocalEntry<'a> = (
     PointerValue<'a>,
     BasicTypeEnum<'a>,
@@ -27,7 +27,6 @@ type LocalsStackLocal<'a> = Vec<HashMap<String, LocalEntry<'a>>>;
 use crate::codegen::helpers::extract_basic_value_from_valuekind;
 
 impl<'a> crate::codegen::CodeGen<'a> {
-    #[allow(clippy::result_large_err)]
     pub(super) fn lower_assign_expr(
         &self,
         assign: &oxc_ast::ast::AssignmentExpression<'_>,
@@ -664,7 +663,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
                     // Try to evaluate the computed index as a compile-time constant
                     // Support both string literals (field names) and integer literals (field indices)
-                    let (field_idx, field_ty) = if let Some(class_name) = class_name_opt.clone() {
+                    let (field_idx, field_ty) = if let Some(class_name) = class_name_opt {
                         if let Some(fields) = self.class_fields.borrow().get(&class_name) {
                             // const_eval removed - check for string literal directly
                             if let oxc_ast::ast::Expression::StringLiteral(lit) =

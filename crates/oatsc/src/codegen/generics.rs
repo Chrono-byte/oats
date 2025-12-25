@@ -120,7 +120,7 @@ impl<'a> CodeGen<'a> {
         };
 
         // Obtain type parameter names: prefer fsig.type_params
-        let tp_names = fsig.type_params.clone();
+        let tp_names = &fsig.type_params;
 
         if tp_names.len() != type_args.len() {
             return Err(Diagnostic::simple_boxed(
@@ -177,7 +177,7 @@ impl<'a> CodeGen<'a> {
             .and_then(|rt| crate::types::map_ts_type_with_subst(&rt.type_annotation, &subst))
         {
             Some(ty) => ty,
-            None => fsig.ret.clone(),
+            None => fsig.ret,
         };
 
         // Build specialized name matching expected `_mono` pattern
@@ -192,9 +192,10 @@ impl<'a> CodeGen<'a> {
         }
 
         // Reserve mapping before emission to avoid recursion
+        let specialized_name_clone = specialized_name.clone();
         self.monomorphized_map
             .borrow_mut()
-            .insert(key.clone(), specialized_name.clone());
+            .insert(key.clone(), specialized_name_clone);
 
         // Emit the specialized function IR. gen_function_ir mutates the builder
         // insert point, so preserve and restore it.
@@ -285,9 +286,10 @@ impl<'a> CodeGen<'a> {
         }
 
         // Reserve mapping before emission to avoid recursion
+        let specialized_name_clone = specialized_name.clone();
         self.monomorphized_map
             .borrow_mut()
-            .insert(key.clone(), specialized_name.clone());
+            .insert(key, specialized_name_clone);
 
         // Generate the specialized class IR
         // Creates a modified class AST with substituted types
@@ -313,13 +315,13 @@ impl<'a> CodeGen<'a> {
         // Register in symbol table with original name as key, specialized name as value
         self.symbol_table
             .borrow_mut()
-            .insert_type(raw_name.clone(), specialized_name.to_string());
+            .insert_type(raw_name, specialized_name.to_string());
 
         // 1. Record parent class (none currently)
         let parent_name_opt = None;
         self.class_parents
             .borrow_mut()
-            .insert(specialized_name.to_string(), parent_name_opt.clone());
+            .insert(specialized_name.to_string(), parent_name_opt);
 
         // 2. Scan members for fields and constructor
         let mut fields = Vec::new();
@@ -395,7 +397,7 @@ impl<'a> CodeGen<'a> {
 
                     // Save current class parent for super calls
                     let old_parent = self.current_class_parent.borrow().clone();
-                    *self.current_class_parent.borrow_mut() = parent_name_opt.clone();
+                    *self.current_class_parent.borrow_mut() = None;
 
                     self.gen_function_ir(&fname, method_func, &params, &ret, Some("this"))?;
 
@@ -407,7 +409,7 @@ impl<'a> CodeGen<'a> {
         if let Some(ctor) = ctor_opt {
             // Save current class parent for constructor
             let old_parent = self.current_class_parent.borrow().clone();
-            *self.current_class_parent.borrow_mut() = parent_name_opt;
+            *self.current_class_parent.borrow_mut() = None;
 
             self.gen_constructor_ir(specialized_name, ctor, &fields, None)?;
 

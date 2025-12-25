@@ -54,7 +54,7 @@ pub mod utils;
 // helper modules. Use the same alias here so different files agree on the
 // in-memory representation of the locals stack.
 // LocalEntry now carries an optional OatsType as the seventh element for union tracking.
-#[allow(dead_code)]
+
 type LocalEntry<'a> = (
     PointerValue<'a>,               // alloca ptr
     BasicTypeEnum<'a>,              // LLVM type
@@ -133,14 +133,6 @@ pub struct CodeGen<'a> {
     pub fn_rc_dec: RefCell<Option<FunctionValue<'a>>>,
     /// Runtime function: `number_to_string`
     pub fn_number_to_string: RefCell<Option<FunctionValue<'a>>>,
-    /// Runtime function: `number_is_nan`
-    pub fn_number_is_nan: RefCell<Option<FunctionValue<'a>>>,
-    /// Runtime function: `number_is_finite`
-    pub fn_number_is_finite: RefCell<Option<FunctionValue<'a>>>,
-    /// Runtime function: `number_is_infinite`
-    pub fn_number_is_infinite: RefCell<Option<FunctionValue<'a>>>,
-    /// Runtime function: `number_parse_float`
-    pub fn_number_parse_float: RefCell<Option<FunctionValue<'a>>>,
     /// Runtime function: `number_new`
     pub fn_number_new: RefCell<Option<FunctionValue<'a>>>,
     /// Runtime function: `number_is_nan_static`
@@ -327,10 +319,10 @@ impl<'a> CodeGen<'a> {
     fn get_promise_resolve(&self) -> FunctionValue<'a> {
         // promise_resolve(i8*) -> i8*
         let fn_type = self.i8ptr_t.fn_type(&[self.i8ptr_t.into()], false);
-        match self.module.get_function("promise_resolve") {
-            Some(f) => f,
-            None => self.module.add_function("promise_resolve", fn_type, None),
-        }
+        self.module.get_function("promise_resolve").map_or_else(
+            || self.module.add_function("promise_resolve", fn_type, None),
+            std::convert::identity,
+        )
     }
 
     fn get_promise_poll_into(&self) -> FunctionValue<'a> {
@@ -338,21 +330,24 @@ impl<'a> CodeGen<'a> {
         let fn_type = self
             .i32_t
             .fn_type(&[self.i8ptr_t.into(), self.i8ptr_t.into()], false);
-        match self.module.get_function("promise_poll_into") {
-            Some(f) => f,
-            None => self.module.add_function("promise_poll_into", fn_type, None),
-        }
+        self.module.get_function("promise_poll_into").map_or_else(
+            || self.module.add_function("promise_poll_into", fn_type, None),
+            std::convert::identity,
+        )
     }
 
     fn get_promise_new_from_state(&self) -> FunctionValue<'a> {
         // promise_new_from_state(i8*) -> i8*
         let fn_type = self.i8ptr_t.fn_type(&[self.i8ptr_t.into()], false);
-        match self.module.get_function("promise_new_from_state") {
-            Some(f) => f,
-            None => self
-                .module
-                .add_function("promise_new_from_state", fn_type, None),
-        }
+        self.module
+            .get_function("promise_new_from_state")
+            .map_or_else(
+                || {
+                    self.module
+                        .add_function("promise_new_from_state", fn_type, None)
+                },
+                std::convert::identity,
+            )
     }
 
     fn get_executor_enqueue(&self) -> FunctionValue<'a> {
@@ -361,10 +356,10 @@ impl<'a> CodeGen<'a> {
             .context
             .void_type()
             .fn_type(&[self.i8ptr_t.into()], false);
-        match self.module.get_function("executor_enqueue") {
-            Some(f) => f,
-            None => self.module.add_function("executor_enqueue", fn_type, None),
-        }
+        self.module.get_function("executor_enqueue").map_or_else(
+            || self.module.add_function("executor_enqueue", fn_type, None),
+            std::convert::identity,
+        )
     }
 
     fn get_rc_dec(&self) -> FunctionValue<'a> {
@@ -394,66 +389,6 @@ impl<'a> CodeGen<'a> {
             None,
         );
         *self.fn_number_to_string.borrow_mut() = Some(f);
-        f
-    }
-
-    fn get_number_is_nan(&self) -> FunctionValue<'a> {
-        if let Some(f) = *self.fn_number_is_nan.borrow() {
-            return f;
-        }
-        // number_is_nan(f64) -> i64
-        let fn_type = self.i64_t.fn_type(&[self.f64_t.into()], false);
-        let f = self.module.add_function(
-            crate::runtime_functions::names::NUMBER_IS_NAN,
-            fn_type,
-            None,
-        );
-        *self.fn_number_is_nan.borrow_mut() = Some(f);
-        f
-    }
-
-    fn get_number_is_finite(&self) -> FunctionValue<'a> {
-        if let Some(f) = *self.fn_number_is_finite.borrow() {
-            return f;
-        }
-        // number_is_finite(f64) -> i64
-        let fn_type = self.i64_t.fn_type(&[self.f64_t.into()], false);
-        let f = self.module.add_function(
-            crate::runtime_functions::names::NUMBER_IS_FINITE,
-            fn_type,
-            None,
-        );
-        *self.fn_number_is_finite.borrow_mut() = Some(f);
-        f
-    }
-
-    fn get_number_is_infinite(&self) -> FunctionValue<'a> {
-        if let Some(f) = *self.fn_number_is_infinite.borrow() {
-            return f;
-        }
-        // number_is_infinite(f64) -> i64
-        let fn_type = self.i64_t.fn_type(&[self.f64_t.into()], false);
-        let f = self.module.add_function(
-            crate::runtime_functions::names::NUMBER_IS_INFINITE,
-            fn_type,
-            None,
-        );
-        *self.fn_number_is_infinite.borrow_mut() = Some(f);
-        f
-    }
-
-    fn get_number_parse_float(&self) -> FunctionValue<'a> {
-        if let Some(f) = *self.fn_number_parse_float.borrow() {
-            return f;
-        }
-        // number_parse_float(i8*) -> f64
-        let fn_type = self.f64_t.fn_type(&[self.i8ptr_t.into()], false);
-        let f = self.module.add_function(
-            crate::runtime_functions::names::NUMBER_PARSE_FLOAT,
-            fn_type,
-            None,
-        );
-        *self.fn_number_parse_float.borrow_mut() = Some(f);
         f
     }
 
@@ -666,52 +601,56 @@ impl<'a> CodeGen<'a> {
     }
 
     fn get_array_get_f64(&self) -> FunctionValue<'a> {
-        if let Some(f) = self.module.get_function("array_get_f64") {
-            f
-        } else {
-            let fn_type = self
-                .f64_t
-                .fn_type(&[self.i8ptr_t.into(), self.i64_t.into()], false);
-            self.module.add_function("array_get_f64", fn_type, None)
-        }
+        self.module.get_function("array_get_f64").map_or_else(
+            || {
+                let fn_type = self
+                    .f64_t
+                    .fn_type(&[self.i8ptr_t.into(), self.i64_t.into()], false);
+                self.module.add_function("array_get_f64", fn_type, None)
+            },
+            std::convert::identity,
+        )
     }
 
     fn get_array_get_ptr(&self) -> FunctionValue<'a> {
-        if let Some(f) = self.module.get_function("array_get_ptr") {
-            f
-        } else {
-            let fn_type = self
-                .i8ptr_t
-                .fn_type(&[self.i8ptr_t.into(), self.i64_t.into()], false);
-            self.module.add_function("array_get_ptr", fn_type, None)
-        }
+        self.module.get_function("array_get_ptr").map_or_else(
+            || {
+                let fn_type = self
+                    .i8ptr_t
+                    .fn_type(&[self.i8ptr_t.into(), self.i64_t.into()], false);
+                self.module.add_function("array_get_ptr", fn_type, None)
+            },
+            std::convert::identity,
+        )
     }
 
     fn get_array_get_length(&self) -> FunctionValue<'a> {
-        if let Some(f) = self.module.get_function("array_get_length") {
-            f
-        } else {
-            // array_get_length(arr_ptr: i8*) -> i64
-            let fn_type = self.i64_t.fn_type(&[self.i8ptr_t.into()], false);
-            self.module.add_function("array_get_length", fn_type, None)
-        }
+        self.module.get_function("array_get_length").map_or_else(
+            || {
+                // array_get_length(arr_ptr: i8*) -> i64
+                let fn_type = self.i64_t.fn_type(&[self.i8ptr_t.into()], false);
+                self.module.add_function("array_get_length", fn_type, None)
+            },
+            std::convert::identity,
+        )
     }
 
     fn get_array_set_ptr(&self) -> FunctionValue<'a> {
-        if let Some(f) = self.module.get_function("array_set_ptr") {
-            f
-        } else {
-            // array_set_ptr(arr_ptr: i8**, idx: i64, p: i8*) -> void
-            // Takes pointer-to-pointer to allow reallocation
-            // Represent i8** as pointer-to (i8*) type
-            // Build i8** by asking the Context for a pointer type in the default address space
-            let ptr_ptr_t = self.context.ptr_type(AddressSpace::default());
-            let fn_type = self.context.void_type().fn_type(
-                &[ptr_ptr_t.into(), self.i64_t.into(), self.i8ptr_t.into()],
-                false,
-            );
-            self.module.add_function("array_set_ptr", fn_type, None)
-        }
+        self.module.get_function("array_set_ptr").map_or_else(
+            || {
+                // array_set_ptr(arr_ptr: i8**, idx: i64, p: i8*) -> void
+                // Takes pointer-to-pointer to allow reallocation
+                // Represent i8** as pointer-to (i8*) type
+                // Build i8** by asking the Context for a pointer type in the default address space
+                let ptr_ptr_t = self.context.ptr_type(AddressSpace::default());
+                let fn_type = self.context.void_type().fn_type(
+                    &[ptr_ptr_t.into(), self.i64_t.into(), self.i8ptr_t.into()],
+                    false,
+                );
+                self.module.add_function("array_set_ptr", fn_type, None)
+            },
+            std::convert::identity,
+        )
     }
 
     // --- Main Function Generation ---

@@ -8,7 +8,7 @@ use inkwell::values::PointerValue;
 
 // LocalEntry now includes an Option<String> for an optional nominal type name
 // LocalEntry now includes an Option<OatsType> for union tracking
-#[allow(dead_code)]
+
 type LocalEntry<'a> = (
     PointerValue<'a>,
     BasicTypeEnum<'a>,
@@ -29,18 +29,21 @@ impl<'a> crate::codegen::CodeGen<'a> {
         _locals: &mut LocalsStackLocal<'a>,
     ) -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
         // `this` is always the first parameter in method functions
-        if let Some(pv) = function.get_nth_param(0) {
-            // Record that this expression originated from 'this'
-            self.last_expr_origin_local
-                .borrow_mut()
-                .replace("this".to_string());
-            Ok(pv)
-        } else {
-            Err(Diagnostic::simple_with_span_boxed(
-                Severity::Error,
-                "'this' used in function with no parameters",
-                this_expr.span.start as usize,
-            ))
-        }
+        function.get_nth_param(0).map_or_else(
+            || {
+                Err(Diagnostic::simple_with_span_boxed(
+                    Severity::Error,
+                    "'this' used in function with no parameters",
+                    this_expr.span.start as usize,
+                ))
+            },
+            |pv| {
+                // Record that this expression originated from 'this'
+                self.last_expr_origin_local
+                    .borrow_mut()
+                    .replace("this".to_string());
+                Ok(pv)
+            },
+        )
     }
 }

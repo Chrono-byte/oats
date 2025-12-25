@@ -11,7 +11,6 @@ use inkwell::values::FunctionValue;
 use oxc_ast::ast::BindingPatternKind;
 use std::collections::HashMap;
 
-#[allow(dead_code)]
 type LocalEntry<'a> = (
     inkwell::values::PointerValue<'a>,
     inkwell::types::BasicTypeEnum<'a>,
@@ -38,16 +37,16 @@ impl<'a> crate::codegen::CodeGen<'a> {
             "__exception_flag_{}",
             function.get_name().to_str().unwrap_or("unknown")
         );
-        let exception_flag_global =
-            if let Some(existing) = self.module.get_global(&exception_flag_name) {
-                existing
-            } else {
+        let exception_flag_global = self.module.get_global(&exception_flag_name).map_or_else(
+            || {
                 let i8_t = self.i8_t;
                 let exception_flag = self.module.add_global(i8_t, None, &exception_flag_name);
                 exception_flag.set_initializer(&i8_t.const_int(0, false));
                 exception_flag.set_linkage(inkwell::module::Linkage::Internal);
                 exception_flag
-            };
+            },
+            std::convert::identity,
+        );
 
         // Create basic blocks
         let try_block = self.context.append_basic_block(function, "try.block");
@@ -116,18 +115,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
             })?;
 
         // Branch based on exception flag
-        let next_block = if let Some(catch_bb) = catch_block {
-            catch_bb
-        } else if let Some(finally_bb) = finally_block {
-            finally_bb
-        } else {
-            merge_block
-        };
-        let normal_block = if let Some(finally_bb) = finally_block {
-            finally_bb
-        } else {
-            merge_block
-        };
+        let next_block = catch_block.or(finally_block).unwrap_or(merge_block);
+        let normal_block = finally_block.unwrap_or(merge_block);
         let _ = self
             .builder
             .build_conditional_branch(exception_occurred, next_block, normal_block);
@@ -247,16 +236,16 @@ impl<'a> crate::codegen::CodeGen<'a> {
             "__exception_flag_{}",
             function.get_name().to_str().unwrap_or("unknown")
         );
-        let exception_flag_global =
-            if let Some(existing) = self.module.get_global(&exception_flag_name) {
-                existing
-            } else {
+        let exception_flag_global = self.module.get_global(&exception_flag_name).map_or_else(
+            || {
                 let i8_t = self.i8_t;
                 let exception_flag = self.module.add_global(i8_t, None, &exception_flag_name);
                 exception_flag.set_initializer(&i8_t.const_int(0, false));
                 exception_flag.set_linkage(inkwell::module::Linkage::Internal);
                 exception_flag
-            };
+            },
+            std::convert::identity,
+        );
 
         // Set exception flag to 1 (exception thrown)
         let one = self.i8_t.const_int(1, false);

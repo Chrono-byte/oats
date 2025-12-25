@@ -15,7 +15,6 @@ use crate::codegen::utils;
 use oxc_ast::ast::Expression;
 
 /// Lower a literal expression (number, boolean, string, null)
-#[allow(clippy::result_large_err)]
 pub fn lower_lit<'a>(
     codegen: &crate::codegen::CodeGen<'a>,
     expr: &oxc_ast::ast::Expression<'_>,
@@ -103,7 +102,6 @@ pub fn lower_lit<'a>(
 }
 
 /// Lower an array literal expression
-#[allow(clippy::result_large_err)]
 pub fn lower_array<'a>(
     codegen: &crate::codegen::CodeGen<'a>,
     arr: &oxc_ast::ast::ArrayExpression<'_>,
@@ -394,7 +392,6 @@ pub fn lower_array<'a>(
 }
 
 /// Lower an object literal expression
-#[allow(clippy::result_large_err)]
 pub fn lower_object<'a>(
     codegen: &crate::codegen::CodeGen<'a>,
     obj_lit: &oxc_ast::ast::ObjectExpression<'_>,
@@ -725,7 +722,6 @@ pub fn lower_object<'a>(
 }
 
 /// Lower a template literal expression
-#[allow(clippy::result_large_err)]
 pub fn lower_template<'a>(
     codegen: &crate::codegen::CodeGen<'a>,
     tpl: &oxc_ast::ast::TemplateLiteral<'_>,
@@ -814,7 +810,7 @@ pub fn lower_template<'a>(
             Some(s) => s.to_string(),
             None => String::new(),
         };
-        let quasi_ptr = create_string_literal(codegen, &quasi_str)?;
+        let quasi_string_ptr = create_string_literal(codegen, &quasi_str)?;
 
         // Concatenate with result so far. If the current `result`
         // is a temporary (previous concat produced a fresh heap
@@ -825,7 +821,7 @@ pub fn lower_template<'a>(
                 .builder
                 .build_call(
                     concat_fn,
-                    &[prev.into(), quasi_ptr.into()],
+                    &[prev.into(), quasi_string_ptr.into()],
                     "tpl_concat_quasi",
                 )
                 .map_err(|_| Diagnostic::error("failed to build call"))?;
@@ -842,7 +838,7 @@ pub fn lower_template<'a>(
             // Using the quasi literal as the initial result. Quasi
             // literals are static (interned globals) so mark as not tmp.
             result_is_tmp = false;
-            Some(quasi_ptr)
+            Some(quasi_string_ptr)
         };
 
         // If there's a corresponding expression, evaluate it and convert to string

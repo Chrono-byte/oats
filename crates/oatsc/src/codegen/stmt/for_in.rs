@@ -8,7 +8,6 @@ use inkwell::values::{BasicValueEnum, FunctionValue};
 use oxc_ast::ast::{BindingPatternKind, Expression, ForInStatement, ForStatementLeft, Statement};
 use std::collections::HashMap;
 
-#[allow(dead_code)]
 type LocalEntry<'a> = (
     inkwell::values::PointerValue<'a>,
     inkwell::types::BasicTypeEnum<'a>,
@@ -72,7 +71,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     self.find_local(locals_stack, ident_name)
                     && let Some(nom) = nominal
                 {
-                    class_name_opt = Some(nom.clone());
+                    class_name_opt = Some(nom);
                     return;
                 }
                 if let Some(param_idx) = param_map.get(ident_name) {

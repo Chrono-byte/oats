@@ -4,7 +4,6 @@ use inkwell::values::{BasicValueEnum, FunctionValue};
 use oxc_ast::ast::{BindingPatternKind, ForOfStatement, ForStatementLeft, Statement};
 use std::collections::HashMap;
 
-#[allow(dead_code)]
 type LocalEntry<'a> = (
     inkwell::values::PointerValue<'a>,
     inkwell::types::BasicTypeEnum<'a>,
@@ -196,7 +195,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     initialized: true,
                                     is_const: false,
                                     is_weak: false,
-                                    nominal: declared_nominal.clone(),
+                                    nominal: declared_nominal,
                                     oats_type: None,
                                 },
                             );

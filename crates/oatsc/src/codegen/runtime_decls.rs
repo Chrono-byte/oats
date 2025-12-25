@@ -75,9 +75,7 @@ impl<'a> CodeGen<'a> {
         self.declare_function_if_missing("sleep_ms", &[self.f64_t.into()], None, |_| {});
 
         // Declare test-only helper when feature is enabled
-        if cfg!(feature = "collector-test") {
-            self.declare_function_if_missing("collector_test_enqueue", &[], None, |_| {});
-        }
+        self.declare_function_if_missing("collector_test_enqueue", &[], None, |_| {});
     }
 
     fn declare_print_functions(&self) {
@@ -318,11 +316,10 @@ impl<'a> CodeGen<'a> {
         if self.module.get_function(name).is_none() {
             use inkwell::types::BasicType;
             let params: Vec<_> = param_types.iter().map(|&t| t.into()).collect();
-            let ret_ty = if let Some(rt) = return_type {
-                rt.fn_type(&params, false)
-            } else {
-                self.context.void_type().fn_type(&params, false)
-            };
+            let ret_ty = return_type.map_or_else(
+                || self.context.void_type().fn_type(&params, false),
+                |rt| rt.fn_type(&params, false),
+            );
             let f = self.module.add_function(name, ret_ty, None);
             on_declare(f);
         }

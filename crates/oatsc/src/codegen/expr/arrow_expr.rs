@@ -10,7 +10,7 @@ use std::collections::HashMap;
 
 // LocalEntry now includes an Option<String> for an optional nominal type name
 // LocalEntry now includes an Option<OatsType> for union tracking
-#[allow(dead_code)]
+
 type LocalEntry<'a> = (
     inkwell::values::PointerValue<'a>,
     BasicTypeEnum<'a>,
@@ -23,7 +23,6 @@ type LocalEntry<'a> = (
 type LocalsStackLocal<'a> = Vec<HashMap<String, LocalEntry<'a>>>;
 
 impl<'a> CodeGen<'a> {
-    #[allow(clippy::result_large_err)]
     pub(super) fn lower_arrow_expr(
         &self,
         arrow: &ArrowFunctionExpression,
@@ -200,15 +199,12 @@ impl<'a> CodeGen<'a> {
         let mut param_types = Vec::new();
         for param in &arrow.params.items {
             // Extract type from parameter annotation, or default to Number
-            let param_type = if let Some(type_ann) = &param.pattern.type_annotation {
-                if let Some(mapped) = crate::types::map_ts_type(&type_ann.type_annotation) {
-                    mapped
-                } else {
-                    crate::types::OatsType::Number
-                }
-            } else {
-                crate::types::OatsType::Number
-            };
+            let param_type = param
+                .pattern
+                .type_annotation
+                .as_ref()
+                .and_then(|type_ann| crate::types::map_ts_type(&type_ann.type_annotation))
+                .unwrap_or(crate::types::OatsType::Number);
             param_types.push(param_type);
         }
 

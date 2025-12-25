@@ -326,7 +326,6 @@ impl<'a> crate::codegen::CodeGen<'a> {
     /// This function handles the generator-specific code generation for functions
     /// marked as generator. It creates a next function and a wrapper that returns
     /// a generator object.
-    #[allow(clippy::result_large_err)]
     pub fn gen_generator_function_ir(
         &self,
         func_name: &str,
@@ -388,7 +387,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         // Store generator lowering context in CodeGen BEFORE generating next body
         self.generator_yield_live_sets
             .borrow_mut()
-            .replace(yield_live_sets.clone());
+            .replace(yield_live_sets);
         self.generator_local_name_to_slot
             .borrow_mut()
             .replace(local_name_to_slot.clone());

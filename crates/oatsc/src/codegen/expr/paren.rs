@@ -7,7 +7,7 @@ use inkwell::values::PointerValue;
 
 // LocalEntry now includes an Option<String> for an optional nominal type name
 // LocalEntry now includes an Option<OatsType> for union tracking
-#[allow(dead_code)]
+
 type LocalEntry<'a> = (
     PointerValue<'a>,
     BasicTypeEnum<'a>,
@@ -20,7 +20,6 @@ type LocalEntry<'a> = (
 type LocalsStackLocal<'a> = Vec<HashMap<String, LocalEntry<'a>>>;
 
 impl<'a> crate::codegen::CodeGen<'a> {
-    #[allow(clippy::result_large_err)]
     pub(super) fn lower_paren_expr(
         &self,
         paren: &oxc_ast::ast::ParenthesizedExpression<'_>,

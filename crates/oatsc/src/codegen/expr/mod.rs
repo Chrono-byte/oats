@@ -42,7 +42,7 @@ pub mod yield_expr;
 
 // LocalEntry now includes an Option<String> for an optional nominal type name
 // LocalEntry now includes an Option<OatsType> for union tracking
-#[allow(dead_code)]
+
 type LocalEntry<'a> = (
     PointerValue<'a>,
     BasicTypeEnum<'a>,
@@ -114,7 +114,6 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 self.lower_super_expr(super_expr, function, param_map, locals)
             }
             Expression::CallExpression(call) => {
-                eprintln!("DEBUG: Found CallExpression: {call:?}");
                 self.lower_call_expr(call, function, param_map, locals)
             }
             // (Duplicate closure-call lowering removed; handled in the primary Call arm above.)
@@ -230,18 +229,20 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     // Check params
                     else if let Some(param_idx) = param_map.get(&ident_name) {
                         let fname = function.get_name().to_str().unwrap_or_default();
-                        if let Some(param_types) = self.fn_param_types.borrow().get(fname) {
-                            let idx = *param_idx as usize;
-                            if idx < param_types.len()
-                                && let crate::types::OatsType::NominalStruct(n) = &param_types[idx]
-                            {
-                                Some(n.clone())
-                            } else {
-                                None
-                            }
-                        } else {
-                            None
-                        }
+                        self.fn_param_types
+                            .borrow()
+                            .get(fname)
+                            .and_then(|param_types| {
+                                let idx = *param_idx as usize;
+                                if idx < param_types.len()
+                                    && let crate::types::OatsType::NominalStruct(n) =
+                                        &param_types[idx]
+                                {
+                                    Some(n.clone())
+                                } else {
+                                    None
+                                }
+                            })
                     }
                     // Check locals
                     else if let Some((_, _, _, _, _, nominal, _oats_type)) =
@@ -280,18 +281,20 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     // Check params
                     else if let Some(param_idx) = param_map.get(&ident_name) {
                         let fname = function.get_name().to_str().unwrap_or_default();
-                        if let Some(param_types) = self.fn_param_types.borrow().get(fname) {
-                            let idx = *param_idx as usize;
-                            if idx < param_types.len()
-                                && let crate::types::OatsType::NominalStruct(n) = &param_types[idx]
-                            {
-                                Some(n.clone())
-                            } else {
-                                None
-                            }
-                        } else {
-                            None
-                        }
+                        self.fn_param_types
+                            .borrow()
+                            .get(fname)
+                            .and_then(|param_types| {
+                                let idx = *param_idx as usize;
+                                if idx < param_types.len()
+                                    && let crate::types::OatsType::NominalStruct(n) =
+                                        &param_types[idx]
+                                {
+                                    Some(n.clone())
+                                } else {
+                                    None
+                                }
+                            })
                     }
                     // Check locals
                     else if let Some((_, _, _, _, _, nominal, _oats_type)) =

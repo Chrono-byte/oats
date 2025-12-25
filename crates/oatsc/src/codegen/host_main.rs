@@ -29,9 +29,7 @@ impl<'a> CodeGen<'a> {
         self.builder.position_at_end(entry);
 
         // Call oats_main (user defined or generated main function)
-        let oats_main = if let Some(f) = self.module.get_function("oats_main") {
-            f
-        } else {
+        let Some(oats_main) = self.module.get_function("oats_main") else {
             crate::diagnostics::emit_diagnostic(
                 &Diagnostic::simple_boxed(
                     Severity::Error,
@@ -83,36 +81,39 @@ impl<'a> CodeGen<'a> {
         if bv.get_type().is_int_type() {
             // Truncate or bitcast to i32 if needed
             let rv_int = bv.into_int_value();
-            if let Ok(c) = self
-                .builder
+            self.builder
                 .build_int_truncate_or_bit_cast(rv_int, i32_t, "ret_i32")
-            {
-                c
-            } else {
-                crate::diagnostics::emit_diagnostic(
-                    &Diagnostic::simple_boxed(
-                        Severity::Error,
-                        "int cast failed when building host main",
-                    ),
-                    Some(self.source),
-                );
-                i32_t.const_int(0, false)
-            }
+                .map_or_else(
+                    |_| {
+                        crate::diagnostics::emit_diagnostic(
+                            &Diagnostic::simple_boxed(
+                                Severity::Error,
+                                "int cast failed when building host main",
+                            ),
+                            Some(self.source),
+                        );
+                        i32_t.const_int(0, false)
+                    },
+                    std::convert::identity,
+                )
         } else if bv.get_type().is_float_type() {
             // cast float to i32 via fptosi
             let fv = bv.into_float_value();
-            if let Ok(c) = self.builder.build_float_to_signed_int(fv, i32_t, "f_to_i") {
-                c
-            } else {
-                crate::diagnostics::emit_diagnostic(
-                    &Diagnostic::simple_boxed(
-                        Severity::Error,
-                        "float->int conversion failed in host main",
-                    ),
-                    Some(self.source),
-                );
-                i32_t.const_int(0, false)
-            }
+            self.builder
+                .build_float_to_signed_int(fv, i32_t, "f_to_i")
+                .map_or_else(
+                    |_| {
+                        crate::diagnostics::emit_diagnostic(
+                            &Diagnostic::simple_boxed(
+                                Severity::Error,
+                                "float->int conversion failed in host main",
+                            ),
+                            Some(self.source),
+                        );
+                        i32_t.const_int(0, false)
+                    },
+                    std::convert::identity,
+                )
         } else {
             // pointer or unknown return -> return 0
             i32_t.const_int(0, false)

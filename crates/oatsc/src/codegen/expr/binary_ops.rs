@@ -10,7 +10,7 @@ use oxc_ast::ast::{BinaryOperator, Expression, UnaryOperator};
 
 // LocalEntry now includes an Option<String> for an optional nominal type name
 // LocalEntry now includes an Option<OatsType> for union tracking
-#[allow(dead_code)]
+
 type LocalEntry<'a> = (
     PointerValue<'a>,
     BasicTypeEnum<'a>,
@@ -23,7 +23,6 @@ type LocalEntry<'a> = (
 type LocalsStackLocal<'a> = Vec<HashMap<String, LocalEntry<'a>>>;
 
 impl<'a> crate::codegen::CodeGen<'a> {
-    #[allow(clippy::result_large_err)]
     pub(super) fn lower_binary_expr(
         &self,
         bin: &oxc_ast::ast::BinaryExpression<'_>,
@@ -42,7 +41,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         // This keeps the emitted IR small for the common guarded
         // branches used in tests and examples.
         if let Expression::UnaryExpression(unary) = &bin.left
-            && let UnaryOperator::Typeof = unary.operator
+            && unary.operator == UnaryOperator::Typeof
             && let Expression::StringLiteral(s_lit) = &bin.right
         {
             // Lower inner expression and then check union discriminant if it's a pointer
@@ -90,7 +89,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
         // Handle string concatenation BEFORE numeric coercion
         // If op is Add and at least one operand is a pointer (string), treat as string concat
-        if let BinaryOperator::Addition = bin.operator {
+        if bin.operator == BinaryOperator::Addition {
             // Convert numbers to strings if needed
             // Helper to convert a numeric value (IntValue or FloatValue) to string
             let num_to_string = |num_val: BasicValueEnum<'a>| -> crate::diagnostics::DiagnosticResult<PointerValue<'a>> {
@@ -433,7 +432,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         match (l, r) {
             (BasicValueEnum::PointerValue(lp), BasicValueEnum::PointerValue(rp)) => {
                 // Keep string concat behavior for Add
-                if let BinaryOperator::Addition = bin.operator {
+                if bin.operator == BinaryOperator::Addition {
                     if let Some(strcat) = self.module.get_function("str_concat") {
                         let call_site =
                             match self

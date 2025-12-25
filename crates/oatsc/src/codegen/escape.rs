@@ -339,14 +339,28 @@ impl EscapeAnalyzer {
             Expression::CallExpression(call) => {
                 // callee is an Expression in OXC; analyze it first
                 self.analyze_expr_with_depth(&call.callee, depth + 1);
+                // Check if callee is a StaticMemberExpression (e.g., console.log)
+                if let Expression::StaticMemberExpression(member) = &call.callee
+                    && let Expression::Identifier(obj_ident) = &member.object
+                    && obj_ident.name == "console"
+                    && member.property.name == "log"
+                {
+                    let func_name = "console.log".to_string();
+                    self.info.mark_escape_call(func_name);
+                    for arg in &call.arguments {
+                        if let Argument::SpreadElement(spread) = arg {
+                            self.analyze_expr_as_escaping_with_depth(&spread.argument, depth + 1);
+                        } else if let Some(expr_arg) = arg.as_expression() {
+                            self.analyze_expr_as_escaping_with_depth(expr_arg, depth + 1);
+                        }
+                    }
+                    return;
+                }
                 // If callee is an identifier of known escape-causing functions, mark all args
                 if let Expression::Identifier(ident) = &call.callee {
                     let func_name = ident.name.to_string();
-                    if matches!(
-                        func_name.as_str(),
-                        "console.log" | "setTimeout" | "setInterval"
-                    ) {
-                        self.info.mark_escape_call(func_name.clone());
+                    if matches!(func_name.as_str(), "setTimeout" | "setInterval") {
+                        self.info.mark_escape_call(func_name);
                         for arg in &call.arguments {
                             if let Argument::SpreadElement(spread) = arg {
                                 self.analyze_expr_as_escaping_with_depth(
@@ -497,7 +511,8 @@ impl EscapeAnalyzer {
                 // (variables captured by closures escape because the closure may outlive the function)
                 for var in captured {
                     if self.is_defined(&var) {
-                        self.info.mark_captured(var.clone());
+                        let var_clone = var.clone();
+                        self.info.mark_captured(var_clone);
                         self.info.mark_escaping(var);
                     }
                 }
@@ -632,7 +647,8 @@ impl EscapeAnalyzer {
             await_analyzer.analyze_stmts(&body.statements);
 
             for var in await_analyzer.await_live {
-                self.info.mark_await_live(var.clone());
+                let var_clone = var.clone();
+                self.info.mark_await_live(var_clone);
                 self.info.mark_escaping(var);
             }
         }

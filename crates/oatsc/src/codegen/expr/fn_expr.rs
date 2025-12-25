@@ -10,7 +10,6 @@ use crate::diagnostics::{Diagnostic, Severity};
 use inkwell::values::{BasicValue, BasicValueEnum, FunctionValue};
 use std::collections::HashMap;
 
-#[allow(dead_code)]
 type LocalEntry<'a> = (
     inkwell::values::PointerValue<'a>,
     inkwell::types::BasicTypeEnum<'a>,
@@ -28,7 +27,6 @@ impl<'a> CodeGen<'a> {
     /// Function expressions contain `Box<Function>` which has a different structure
     /// than `ArrowFunctionExpression`. Converts it to a closure similar to arrow functions,
     /// but note that function expressions have their own `this` binding (unlike arrow functions).
-    #[allow(clippy::result_large_err)]
     pub(super) fn lower_fn_expr(
         &self,
         fn_expr: &oxc_ast::ast::Function<'_>,

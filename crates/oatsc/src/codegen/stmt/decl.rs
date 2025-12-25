@@ -8,7 +8,6 @@ use oxc_ast::ast::{
 };
 use std::collections::HashMap;
 
-#[allow(dead_code)]
 type LocalEntry<'a> = (
     inkwell::values::PointerValue<'a>,
     inkwell::types::BasicTypeEnum<'a>,
@@ -156,7 +155,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
     /// Returns `Ok(true)` if the const was successfully evaluated and stored,
     /// meaning the caller should skip further lowering. Returns `Ok(false)` if
     /// the const should fall through to normal lowering (e.g., arrays/objects).
-    fn handle_const_decl(
+    const fn handle_const_decl(
         &self,
         _init: &Expression<'_>,
         var_decl: &VariableDeclaration<'_>,
@@ -979,7 +978,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             // Copy elements from source array to rest array
             // Loop from rest_pos to length, copying each element
             let array_get_ptr = self.get_array_get_ptr();
-            let array_set_ptr = self.get_array_set_ptr();
+            let array_set_function = self.get_array_set_ptr();
 
             // Create a loop to copy elements
             let loop_start_bb = self.context.append_basic_block(function, "rest_loop_start");
@@ -1066,7 +1065,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             let _ = self
                 .builder
                 .build_call(
-                    array_set_ptr,
+                    array_set_function,
                     &[rest_arr_ptr_alloca.into(), rest_idx.into(), src_elem.into()],
                     "set_rest_elem",
                 )

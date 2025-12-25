@@ -1,7 +1,6 @@
 use crate::diagnostics::Severity;
 use std::collections::HashMap;
 
-#[allow(dead_code)]
 type LocalEntry<'a> = (
     inkwell::values::PointerValue<'a>,
     inkwell::types::BasicTypeEnum<'a>,
@@ -28,23 +27,26 @@ impl<'a> crate::codegen::CodeGen<'a> {
         locals_stack: &mut Vec<HashMap<String, LocalEntry<'a>>>,
     ) -> crate::diagnostics::DiagnosticResult<bool> {
         // Find the target loop context
-        let target_ctx = if let Some(label) = break_stmt.label.as_ref() {
-            // Labeled break: find the loop with matching label
-            let label_str = label.name.as_str();
-            self.loop_context_stack
-                .borrow()
-                .iter()
-                .rev()
-                .find(|ctx| ctx.label.as_deref() == Some(label_str))
-                .cloned()
-        } else {
-            // Unlabeled break: use innermost loop
-            self.loop_context_stack.borrow().last().cloned()
-        };
+        let target_ctx = break_stmt.label.as_ref().map_or_else(
+            || {
+                // Unlabeled break: use innermost loop
+                self.loop_context_stack.borrow().last().cloned()
+            },
+            |label| {
+                // Labeled break: find the loop with matching label
+                let label_str = label.name.as_str();
+                self.loop_context_stack
+                    .borrow()
+                    .iter()
+                    .rev()
+                    .find(|ctx| ctx.label.as_deref() == Some(label_str))
+                    .cloned()
+            },
+        );
 
         if let Some(loop_ctx) = target_ctx {
             // Emit RC decrements for locals owned by the target loop
-            self._emit_rc_dec_for_locals_from(locals_stack, loop_ctx.locals_start);
+            self.emit_rc_dec_for_locals_from(locals_stack, loop_ctx.locals_start);
 
             // Branch to break block
             let _ = self
@@ -65,23 +67,26 @@ impl<'a> crate::codegen::CodeGen<'a> {
         locals_stack: &mut Vec<HashMap<String, LocalEntry<'a>>>,
     ) -> crate::diagnostics::DiagnosticResult<bool> {
         // Find the target loop context
-        let target_ctx = if let Some(label) = continue_stmt.label.as_ref() {
-            // Labeled continue: find the loop with matching label
-            let label_str = label.name.as_str();
-            self.loop_context_stack
-                .borrow()
-                .iter()
-                .rev()
-                .find(|ctx| ctx.label.as_deref() == Some(label_str))
-                .cloned()
-        } else {
-            // Unlabeled continue: use innermost loop
-            self.loop_context_stack.borrow().last().cloned()
-        };
+        let target_ctx = continue_stmt.label.as_ref().map_or_else(
+            || {
+                // Unlabeled continue: use innermost loop
+                self.loop_context_stack.borrow().last().cloned()
+            },
+            |label| {
+                // Labeled continue: find the loop with matching label
+                let label_str = label.name.as_str();
+                self.loop_context_stack
+                    .borrow()
+                    .iter()
+                    .rev()
+                    .find(|ctx| ctx.label.as_deref() == Some(label_str))
+                    .cloned()
+            },
+        );
 
         if let Some(loop_ctx) = target_ctx {
             // Emit RC decrements for locals owned by the target loop
-            self._emit_rc_dec_for_locals_from(locals_stack, loop_ctx.locals_start);
+            self.emit_rc_dec_for_locals_from(locals_stack, loop_ctx.locals_start);
 
             // Branch to continue block
             let _ = self

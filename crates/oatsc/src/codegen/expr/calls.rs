@@ -11,7 +11,6 @@ use std::collections::HashMap;
 
 type CallExpr<'a> = CallExpression<'a>;
 
-#[allow(dead_code)]
 type LocalEntry<'a> = (
     PointerValue<'a>,
     BasicTypeEnum<'a>,
@@ -24,7 +23,6 @@ type LocalEntry<'a> = (
 
 impl<'a> CodeGen<'a> {
     /// Lower Call expression (function calls, method calls, super calls, closures).
-    #[allow(clippy::result_large_err)]
     pub(super) fn lower_call_expr(
         &self,
         call: &CallExpr,
@@ -32,7 +30,6 @@ impl<'a> CodeGen<'a> {
         param_map: &HashMap<String, u32>,
         locals: &mut Vec<HashMap<String, LocalEntry<'a>>>,
     ) -> crate::diagnostics::DiagnosticResult<inkwell::values::BasicValueEnum<'a>> {
-        eprintln!("DEBUG: lower_call_expr: entered for {:?}", call.callee);
         // Support simple identifier callees and member-callee method calls.
         //
         // Intentionally supports a small set of call shapes in the
@@ -191,14 +188,9 @@ impl<'a> CodeGen<'a> {
     ) -> crate::diagnostics::DiagnosticResult<inkwell::values::BasicValueEnum<'a>> {
         let prop_name = member.property.name.to_string();
 
-        // Debug: Print what is being processed
-        eprintln!("DEBUG: lower_static_member_call: obj_name检查, prop_name={prop_name}");
-
         // Get object name if it's an identifier
         let obj_name = if let Expression::Identifier(obj_ident) = &member.object {
-            let name = obj_ident.name.to_string();
-            eprintln!("DEBUG: obj_name={name}");
-            name
+            obj_ident.name.to_string()
         } else {
             return Err(Diagnostic::simple_with_span_boxed(
                 Severity::Error,
@@ -347,6 +339,53 @@ impl<'a> CodeGen<'a> {
         param_map: &HashMap<String, u32>,
         locals: &mut Vec<HashMap<String, LocalEntry<'a>>>,
     ) -> crate::diagnostics::DiagnosticResult<inkwell::values::BasicValueEnum<'a>> {
+        // Ensure console functions are declared in the module
+        let void_t = self.context.void_type();
+        let i8ptr_t = self.i8ptr_t;
+        let f64_t = self.f64_t;
+        let i32_t = self.i32_t;
+
+        if self.module.get_function("oats_std_console_log").is_none() {
+            self.module.add_function(
+                crate::runtime_functions::names::STD_CONSOLE_LOG,
+                void_t.fn_type(&[i8ptr_t.into()], false),
+                None,
+            );
+        }
+        if self
+            .module
+            .get_function("oats_std_console_log_number")
+            .is_none()
+        {
+            self.module.add_function(
+                "oats_std_console_log_number",
+                void_t.fn_type(&[f64_t.into()], false),
+                None,
+            );
+        }
+        if self
+            .module
+            .get_function("oats_std_console_log_int")
+            .is_none()
+        {
+            self.module.add_function(
+                "oats_std_console_log_int",
+                void_t.fn_type(&[i32_t.into()], false),
+                None,
+            );
+        }
+        if self
+            .module
+            .get_function("oats_std_console_log_newline")
+            .is_none()
+        {
+            self.module.add_function(
+                "oats_std_console_log_newline",
+                void_t.fn_type(&[], false),
+                None,
+            );
+        }
+
         // Handle no arguments - print newline
         if call.arguments.is_empty() {
             if let Some(fv) = self.module.get_function("oats_std_console_log_newline") {
@@ -574,9 +613,15 @@ impl<'a> CodeGen<'a> {
                 BasicValueEnum::FloatValue(fv_val) => {
                     // Number - use number version
                     if let Some(fv) = self.module.get_function("oats_std_console_log_number") {
-                        let _ = self
-                            .builder
-                            .build_call(fv, &[fv_val.into()], "console_log_number");
+                        self.builder
+                            .build_call(fv, &[fv_val.into()], "console_log_number")
+                            .map_err(|e| {
+                                Diagnostic::simple_with_span_boxed(
+                                    Severity::Error,
+                                    format!("Failed to build console.log call: {e:?}"),
+                                    call.span.start as usize,
+                                )
+                            })?;
                         return Ok(self.f64_t.const_float(0.0).as_basic_value_enum());
                     }
                     return Err(Diagnostic::simple_with_span_boxed(
@@ -600,31 +645,28 @@ impl<'a> CodeGen<'a> {
                             "oats_std_console_log_int not found",
                             call.span.start as usize,
                         ));
-                    } else {
-                        // i64 or other - convert to f64 and use number version
-                        let f64_val = self
-                            .builder
-                            .build_signed_int_to_float(iv_val, self.f64_t, "int_to_f64")
-                            .map_err(|_| {
-                                Diagnostic::simple_boxed(
-                                    Severity::Error,
-                                    "failed to convert int to float",
-                                )
-                            })?;
-                        if let Some(fv) = self.module.get_function("oats_std_console_log_number") {
-                            let _ = self.builder.build_call(
-                                fv,
-                                &[f64_val.into()],
-                                "console_log_number",
-                            );
-                            return Ok(self.f64_t.const_float(0.0).as_basic_value_enum());
-                        }
-                        return Err(Diagnostic::simple_with_span_boxed(
-                            Severity::Error,
-                            "oats_std_console_log_number not found",
-                            call.span.start as usize,
-                        ));
                     }
+                    // i64 or other - convert to f64 and use number version
+                    let f64_val = self
+                        .builder
+                        .build_signed_int_to_float(iv_val, self.f64_t, "int_to_f64")
+                        .map_err(|_| {
+                            Diagnostic::simple_boxed(
+                                Severity::Error,
+                                "failed to convert int to float",
+                            )
+                        })?;
+                    if let Some(fv) = self.module.get_function("oats_std_console_log_number") {
+                        let _ =
+                            self.builder
+                                .build_call(fv, &[f64_val.into()], "console_log_number");
+                        return Ok(self.f64_t.const_float(0.0).as_basic_value_enum());
+                    }
+                    return Err(Diagnostic::simple_with_span_boxed(
+                        Severity::Error,
+                        "oats_std_console_log_number not found",
+                        call.span.start as usize,
+                    ));
                 }
                 _ => {
                     // Other types (arrays, structs, vectors) - convert to string
@@ -845,10 +887,9 @@ impl<'a> CodeGen<'a> {
                     let either = cs.try_as_basic_value();
                     if let inkwell::values::ValueKind::Basic(bv) = either {
                         return Ok(bv);
-                    } else {
-                        let zero = self.f64_t.const_float(0.0);
-                        return Ok(zero.as_basic_value_enum());
                     }
+                    let zero = self.f64_t.const_float(0.0);
+                    return Ok(zero.as_basic_value_enum());
                 }
             }
 
@@ -929,10 +970,9 @@ impl<'a> CodeGen<'a> {
             let either = cs.try_as_basic_value();
             if let inkwell::values::ValueKind::Basic(bv) = either {
                 return Ok(bv);
-            } else {
-                let zero = self.f64_t.const_float(0.0);
-                return Ok(zero.as_basic_value_enum());
             }
+            let zero = self.f64_t.const_float(0.0);
+            return Ok(zero.as_basic_value_enum());
         }
 
         // Check if it's a direct function call (fallback for global functions not in symbol table)
@@ -964,10 +1004,9 @@ impl<'a> CodeGen<'a> {
             let either = cs.try_as_basic_value();
             if let inkwell::values::ValueKind::Basic(bv) = either {
                 return Ok(bv);
-            } else {
-                let zero = self.f64_t.const_float(0.0);
-                return Ok(zero.as_basic_value_enum());
             }
+            let zero = self.f64_t.const_float(0.0);
+            return Ok(zero.as_basic_value_enum());
         }
 
         // Check for nested generic functions
@@ -1027,10 +1066,9 @@ impl<'a> CodeGen<'a> {
                     let either = cs.try_as_basic_value();
                     if let inkwell::values::ValueKind::Basic(bv) = either {
                         return Ok(bv);
-                    } else {
-                        let zero = self.f64_t.const_float(0.0);
-                        return Ok(zero.as_basic_value_enum());
                     }
+                    let zero = self.f64_t.const_float(0.0);
+                    return Ok(zero.as_basic_value_enum());
                 }
             }
         }

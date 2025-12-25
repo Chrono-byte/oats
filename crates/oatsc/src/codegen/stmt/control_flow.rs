@@ -6,7 +6,6 @@ use oxc_ast::ast::{
     DoWhileStatement, ForStatement, ForStatementInit, IfStatement, Statement, WhileStatement,
 };
 
-#[allow(dead_code)]
 type LocalEntry<'a> = (
     inkwell::values::PointerValue<'a>,
     inkwell::types::BasicTypeEnum<'a>,

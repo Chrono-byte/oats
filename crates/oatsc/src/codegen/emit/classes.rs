@@ -29,14 +29,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
         };
 
         // Check if this is a generic class
-        let type_params = if let Some(tp) = &c.type_parameters {
-            tp.params
-                .iter()
-                .map(|p| p.name.name.to_string())
-                .collect::<Vec<_>>()
-        } else {
-            Vec::new()
-        };
+        let type_params = c.type_parameters.as_ref().map_or_else(Vec::new, |tp| {
+            tp.params.iter().map(|p| p.name.name.to_string()).collect()
+        });
 
         // If generic, create a substitution that replaces type parameters with unions
         let subst = if type_params.is_empty() {
@@ -106,38 +101,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         PropertyKey::StringLiteral(s) => s.value.to_string(),
                         _ => continue,
                     };
-                    let ptype = if let Some(ann) = &p.type_annotation {
-                        if let Some(ref s) = subst {
-                            crate::types::map_ts_type_with_subst_and_aliases(
-                                &ann.type_annotation,
-                                s,
-                                Some(&*self.type_aliases.borrow()),
-                                Some(&*self.symbol_table.borrow()),
-                            )
-                        } else {
-                            crate::types::map_ts_type_with_aliases(
-                                &ann.type_annotation,
-                                Some(&*self.type_aliases.borrow()),
-                                Some(&*self.symbol_table.borrow()),
-                            )
-                        }
-                        .unwrap_or(crate::types::OatsType::Number)
-                    } else {
-                        crate::types::OatsType::Number
-                    };
-                    fields.push((pname, ptype));
-                }
-                _ => {}
-            }
-        }
-
-        // Add shorthand properties from constructor if found
-        if let Some(ctor) = ctor_opt {
-            for param in &ctor.value.params.items {
-                if let BindingPatternKind::BindingIdentifier(ident) = &param.pattern.kind {
-                    let pname = ident.name.to_string();
-                    if !fields.iter().any(|(n, _)| n == &pname) {
-                        let ptype = if let Some(ann) = &param.pattern.type_annotation {
+                    let ptype = p.type_annotation.as_ref().map_or_else(
+                        || crate::types::OatsType::Number,
+                        |ann| {
                             if let Some(ref s) = subst {
                                 crate::types::map_ts_type_with_subst_and_aliases(
                                     &ann.type_annotation,
@@ -153,9 +119,40 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 )
                             }
                             .unwrap_or(crate::types::OatsType::Number)
-                        } else {
-                            crate::types::OatsType::Number
-                        };
+                        },
+                    );
+                    fields.push((pname, ptype));
+                }
+                _ => {}
+            }
+        }
+
+        // Add shorthand properties from constructor if found
+        if let Some(ctor) = ctor_opt {
+            for param in &ctor.value.params.items {
+                if let BindingPatternKind::BindingIdentifier(ident) = &param.pattern.kind {
+                    let pname = ident.name.to_string();
+                    if !fields.iter().any(|(n, _)| n == &pname) {
+                        let ptype = param.pattern.type_annotation.as_ref().map_or_else(
+                            || crate::types::OatsType::Number,
+                            |ann| {
+                                if let Some(ref s) = subst {
+                                    crate::types::map_ts_type_with_subst_and_aliases(
+                                        &ann.type_annotation,
+                                        s,
+                                        Some(&*self.type_aliases.borrow()),
+                                        Some(&*self.symbol_table.borrow()),
+                                    )
+                                } else {
+                                    crate::types::map_ts_type_with_aliases(
+                                        &ann.type_annotation,
+                                        Some(&*self.type_aliases.borrow()),
+                                        Some(&*self.symbol_table.borrow()),
+                                    )
+                                }
+                                .unwrap_or(crate::types::OatsType::Number)
+                            },
+                        );
                         fields.push((pname, ptype));
                     }
                 }

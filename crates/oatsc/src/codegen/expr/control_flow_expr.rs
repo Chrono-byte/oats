@@ -8,7 +8,7 @@ use inkwell::values::{BasicValue, PointerValue};
 
 // LocalEntry now includes an Option<String> for an optional nominal type name
 // LocalEntry now includes an Option<OatsType> for union tracking
-#[allow(dead_code)]
+
 type LocalEntry<'a> = (
     PointerValue<'a>,
     BasicTypeEnum<'a>,
@@ -21,7 +21,6 @@ type LocalEntry<'a> = (
 type LocalsStackLocal<'a> = Vec<HashMap<String, LocalEntry<'a>>>;
 
 impl<'a> crate::codegen::CodeGen<'a> {
-    #[allow(clippy::result_large_err)]
     pub(super) fn lower_cond_expr(
         &self,
         cond: &oxc_ast::ast::ConditionalExpression<'_>,
@@ -352,37 +351,36 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         Severity::Error,
                         "unboxing failed for phi",
                     ));
-                } else {
-                    // The function expects a pointer return (i8*). Prefer a pointer phi:
-                    // box the numeric `then` arm into a union pointer, keep the
-                    // pointer `else` arm as-is, then build an i8* phi.
-                    self.builder.position_at_end(then_bb);
-                    let boxed_then =
-                        box_to_ptr(self, tv).map_err(|_| Diagnostic::error("phi boxing failed"))?;
-                    self.ensure_unconditional_branch(merge_bb);
-
-                    self.builder.position_at_end(else_bb);
-                    let else_ptr = match ev {
-                        BasicValueEnum::PointerValue(p) => p.as_basic_value_enum(),
-                        _ => {
-                            return Err(Diagnostic::simple_boxed(
-                                Severity::Error,
-                                "expected pointer in else arm",
-                            ));
-                        }
-                    };
-                    self.ensure_unconditional_branch(merge_bb);
-
-                    // merge: build phi of i8*
-                    self.builder.position_at_end(merge_bb);
-                    let ptr_ty = self.i8ptr_t.as_basic_type_enum();
-                    let phi_node = self
-                        .builder
-                        .build_phi(ptr_ty, "phi_tmp")
-                        .map_err(|_| Diagnostic::error("phi creation failed"))?;
-                    phi_node.add_incoming(&[(&boxed_then, then_bb), (&else_ptr, else_bb)]);
-                    return Ok(phi_node.as_basic_value());
                 }
+                // The function expects a pointer return (i8*). Prefer a pointer phi:
+                // box the numeric `then` arm into a union pointer, keep the
+                // pointer `else` arm as-is, then build an i8* phi.
+                self.builder.position_at_end(then_bb);
+                let boxed_then =
+                    box_to_ptr(self, tv).map_err(|_| Diagnostic::error("phi boxing failed"))?;
+                self.ensure_unconditional_branch(merge_bb);
+
+                self.builder.position_at_end(else_bb);
+                let else_ptr = match ev {
+                    BasicValueEnum::PointerValue(p) => p.as_basic_value_enum(),
+                    _ => {
+                        return Err(Diagnostic::simple_boxed(
+                            Severity::Error,
+                            "expected pointer in else arm",
+                        ));
+                    }
+                };
+                self.ensure_unconditional_branch(merge_bb);
+
+                // merge: build phi of i8*
+                self.builder.position_at_end(merge_bb);
+                let ptr_ty = self.i8ptr_t.as_basic_type_enum();
+                let phi_node = self
+                    .builder
+                    .build_phi(ptr_ty, "phi_tmp")
+                    .map_err(|_| Diagnostic::error("phi creation failed"))?;
+                phi_node.add_incoming(&[(&boxed_then, then_bb), (&else_ptr, else_bb)]);
+                return Ok(phi_node.as_basic_value());
             }
 
             // Otherwise, perform general boxing in predecessors (below)...

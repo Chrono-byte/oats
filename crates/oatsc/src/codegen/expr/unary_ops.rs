@@ -8,7 +8,7 @@ use inkwell::values::{BasicValue, PointerValue};
 
 // LocalEntry now includes an Option<String> for an optional nominal type name
 // LocalEntry now includes an Option<OatsType> for union tracking
-#[allow(dead_code)]
+
 type LocalEntry<'a> = (
     PointerValue<'a>,
     BasicTypeEnum<'a>,
@@ -79,7 +79,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     let s_obj = self.intern_string_literal("object");
 
                     // Build nested selects: if num -> s_num else if str -> s_str else if bool -> s_bool else s_obj
-                    let sel1 = self
+                    let num_str_select = self
                         .builder
                         .build_select(
                             cmp_num,
@@ -88,7 +88,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             "sel_num_str",
                         )
                         .map_err(|_| Diagnostic::error("failed to build select for typeof"))?;
-                    let sel2 = self
+                    let bool_obj_select = self
                         .builder
                         .build_select(
                             cmp_bool,
@@ -99,7 +99,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         .map_err(|_| Diagnostic::error("failed to build select for typeof"))?;
                     let final_sel = self
                         .builder
-                        .build_select(cmp_str, sel1, sel2, "sel_final")
+                        .build_select(cmp_str, num_str_select, bool_obj_select, "sel_final")
                         .map_err(|_| Diagnostic::error("failed to build select for typeof"))?;
                     return Ok(final_sel);
                 }
@@ -138,14 +138,15 @@ impl<'a> crate::codegen::CodeGen<'a> {
             }
             UnaryOperator::UnaryPlus => {
                 // Unary plus: coerce to number (no-op for numbers)
-                if let Some(fv) = self.coerce_to_f64(arg_val) {
-                    Ok(fv.as_basic_value_enum())
-                } else {
-                    Err(Diagnostic::simple_boxed(
-                        Severity::Error,
-                        "unary plus requires numeric operand",
-                    ))
-                }
+                self.coerce_to_f64(arg_val).map_or_else(
+                    || {
+                        Err(Diagnostic::simple_boxed(
+                            Severity::Error,
+                            "unary plus requires numeric operand",
+                        ))
+                    },
+                    |fv| Ok(fv.as_basic_value_enum()),
+                )
             }
             UnaryOperator::LogicalNot => {
                 // Logical NOT: convert to boolean and negate using XOR

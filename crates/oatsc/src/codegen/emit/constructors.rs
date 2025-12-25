@@ -36,7 +36,6 @@ impl crate::codegen::CodeGen<'_> {
     ///
     /// # Returns
     /// Returns `Ok(())` on success or a `Diagnostic` on error.
-    #[allow(clippy::result_large_err)]
     pub fn gen_constructor_ir(
         &self,
         class_name: &str,
@@ -586,8 +585,8 @@ impl crate::codegen::CodeGen<'_> {
                     .context
                     .struct_type(&[self.i64_t.into(), arr_i32_ty.into()], false);
 
-                let magic_u64 = 0x4F415453u64; // 'OATS'
-                let meta0_val = (magic_u64 << 32) | (len as u64 & 0xffffffffu64);
+                let magic_u64 = 0x4F41_5453_u64; // 'OATS'
+                let meta0_val = (magic_u64 << 32) | (len as u64 & 0xffff_ffff_u64);
                 let meta0_const = self.i64_t.const_int(meta0_val, false);
 
                 // Convert offsets to i32 constants
@@ -596,7 +595,7 @@ impl crate::codegen::CodeGen<'_> {
                     .map(|iv| {
                         // Try to extract a constant; fall back to zero if not available.
                         let v = iv.get_zero_extended_constant().unwrap_or(0);
-                        self.i32_t.const_int(v & 0xffffffffu64, false)
+                        self.i32_t.const_int(v & 0xffff_ffff_u64, false)
                     })
                     .collect();
                 let array_const = self.i32_t.const_array(&int32_vals);
@@ -759,13 +758,14 @@ impl crate::codegen::CodeGen<'_> {
         if let Some(decos) = decorators {
             for dec_name in decos.into_iter().rev() {
                 // Ensure decorator function exists (declare if missing)
-                let deco_fn = if let Some(f) = self.module.get_function(&dec_name) {
-                    f
-                } else {
-                    // Decorator signature: i8* (i8*) -> i8* ; accept and return ctor ptrs
-                    let ty = self.i8ptr_t.fn_type(&[self.i8ptr_t.into()], false);
-                    self.module.add_function(&dec_name, ty, None)
-                };
+                let deco_fn = self.module.get_function(&dec_name).map_or_else(
+                    || {
+                        // Decorator signature: i8* (i8*) -> i8* ; accept and return ctor ptrs
+                        let ty = self.i8ptr_t.fn_type(&[self.i8ptr_t.into()], false);
+                        self.module.add_function(&dec_name, ty, None)
+                    },
+                    std::convert::identity,
+                );
 
                 // Call decorator with current_ctor_ptr (cast to i8*)
                 let call_site =
@@ -937,15 +937,15 @@ impl crate::codegen::CodeGen<'_> {
                 .context
                 .struct_type(&[self.i64_t.into(), arr_i32_ty.into()], false);
 
-            let magic_u64 = 0x4F415453u64; // 'OATS'
-            let meta0_val = (magic_u64 << 32) | (len as u64 & 0xffffffffu64);
+            let magic_u64 = 0x4F41_5453_u64; // 'OATS'
+            let meta0_val = (magic_u64 << 32) | (len as u64 & 0xffff_ffff_u64);
             let meta0_const = self.i64_t.const_int(meta0_val, false);
 
             let int32_vals: Vec<inkwell::values::IntValue> = int_vals
                 .into_iter()
                 .map(|iv| {
                     let v = iv.get_zero_extended_constant().unwrap_or(0);
-                    self.i32_t.const_int(v & 0xffffffffu64, false)
+                    self.i32_t.const_int(v & 0xffff_ffff_u64, false)
                 })
                 .collect();
             let array_const = self.i32_t.const_array(&int32_vals);

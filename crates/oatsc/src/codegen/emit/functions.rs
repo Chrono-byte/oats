@@ -32,7 +32,6 @@ impl<'a> crate::codegen::CodeGen<'a> {
     /// failure. The function emits calls to runtime helpers (for example
     /// for union boxing) and expects the runtime to provide those symbols
     /// during linking.
-    #[allow(clippy::result_large_err)]
     pub fn gen_function_ir(
         &self,
         func_name: &str,

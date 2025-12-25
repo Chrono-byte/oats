@@ -9,7 +9,7 @@ use std::collections::HashMap;
 
 // LocalEntry now includes an Option<String> for an optional nominal type name
 // LocalEntry now includes an Option<OatsType> for union tracking
-#[allow(dead_code)]
+
 type LocalEntry<'a> = (
     PointerValue<'a>,
     BasicTypeEnum<'a>,
@@ -22,7 +22,6 @@ type LocalEntry<'a> = (
 type LocalsStackLocal<'a> = Vec<HashMap<String, LocalEntry<'a>>>;
 
 impl<'a> CodeGen<'a> {
-    #[allow(clippy::result_large_err)]
     pub(super) fn lower_member_expr(
         &self,
         member: &oxc_ast::ast::Expression<'_>,
@@ -89,7 +88,7 @@ impl<'a> CodeGen<'a> {
 
                     // If we inferred a nominal type and have its fields registered,
                     // perform field load similar to dot-member lowering.
-                    if let Some(class_name) = class_name_opt.clone()
+                    if let Some(class_name) = class_name_opt
                         && let Some(fields) = self.class_fields.borrow().get(&class_name)
                     {
                         // compute integer index

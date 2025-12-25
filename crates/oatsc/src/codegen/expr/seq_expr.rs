@@ -9,7 +9,6 @@ use inkwell::values::{BasicValueEnum, FunctionValue};
 use oxc_ast::ast::SequenceExpression;
 use std::collections::HashMap;
 
-#[allow(dead_code)]
 type LocalEntry<'a> = (
     inkwell::values::PointerValue<'a>,
     inkwell::types::BasicTypeEnum<'a>,
@@ -26,7 +25,6 @@ impl<'a> CodeGen<'a> {
     ///
     /// Evaluates all expressions in order, discarding all but the last value.
     /// The last expression's value is returned.
-    #[allow(clippy::result_large_err)]
     pub(super) fn lower_seq_expr(
         &self,
         seq: &SequenceExpression<'_>,

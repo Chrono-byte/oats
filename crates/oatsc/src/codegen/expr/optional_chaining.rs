@@ -11,7 +11,6 @@ use inkwell::values::{BasicValue, BasicValueEnum, FunctionValue};
 use oxc_ast::ast::Expression;
 use std::collections::HashMap;
 
-#[allow(dead_code)]
 type LocalEntry<'a> = (
     inkwell::values::PointerValue<'a>,
     inkwell::types::BasicTypeEnum<'a>,
@@ -28,7 +27,6 @@ impl<'a> CodeGen<'a> {
     ///
     /// Generates code that checks for null/undefined before accessing the member or calling.
     /// If the object is null/undefined, returns null pointer (undefined).
-    #[allow(clippy::result_large_err)]
     pub(super) fn lower_optional_member_expr(
         &self,
         chain: &oxc_ast::ast::ChainExpression<'_>,

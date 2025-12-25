@@ -19,14 +19,15 @@ use std::collections::HashMap;
 
 /// Helper function to extract `BasicValueEnum` from `ValueKind`
 /// `ValueKind` is an enum in inkwell that can be Basic or `CallSite`
-pub(crate) fn extract_basic_value_from_valuekind(vk: ValueKind<'_>) -> Option<BasicValueEnum<'_>> {
+pub(crate) const fn extract_basic_value_from_valuekind(
+    vk: ValueKind<'_>,
+) -> Option<BasicValueEnum<'_>> {
     match vk {
         ValueKind::Basic(bv) => Some(bv),
-        _ => None,
+        ValueKind::Instruction(_) => None,
     }
 }
 
-#[allow(dead_code)]
 type LocalEntry<'a> = (
     inkwell::values::PointerValue<'a>,
     BasicTypeEnum<'a>,
@@ -105,7 +106,8 @@ impl<'a> super::CodeGen<'a> {
             | OatsType::Enum(_, _)
             // ProcessId and MonitorRef are represented as i8* (pointers to heap-allocated u64)
             | OatsType::ProcessId
-            | OatsType::MonitorRef => self.i8ptr_t.as_basic_type_enum(),
+            | OatsType::MonitorRef
+            | OatsType::NumberObject => self.i8ptr_t.as_basic_type_enum(),
             OatsType::Option(inner) => {
                 // If the inner type is numeric (or a union of numeric-only arms),
                 // represent Option<number> using the numeric ABI (f64). This lets
@@ -197,7 +199,6 @@ impl<'a> super::CodeGen<'a> {
                 // Generic instances are specialized, so treat as pointer types
                 self.i8ptr_t.as_basic_type_enum()
             }
-            OatsType::NumberObject => self.i8ptr_t.as_basic_type_enum(),
         }
     }
 
@@ -438,12 +439,11 @@ impl<'a> super::CodeGen<'a> {
                     }
                     BasicValueEnum::IntValue(iv) => {
                         // convert bool/int to f64 then box
-                        let fv = match self
+                        let Ok(fv) = self
                             .builder
                             .build_signed_int_to_float(iv, self.f64_t, "i2f_box")
-                        {
-                            Ok(v) => v,
-                            Err(_) => return None,
+                        else {
+                            return None;
                         };
                         let box_fn = self.get_union_box_f64();
                         if let Ok(cs) = self.builder.build_call(box_fn, &[fv.into()], "box_for_phi")
@@ -460,9 +460,8 @@ impl<'a> super::CodeGen<'a> {
 
             let tvp = ensure_ptr(tv)?;
             let evp = ensure_ptr(ev)?;
-            let phi_node = match self.builder.build_phi(ty, "phi_tmp") {
-                Ok(p) => p,
-                Err(_) => return None,
+            let Ok(phi_node) = self.builder.build_phi(ty, "phi_tmp") else {
+                return None;
             };
             phi_node.add_incoming(&[(&tvp, then_bb), (&evp, else_bb)]);
             return Some(phi_node.as_basic_value());
@@ -484,9 +483,8 @@ impl<'a> super::CodeGen<'a> {
                 _ => return None,
             };
             let ty = self.f64_t.as_basic_type_enum();
-            let phi_node = match self.builder.build_phi(ty, "phi_tmp") {
-                Ok(p) => p,
-                Err(_) => return None,
+            let Ok(phi_node) = self.builder.build_phi(ty, "phi_tmp") else {
+                return None;
             };
             phi_node.add_incoming(&[
                 (&tv_f.as_basic_value_enum(), then_bb),
@@ -509,9 +507,8 @@ impl<'a> super::CodeGen<'a> {
                 _ => return None,
             };
             let ty = self.f64_t.as_basic_type_enum();
-            let phi_node = match self.builder.build_phi(ty, "phi_tmp") {
-                Ok(p) => p,
-                Err(_) => return None,
+            let Ok(phi_node) = self.builder.build_phi(ty, "phi_tmp") else {
+                return None;
             };
             phi_node.add_incoming(&[
                 (&tv_f.as_basic_value_enum(), then_bb),
@@ -527,9 +524,8 @@ impl<'a> super::CodeGen<'a> {
         ) = (tv_ty, ev_ty)
         {
             let ty = self.i8ptr_t.as_basic_type_enum();
-            let phi_node = match self.builder.build_phi(ty, "phi_tmp") {
-                Ok(p) => p,
-                Err(_) => return None,
+            let Ok(phi_node) = self.builder.build_phi(ty, "phi_tmp") else {
+                return None;
             };
             phi_node.add_incoming(&[(&tv, then_bb), (&ev, else_bb)]);
             return Some(phi_node.as_basic_value());
@@ -542,9 +538,8 @@ impl<'a> super::CodeGen<'a> {
             let tv_i = self.coerce_to_i64(tv)?;
             let ev_i = self.coerce_to_i64(ev)?;
             let ty = self.i64_t.as_basic_type_enum();
-            let phi_node = match self.builder.build_phi(ty, "phi_tmp") {
-                Ok(p) => p,
-                Err(_) => return None,
+            let Ok(phi_node) = self.builder.build_phi(ty, "phi_tmp") else {
+                return None;
             };
             phi_node.add_incoming(&[
                 (&tv_i.as_basic_value_enum(), then_bb),
@@ -645,9 +640,7 @@ impl<'a> super::CodeGen<'a> {
         let rc_dec = self.get_rc_dec();
         let rc_weak_dec = self.get_rc_weak_dec();
         for scope in locals.iter().rev() {
-            for (local_name, (ptr, ty, init, _is_const, is_weak, _nominal, oats_type)) in
-                scope.iter()
-            {
+            for (local_name, (ptr, ty, init, _is_const, is_weak, _nominal, oats_type)) in scope {
                 if *init && let inkwell::types::BasicTypeEnum::PointerType(_) = ty {
                     // Skip RC operations for unowned references
                     if let Some(crate::types::OatsType::Unowned(_)) = oats_type {
@@ -684,7 +677,7 @@ impl<'a> super::CodeGen<'a> {
     // `start_index`. This is useful when leaving a loop body early due to
     // `break`/`continue` where only the inner scopes should be decref'd.
     // Respects escape analysis: skips rc_dec for non-escaping variables.
-    pub(crate) fn _emit_rc_dec_for_locals_from(
+    pub(crate) fn emit_rc_dec_for_locals_from(
         &self,
         locals: &LocalsStackLocal<'a>,
         start_index: usize,
@@ -696,9 +689,7 @@ impl<'a> super::CodeGen<'a> {
         // iterate from innermost scope down to start_index
         let rc_weak_dec = self.get_rc_weak_dec();
         for scope in locals.iter().rev().take(locals.len() - start_index) {
-            for (local_name, (ptr, ty, init, _is_const, is_weak, _nominal, oats_type)) in
-                scope.iter()
-            {
+            for (local_name, (ptr, ty, init, _is_const, is_weak, _nominal, oats_type)) in scope {
                 if *init
                     && let inkwell::types::BasicTypeEnum::PointerType(_) = ty
                     && let Ok(loaded) = self.builder.build_load(*ty, *ptr, "drop_load")
@@ -909,19 +900,22 @@ impl<'a> super::CodeGen<'a> {
         }
 
         let len = offsets.len();
-        let arr_i32_ty = self.context.i32_type().array_type(len as u32);
+        let arr_i32_ty = self
+            .context
+            .i32_type()
+            .array_type(u32::try_from(len).unwrap_or(u32::MAX));
         let struct_ty = self
             .context
             .struct_type(&[self.i64_t.into(), arr_i32_ty.into()], false);
 
-        let magic_u64 = 0x4F415453u64; // 'OATS'
-        let meta0_val = (magic_u64 << 32) | (len as u64 & 0xffffffffu64);
+        let magic_u64 = 0x4F41_5453_u64; // 'OATS'
+        let meta0_val = (magic_u64 << 32) | (len as u64 & 0xffff_ffff_u64);
         let meta0_const = self.i64_t.const_int(meta0_val, false);
 
         // Pre-allocate with known capacity
         let mut int32_vals = Vec::with_capacity(offsets.len());
         for &off in offsets {
-            let v = off & 0xffffffffu64;
+            let v = off & 0xffff_ffff_u64;
             int32_vals.push(self.i32_t.const_int(v, false));
         }
         let array_const = self.i32_t.const_array(&int32_vals);
@@ -1185,7 +1179,9 @@ impl<'a> super::CodeGen<'a> {
                     })?;
                 match call.try_as_basic_value() {
                     inkwell::values::ValueKind::Basic(bv) => Ok(bv),
-                    _ => Ok(self.f64_t.const_float(0.0).as_basic_value_enum()),
+                    inkwell::values::ValueKind::Instruction(_) => {
+                        Ok(self.f64_t.const_float(0.0).as_basic_value_enum())
+                    }
                 }
             } else {
                 Ok(arg_val)
@@ -1208,7 +1204,9 @@ impl<'a> super::CodeGen<'a> {
                 })?;
             match call.try_as_basic_value() {
                 inkwell::values::ValueKind::Basic(bv) => Ok(bv),
-                _ => Ok(self.f64_t.const_float(0.0).as_basic_value_enum()),
+                inkwell::values::ValueKind::Instruction(_) => {
+                    Ok(self.f64_t.const_float(0.0).as_basic_value_enum())
+                }
             }
         } else {
             // No coercion needed

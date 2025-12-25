@@ -245,7 +245,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         // Find indexes of await markers
         let mut await_positions: Vec<usize> = Vec::new();
         for (i, n) in nodes.iter().enumerate() {
-            if let Node::AwaitMarker = n {
+            if matches!(n, Node::AwaitMarker) {
                 await_positions.push(i);
             }
         }
@@ -270,7 +270,6 @@ impl<'a> crate::codegen::CodeGen<'a> {
     /// This function handles the async-specific code generation for functions
     /// marked as async. It creates a poll function and a wrapper that returns
     /// a Promise.
-    #[allow(clippy::result_large_err)]
     pub fn gen_async_function_ir(
         &self,
         func_name: &str,
@@ -348,7 +347,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         // Store async lowering context in CodeGen BEFORE generating poll body
         self.async_await_live_sets
             .borrow_mut()
-            .replace(await_live_sets.clone());
+            .replace(await_live_sets);
         self.async_local_name_to_slot
             .borrow_mut()
             .replace(local_name_to_slot.clone());
@@ -1034,9 +1033,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         ));
                     }
                 };
-                let poll_fn = self.get_promise_poll_into();
+                let promise_poll_func = self.get_promise_poll_into();
                 let _cs = match self.builder.build_call(
-                    poll_fn,
+                    promise_poll_func,
                     &[promise_ptr.into(), out_alloca.into()],
                     "resume_promise_poll",
                 ) {

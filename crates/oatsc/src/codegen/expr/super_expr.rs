@@ -10,7 +10,6 @@ use inkwell::values::{BasicValue, BasicValueEnum, FunctionValue};
 use oxc_ast::ast::Super;
 use std::collections::HashMap;
 
-#[allow(dead_code)]
 type LocalEntry<'a> = (
     inkwell::values::PointerValue<'a>,
     inkwell::types::BasicTypeEnum<'a>,
@@ -29,7 +28,6 @@ impl<'a> CodeGen<'a> {
     /// be used for member access or method calls. In practice, `super` is usually
     /// used as `super.prop` or `super.method()`, which are handled by `member_access`
     /// and calls modules respectively.
-    #[allow(clippy::result_large_err)]
     pub(super) fn lower_super_expr(
         &self,
         _super_expr: &Super,
@@ -39,20 +37,23 @@ impl<'a> CodeGen<'a> {
     ) -> crate::diagnostics::DiagnosticResult<BasicValueEnum<'a>> {
         // Super expressions in isolation should return `this`
         // Get the first parameter which should be `this` for methods/constructors
-        if let Some(this_param) = function.get_nth_param(0) {
-            if let BasicValueEnum::PointerValue(this_ptr) = this_param {
-                Ok(this_ptr.as_basic_value_enum())
-            } else {
+        function.get_nth_param(0).map_or_else(
+            || {
                 Err(Diagnostic::simple_boxed(
                     Severity::Error,
-                    "super used but 'this' parameter is not a pointer",
+                    "super used in function with no 'this' parameter",
                 ))
-            }
-        } else {
-            Err(Diagnostic::simple_boxed(
-                Severity::Error,
-                "super used in function with no 'this' parameter",
-            ))
-        }
+            },
+            |this_param| {
+                if let BasicValueEnum::PointerValue(this_ptr) = this_param {
+                    Ok(this_ptr.as_basic_value_enum())
+                } else {
+                    Err(Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "super used but 'this' parameter is not a pointer",
+                    ))
+                }
+            },
+        )
     }
 }

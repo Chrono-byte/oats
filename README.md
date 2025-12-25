@@ -1,55 +1,31 @@
-# Oats 🌾
+# Oats
 
 [![License](https://img.shields.io/badge/license-zlib-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/built%20with-Rust-000000.svg?logo=rust)](https://www.rust-lang.org/)
 [![LLVM](https://img.shields.io/badge/powered%20by-LLVM%2018-262D3A.svg)](https://llvm.org/)
 
-> An Ahead-of-Time (AOT) Compiler for TypeScript/JavaScript
+Compiles TypeScript/JavaScript to native code using LLVM. Still experimental, but it works for basic stuff. Supports multi-file projects, generates standalone executables, and uses reference counting for memory management.
 
-Oats is an experimental ahead-of-time (AOT) compiler that compiles TypeScript and JavaScript
-into native machine code using LLVM. It
-supports multi-file compilation with a package system for dependency management,
-generates standalone executables, and uses reference counting for memory
-management.
+## Features
 
----
+- Basic types: numbers, booleans, strings, arrays, classes, unions
+- Multi-file compilation with a package system
+- Generics (via monomorphization) and union types
+- Async functions (still in preview, but they work)
+- Reference counting with weak refs and cycle collection
+- Outputs LLVM IR and links to a custom runtime
 
-## Table of Contents
-
-- [Features](#-features)
-- [Getting Started](#-getting-started)
-- [Project Structure](#-project-structure)
-- [Contributing](#-contributing)
-- [License](#-license)
-
----
-
-## ✨ Features
-
-- **Rich Language Features**: Supports numbers, booleans, strings, arrays,
-  classes, and unions.
-- **Package System**: Supports multi-file compilation with dependency
-  resolution, allowing complex applications to be built from modular components.
-- **Generics & Unions**: Supports generics via call-site monomorphization and
-  handles complex union types with runtime boxing.
-- **Async (preview)**: `async` functions are lowered into efficient poll-state
-  machines with resume blocks, enabling asynchronous operations.
-- **Memory Management**: Implements deterministic Automatic Reference Counting
-  (ARC) with support for weak references and a background cycle collector.
-- **LLVM Integration**: Emits optimized LLVM 18 IR and links against a custom
-  safe runtime to produce native executables.
-
----
-
-## 🚀 Getting Started
+## Getting Started
 
 ### Prerequisites
 
-- **Rust Toolchain**: Install via [rustup](https://rustup.rs/).
-- **LLVM 18**: Install development headers and tools for your platform.
-- **clang**: Required for linking (typically comes with LLVM).
+You'll need:
 
-#### Installing LLVM 18
+- Rust (install via [rustup](https://rustup.rs/))
+- LLVM 18 dev headers and tools
+- clang (usually comes with LLVM)
+
+Installing LLVM 18:
 
 **Fedora**:
 
@@ -63,110 +39,80 @@ sudo dnf install llvm18 llvm18-devel clang18
 sudo pacman -S llvm18 clang
 ```
 
-### Standalone Toasty (Recommended)
+### Quick Start (Recommended)
 
-`toasty` can work as a standalone tool by automatically fetching pre-built
-runtime libraries from GitHub releases.
+The easiest way is to use `toasty` standalone.
 
-1. **Install `toasty`**:
+Install it:
 
-   ```bash
-   cargo install --git https://github.com/Chrono-byte/oats toasty
-   ```
+```bash
+cargo install --git https://gitlab.com/Chrono-byte/oats toasty
+```
 
-2. **Compile and run programs**:
+Then compile and run:
 
-   ```bash
-   # Create a simple program
-   echo 'export function main(): void { println(5 + 3); }' > add.oats
+```bash
+# Create a simple program
+echo 'export function main(): void { println(5 + 3); }' > add.ts
 
-   # Build it (automatically fetches runtime if not cached)
-   toasty build add.oats
+# Build it
+toasty build add.ts
 
-   # Or build and run in one step
-   toasty run add.oats
-   ```
+# Or build and run
+toasty run add.ts
+```
 
-The runtime is automatically cached in `~/.oats/runtime/` for faster
-subsequent builds.
+The runtime gets cached in `~/.ts/runtime/` so subsequent builds are faster.
 
-**Environment variables**:
+Environment variables:
 
-- `OATS_NO_REMOTE_RUNTIME`: Force local runtime build instead of fetching.
-- `OATS_RUNTIME_CACHE`: Override the cache directory.
+- `OATS_RUNTIME_CACHE`: Change where the runtime cache goes
 
-### Full Repository Setup (For Development)
+### Building from Source
 
-If you want to develop Oats or work with the full repository:
+If you want to hack on Oats:
 
-1. **Clone the Repository**:
+```bash
+git clone https://gitlab.com/Chrono-byte/oats.git
+cd oats
 
-   ```bash
-   git clone https://github.com/Chrono-byte/oats.git
-   cd oats
-   ```
+# Build everything
+cargo build --workspace --release
 
-2. **Compile and Run**:
+# Run an example
+cargo run -p toasty --release -- run examples/add.ts
+```
 
-   ```bash
-   # Build in release mode for better performance
-   cargo build --workspace --release
+## Project Structure
 
-   # Run the `toasty` CLI to compile and execute the example
-   cargo run -p toasty --release -- run examples/add.oats
-   ```
+- `crates/oatsc`: The actual compiler (parsing, type checking, LLVM IR generation)
+- `crates/runtime`: Runtime library with ARC, allocators, logging, cycle collector.
+- `crates/toasty`: CLI tool with `build` and `run` commands
+- `crates/std`: Standard library (console, filesystem, networking, etc.)
+- `docs/`: Documentation (architecture, dev guides, memory design, roadmap)
+- `examples/`: Example programs and test suites
+- `scripts/`: Helper scripts for dev/testing
 
----
+Check out `docs/README.md` for more detailed docs.
 
-## 📁 Project Structure
+## Contributing
 
-- **`crates/oatsc`**: Core compiler for parsing, type checking, and LLVM IR
-  generation.
-- **`crates/runtime`**: The safe runtime library providing ARC helpers,
-  allocators, logging, and the cycle collector. Built as a static library and
-  published via GitHub Actions.
-- **`crates/toasty`**: The CLI wrapper for the compiler with `build` and `run`
-  commands, including package-based compilation support.
-- **`crates/std`**: The Oats standard library providing console, filesystem,
-  networking, and other system utilities.
-- **`docs/`**: Comprehensive documentation including architecture, development
-  guides, memory design, and roadmap.
-- **`examples/`**: Sample programs demonstrating language features, organized
-  into basic examples and comprehensive test suites (`proper_tests/`).
-- **`fuzz/`**: Fuzz testing suite for the parser.
-- **`scripts/`**: Utility scripts for development, testing, and environment
-  setup.
-- **`.github/workflows/`**: CI/CD workflows, including automated testing and
-  release builds.
+Contributions welcome! Check out `docs/ROADMAP.md` to see what's planned.
 
-See `docs/README.md` for a guided tour of the documentation set.
+To build and test:
 
----
+```bash
+# Build everything
+cargo build --workspace
 
-## 🤝 Contributing
+# Run tests
+cargo test --workspace
 
-Contributions are welcome\! Start by exploring the `docs/` directory:
+# Run the end-to-end tests
+./scripts/run_all_proper_tests.sh
+```
 
-- **`ROADMAP.md`**: Outlines the long-term vision and feature plans.
-
-### Development Workflow
-
-**Build and Test**:
-
-   ```bash
-   # Build all crates
-   cargo build --workspace
-
-   # Run all unit and integration tests
-   cargo test --workspace
-
-   # Run the end-to-end "proper" tests
-   ./scripts/run_all_proper_tests.sh
-   ```
-
----
-
-## 📜 License
+## License
 
 Licensed under the **zlib/libpng License with Acknowledgement**. See the
 [LICENSE](LICENSE) file for details.

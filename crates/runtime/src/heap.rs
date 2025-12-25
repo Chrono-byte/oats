@@ -26,14 +26,11 @@ pub(crate) fn check_and_reserve_allocation(size: u64) -> bool {
         }
 
         // Try to atomically update current allocation
-        match CURRENT_HEAP_BYTES.compare_exchange_weak(
-            current,
-            new_total,
-            Ordering::Relaxed,
-            Ordering::Relaxed,
-        ) {
-            Ok(_) => return true, // Successfully reserved
-            Err(_) => continue,   // Retry on contention
+        if CURRENT_HEAP_BYTES
+            .compare_exchange_weak(current, new_total, Ordering::Relaxed, Ordering::Relaxed)
+            .is_ok()
+        {
+            return true;
         }
     }
 }
@@ -48,14 +45,13 @@ use std::alloc::Layout;
 use std::io::{self, Write};
 
 #[unsafe(no_mangle)]
-pub fn runtime_malloc(size: size_t) -> *mut c_void {
+pub extern "C" fn runtime_malloc(size: size_t) -> *mut c_void {
+    const MAX_REASONABLE_SIZE: usize = 1 << 30; // 1 GB max
     unsafe {
         if size == 0 {
             return std::ptr::null_mut();
         }
-        let total = if let Some(total) = size.checked_add(std::mem::size_of::<u64>()) {
-            total
-        } else {
+        let Some(total) = size.checked_add(std::mem::size_of::<u64>()) else {
             if RUNTIME_LOG.load(Ordering::Relaxed) {
                 let _ = io::stderr().write_all(
                     b"[oats runtime] runtime_malloc: integer overflow in allocation size\n",
@@ -80,7 +76,6 @@ pub fn runtime_malloc(size: size_t) -> *mut c_void {
         }
 
         // Validate total size is reasonable before attempting allocation
-        const MAX_REASONABLE_SIZE: usize = 1 << 30; // 1 GB max
         if total > MAX_REASONABLE_SIZE {
             if RUNTIME_LOG.load(Ordering::Relaxed) {
                 let _ = io::stderr().write_all(
@@ -94,9 +89,7 @@ pub fn runtime_malloc(size: size_t) -> *mut c_void {
             return std::ptr::null_mut();
         }
 
-        let layout = if let Ok(layout) = Layout::from_size_align(total, 8) {
-            layout
-        } else {
+        let Ok(layout) = Layout::from_size_align(total, 8) else {
             if RUNTIME_LOG.load(Ordering::Relaxed) {
                 let _ = io::stderr().write_all(
                     format!("[oats runtime] runtime_malloc: invalid layout for size {total}\n")
@@ -111,7 +104,10 @@ pub fn runtime_malloc(size: size_t) -> *mut c_void {
             release_allocation(total as u64);
             return std::ptr::null_mut();
         }
-        let size_ptr = base.cast::<u64>();
+        // base is allocated with 8-byte alignment, so casting to u64 is safe
+        debug_assert!((base as usize).is_multiple_of(std::mem::align_of::<u64>()));
+        let addr = base as usize;
+        let size_ptr = addr as *mut u64;
         *size_ptr = total as u64;
         base.add(std::mem::size_of::<u64>()).cast::<c_void>()
     }
@@ -121,7 +117,8 @@ pub fn runtime_malloc(size: size_t) -> *mut c_void {
 /// `p` must be a pointer previously returned by `runtime_malloc` or null.
 /// Passing arbitrary or already-freed pointers is undefined behavior.
 #[unsafe(no_mangle)]
-pub unsafe fn runtime_free(p: *mut c_void) {
+pub unsafe extern "C" fn runtime_free(p: *mut c_void) {
+    const MAX_REASONABLE_SIZE: usize = 1 << 30; // 1 GB max
     unsafe {
         if p.is_null() {
             return;
@@ -143,14 +140,16 @@ pub unsafe fn runtime_free(p: *mut c_void) {
             }
             return;
         }
-        let size_ptr = base.cast::<u64>();
-        let total = *size_ptr as usize;
+        // base is allocated with 8-byte alignment, so casting to u64 is safe
+        debug_assert!((base as usize).is_multiple_of(std::mem::align_of::<u64>()));
+        let addr = base as usize;
+        let size_ptr = addr as *mut u64;
+        let total = usize::try_from(*size_ptr).unwrap_or(0);
         if total == 0 {
             return;
         }
 
         // Validate total size is reasonable (prevent corrupted size fields)
-        const MAX_REASONABLE_SIZE: usize = 1 << 30; // 1 GB max
         if total > MAX_REASONABLE_SIZE {
             if RUNTIME_LOG.load(Ordering::Relaxed) {
                 let _ = io::stderr().write_all(
@@ -184,9 +183,8 @@ pub unsafe fn runtime_free(p: *mut c_void) {
 
         release_allocation(total as u64);
 
-        let layout = match Layout::from_size_align(total, 8) {
-            Ok(layout) => layout,
-            Err(_) => return, // Skip deallocation if layout is invalid
+        let Ok(layout) = Layout::from_size_align(total, 8) else {
+            return; // Skip deallocation if layout is invalid
         };
         std::alloc::dealloc(base, layout);
     }

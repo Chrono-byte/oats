@@ -12,7 +12,7 @@ pub fn stringify_value_raw(val_raw: u64, depth: usize) -> String {
         return "...".to_string();
     }
     // Heuristic: treat values that look like plausible addresses as pointers
-    let addr = val_raw as usize;
+    let addr = usize::try_from(val_raw).unwrap_or(0);
     if is_plausible_addr(addr) {
         let p = addr as *mut c_void;
         // Try array/tuple/string recursion
@@ -48,14 +48,3 @@ pub fn stringify_value_raw(val_raw: u64, depth: usize) -> String {
     let f = f64::from_bits(val_raw);
     format!("{f}")
 }
-
-#[allow(unused_imports)]
-pub(crate) use crate::heap::check_and_reserve_allocation;
-#[allow(unused_imports)]
-pub(crate) use crate::heap::release_allocation;
-#[allow(unused_imports)]
-pub(crate) use crate::init_resource_limits;
-#[allow(unused_imports)]
-pub(crate) use crate::init_runtime_log;
-#[allow(unused_imports)]
-pub(crate) use crate::validate_meta_block;

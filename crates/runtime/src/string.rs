@@ -15,11 +15,7 @@ use crate::{RUNTIME_LOG, rc_dec, rc_inc};
 /// the lifetime of the returned pointer. The returned pointer must be freed
 /// using appropriate reference counting mechanisms.
 pub unsafe extern "C" fn heap_str_alloc(str_len: size_t) -> *mut c_void {
-    let total_size = if let Some(total) =
-        16usize.checked_add(str_len).and_then(|s| s.checked_add(1))
-    {
-        total
-    } else {
+    let Some(total_size) = 16usize.checked_add(str_len).and_then(|s| s.checked_add(1)) else {
         if RUNTIME_LOG.load(Ordering::Relaxed) {
             let _ = io::stderr().write_all(
                 format!("[oats runtime] heap_str_alloc: integer overflow (str_len={str_len})\n")
@@ -34,12 +30,12 @@ pub unsafe extern "C" fn heap_str_alloc(str_len: size_t) -> *mut c_void {
         return ptr::null_mut();
     }
 
-    let header_ptr = p.cast::<u64>();
     unsafe {
-        *header_ptr = make_heap_header(1);
+        let header_ptr_u8 = p.cast::<u8>();
+        ptr::write_unaligned(header_ptr_u8.cast::<u64>(), make_heap_header(1));
 
-        let len_ptr = p.cast::<u8>().add(8).cast::<u64>();
-        *len_ptr = str_len as u64;
+        let len_ptr_u8 = header_ptr_u8.add(8);
+        ptr::write_unaligned(len_ptr_u8.cast::<u64>(), str_len as u64);
     }
 
     p
@@ -82,7 +78,7 @@ pub unsafe fn heap_str_from_cstr_pub(s: *const c_char) -> *mut c_char {
 /// The pointer must point to valid string data with the expected memory layout.
 #[inline]
 #[must_use]
-pub unsafe fn heap_str_to_obj(data: *const c_char) -> *mut c_void {
+pub const unsafe fn heap_str_to_obj(data: *const c_char) -> *mut c_void {
     if data.is_null() {
         return ptr::null_mut();
     }
@@ -142,7 +138,7 @@ pub unsafe fn rc_dec_str_pub(data: *mut c_char) {
 /// `s` must be a valid pointer to a null-terminated C string, or null.
 /// If non-null, the string must remain valid for the duration of this call.
 #[unsafe(no_mangle)]
-pub unsafe fn str_dup(s: *const c_char) -> *mut c_char {
+pub unsafe extern "C" fn str_dup(s: *const c_char) -> *mut c_char {
     if s.is_null() {
         return ptr::null_mut();
     }
@@ -161,7 +157,7 @@ pub unsafe fn str_dup(s: *const c_char) -> *mut c_char {
 /// `a` and `b` must be valid nul-terminated C string pointers. The returned
 /// pointer is an owning C string which should be released with `runtime_free`.
 #[unsafe(no_mangle)]
-pub unsafe fn str_concat(a: *const c_char, b: *const c_char) -> *mut c_char {
+pub unsafe extern "C" fn str_concat(a: *const c_char, b: *const c_char) -> *mut c_char {
     unsafe {
         if a.is_null() || b.is_null() {
             return ptr::null_mut();
@@ -169,9 +165,7 @@ pub unsafe fn str_concat(a: *const c_char, b: *const c_char) -> *mut c_char {
         let la = CStr::from_ptr(a).to_bytes().len();
         let lb = CStr::from_ptr(b).to_bytes().len();
 
-        let total_len = if let Some(len) = la.checked_add(lb) {
-            len
-        } else {
+        let Some(total_len) = la.checked_add(lb) else {
             if RUNTIME_LOG.load(Ordering::Relaxed) {
                 let _ = io::stderr().write_all(
                     format!(
@@ -241,7 +235,20 @@ fn format_js_number(num: f64) -> String {
     // For other numbers, use fixed-point notation
     // JavaScript typically shows up to 15 significant digits
     let formatted = if num.fract() == 0.0 {
-        format!("{}", num as i64)
+        // For whole numbers, format as integer
+        // Check if number fits in i64 range to avoid truncation
+        // i64::MAX = 9223372036854775807, i64::MIN = -9223372036854775808
+        const MAX_I64_AS_F64: f64 = 9_223_372_036_854_775_807.0;
+        const MIN_I64_AS_F64: f64 = -9_223_372_036_854_775_808.0;
+        if (MIN_I64_AS_F64..=MAX_I64_AS_F64).contains(&num) {
+            // Safe to convert: number is within i64 range
+            // Use truncation which is safe here since we've verified the range
+            let num_i64 = num.trunc() as i64;
+            format!("{num_i64}")
+        } else {
+            // For numbers outside i64 range, format as float without decimal
+            format!("{num:.0}")
+        }
     } else {
         format!("{num:.15}")
     };
@@ -276,7 +283,7 @@ pub extern "C" fn number_is_finite(num: f64) -> i64 {
 /// Check if a number is infinite.
 /// Returns 1 if positive infinity, -1 if negative infinity, 0 otherwise.
 #[unsafe(no_mangle)]
-pub extern "C" fn number_is_infinite(num: f64) -> i64 {
+pub const extern "C" fn number_is_infinite(num: f64) -> i64 {
     if num.is_infinite() {
         if num.is_sign_positive() { 1 } else { -1 }
     } else {
@@ -292,36 +299,54 @@ pub extern "C" fn number_is_infinite(num: f64) -> i64 {
 /// `str_ptr` must be a valid pointer to a null-terminated C string.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn number_parse_float(str_ptr: *const c_char) -> f64 {
+    // Helper function to convert u64 to f64 with proper handling of precision loss
+    // f64 can exactly represent integers up to 2^53 (9007199254740992)
+    // For values <= 2^53, the conversion is exact (no precision loss)
+    // For larger values, precision loss is unavoidable but we round to nearest representable value
+    fn u64_to_f64_safe(n: u64) -> f64 {
+        // Helper function to convert u64 to f64 with proper handling of precision loss
+        // f64 can exactly represent integers up to 2^53 (9007199254740992)
+        // For values <= 2^53, the conversion is exact (no precision loss)
+        // For larger values, precision loss is unavoidable but we round to nearest representable value
+        const MAX_EXACT_F64_U64: u64 = 1u64 << 53; // 2^53 = 9007199254740992
+        // Convert u64 to f64
+        if n <= MAX_EXACT_F64_U64 {
+            // Exact conversion for values <= 2^53
+            // This conversion is lossless for integers in this range
+            let result = n as f64;
+            // Verify the conversion was exact (sanity check)
+            debug_assert_eq!(
+                result as u64, n,
+                "u64 to f64 conversion should be exact for n <= 2^53"
+            );
+            result
+        } else {
+            // For values > 2^53, precision loss is unavoidable
+            // This rounds to the nearest representable f64 value
+            n as f64
+        }
+    }
+
     if str_ptr.is_null() {
         return f64::NAN;
     }
 
     // SAFETY: The string is assumed to be valid UTF-8 as per Oats string encoding
     let c_str = unsafe { CStr::from_ptr(str_ptr) };
-    let str_slice = match c_str.to_str() {
-        Ok(s) => s,
-        Err(_) => return f64::NAN,
+    let Ok(str_slice) = c_str.to_str() else {
+        return f64::NAN;
     };
 
     // Handle hexadecimal notation (0x, 0X)
     if str_slice.starts_with("0x") || str_slice.starts_with("0X") {
-        // Parse as hex
-        match u64::from_str_radix(&str_slice[2..], 16) {
-            Ok(n) => n as f64,
-            Err(_) => f64::NAN,
-        }
+        // Parse as hex and convert to f64
+        u64::from_str_radix(&str_slice[2..], 16).map_or(f64::NAN, u64_to_f64_safe)
     } else if str_slice.starts_with("0o") || str_slice.starts_with("0O") {
-        // Parse as octal
-        match u64::from_str_radix(&str_slice[2..], 8) {
-            Ok(n) => n as f64,
-            Err(_) => f64::NAN,
-        }
+        // Parse as octal and convert to f64
+        u64::from_str_radix(&str_slice[2..], 8).map_or(f64::NAN, u64_to_f64_safe)
     } else if str_slice.starts_with("0b") || str_slice.starts_with("0B") {
-        // Parse as binary
-        match u64::from_str_radix(&str_slice[2..], 2) {
-            Ok(n) => n as f64,
-            Err(_) => f64::NAN,
-        }
+        // Parse as binary and convert to f64
+        u64::from_str_radix(&str_slice[2..], 2).map_or(f64::NAN, u64_to_f64_safe)
     } else {
         // Parse as decimal (float)
         str_slice.parse::<f64>().unwrap_or(f64::NAN)

@@ -30,13 +30,18 @@ fn runtime_index_oob_error(_arr: *mut c_void, idx: usize, len: usize) {
     }
 }
 
+/// Function to allocate an array on the heap.
+///
+/// # Returns
+/// A pointer to the allocated array, or null if allocation failed.
+///
+/// # Panics
+/// Panics if allocation fails.
 #[unsafe(no_mangle)]
 pub extern "C" fn array_alloc(len: usize, elem_size: usize, elem_is_number: i32) -> *mut c_void {
     // For empty arrays, allocate with minimum capacity to allow push/assignment
     let capacity = if len == 0 { MIN_ARRAY_CAPACITY } else { len };
-    let data_bytes = if let Some(bytes) = capacity.checked_mul(elem_size) {
-        bytes
-    } else {
+    let Some(data_bytes) = capacity.checked_mul(elem_size) else {
         if RUNTIME_LOG.load(Ordering::Relaxed) {
             let _ = io::stderr().write_all(
                 format!(
@@ -47,9 +52,7 @@ pub extern "C" fn array_alloc(len: usize, elem_size: usize, elem_is_number: i32)
         }
         return ptr::null_mut();
     };
-    let total_bytes = if let Some(total) = ARRAY_HEADER_SIZE.checked_add(data_bytes) {
-        total
-    } else {
+    let Some(total_bytes) = ARRAY_HEADER_SIZE.checked_add(data_bytes) else {
         if RUNTIME_LOG.load(Ordering::Relaxed) {
             let _ = io::stderr().write_all(
                 b"[oats runtime] array_alloc: integer overflow in total size calculation\n",
@@ -64,16 +67,32 @@ pub extern "C" fn array_alloc(len: usize, elem_size: usize, elem_is_number: i32)
             return ptr::null_mut();
         }
 
-        let header_ptr = p.cast::<u64>();
-        let flags = ((elem_is_number as u64) << 32) & 0xffffffff00000000u64;
+        // Write header using unaligned writes since we control the memory layout
+        // elem_is_number is used as a boolean (0 or 1), extract only the bit we need
+        let elem_is_number_u32 = match u32::try_from(elem_is_number.max(0)) {
+            Ok(val) => val,
+            Err(e) => {
+                if RUNTIME_LOG.load(Ordering::Relaxed) {
+                    let _ = io::stderr().write_all(
+                        format!("[oats runtime] array_alloc: elem_is_number ({elem_is_number}) did not fit in u32: {e}\n").as_bytes()
+                    );
+                }
+                return ptr::null_mut();
+            }
+        };
+        let elem_is_number_flag = u64::from(elem_is_number_u32) & 1;
+        let flags = (elem_is_number_flag << 32) & 0xffff_ffff_0000_0000_u64;
         let initial_rc = 1u64;
-        *header_ptr = flags | initial_rc;
+        ptr::write_unaligned(p.cast::<u64>(), flags | initial_rc);
 
-        let len_ptr = p.add(mem::size_of::<u64>()).cast::<u64>();
-        *len_ptr = len as u64;
+        // Write length
+        ptr::write_unaligned(p.add(mem::size_of::<u64>()).cast::<u64>(), len as u64);
 
-        let cap_ptr = p.add(mem::size_of::<u64>() * 2).cast::<u64>();
-        *cap_ptr = capacity as u64;
+        // Write capacity
+        ptr::write_unaligned(
+            p.add(mem::size_of::<u64>() * 2).cast::<u64>(),
+            capacity as u64,
+        );
 
         p.cast::<c_void>()
     }
@@ -89,16 +108,15 @@ pub extern "C" fn array_get_f64(arr: *mut c_void, idx: usize) -> f64 {
         if !crate::is_plausible_addr(arr as usize) {
             return 0.0;
         }
-        let len_ptr = arr.cast::<u8>().add(mem::size_of::<u64>()) as *const u64;
-        let len = *len_ptr as usize;
+        let len_ptr_u8 = arr.cast::<u8>().add(mem::size_of::<u64>());
+        let len_u64 = ptr::read_unaligned(len_ptr_u8 as *const u64);
+        let len = usize::try_from(len_u64).unwrap_or(0);
         if idx >= len {
             runtime_index_oob_error(arr, idx, len);
             return 0.0;
         }
         // Validate element offset calculation to prevent overflow
-        let elem_offset = if let Some(offset) = idx.checked_mul(mem::size_of::<f64>()) {
-            offset
-        } else {
+        let Some(elem_offset) = idx.checked_mul(mem::size_of::<f64>()) else {
             if RUNTIME_LOG.load(Ordering::Relaxed) {
                 let _ = io::stderr().write_all(
                     format!(
@@ -110,9 +128,10 @@ pub extern "C" fn array_get_f64(arr: *mut c_void, idx: usize) -> f64 {
             return 0.0;
         };
 
-        let data_start = arr.cast::<u8>().add(ARRAY_HEADER_SIZE);
-        let elem_ptr = data_start.add(elem_offset) as *const f64;
-        *elem_ptr
+        let data_start = arr.cast::<u64>().add(ARRAY_HEADER_SIZE / 8).cast::<u8>();
+        let elem_addr = data_start as usize + elem_offset;
+        let elem_ptr = ptr::with_exposed_provenance::<f64>(elem_addr).cast_mut();
+        ptr::read_unaligned(elem_ptr)
     }
 }
 
@@ -126,16 +145,15 @@ pub extern "C" fn array_get_ptr(arr: *mut c_void, idx: usize) -> *mut c_void {
         if !crate::is_plausible_addr(arr as usize) {
             return ptr::null_mut();
         }
-        let len_ptr = arr.cast::<u8>().add(mem::size_of::<u64>()) as *const u64;
-        let len = *len_ptr as usize;
+        let len_ptr_u8 = arr.cast::<u8>().add(mem::size_of::<u64>());
+        let len_u64 = ptr::read_unaligned(len_ptr_u8 as *const u64);
+        let len = usize::try_from(len_u64).unwrap_or(0);
         if idx >= len {
             runtime_index_oob_error(arr, idx, len);
             return ptr::null_mut();
         }
         // Validate element offset calculation to prevent overflow
-        let elem_offset = if let Some(offset) = idx.checked_mul(mem::size_of::<*mut c_void>()) {
-            offset
-        } else {
+        let Some(elem_offset) = idx.checked_mul(mem::size_of::<*mut c_void>()) else {
             if RUNTIME_LOG.load(Ordering::Relaxed) {
                 let _ = io::stderr().write_all(
                     format!(
@@ -147,9 +165,10 @@ pub extern "C" fn array_get_ptr(arr: *mut c_void, idx: usize) -> *mut c_void {
             return ptr::null_mut();
         };
 
-        let data_start = arr.cast::<u8>().add(ARRAY_HEADER_SIZE);
-        let elem_ptr = data_start.add(elem_offset) as *const *mut c_void;
-        let p = *elem_ptr;
+        let data_start = arr.cast::<u64>().add(ARRAY_HEADER_SIZE / 8).cast::<u8>();
+        let elem_addr = data_start as usize + elem_offset;
+        let elem_ptr = ptr::with_exposed_provenance::<*mut c_void>(elem_addr).cast_mut();
+        let p = ptr::read_unaligned(elem_ptr);
         if !p.is_null() {
             rc_inc(p);
         }
@@ -176,16 +195,15 @@ pub extern "C" fn array_get_ptr_borrow(arr: *mut c_void, idx: usize) -> *mut c_v
         if !crate::is_plausible_addr(arr as usize) {
             return ptr::null_mut();
         }
-        let len_ptr = arr.cast::<u8>().add(mem::size_of::<u64>()) as *const u64;
-        let len = *len_ptr as usize;
+        let len_ptr_u8 = arr.cast::<u8>().add(mem::size_of::<u64>());
+        let len_u64 = ptr::read_unaligned(len_ptr_u8 as *const u64);
+        let len = usize::try_from(len_u64).unwrap_or(0);
         if idx >= len {
             runtime_index_oob_error(arr, idx, len);
             return ptr::null_mut();
         }
         // Validate element offset calculation to prevent overflow
-        let elem_offset = if let Some(offset) = idx.checked_mul(mem::size_of::<*mut c_void>()) {
-            offset
-        } else {
+        let Some(elem_offset) = idx.checked_mul(mem::size_of::<*mut c_void>()) else {
             if RUNTIME_LOG.load(Ordering::Relaxed) {
                 let _ = io::stderr().write_all(
                     format!(
@@ -197,10 +215,104 @@ pub extern "C" fn array_get_ptr_borrow(arr: *mut c_void, idx: usize) -> *mut c_v
             return ptr::null_mut();
         };
 
-        let data_start = arr.cast::<u8>().add(ARRAY_HEADER_SIZE);
-        let elem_ptr = data_start.add(elem_offset) as *const *mut c_void;
-        *elem_ptr
+        let data_start = arr.cast::<u64>().add(ARRAY_HEADER_SIZE / 8).cast::<u8>();
+        let elem_addr = data_start as usize + elem_offset;
+        let elem_ptr = ptr::with_exposed_provenance::<*mut c_void>(elem_addr).cast_mut();
+        ptr::read_unaligned(elem_ptr)
     }
+}
+
+/// Read metadata from an array pointer.
+/// Returns `(elem_is_number, len, capacity)` tuple.
+///
+/// # Safety
+/// `arr` must be a valid array pointer allocated by this runtime.
+unsafe fn read_array_metadata(arr: *mut c_void) -> (i32, usize, usize) {
+    let header_u64 = unsafe { ptr::read_unaligned(arr.cast::<u64>()) };
+    let elem_is_number = ((header_u64 >> 32) & 1) as i32;
+
+    let len_ptr_u8 = unsafe { arr.cast::<u8>().add(mem::size_of::<u64>()) };
+    let len_u64 = unsafe { ptr::read_unaligned(len_ptr_u8 as *const u64) };
+    let len = usize::try_from(len_u64).unwrap_or(0);
+
+    let cap_addr = arr as usize + mem::size_of::<u64>() * 2;
+    let cap_ptr = ptr::with_exposed_provenance::<u64>(cap_addr).cast_mut();
+    let capacity_u64 = unsafe { ptr::read_unaligned(cap_ptr) };
+    let capacity = usize::try_from(capacity_u64).unwrap_or(0);
+
+    (elem_is_number, len, capacity)
+}
+
+/// Calculate new capacity using geometric growth (1.5x) with bounds checking.
+/// Returns None if calculation would overflow or exceed safe limits.
+fn calculate_new_capacity(old_capacity: usize, min_capacity: usize) -> Option<usize> {
+    const MAX_SAFE_CAPACITY: usize = usize::MAX / 3; // Ensure 1.5x growth doesn't overflow
+
+    if old_capacity > MAX_SAFE_CAPACITY {
+        return None;
+    }
+
+    if min_capacity > MAX_SAFE_CAPACITY {
+        return None;
+    }
+
+    // Use checked arithmetic to prevent overflow
+    let growth = old_capacity / 2;
+    let new_capacity = old_capacity.checked_add(growth.max(1))?;
+
+    if new_capacity < min_capacity {
+        Some(min_capacity)
+    } else {
+        Some(new_capacity)
+    }
+}
+
+/// Copy array data from old array to new array, handling reference counting.
+/// Returns true on success, false on overflow.
+///
+/// # Safety
+/// `old_arr` and `new_arr` must be valid array pointers allocated by this runtime.
+/// `len` must not exceed the capacity of either array.
+unsafe fn copy_array_data(
+    old_arr: *mut c_void,
+    new_arr: *mut c_void,
+    len: usize,
+    elem_size: usize,
+    elem_is_number: i32,
+) -> bool {
+    // Validate copy size to prevent overflow
+    let Some(copy_size) = len.checked_mul(elem_size) else {
+        return false;
+    };
+
+    let old_data = unsafe {
+        old_arr
+            .cast::<u64>()
+            .add(ARRAY_HEADER_SIZE / 8)
+            .cast::<u8>()
+    };
+    let new_data = unsafe {
+        new_arr
+            .cast::<u64>()
+            .add(ARRAY_HEADER_SIZE / 8)
+            .cast::<u8>()
+    };
+    unsafe { ptr::copy_nonoverlapping(old_data, new_data, copy_size) };
+
+    // Handle reference counting for pointer elements
+    if elem_is_number == 0 {
+        for i in 0..len {
+            let ptr_offset = i * mem::size_of::<*mut c_void>();
+            let ptr_addr = new_data as usize + ptr_offset;
+            let ptr_ptr = ptr::with_exposed_provenance::<*mut c_void>(ptr_addr);
+            let p = unsafe { ptr::read_unaligned(ptr_ptr) };
+            if !p.is_null() {
+                unsafe { rc_inc(p) };
+            }
+        }
+    }
+
+    true
 }
 
 /// Grow an array to accommodate at least `min_capacity` elements.
@@ -217,59 +329,19 @@ unsafe fn array_grow(arr: *mut c_void, min_capacity: usize) -> *mut c_void {
     }
 
     unsafe {
-        // Read current metadata
-        let header_ptr = arr as *const u64;
-        let header = *header_ptr;
-        let elem_is_number = ((header >> 32) & 1) as i32;
+        let (elem_is_number, len, old_capacity) = read_array_metadata(arr);
 
-        let len_ptr = arr.cast::<u8>().add(mem::size_of::<u64>()) as *const u64;
-        let len = *len_ptr as usize;
-
-        let cap_ptr = arr.cast::<u8>().add(mem::size_of::<u64>() * 2) as *const u64;
-        let old_capacity = *cap_ptr as usize;
-
-        // Calculate new capacity with geometric growth (1.5x)
-        // Validate old_capacity to prevent overflow in growth calculation
-        const MAX_SAFE_CAPACITY: usize = usize::MAX / 3; // Ensure 1.5x growth doesn't overflow
-        if old_capacity > MAX_SAFE_CAPACITY {
+        let Some(new_capacity) = calculate_new_capacity(old_capacity, min_capacity) else {
             if RUNTIME_LOG.load(Ordering::Relaxed) {
                 let _ = io::stderr().write_all(
                     format!(
-                        "[oats runtime] array_grow: capacity {old_capacity} exceeds safe limit\n"
+                        "[oats runtime] array_grow: capacity {old_capacity} exceeds safe limit or overflow\n"
                     )
                     .as_bytes(),
                 );
             }
             return ptr::null_mut();
-        }
-
-        // Use checked arithmetic to prevent overflow
-        let growth = old_capacity / 2;
-        let mut new_capacity = if let Some(cap) = old_capacity.checked_add(growth.max(1)) {
-            cap
-        } else {
-            if RUNTIME_LOG.load(Ordering::Relaxed) {
-                let _ = io::stderr().write_all(
-                    b"[oats runtime] array_grow: integer overflow in capacity calculation\n",
-                );
-            }
-            return ptr::null_mut();
         };
-        if new_capacity < min_capacity {
-            // Validate min_capacity doesn't exceed maximum safe value
-            if min_capacity > MAX_SAFE_CAPACITY {
-                if RUNTIME_LOG.load(Ordering::Relaxed) {
-                    let _ = io::stderr().write_all(
-                        format!(
-                            "[oats runtime] array_grow: min_capacity {min_capacity} exceeds safe limit\n"
-                        )
-                        .as_bytes(),
-                    );
-                }
-                return ptr::null_mut();
-            }
-            new_capacity = min_capacity;
-        }
 
         // Determine element size
         let elem_size = if elem_is_number != 0 {
@@ -283,28 +355,9 @@ unsafe fn array_grow(arr: *mut c_void, min_capacity: usize) -> *mut c_void {
             return ptr::null_mut();
         }
 
-        let new_len_ptr = new_arr
-            .cast::<u8>()
-            .add(mem::size_of::<u64>())
-            .cast::<u64>();
-        *new_len_ptr = len as u64;
-
-        // Validate copy size to prevent overflow
-        let copy_size = if let Some(size) = len.checked_mul(elem_size) {
-            size
-        } else {
-            if RUNTIME_LOG.load(Ordering::Relaxed) {
-                let _ = io::stderr().write_all(
-                    format!(
-                        "[oats runtime] array_grow: integer overflow in copy size (len={len}, elem_size={elem_size})\n"
-                    )
-                    .as_bytes(),
-                );
-            }
-            // Clean up allocated array before returning
-            rc_dec(new_arr);
-            return ptr::null_mut();
-        };
+        let new_len_addr = new_arr as usize + mem::size_of::<u64>();
+        let new_len_ptr = ptr::with_exposed_provenance::<u64>(new_len_addr).cast_mut();
+        ptr::write_unaligned(new_len_ptr, len as u64);
 
         // Ensure len doesn't exceed old_capacity (safety check)
         if len > old_capacity {
@@ -320,18 +373,17 @@ unsafe fn array_grow(arr: *mut c_void, min_capacity: usize) -> *mut c_void {
             return ptr::null_mut();
         }
 
-        let old_data = arr.cast::<u8>().add(ARRAY_HEADER_SIZE);
-        let new_data = new_arr.cast::<u8>().add(ARRAY_HEADER_SIZE);
-        ptr::copy_nonoverlapping(old_data, new_data, copy_size);
-
-        if elem_is_number == 0 {
-            let ptrs = new_data.cast::<*mut c_void>();
-            for i in 0..len {
-                let p = *ptrs.add(i);
-                if !p.is_null() {
-                    rc_inc(p);
-                }
+        if !copy_array_data(arr, new_arr, len, elem_size, elem_is_number) {
+            if RUNTIME_LOG.load(Ordering::Relaxed) {
+                let _ = io::stderr().write_all(
+                    format!(
+                        "[oats runtime] array_grow: integer overflow in copy size (len={len}, elem_size={elem_size})\n"
+                    )
+                    .as_bytes(),
+                );
             }
+            rc_dec(new_arr);
+            return ptr::null_mut();
         }
 
         new_arr
@@ -345,6 +397,8 @@ unsafe fn array_grow(arr: *mut c_void, min_capacity: usize) -> *mut c_void {
 /// The function performs null checks and bounds checking internally.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn array_set_f64(arr_ptr: *mut *mut c_void, idx: usize, v: f64) {
+    const MAX_ZERO_FILL: usize = 1_000_000; // 1M elements max
+
     if arr_ptr.is_null() {
         return;
     }
@@ -358,11 +412,10 @@ pub unsafe extern "C" fn array_set_f64(arr_ptr: *mut *mut c_void, idx: usize, v:
             return;
         }
 
-        let cap_ptr = arr
-            .cast::<u8>()
-            .add(mem::size_of::<u64>() * 2)
-            .cast::<u64>();
-        let capacity = *cap_ptr as usize;
+        let cap_addr = arr as usize + mem::size_of::<u64>() * 2;
+        let cap_ptr = ptr::with_exposed_provenance::<u64>(cap_addr).cast_mut();
+        let capacity_u64 = ptr::read_unaligned(cap_ptr);
+        let capacity = usize::try_from(capacity_u64).unwrap_or(0);
 
         // If index is beyond capacity, grow the array
         if idx >= capacity {
@@ -377,15 +430,14 @@ pub unsafe extern "C" fn array_set_f64(arr_ptr: *mut *mut c_void, idx: usize, v:
         }
 
         // Re-get pointers in case arr changed
-        let len_ptr = arr.cast::<u8>().add(mem::size_of::<u64>()).cast::<u64>();
-        let len = *len_ptr as usize;
+        let len_ptr_u8 = arr.cast::<u8>().add(mem::size_of::<u64>());
+        let len_u64 = ptr::read_unaligned(len_ptr_u8 as *const u64);
+        let len = usize::try_from(len_u64).unwrap_or(0);
 
         // If index is beyond length, zero-fill and extend length
         if idx >= len {
             // Validate index doesn't cause overflow when extending length
-            let new_len = if let Some(nl) = idx.checked_add(1) {
-                nl
-            } else {
+            let Some(new_len) = idx.checked_add(1) else {
                 if RUNTIME_LOG.load(Ordering::Relaxed) {
                     let _ = io::stderr().write_all(
                         format!(
@@ -400,7 +452,6 @@ pub unsafe extern "C" fn array_set_f64(arr_ptr: *mut *mut c_void, idx: usize, v:
             // Validate zeros_count calculation doesn't overflow
             let zeros_count = idx - len;
             // Ensure zeros_count is reasonable (prevent excessive zero-filling)
-            const MAX_ZERO_FILL: usize = 1_000_000; // 1M elements max
             if zeros_count > MAX_ZERO_FILL {
                 if RUNTIME_LOG.load(Ordering::Relaxed) {
                     let _ = io::stderr().write_all(
@@ -413,11 +464,9 @@ pub unsafe extern "C" fn array_set_f64(arr_ptr: *mut *mut c_void, idx: usize, v:
                 return;
             }
 
-            let data_start = arr.cast::<u8>().add(ARRAY_HEADER_SIZE);
+            let data_start = arr.cast::<u64>().add(ARRAY_HEADER_SIZE / 8).cast::<u8>();
             // Validate offset calculation for zeros_start
-            let zeros_offset = if let Some(offset) = len.checked_mul(mem::size_of::<f64>()) {
-                offset
-            } else {
+            let Some(zeros_offset) = len.checked_mul(mem::size_of::<f64>()) else {
                 if RUNTIME_LOG.load(Ordering::Relaxed) {
                     let _ = io::stderr().write_all(
                         b"[oats runtime] array_set_f64: integer overflow in zeros offset\n",
@@ -425,18 +474,17 @@ pub unsafe extern "C" fn array_set_f64(arr_ptr: *mut *mut c_void, idx: usize, v:
                 }
                 return;
             };
-            let zeros_start = data_start.add(zeros_offset).cast::<f64>();
+            let zeros_addr = data_start as usize + zeros_offset;
+            let zeros_start = ptr::with_exposed_provenance::<f64>(zeros_addr).cast_mut();
             for i in 0..zeros_count {
-                *zeros_start.add(i) = 0.0;
+                ptr::write_unaligned(zeros_start.add(i), 0.0);
             }
-            *len_ptr = new_len as u64;
+            ptr::write_unaligned(len_ptr_u8.cast::<u64>(), new_len as u64);
         }
 
         // Set the value
         // Validate element offset calculation to prevent overflow
-        let elem_offset = if let Some(offset) = idx.checked_mul(mem::size_of::<f64>()) {
-            offset
-        } else {
+        let Some(elem_offset) = idx.checked_mul(mem::size_of::<f64>()) else {
             if RUNTIME_LOG.load(Ordering::Relaxed) {
                 let _ = io::stderr().write_all(
                     format!(
@@ -448,9 +496,12 @@ pub unsafe extern "C" fn array_set_f64(arr_ptr: *mut *mut c_void, idx: usize, v:
             return;
         };
 
-        let data_start = arr.cast::<u8>().add(ARRAY_HEADER_SIZE);
-        let elem_ptr = data_start.add(elem_offset).cast::<f64>();
-        *elem_ptr = v;
+        let data_start = arr.cast::<u64>().add(ARRAY_HEADER_SIZE / 8).cast::<u8>();
+        let elem_addr = data_start as usize + elem_offset;
+        // elem_offset is multiple of 8 (size_of::<f64>()), so should maintain alignment
+        debug_assert!(elem_addr.is_multiple_of(std::mem::align_of::<f64>()));
+        let elem_ptr = elem_addr as *mut f64;
+        ptr::write_unaligned(elem_ptr, v);
     }
 }
 
@@ -462,6 +513,8 @@ pub unsafe extern "C" fn array_set_f64(arr_ptr: *mut *mut c_void, idx: usize, v:
 /// or null. The function performs null checks and bounds checking internally.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn array_set_ptr(arr_ptr: *mut *mut c_void, idx: usize, p: *mut c_void) {
+    const MAX_NULL_FILL: usize = 1_000_000; // 1M elements max
+
     if arr_ptr.is_null() {
         return;
     }
@@ -475,11 +528,10 @@ pub unsafe extern "C" fn array_set_ptr(arr_ptr: *mut *mut c_void, idx: usize, p:
             return;
         }
 
-        let cap_ptr = arr
-            .cast::<u8>()
-            .add(mem::size_of::<u64>() * 2)
-            .cast::<u64>();
-        let capacity = *cap_ptr as usize;
+        let cap_addr = arr as usize + mem::size_of::<u64>() * 2;
+        let cap_ptr = ptr::with_exposed_provenance::<u64>(cap_addr).cast_mut();
+        let capacity_u64 = ptr::read_unaligned(cap_ptr);
+        let capacity = usize::try_from(capacity_u64).unwrap_or(0);
 
         // If index is beyond capacity, grow the array
         if idx >= capacity {
@@ -494,15 +546,14 @@ pub unsafe extern "C" fn array_set_ptr(arr_ptr: *mut *mut c_void, idx: usize, p:
         }
 
         // Re-get pointers in case arr changed
-        let len_ptr = arr.cast::<u8>().add(mem::size_of::<u64>()).cast::<u64>();
-        let len = *len_ptr as usize;
+        let len_ptr_u8 = arr.cast::<u8>().add(mem::size_of::<u64>());
+        let len_u64 = ptr::read_unaligned(len_ptr_u8 as *const u64);
+        let len = usize::try_from(len_u64).unwrap_or(0);
 
         // If index is beyond length, null-fill and extend length
         if idx >= len {
             // Validate index doesn't cause overflow when extending length
-            let new_len = if let Some(nl) = idx.checked_add(1) {
-                nl
-            } else {
+            let Some(new_len) = idx.checked_add(1) else {
                 if RUNTIME_LOG.load(Ordering::Relaxed) {
                     let _ = io::stderr().write_all(
                         format!(
@@ -517,7 +568,6 @@ pub unsafe extern "C" fn array_set_ptr(arr_ptr: *mut *mut c_void, idx: usize, p:
             // Validate nulls_count calculation doesn't overflow
             let nulls_count = idx - len;
             // Ensure nulls_count is reasonable (prevent excessive null-filling)
-            const MAX_NULL_FILL: usize = 1_000_000; // 1M elements max
             if nulls_count > MAX_NULL_FILL {
                 if RUNTIME_LOG.load(Ordering::Relaxed) {
                     let _ = io::stderr().write_all(
@@ -530,12 +580,9 @@ pub unsafe extern "C" fn array_set_ptr(arr_ptr: *mut *mut c_void, idx: usize, p:
                 return;
             }
 
-            let data_start = arr.cast::<u8>().add(ARRAY_HEADER_SIZE);
+            let data_start = arr.cast::<u64>().add(ARRAY_HEADER_SIZE / 8).cast::<u8>();
             // Validate offset calculation for nulls_start
-            let nulls_offset = if let Some(offset) = len.checked_mul(mem::size_of::<*mut c_void>())
-            {
-                offset
-            } else {
+            let Some(nulls_offset) = len.checked_mul(mem::size_of::<*mut c_void>()) else {
                 if RUNTIME_LOG.load(Ordering::Relaxed) {
                     let _ = io::stderr().write_all(
                         b"[oats runtime] array_set_ptr: integer overflow in nulls offset\n",
@@ -543,17 +590,18 @@ pub unsafe extern "C" fn array_set_ptr(arr_ptr: *mut *mut c_void, idx: usize, p:
                 }
                 return;
             };
-            let nulls_start = data_start.add(nulls_offset).cast::<*mut c_void>();
+            let nulls_addr = data_start as usize + nulls_offset;
+            // nulls_offset is multiple of 8 (size_of::<*mut c_void>()), so should maintain alignment
+            debug_assert!(nulls_addr.is_multiple_of(std::mem::align_of::<*mut c_void>()));
+            let nulls_start = nulls_addr as *mut *mut c_void;
             for i in 0..nulls_count {
-                *nulls_start.add(i) = ptr::null_mut();
+                ptr::write_unaligned(nulls_start.add(i), ptr::null_mut());
             }
-            *len_ptr = new_len as u64;
+            ptr::write_unaligned(len_ptr_u8.cast::<u64>(), new_len as u64);
         }
 
         // Validate element offset calculation to prevent overflow
-        let elem_offset = if let Some(offset) = idx.checked_mul(mem::size_of::<*mut c_void>()) {
-            offset
-        } else {
+        let Some(elem_offset) = idx.checked_mul(mem::size_of::<*mut c_void>()) else {
             if RUNTIME_LOG.load(Ordering::Relaxed) {
                 let _ = io::stderr().write_all(
                     format!(
@@ -565,8 +613,11 @@ pub unsafe extern "C" fn array_set_ptr(arr_ptr: *mut *mut c_void, idx: usize, p:
             return;
         };
 
-        let data_start = arr.cast::<u8>().add(ARRAY_HEADER_SIZE);
-        let elem_ptr = data_start.add(elem_offset).cast::<AtomicPtr<c_void>>();
+        let data_start = arr.cast::<u64>().add(ARRAY_HEADER_SIZE / 8).cast::<u8>();
+        let elem_addr = data_start as usize + elem_offset;
+        // elem_offset is multiple of 8 (size_of::<*mut c_void>()), so should maintain alignment
+        debug_assert!(elem_addr.is_multiple_of(std::mem::align_of::<AtomicPtr<c_void>>()));
+        let elem_ptr = ptr::with_exposed_provenance::<AtomicPtr<c_void>>(elem_addr).cast_mut();
 
         // Increment the new pointer's refcount *before* swapping it in.
         if !p.is_null() {
@@ -599,16 +650,17 @@ pub unsafe extern "C" fn array_set_ptr_weak(arr: *mut c_void, idx: usize, p: *mu
         if !crate::is_plausible_addr(arr as usize) {
             return;
         }
-        let len_ptr = arr.cast::<u8>().add(mem::size_of::<u64>()) as *const u64;
-        let len = *len_ptr as usize;
+        let len_ptr_u8 = arr.cast::<u8>().add(mem::size_of::<u64>());
+        let len_u64 = ptr::read_unaligned(len_ptr_u8 as *const u64);
+        let len = usize::try_from(len_u64).unwrap_or(0);
         if idx >= len {
             runtime_index_oob_error(arr, idx, len);
             return;
         }
-        let data_start = arr.cast::<u8>().add(ARRAY_HEADER_SIZE);
-        let elem_ptr = data_start
-            .add(idx * mem::size_of::<*mut c_void>())
-            .cast::<AtomicPtr<c_void>>();
+        let data_start = arr.cast::<u64>().add(ARRAY_HEADER_SIZE / 8).cast::<u8>();
+        let elem_offset = idx * mem::size_of::<*mut c_void>();
+        let elem_addr = data_start as usize + elem_offset;
+        let elem_ptr = ptr::with_exposed_provenance::<AtomicPtr<c_void>>(elem_addr).cast_mut();
 
         // Increment the new pointer's WEAK refcount *before* swapping it in.
         if !p.is_null() {
@@ -635,10 +687,13 @@ pub extern "C" fn array_push_f64(arr: *mut c_void, value: f64) {
         if !crate::is_plausible_addr(arr as usize) {
             return;
         }
-        let len_ptr = arr.cast::<u8>().add(mem::size_of::<u64>()).cast::<u64>();
-        let len = *len_ptr as usize;
-        let cap_ptr = arr.cast::<u8>().add(mem::size_of::<u64>() * 2) as *const u64;
-        let capacity = *cap_ptr as usize;
+        let len_ptr_u8 = arr.cast::<u8>().add(mem::size_of::<u64>());
+        let len_u64 = ptr::read_unaligned(len_ptr_u8 as *const u64);
+        let len = usize::try_from(len_u64).unwrap_or(0);
+        let cap_addr = arr as usize + mem::size_of::<u64>() * 2;
+        let cap_ptr = ptr::with_exposed_provenance::<u64>(cap_addr).cast_mut();
+        let capacity_u64 = ptr::read_unaligned(cap_ptr);
+        let capacity = usize::try_from(capacity_u64).unwrap_or(0);
 
         if len >= capacity {
             if crate::RUNTIME_LOG.load(Ordering::Relaxed) {
@@ -656,10 +711,13 @@ pub extern "C" fn array_push_f64(arr: *mut c_void, value: f64) {
             return;
         }
 
-        let data_start = arr.cast::<u8>().add(ARRAY_HEADER_SIZE);
-        let elem_ptr = data_start.add(len * mem::size_of::<f64>()).cast::<f64>();
-        *elem_ptr = value;
-        *len_ptr = (len + 1) as u64;
+        let data_start = arr.cast::<u64>().add(ARRAY_HEADER_SIZE / 8).cast::<u8>();
+        let elem_addr = data_start as usize + len * mem::size_of::<f64>();
+        // len * size_of::<f64>() maintains 8-byte alignment
+        debug_assert!(elem_addr.is_multiple_of(std::mem::align_of::<f64>()));
+        let elem_ptr = elem_addr as *mut f64;
+        ptr::write_unaligned(elem_ptr, value);
+        ptr::write_unaligned(len_ptr_u8.cast::<u64>(), (len + 1) as u64);
     }
 }
 
@@ -673,16 +731,20 @@ pub extern "C" fn array_pop_f64(arr: *mut c_void) -> f64 {
         if !crate::is_plausible_addr(arr as usize) {
             return 0.0;
         }
-        let len_ptr = arr.cast::<u8>().add(mem::size_of::<u64>()).cast::<u64>();
-        let len = *len_ptr as isize;
-        if len <= 0 {
+        let len_addr = arr as usize + mem::size_of::<u64>();
+        // Adding 8 bytes to 8-byte aligned pointer maintains alignment
+        debug_assert!(len_addr.is_multiple_of(std::mem::align_of::<u64>()));
+        let len_ptr = ptr::with_exposed_provenance::<u64>(len_addr).cast_mut();
+        let len = usize::try_from(*len_ptr).unwrap_or(0);
+        if len == 0 {
             return 0.0;
         }
-        let new_len = (len - 1) as usize;
-        let data_start = arr.cast::<u8>().add(ARRAY_HEADER_SIZE);
-        let elem_ptr = data_start
-            .add(new_len * mem::size_of::<f64>())
-            .cast::<f64>();
+        let new_len = len - 1;
+        let data_start = arr.cast::<u64>().add(ARRAY_HEADER_SIZE / 8).cast::<u8>();
+        let elem_addr = data_start as usize + new_len * mem::size_of::<f64>();
+        // new_len * size_of::<f64>() maintains 8-byte alignment
+        debug_assert!(elem_addr.is_multiple_of(std::mem::align_of::<f64>()));
+        let elem_ptr = elem_addr as *mut f64;
         let val = *elem_ptr;
         // Optionally zero the slot
         *elem_ptr = 0.0;
@@ -706,17 +768,18 @@ pub unsafe extern "C" fn array_push_ptr(arr: *mut c_void, value: *mut c_void) {
         if !crate::is_plausible_addr(arr as usize) {
             return;
         }
-        let len_ptr = arr.cast::<u8>().add(mem::size_of::<u64>()).cast::<u64>();
-        let len = *len_ptr as usize;
-        let data_start = arr.cast::<u8>().add(ARRAY_HEADER_SIZE);
-        let elem_ptr = data_start
-            .add(len * mem::size_of::<*mut c_void>())
-            .cast::<*mut c_void>();
-        *elem_ptr = value;
+        let len_ptr_u8 = arr.cast::<u8>().add(mem::size_of::<u64>());
+        let len_u64 = ptr::read_unaligned(len_ptr_u8 as *const u64);
+        let len = usize::try_from(len_u64).unwrap_or(0);
+        let data_start = arr.cast::<u64>().add(ARRAY_HEADER_SIZE / 8).cast::<u8>();
+        let elem_offset = len * mem::size_of::<*mut c_void>();
+        let elem_addr = data_start as usize + elem_offset;
+        let elem_ptr = ptr::with_exposed_provenance::<*mut c_void>(elem_addr).cast_mut();
+        ptr::write_unaligned(elem_ptr, value);
         if !value.is_null() {
             rc_inc(value);
         }
-        *len_ptr = (len + 1) as u64;
+        ptr::write_unaligned(len_ptr_u8.cast::<u64>(), (len + 1) as u64);
     }
 }
 
@@ -736,17 +799,18 @@ pub unsafe extern "C" fn array_push_ptr_weak(arr: *mut c_void, value: *mut c_voi
         if !crate::is_plausible_addr(arr as usize) {
             return;
         }
-        let len_ptr = arr.cast::<u8>().add(mem::size_of::<u64>()).cast::<u64>();
-        let len = *len_ptr as usize;
-        let data_start = arr.cast::<u8>().add(ARRAY_HEADER_SIZE);
-        let elem_ptr = data_start
-            .add(len * mem::size_of::<*mut c_void>())
-            .cast::<*mut c_void>();
-        *elem_ptr = value;
+        let len_ptr_u8 = arr.cast::<u8>().add(mem::size_of::<u64>());
+        let len_u64 = ptr::read_unaligned(len_ptr_u8 as *const u64);
+        let len = usize::try_from(len_u64).unwrap_or(0);
+        let data_start = arr.cast::<u64>().add(ARRAY_HEADER_SIZE / 8).cast::<u8>();
+        let elem_offset = len * mem::size_of::<*mut c_void>();
+        let elem_addr = data_start as usize + elem_offset;
+        let elem_ptr = ptr::with_exposed_provenance::<*mut c_void>(elem_addr).cast_mut();
+        ptr::write_unaligned(elem_ptr, value);
         if !value.is_null() {
             rc_weak_inc(value);
         }
-        *len_ptr = (len + 1) as u64;
+        ptr::write_unaligned(len_ptr_u8.cast::<u64>(), (len + 1) as u64);
     }
 }
 
@@ -760,16 +824,17 @@ pub extern "C" fn array_pop_ptr(arr: *mut c_void) -> *mut c_void {
         if !crate::is_plausible_addr(arr as usize) {
             return ptr::null_mut();
         }
-        let len_ptr = arr.cast::<u8>().add(mem::size_of::<u64>()).cast::<u64>();
-        let len = *len_ptr as isize;
-        if len <= 0 {
+        let len_addr = arr as usize + mem::size_of::<u64>();
+        let len_ptr = ptr::with_exposed_provenance::<u64>(len_addr).cast_mut();
+        let len = usize::try_from(*len_ptr).unwrap_or(0);
+        if len == 0 {
             return ptr::null_mut();
         }
-        let new_len = (len - 1) as usize;
-        let data_start = arr.cast::<u8>().add(ARRAY_HEADER_SIZE);
-        let elem_ptr = data_start
-            .add(new_len * mem::size_of::<*mut c_void>())
-            .cast::<*mut c_void>();
+        let new_len = len - 1;
+        let data_start = arr.cast::<u64>().add(ARRAY_HEADER_SIZE / 8).cast::<u8>();
+        let elem_offset = new_len * mem::size_of::<*mut c_void>();
+        let elem_addr = data_start as usize + elem_offset;
+        let elem_ptr = ptr::with_exposed_provenance::<*mut c_void>(elem_addr).cast_mut();
         let raw = *elem_ptr;
         // Clear the slot to avoid dangling references in the array buffer.
         *elem_ptr = ptr::null_mut();
@@ -790,6 +855,7 @@ pub extern "C" fn array_pop_ptr(arr: *mut c_void) -> *mut c_void {
 /// Passing arbitrary pointers is undefined behavior.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn array_to_string(arr: *mut c_void) -> *mut c_char {
+    use std::fmt::Write;
     if arr.is_null() {
         return ptr::null_mut();
     }
@@ -798,30 +864,25 @@ pub unsafe extern "C" fn array_to_string(arr: *mut c_void) -> *mut c_char {
         if !crate::is_plausible_addr(arr as usize) {
             return ptr::null_mut();
         }
-        let header_ptr = arr as *const u64;
-        let header = *header_ptr;
-        let flags = (header >> 32) as u32;
+        let header_u64 = ptr::read_unaligned(arr.cast::<u64>());
+        let flags = (header_u64 >> 32) as u32;
         let elem_is_number = (flags & 1) != 0;
 
-        let len_ptr = arr.cast::<u8>().add(mem::size_of::<u64>()) as *const u64;
-        let len = *len_ptr as usize;
+        let len_ptr_u8 = arr.cast::<u8>().add(mem::size_of::<u64>());
+        let len_u64 = ptr::read_unaligned(len_ptr_u8 as *const u64);
+        let len = usize::try_from(len_u64).unwrap_or(0);
 
+        let mut s = String::new();
+        s.push('[');
         if elem_is_number {
-            let mut s = String::new();
-            s.push('[');
             for i in 0..len {
                 let v = array_get_f64(arr, i);
                 if i != 0 {
                     s.push_str(", ");
                 }
-                s.push_str(&format!("{v}"));
+                write!(s, "{v}").expect("failed to write to string");
             }
-            s.push(']');
-            let c = std::ffi::CString::new(s).unwrap_or_default();
-            heap_str_from_cstr(c.as_ptr())
         } else {
-            let mut s = String::new();
-            s.push('[');
             for i in 0..len {
                 if i != 0 {
                     s.push_str(", ");
@@ -832,8 +893,8 @@ pub unsafe extern "C" fn array_to_string(arr: *mut c_void) -> *mut c_char {
                     continue;
                 }
                 let mut printed = false;
-                let header_ptr = p as *const AtomicU64;
-                let header_val = (*header_ptr).load(Ordering::Relaxed);
+                let header_ptr = p.cast::<AtomicU64>();
+                let header_val = ptr::read_unaligned(header_ptr).load(Ordering::Relaxed);
                 let type_tag = (header_val >> HEADER_TYPE_TAG_SHIFT) as u64;
                 if type_tag == 0 {
                     let nested = array_to_string(p);
@@ -856,14 +917,15 @@ pub unsafe extern "C" fn array_to_string(arr: *mut c_void) -> *mut c_char {
                     }
                 }
                 if !printed {
-                    s.push_str(&format!("<ptr {p:p}>"));
+                    use std::fmt::Write;
+                    write!(s, "<ptr {p:p}>").expect("failed to write to string");
                 }
                 rc_dec(p);
             }
-            s.push(']');
-            let c = std::ffi::CString::new(s).unwrap_or_default();
-            heap_str_from_cstr(c.as_ptr())
         }
+        s.push(']');
+        let c = std::ffi::CString::new(s).unwrap_or_default();
+        heap_str_from_cstr(c.as_ptr())
     }
 }
 

@@ -31,7 +31,7 @@ pub extern "C" fn collector_collect_now() {
 /// # Safety
 /// `s` must be a valid nul-terminated C string pointer or null.
 #[unsafe(no_mangle)]
-pub unsafe fn runtime_strlen(s: *const c_char) -> size_t {
+pub const unsafe extern "C" fn runtime_strlen(s: *const c_char) -> size_t {
     if s.is_null() {
         return 0;
     }

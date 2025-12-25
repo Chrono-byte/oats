@@ -30,7 +30,8 @@ pub unsafe extern "C" fn tuple_to_string(obj: *mut c_void) -> *mut c_char {
         return ptr::null_mut();
     }
     // meta pointer stored at offset +8
-    let meta_ptr_ptr = unsafe { base.cast::<u8>().add(8).cast::<*mut u64>() };
+    let meta_ptr_addr = base as usize + 8;
+    let meta_ptr_ptr = ptr::with_exposed_provenance::<*mut u64>(meta_ptr_addr);
     let meta = unsafe { *meta_ptr_ptr };
     if meta.is_null() {
         return ptr::null_mut();
@@ -39,13 +40,13 @@ pub unsafe extern "C" fn tuple_to_string(obj: *mut c_void) -> *mut c_char {
         return ptr::null_mut();
     }
 
-    let len = unsafe { ((*meta) & 0xffffffffu64) as usize };
+    let len = unsafe { ((*meta) & 0xffff_ffff_u64) as usize };
     // Validate metadata length is reasonable
     const MAX_META_LEN: usize = 10_000; // 10K fields max
     if len > MAX_META_LEN {
         return ptr::null_mut();
     }
-    let offsets_ptr = unsafe { meta.add(1) as *const i32 };
+    let offsets_ptr = unsafe { meta.add(1).cast::<i32>() };
 
     // Pre-allocate with known capacity to avoid reallocations
     let mut parts: Vec<String> = Vec::with_capacity(len);
@@ -55,7 +56,7 @@ pub unsafe extern "C" fn tuple_to_string(obj: *mut c_void) -> *mut c_char {
             // Invalid offset - skip this field
             continue;
         }
-        let off = off_i32 as isize as usize;
+        let off = usize::try_from(off_i32).unwrap();
         // Validate offset alignment and bounds
         if (off & 7) != 0 {
             // Offset must be 8-byte aligned
@@ -68,7 +69,7 @@ pub unsafe extern "C" fn tuple_to_string(obj: *mut c_void) -> *mut c_char {
             continue;
         }
         // Validate that the field address is plausible before dereferencing
-        let field_addr = unsafe { base.cast::<u8>().add(off) as *const u64 };
+        let field_addr = ptr::with_exposed_provenance::<u64>(base as usize + off);
         if !crate::is_plausible_addr(field_addr as usize) {
             // Invalid field address - skip this field
             continue;
@@ -95,11 +96,13 @@ fn union_dtor(obj_ptr: *mut c_void) {
     }
     unsafe {
         // discriminant stored at offset +16
-        let discrim_ptr = obj_ptr.cast::<u8>().add(16).cast::<u64>();
+        let discrim_addr = obj_ptr as usize + 16;
+        let discrim_ptr = ptr::with_exposed_provenance::<u64>(discrim_addr).cast_mut();
         let discrim = *discrim_ptr;
         if discrim == 1 {
             // pointer payload at offset +24
-            let payload_ptr_ptr = obj_ptr.cast::<u8>().add(24).cast::<*mut c_void>();
+            let payload_addr = obj_ptr as usize + 24;
+            let payload_ptr_ptr = ptr::with_exposed_provenance::<*mut c_void>(payload_addr);
             let payload_raw = *payload_ptr_ptr;
             if !payload_raw.is_null() {
                 rc_dec(payload_raw);
@@ -118,28 +121,33 @@ pub extern "C" fn union_box_f64(v: f64) -> *mut c_void {
     unsafe {
         // layout: header(8) | dtor_ptr(8) | discrim(8) | payload(8)
         let total = 8 * 4;
-        let mem = runtime_malloc(total as size_t).cast::<u8>();
+        let mem = runtime_malloc(usize::try_from(total).unwrap() as size_t).cast::<u8>();
         if mem.is_null() {
             return ptr::null_mut();
         }
 
         // header: type_tag=1 (dtor present) | rc=1 | weak=1
         // weak=1 represents the object's own existence
+        // mem is allocated with 8-byte alignment, so casting to u64 is safe
+        debug_assert!((mem as usize).is_multiple_of(std::mem::align_of::<u64>()));
         let header_ptr = mem.cast::<u64>();
         let type_tag: u64 = 1u64 << HEADER_TYPE_TAG_SHIFT;
         let refcount: u64 = 1u64;
         *header_ptr = header_with_weak(type_tag | refcount, 1);
 
         // store dtor pointer at offset +8
-        let dtor_ptr = mem.add(8).cast::<*mut c_void>();
+        let dtor_addr = mem as usize + 8;
+        let dtor_ptr = ptr::with_exposed_provenance::<*mut c_void>(dtor_addr).cast_mut();
         *dtor_ptr = union_dtor as *mut c_void;
 
         // discriminant = 0 for f64
-        let discrim_ptr = mem.add(16).cast::<u64>();
+        let discrim_addr = mem as usize + 16;
+        let discrim_ptr = ptr::with_exposed_provenance::<u64>(discrim_addr).cast_mut();
         *discrim_ptr = 0u64;
 
         // payload f64 at offset +24
-        let payload = mem.add(24).cast::<f64>();
+        let payload_addr = mem as usize + 24;
+        let payload = ptr::with_exposed_provenance::<f64>(payload_addr).cast_mut();
         *payload = v;
 
         mem.cast::<c_void>()
@@ -155,26 +163,31 @@ pub extern "C" fn union_box_f64(v: f64) -> *mut c_void {
 pub unsafe extern "C" fn union_box_ptr(p: *mut c_void) -> *mut c_void {
     unsafe {
         let total = 8 * 4;
-        let mem = runtime_malloc(total as size_t).cast::<u8>();
+        let mem = runtime_malloc(usize::try_from(total).unwrap() as size_t).cast::<u8>();
         if mem.is_null() {
             return ptr::null_mut();
         }
 
+        // mem is allocated with 8-byte alignment, so casting to u64 is safe
+        debug_assert!((mem as usize).is_multiple_of(std::mem::align_of::<u64>()));
         let header_ptr = mem.cast::<u64>();
         let type_tag: u64 = 1u64 << HEADER_TYPE_TAG_SHIFT;
         let refcount: u64 = 1u64;
         *header_ptr = header_with_weak(type_tag | refcount, 1);
 
         // store dtor
-        let dtor_ptr = mem.add(8).cast::<*mut c_void>();
+        let dtor_addr = mem as usize + 8;
+        let dtor_ptr = ptr::with_exposed_provenance::<*mut c_void>(dtor_addr).cast_mut();
         *dtor_ptr = union_dtor as *mut c_void;
 
         // discriminant = 1 for pointer
-        let discrim_ptr = mem.add(16).cast::<u64>();
+        let discrim_addr = mem as usize + 16;
+        let discrim_ptr = ptr::with_exposed_provenance::<u64>(discrim_addr).cast_mut();
         *discrim_ptr = 1u64;
 
         // payload pointer at offset +24
-        let payload_ptr_ptr = mem.add(24).cast::<*mut c_void>();
+        let payload_addr = mem as usize + 24;
+        let payload_ptr_ptr = ptr::with_exposed_provenance::<*mut c_void>(payload_addr).cast_mut();
         *payload_ptr_ptr = p;
         // Ensure the boxed union owns a strong reference to the nested pointer
         // so the payload remains live for the lifetime of the union object.
@@ -200,13 +213,15 @@ pub extern "C" fn union_unbox_f64(u: *mut c_void) -> f64 {
             return 0.0;
         }
         // Validate discriminant before unboxing
-        let discrim_ptr = u.cast::<u8>().add(16).cast::<u64>();
+        let discrim_addr = u as usize + 16;
+        let discrim_ptr = ptr::with_exposed_provenance::<u64>(discrim_addr);
         let discrim = *discrim_ptr;
         if discrim != 0 {
             // Not a number payload - return default
             return 0.0;
         }
-        let payload = u.cast::<u8>().add(24).cast::<f64>();
+        let payload_addr = u as usize + 24;
+        let payload = ptr::with_exposed_provenance::<f64>(payload_addr);
         *payload
     }
 }
@@ -226,13 +241,15 @@ pub extern "C" fn union_unbox_ptr(u: *mut c_void) -> *mut c_void {
             return ptr::null_mut();
         }
         // Validate discriminant before unboxing
-        let discrim_ptr = u.cast::<u8>().add(16).cast::<u64>();
+        let discrim_addr = u as usize + 16;
+        let discrim_ptr = ptr::with_exposed_provenance::<u64>(discrim_addr);
         let discrim = *discrim_ptr;
         if discrim != 1 {
             // Not a pointer payload - return NULL
             return ptr::null_mut();
         }
-        let payload_ptr_ptr = u.cast::<u8>().add(24).cast::<*mut c_void>();
+        let payload_addr = u as usize + 24;
+        let payload_ptr_ptr = ptr::with_exposed_provenance::<*mut c_void>(payload_addr);
         let p = *payload_ptr_ptr;
         if !p.is_null() {
             rc_inc(p);
@@ -256,7 +273,8 @@ pub extern "C" fn union_get_discriminant(u: *mut c_void) -> i64 {
         if u.is_null() {
             return -1;
         }
-        let discrim_ptr = u.cast::<u8>().add(16).cast::<u64>();
+        let discrim_addr = u as usize + 16;
+        let discrim_ptr = ptr::with_exposed_provenance::<u64>(discrim_addr);
         let discrim = *discrim_ptr;
         // Validate discriminant is in expected range
         if discrim > 1 {

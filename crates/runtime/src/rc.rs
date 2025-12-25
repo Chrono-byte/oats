@@ -47,12 +47,12 @@ pub unsafe extern "C" fn rc_inc(p: *mut c_void) {
             return;
         }
 
+        // Overflow protection: don't increment beyond safe limit
+        // Ensure version index doesn't conflict with special flags
+        const MAX_SAFE_RC: u64 = 0x7FFF_FFFF;
         // Optimized loop: reuse loaded value, only reload on CAS failure
         loop {
             let rc = old_header & HEADER_RC_MASK;
-            // Overflow protection: don't increment beyond safe limit
-            // Ensure version index doesn't conflict with special flags
-            const MAX_SAFE_RC: u64 = 0x7FFFFFFF;
             if rc >= MAX_SAFE_RC {
                 if crate::RUNTIME_LOG.load(Ordering::Relaxed) {
                     let _ = io::stderr().write_all(
@@ -121,7 +121,7 @@ pub(crate) unsafe fn get_object_base(p: *mut c_void) -> *mut c_void {
 
         // Fast path: check if current pointer looks like a valid header
         // Most pointers are already at the base, so this avoids the subtraction
-        let header = p as *const AtomicU64;
+        let header = p.cast::<AtomicU64>();
         // Additional validation: ensure header pointer is aligned and plausible
         if !crate::is_plausible_addr(header as usize) {
             return ptr::null_mut();
@@ -138,18 +138,15 @@ pub(crate) unsafe fn get_object_base(p: *mut c_void) -> *mut c_void {
 
         // Try offset -16 (string data pointer case)
         // Validate that subtracting 16 doesn't result in invalid memory
-        let obj_ptr_addr = match p_addr.checked_sub(16) {
-            Some(addr) => addr,
-            None => {
-                // Underflow - can't be a valid string data pointer
-                return p; // Assume it's already the base
-            }
+        let Some(obj_ptr_addr) = p_addr.checked_sub(16) else {
+            // Underflow - can't be a valid string data pointer
+            return p; // Assume it's already the base
         };
         if !crate::is_plausible_addr(obj_ptr_addr) {
             return p; // Offset pointer is not plausible, assume original is base
         }
-        let obj_ptr = obj_ptr_addr as *mut c_void;
-        let obj_header = obj_ptr as *const AtomicU64;
+        let obj_ptr = ptr::with_exposed_provenance::<c_void>(obj_ptr_addr).cast_mut();
+        let obj_header = obj_ptr.cast::<AtomicU64>();
         // Validate obj_header pointer before dereferencing
         if !crate::is_plausible_addr(obj_header as usize) {
             return p; // Can't validate offset header, assume original is base
@@ -281,12 +278,15 @@ pub unsafe extern "C" fn rc_dec(p: *mut c_void) {
                         }
                         let _depth_guard = DepthGuard;
 
-                        let type_tag = (old_header >> HEADER_TYPE_TAG_SHIFT) as u32;
+                        let type_tag =
+                            u32::try_from(old_header >> HEADER_TYPE_TAG_SHIFT).unwrap_or(0);
                         if type_tag == 1 {
-                            let dtor_ptr_ptr = obj_ptr
-                                .cast::<u8>()
-                                .add(std::mem::size_of::<u64>())
-                                .cast::<*mut c_void>();
+                            let dtor_addr = obj_ptr as usize + std::mem::size_of::<u64>();
+                            // Adding 8 bytes to 8-byte aligned pointer maintains alignment
+                            debug_assert!(
+                                dtor_addr.is_multiple_of(std::mem::align_of::<*mut c_void>())
+                            );
+                            let dtor_ptr_ptr = dtor_addr as *mut *mut c_void;
                             let dtor_raw = *dtor_ptr_ptr;
                             if !dtor_raw.is_null() {
                                 // Validate function pointer before transmute
@@ -537,7 +537,7 @@ pub unsafe extern "C" fn rc_weak_upgrade(p: *mut c_void) -> *mut c_void {
                 return ptr::null_mut();
             }
             // Overflow protection: ensure version index doesn't conflict with special flags
-            const MAX_SAFE_RC: u64 = 0x7FFFFFFF;
+            const MAX_SAFE_RC: u64 = 0x7FFF_FFFF;
             if strong >= MAX_SAFE_RC {
                 if crate::RUNTIME_LOG.load(Ordering::Relaxed) {
                     let _ = io::stderr().write_all(

@@ -97,7 +97,7 @@ Check out `docs/README.md` for more detailed docs.
 
 ## Contributing
 
-Contributions welcome! Check out `docs/ROADMAP.md` to see what's planned.
+Contributions welcome. Check out `docs/ROADMAP.md` to see what's planned.
 
 To build and test:
 

@@ -1,7 +1,5 @@
 # Oats Roadmap
 
-AOT compiler for TypeScript/JavaScript. Supports classes, async/await, generics, and most of the language.
-
 ## Current State
 
 **Overall:** Pretty solid (4/5)

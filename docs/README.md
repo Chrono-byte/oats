@@ -1,17 +1,15 @@
 # Oats Documentation
 
-Docs for the Oats compiler. Here's what's here:
+Documentation for the Oats compiler.
 
 ## Quick Start
-
-New to Oats? Check out:
 
 - Main `README.md` in the repo root
 - `DEVELOPMENT.md` for setup
 - `examples/` to see it in action
 - `ARCHITECTURE.md` for how it works
 
-Want to contribute?
+## Contributing
 
 - `DEVELOPMENT.md` - How to work on the code
 - `ROADMAP.md` - What's planned
@@ -20,7 +18,7 @@ Want to contribute?
 
 Oats supports most TypeScript/JavaScript:
 
-- Core stuff: functions, classes, interfaces, enums, generics, unions
+- Core features: functions, classes, interfaces, enums, generics, unions
 - Async/await with state machine lowering
 - Modern syntax: destructuring, template literals, arrow functions
 - Types: primitives, tuples, promises, weak/unowned refs

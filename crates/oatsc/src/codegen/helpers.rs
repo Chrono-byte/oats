@@ -639,15 +639,22 @@ impl<'a> super::CodeGen<'a> {
     // Emit rc_dec calls for any initialized pointer locals in the provided
     // locals stack. This is used at function exit or before early returns to
     // ensure pointer locals are decref'd so the runtime can free them.
+    // Respects escape analysis: skips rc_dec for non-escaping variables.
     pub fn emit_rc_dec_for_locals(&self, locals: &LocalsStackLocal<'a>) {
         // Find the rc_dec declaration (declare if needed)
         let rc_dec = self.get_rc_dec();
         let rc_weak_dec = self.get_rc_weak_dec();
         for scope in locals.iter().rev() {
-            for (ptr, ty, init, _is_const, is_weak, _nominal, oats_type) in scope.values() {
+            for (local_name, (ptr, ty, init, _is_const, is_weak, _nominal, oats_type)) in
+                scope.iter()
+            {
                 if *init && let inkwell::types::BasicTypeEnum::PointerType(_) = ty {
                     // Skip RC operations for unowned references
                     if let Some(crate::types::OatsType::Unowned(_)) = oats_type {
+                        continue;
+                    }
+                    // Skip RC operations for non-escaping variables (escape analysis optimization)
+                    if self.should_elide_rc_for_local(local_name) {
                         continue;
                     }
                     // load current pointer value
@@ -676,6 +683,7 @@ impl<'a> super::CodeGen<'a> {
     // Emit rc_dec for locals in a suffix of the locals stack starting at
     // `start_index`. This is useful when leaving a loop body early due to
     // `break`/`continue` where only the inner scopes should be decref'd.
+    // Respects escape analysis: skips rc_dec for non-escaping variables.
     pub(crate) fn _emit_rc_dec_for_locals_from(
         &self,
         locals: &LocalsStackLocal<'a>,
@@ -688,7 +696,9 @@ impl<'a> super::CodeGen<'a> {
         // iterate from innermost scope down to start_index
         let rc_weak_dec = self.get_rc_weak_dec();
         for scope in locals.iter().rev().take(locals.len() - start_index) {
-            for (ptr, ty, init, _is_const, is_weak, _nominal, oats_type) in scope.values() {
+            for (local_name, (ptr, ty, init, _is_const, is_weak, _nominal, oats_type)) in
+                scope.iter()
+            {
                 if *init
                     && let inkwell::types::BasicTypeEnum::PointerType(_) = ty
                     && let Ok(loaded) = self.builder.build_load(*ty, *ptr, "drop_load")
@@ -696,6 +706,10 @@ impl<'a> super::CodeGen<'a> {
                 {
                     // Skip RC operations for unowned references
                     if let Some(crate::types::OatsType::Unowned(_)) = oats_type {
+                        continue;
+                    }
+                    // Skip RC operations for non-escaping variables (escape analysis optimization)
+                    if self.should_elide_rc_for_local(local_name) {
                         continue;
                     }
                     if *is_weak {

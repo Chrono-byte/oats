@@ -781,9 +781,7 @@ pub fn run_from_args(
                     Some(&src_path),
                     Some(&source),
                     "cyclic dependency among top-level const declarations",
-                    Some(
-                        "Top-level `const` declarations form a cycle.",
-                    ),
+                    Some("Top-level `const` declarations form a cycle."),
                 );
             }
         }

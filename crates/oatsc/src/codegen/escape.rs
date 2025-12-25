@@ -4,6 +4,9 @@ use oxc_ast::ast::{
 };
 use std::collections::{HashMap, HashSet};
 
+// Maximum recursion depth for escape analysis to prevent stack overflow
+const MAX_ESCAPE_ANALYSIS_DEPTH: usize = 1000;
+
 /// Escape analysis results for a function.
 ///
 /// Tracks which variables escape the function scope, enabling RC optimization.
@@ -83,9 +86,11 @@ impl crate::codegen::CodeGen<'_> {
     pub fn analyze_fn(&self, func: &Function) -> EscapeInfo {
         let mut analyzer = EscapeAnalyzer::new();
 
-        // First pass: Collect parameter names as initial definitions.
+        // First pass: Collect parameter names as initial definitions and mark them as escaping
+        // (parameters come from outside the function scope).
         for param in &func.params.items {
             analyzer.collect_param_names(&param.pattern);
+            analyzer.mark_params_as_escaping(&param.pattern);
         }
 
         // Second pass: Analyze the function body to find uses and other definitions.
@@ -168,6 +173,34 @@ impl EscapeAnalyzer {
         }
     }
 
+    /// Recursively marks parameter names as escaping (they come from outside the function).
+    fn mark_params_as_escaping(&mut self, pat: &BindingPattern) {
+        match &pat.kind {
+            BindingPatternKind::BindingIdentifier(ident) => {
+                self.info.mark_escaping(ident.name.to_string());
+            }
+            BindingPatternKind::ArrayPattern(arr) => {
+                for elem_pat in arr.elements.iter().flatten() {
+                    self.mark_params_as_escaping(elem_pat);
+                }
+                if let Some(rest) = &arr.rest {
+                    self.mark_params_as_escaping(&rest.argument);
+                }
+            }
+            BindingPatternKind::ObjectPattern(obj) => {
+                for prop in &obj.properties {
+                    self.mark_params_as_escaping(&prop.value);
+                }
+                if let Some(rest) = &obj.rest {
+                    self.mark_params_as_escaping(&rest.argument);
+                }
+            }
+            BindingPatternKind::AssignmentPattern(assign) => {
+                self.mark_params_as_escaping(&assign.left);
+            }
+        }
+    }
+
     /// Analyzes a statement for escape patterns.
     fn analyze_stmt(&mut self, stmt: &Statement) {
         self.analyze_stmt_with_depth(stmt, 0);
@@ -175,8 +208,6 @@ impl EscapeAnalyzer {
 
     /// Internal helper with recursion depth tracking to prevent stack overflow.
     fn analyze_stmt_with_depth(&mut self, stmt: &Statement, depth: usize) {
-        // Prevent stack overflow from deeply nested AST structures
-        const MAX_ESCAPE_ANALYSIS_DEPTH: usize = 1000;
         if depth > MAX_ESCAPE_ANALYSIS_DEPTH {
             return;
         }
@@ -297,8 +328,6 @@ impl EscapeAnalyzer {
 
     /// Internal helper with recursion depth tracking to prevent stack overflow.
     fn analyze_expr_with_depth(&mut self, expr: &Expression, depth: usize) {
-        // Prevent stack overflow from deeply nested expressions
-        const MAX_ESCAPE_ANALYSIS_DEPTH: usize = 1000;
         if depth > MAX_ESCAPE_ANALYSIS_DEPTH {
             return;
         }
@@ -356,19 +385,53 @@ impl EscapeAnalyzer {
                 self.analyze_expr_with_depth(&member.object, depth + 1);
             }
             Expression::AssignmentExpression(assign) => {
-                if let Some(simple) = assign.left.as_simple_assignment_target() {
-                    if let SimpleAssignmentTarget::AssignmentTargetIdentifier(ident) = simple {
-                        let name = ident.name.to_string();
-                        if !self.is_defined(&name) {
-                            self.info.define_var(name);
+                // Check if this is a field or array element assignment (member expression)
+                // If so, the right-hand side escapes because it's stored in an object/array
+                let is_member_assignment = assign.left.as_member_expression().is_some();
+
+                if is_member_assignment {
+                    // Field or array element assignment: mark RHS as escaping
+                    self.analyze_expr_as_escaping_with_depth(&assign.right, depth + 1);
+                    // Also analyze the object/array and index expressions
+                    if let Some(member_expr) = assign.left.as_member_expression() {
+                        match member_expr {
+                            oxc_ast::ast::MemberExpression::StaticMemberExpression(
+                                static_member,
+                            ) => {
+                                self.analyze_expr_with_depth(&static_member.object, depth + 1);
+                            }
+                            oxc_ast::ast::MemberExpression::ComputedMemberExpression(
+                                computed_member,
+                            ) => {
+                                self.analyze_expr_with_depth(&computed_member.object, depth + 1);
+                                self.analyze_expr_with_depth(
+                                    &computed_member.expression,
+                                    depth + 1,
+                                );
+                            }
+                            oxc_ast::ast::MemberExpression::PrivateFieldExpression(
+                                private_field,
+                            ) => {
+                                self.analyze_expr_with_depth(&private_field.object, depth + 1);
+                            }
                         }
                     }
-                    // For other simple assignment targets, analyze the expression being assigned
-                } else if let Some(_pattern) = assign.left.as_assignment_target_pattern() {
-                    // For pattern assignments, we need to handle AssignmentTargetPattern
-                    // which is different from BindingPattern - for now, skip detailed analysis
+                } else {
+                    // Simple assignment: analyze normally
+                    if let Some(simple) = assign.left.as_simple_assignment_target() {
+                        if let SimpleAssignmentTarget::AssignmentTargetIdentifier(ident) = simple {
+                            let name = ident.name.to_string();
+                            if !self.is_defined(&name) {
+                                self.info.define_var(name);
+                            }
+                        }
+                        // For other simple assignment targets, analyze the expression being assigned
+                    } else if let Some(_pattern) = assign.left.as_assignment_target_pattern() {
+                        // For pattern assignments, we need to handle AssignmentTargetPattern
+                        // which is different from BindingPattern - for now, skip detailed analysis
+                    }
+                    self.analyze_expr_with_depth(&assign.right, depth + 1);
                 }
-                self.analyze_expr_with_depth(&assign.right, depth + 1);
             }
             Expression::BinaryExpression(bin) => {
                 self.analyze_expr_with_depth(&bin.left, depth + 1);
@@ -430,10 +493,12 @@ impl EscapeAnalyzer {
                     captured.remove(&param);
                 }
 
-                // Mark remaining variables as captured
+                // Mark remaining variables as captured AND escaping
+                // (variables captured by closures escape because the closure may outlive the function)
                 for var in captured {
                     if self.is_defined(&var) {
-                        self.info.mark_captured(var);
+                        self.info.mark_captured(var.clone());
+                        self.info.mark_escaping(var);
                     }
                 }
 
@@ -468,9 +533,7 @@ impl EscapeAnalyzer {
         vars: &mut HashSet<String>,
         depth: usize,
     ) {
-        // Prevent stack overflow from deeply nested expressions
-        const MAX_VAR_COLLECTION_DEPTH: usize = 1000;
-        if depth > MAX_VAR_COLLECTION_DEPTH {
+        if depth > MAX_ESCAPE_ANALYSIS_DEPTH {
             return;
         }
 

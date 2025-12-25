@@ -4,7 +4,6 @@
 //! are available before attempting to build or run Oats programs.
 
 use crate::diagnostics::{Result, ToastyWarn, WarningCollector};
-use crate::fetch;
 
 /// Check if a command is available in PATH
 #[must_use]
@@ -27,20 +26,38 @@ pub fn check_environment() -> Result<()> {
         return Ok(());
     }
 
-    // Check for oatsc compiler (try selected version first, then local target, then system)
-    let oatsc_available = if let Some(oatsc_path) = fetch::get_selected_compiler_path() {
-        // Use selected oatsc version
-        // SAFETY: set_var is unsafe in Rust 2024 due to thread-safety concerns
-        unsafe {
-            std::env::set_var("OATS_OATSC_PATH", oatsc_path);
+    // Check for oatsc compiler (try local target first, then system)
+    // NOTE: Disabled home directory store check to prefer locally built version
+    let oatsc_available = {
+        // Try to find local oatsc in target/release or target/debug
+        let mut local_oatsc = None;
+
+        // Check target/release/oatsc (relative to workspace root)
+        if let Ok(workspace_root) = std::env::var("CARGO_MANIFEST_DIR") {
+            let release_path = std::path::Path::new(&workspace_root)
+                .parent()
+                .map(|p| p.join("target/release/oatsc"))
+                .filter(|p| p.exists());
+            if release_path.is_some() {
+                local_oatsc = release_path;
+            }
         }
-        true
-    } else if let Ok(current_exe) = std::env::current_exe() {
-        let local_oatsc = current_exe
-            .parent()
-            .and_then(|p| p.parent())
-            .map(|p| p.join("oatsc"))
-            .filter(|p| p.exists());
+
+        // Also check current directory's target/release/oatsc
+        if local_oatsc.is_none() {
+            let release_path = std::path::Path::new("target/release/oatsc");
+            if release_path.exists() {
+                local_oatsc = Some(release_path.to_path_buf());
+            }
+        }
+
+        // Also check target/debug/oatsc
+        if local_oatsc.is_none() {
+            let debug_path = std::path::Path::new("target/debug/oatsc");
+            if debug_path.exists() {
+                local_oatsc = Some(debug_path.to_path_buf());
+            }
+        }
 
         if let Some(oatsc_path) = local_oatsc {
             // Use local oatsc from target directory
@@ -49,14 +66,12 @@ pub fn check_environment() -> Result<()> {
                 std::env::set_var("OATS_OATSC_PATH", oatsc_path);
             }
             true
+        } else if is_command_available("oatsc") {
+            // Use system oatsc
+            true
         } else {
             false
         }
-    } else if is_command_available("oatsc") {
-        // Use system oatsc
-        true
-    } else {
-        false
     };
 
     // Collect warnings instead of printing directly so they use the

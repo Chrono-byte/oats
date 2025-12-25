@@ -556,9 +556,8 @@ pub fn uninstall_runtime_version(version: &str) -> Result<()> {
 
 /// Get the path to the currently selected version of an artifact
 fn get_selected_artifact_path(artifact_type: ArtifactType) -> Option<PathBuf> {
-    let oats_home = match get_oats_home() {
-        Ok(dir) => dir,
-        Err(_) => return None,
+    let Ok(oats_home) = get_oats_home() else {
+        return None;
     };
 
     let config_path = oats_home.join(match artifact_type {

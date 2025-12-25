@@ -99,13 +99,13 @@ impl ToastyError {
     /// Returns `true` if the error is `CompilationFailed`, which means oatsc
     /// has already printed the actual error diagnostics to the user.
     #[must_use]
-    pub fn is_user_code_error(&self) -> bool {
-        matches!(self, ToastyError::CompilationFailed)
+    pub const fn is_user_code_error(&self) -> bool {
+        matches!(self, Self::CompilationFailed)
     }
 
     /// Create an I/O error with context
     pub fn io<P: Into<PathBuf>>(path: P, source: std::io::Error) -> Self {
-        ToastyError::Io {
+        Self::Io {
             path: path.into(),
             source,
         }
@@ -113,7 +113,7 @@ impl ToastyError {
 
     /// Create a manifest parsing error with context
     pub fn manifest_parse<P: Into<PathBuf>>(path: P, source: toml::de::Error) -> Self {
-        ToastyError::ManifestParse {
+        Self::ManifestParse {
             path: path.into(),
             source,
         }
@@ -121,7 +121,7 @@ impl ToastyError {
 
     /// Create a generic error
     pub fn other<S: Into<String>>(message: S) -> Self {
-        ToastyError::Other {
+        Self::Other {
             message: message.into(),
         }
     }
@@ -129,19 +129,19 @@ impl ToastyError {
 
 impl From<serde_json::Error> for ToastyError {
     fn from(err: serde_json::Error) -> Self {
-        ToastyError::Json { source: err }
+        Self::Json { source: err }
     }
 }
 
 impl From<toml::de::Error> for ToastyError {
     fn from(err: toml::de::Error) -> Self {
-        ToastyError::Toml { source: err }
+        Self::Toml { source: err }
     }
 }
 
 impl From<ureq::Error> for ToastyError {
     fn from(err: ureq::Error) -> Self {
-        ToastyError::Fetch {
+        Self::Fetch {
             name: "unknown".to_string(),
             source: Box::new(err),
         }
@@ -150,7 +150,7 @@ impl From<ureq::Error> for ToastyError {
 
 impl From<std::io::Error> for ToastyError {
     fn from(err: std::io::Error) -> Self {
-        ToastyError::Io {
+        Self::Io {
             path: PathBuf::from("<unknown>"),
             source: err,
         }
@@ -218,7 +218,7 @@ pub enum ToastyWarn {
 impl fmt::Display for ToastyWarn {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ToastyWarn::Deprecated {
+            Self::Deprecated {
                 feature,
                 removal_version,
                 alternative,
@@ -232,7 +232,7 @@ impl fmt::Display for ToastyWarn {
                 }
                 Ok(())
             }
-            ToastyWarn::MissingOptionalTool {
+            Self::MissingOptionalTool {
                 tool,
                 impact,
                 install_hint,
@@ -244,7 +244,7 @@ impl fmt::Display for ToastyWarn {
                 }
                 Ok(())
             }
-            ToastyWarn::ConfigWarning {
+            Self::ConfigWarning {
                 key,
                 value,
                 issue,
@@ -259,21 +259,21 @@ impl fmt::Display for ToastyWarn {
                 }
                 Ok(())
             }
-            ToastyWarn::Performance { issue, suggestion } => {
+            Self::Performance { issue, suggestion } => {
                 write!(f, "Performance warning: {issue}")?;
                 if let Some(sugg) = suggestion {
                     write!(f, ". Suggestion: {sugg}")?;
                 }
                 Ok(())
             }
-            ToastyWarn::BuildWarning { issue, context } => {
+            Self::BuildWarning { issue, context } => {
                 write!(f, "Build warning: {issue}")?;
                 if let Some(ctx) = context {
                     write!(f, " (in {ctx})")?;
                 }
                 Ok(())
             }
-            ToastyWarn::MissingCompiler { install_hint } => {
+            Self::MissingCompiler { install_hint } => {
                 write!(f, "Warning: Oats compiler (oatsc) not found")?;
                 if let Some(hint) = install_hint {
                     write!(f, ". To install: {hint}")?;
@@ -312,13 +312,13 @@ impl WarningCollector {
 
     /// Check if any warnings have been collected
     #[must_use]
-    pub fn has_warnings(&self) -> bool {
+    pub const fn has_warnings(&self) -> bool {
         !self.warnings.is_empty()
     }
 
     /// Get the number of warnings
     #[must_use]
-    pub fn count(&self) -> usize {
+    pub const fn count(&self) -> usize {
         self.warnings.len()
     }
 

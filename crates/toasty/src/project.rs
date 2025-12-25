@@ -99,7 +99,7 @@ fn default_profile() -> String {
     "dev".to_string()
 }
 
-fn default_debug() -> bool {
+const fn default_debug() -> bool {
     true
 }
 
@@ -368,6 +368,8 @@ pub fn load_modules_with_verbosity(
     entry_path: &str,
     verbose: bool,
 ) -> Result<HashMap<String, oatsc::parser::ParsedModule>> {
+    use regex::Regex;
+
     // Validate entry path exists and is readable
     if !std::path::Path::new(entry_path).exists() {
         return Err(ToastyError::other(format!(
@@ -385,10 +387,9 @@ pub fn load_modules_with_verbosity(
         Some(p) => p,
         None => &entry_abs,
     };
-    queue.push_back(entry_str.clone());
+    queue.push_back(entry_str);
 
     // Compile regex once outside the loop
-    use regex::Regex;
     let import_re = Regex::new(r#"import\s+.*?\s+from\s+["']([^"']+)["']"#)
         .map_err(|e| ToastyError::other(format!("Failed to compile import regex pattern: {e}")))?;
 
@@ -408,9 +409,7 @@ pub fn load_modules_with_verbosity(
             .map_err(|e| ToastyError::other(format!("Failed to parse module {path}: {e}")))?;
 
         // Check if parsing was successful
-        let parsed = if let Some(pm) = parsed_opt {
-            pm
-        } else {
+        let Some(parsed) = parsed_opt else {
             // Emit diagnostics for parsing failure
             for diag in parse_diags {
                 eprintln!("Parse error in {}: {}", path, diag.message);
@@ -458,6 +457,8 @@ pub fn build_dependency_graph(
     entry_path: &str,
     verbose: bool,
 ) -> Result<(DependencyGraph, HashMap<String, NodeIndex>, NodeIndex)> {
+    use regex::Regex;
+
     let mut graph = DependencyGraph::new();
     let mut node_indices = HashMap::new();
 
@@ -485,7 +486,6 @@ pub fn build_dependency_graph(
     queue.push_back(entry_str.clone());
 
     // Compile regex once outside the loop
-    use regex::Regex;
     let import_re = Regex::new(r#"import\s+.*?\s+from\s+["']([^"']+)["']"#)
         .map_err(|e| ToastyError::other(format!("Failed to compile import regex pattern: {e}")))?;
 
@@ -504,9 +504,7 @@ pub fn build_dependency_graph(
             })?;
 
         // Check if parsing was successful
-        let parsed = if let Some(pm) = parsed_opt {
-            pm
-        } else {
+        let Some(parsed) = parsed_opt else {
             // Emit diagnostics for parsing failure
             for diag in parse_diags {
                 eprintln!("Parse error in {}: {}", current_path, diag.message);
@@ -637,7 +635,7 @@ pub fn build_package_graph(
     };
 
     let root_idx = graph.add_node(root_node);
-    node_map.insert(root_manifest.package.name.clone(), root_idx);
+    node_map.insert(root_manifest.package.name, root_idx);
     path_to_node.insert(root_dir.clone(), root_idx);
 
     // Queue for BFS traversal: (node_index, manifest_dir)

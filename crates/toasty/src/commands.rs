@@ -152,9 +152,9 @@ pub fn handle_build(cli: &Cli, opts: BuildCommandOptions) -> Result<()> {
         }
 
         let options = set_compile_options_from_cli(
-            CompileOptions::new(src_file.clone()),
+            CompileOptions::new(src_file),
             CliBuildOptions {
-                out_dir: out_dir.clone(),
+                out_dir,
                 out_name: opts.out_name.clone(),
                 linker: opts.linker.clone(),
                 opt_level: opts.opt_level.clone(),
@@ -436,7 +436,7 @@ pub fn handle_run(
     let mut options = CompileOptions::with_modules(entry_point);
     options.out_name = out_name.clone();
     options.out_dir = Some(out_dir.clone());
-    let _build_res = compiler::invoke_oatsc(&options)?;
+    let build_res = compiler::invoke_oatsc(&options)?;
     let src_filename = std::path::Path::new(&src_file)
         .file_stem()
         .and_then(|s| s.to_str())
@@ -447,7 +447,7 @@ pub fn handle_run(
         src_filename.to_string()
     };
     // Prefer the path returned by the compiler if available
-    let _out_exe = if let Some(p) = _build_res {
+    let _out_exe = if let Some(p) = build_res {
         p
     } else {
         PathBuf::from(format!("{out_dir}/{exe_name}"))

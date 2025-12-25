@@ -30,6 +30,7 @@ impl<'a> CodeGen<'a> {
         param_map: &HashMap<String, u32>,
         locals: &mut Vec<HashMap<String, LocalEntry<'a>>>,
     ) -> crate::diagnostics::DiagnosticResult<inkwell::values::BasicValueEnum<'a>> {
+        eprintln!("DEBUG: lower_call_expr: entered for {:?}", call.callee);
         // Support simple identifier callees and member-callee method calls.
         //
         // We intentionally support a small set of call shapes in the
@@ -187,10 +188,15 @@ impl<'a> CodeGen<'a> {
         locals: &mut Vec<HashMap<String, LocalEntry<'a>>>,
     ) -> crate::diagnostics::DiagnosticResult<inkwell::values::BasicValueEnum<'a>> {
         let prop_name = member.property.name.to_string();
+        
+        // Debug: Print what we're processing
+        eprintln!("DEBUG: lower_static_member_call: obj_name检查, prop_name={prop_name}");
 
         // Get object name if it's an identifier
         let obj_name = if let Expression::Identifier(obj_ident) = &member.object {
-            obj_ident.name.to_string()
+            let name = obj_ident.name.to_string();
+            eprintln!("DEBUG: obj_name={name}");
+            name
         } else {
             return Err(Diagnostic::simple_with_span_boxed(
                 Severity::Error,

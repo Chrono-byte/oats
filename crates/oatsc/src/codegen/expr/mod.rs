@@ -114,6 +114,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 self.lower_super_expr(super_expr, function, param_map, locals)
             }
             Expression::CallExpression(call) => {
+                eprintln!("DEBUG: Found CallExpression: {call:?}");
                 self.lower_call_expr(call, function, param_map, locals)
             }
             // (Duplicate closure-call lowering removed; handled in the primary Call arm above.)

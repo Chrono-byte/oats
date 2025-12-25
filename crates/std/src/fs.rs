@@ -327,9 +327,11 @@ pub unsafe extern "C" fn oats_std_fs_read_dir(path: *const c_char) -> *mut *mut 
 
     // Convert each entry to CString and store pointer
     for (i, entry) in entries.iter().enumerate() {
-        if let Ok(cstring) = CString::new(entry.as_str()) { unsafe {
-            *array_ptr.add(i + 1) = cstring.into_raw();
-        } } else {
+        if let Ok(cstring) = CString::new(entry.as_str()) {
+            unsafe {
+                *array_ptr.add(i + 1) = cstring.into_raw();
+            }
+        } else {
             // Cleanup on error - free CStrings and array
             unsafe {
                 for j in 0..i {

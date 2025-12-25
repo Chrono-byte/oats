@@ -1,40 +1,35 @@
-# Oats Documentation Guide
+# Oats Documentation
 
-**Last Updated:** October 18, 2025
-
-Welcome to the Oats compiler documentation! This guide helps you navigate the
-documentation and find what you need.
+Docs for the Oats compiler. Here's what's here:
 
 ## Quick Start
 
-**New to Oats?** Start here:
+New to Oats? Check out:
 
-1. Read the main `README.md` in the repository root
-2. Follow setup instructions in `DEVELOPMENT.md`
-3. Try running examples from `examples/`
-4. Read `ARCHITECTURE.md` for system overview
+- Main `README.md` in the repo root
+- `DEVELOPMENT.md` for setup
+- `examples/` to see it in action
+- `ARCHITECTURE.md` for how it works
 
-**Want to contribute?** Read:
+Want to contribute?
 
-1. `CONTRIBUTING.md` (in repository root) - Contribution guidelines
-2. `DEVELOPMENT.md` - Development workflows and standards
-3. `ROADMAP.md` - Current priorities and future plans
+- `DEVELOPMENT.md` - How to work on the code
+- `ROADMAP.md` - What's planned
 
-## Current Implementation Status
+## What Works
 
-**October 18, 2025:** Oats supports TypeScript/JavaScript including:
+Oats supports most TypeScript/JavaScript:
 
-- ✅ **Core language**: Functions, classes, interfaces, enums, generics, unions
-- ✅ **Async/await**: Full `async`/`await` syntax and state machine lowering
-- ✅ **Modern syntax**: Destructuring, template literals, arrow functions
-- ✅ **Type system**: Primitives, tuples, promises, weak/unowned references
-- ✅ **Memory management**: ARC with cycle collection, escape analysis
-- ✅ **Package system**: Multi-file compilation with dependency resolution
+- Core stuff: functions, classes, interfaces, enums, generics, unions
+- Async/await with state machine lowering
+- Modern syntax: destructuring, template literals, arrow functions
+- Types: primitives, tuples, promises, weak/unowned refs
+- Memory: ARC with cycle collection, escape analysis
+- Packages: multi-file compilation with dependency resolution
 
-**Missing features:** Advanced generics (constraints), decorators, mapped types, conditional types, full class modifiers.
+Still missing: advanced generics (constraints), decorators, mapped types, conditional types, full class modifiers.
 
-### Core Documentation
+## Core Docs
 
-#### [`ARCHITECTURE.md`](ARCHITECTURE.md) ⭐ START HERE for technical understanding
-
-#### [`ROADMAP.md`](ROADMAP.md) ⭐ START HERE for project direction
+- [`ARCHITECTURE.md`](ARCHITECTURE.md) - Technical overview
+- [`ROADMAP.md`](ROADMAP.md) - What's coming next

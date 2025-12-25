@@ -58,7 +58,7 @@ impl Collector {
     ///
     /// # Returns
     /// An `Arc<Collector>` suitable for sharing between threads
-    #[must_use] 
+    #[must_use]
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
             queue: Mutex::new(Vec::new()),
@@ -207,8 +207,11 @@ impl Collector {
                             }
                             for i in 0..len {
                                 // Validate element offset calculation to prevent overflow
-                                let elem_offset = if let Some(offset) = i
-                                    .checked_mul(std::mem::size_of::<*mut std::ffi::c_void>()) { offset } else {
+                                let elem_offset = if let Some(offset) =
+                                    i.checked_mul(std::mem::size_of::<*mut std::ffi::c_void>())
+                                {
+                                    offset
+                                } else {
                                     if crate::COLLECTOR_LOG.load(Ordering::Relaxed) {
                                         let _ = io::stderr().write_all(
                                             format!(
@@ -538,12 +541,15 @@ impl Collector {
                     }
 
                     let new = old | crate::HEADER_CLAIM_BIT;
-                    if (*header_ptr).compare_exchange_weak(
-                        old,
-                        new,
-                        std::sync::atomic::Ordering::AcqRel,
-                        std::sync::atomic::Ordering::Relaxed,
-                    ).is_ok() {
+                    if (*header_ptr)
+                        .compare_exchange_weak(
+                            old,
+                            new,
+                            std::sync::atomic::Ordering::AcqRel,
+                            std::sync::atomic::Ordering::Relaxed,
+                        )
+                        .is_ok()
+                    {
                         // We successfully claimed the object. Re-load header
                         // to capture any concurrent mutations that may have
                         // changed flags or type-tag (but claim remains set).
@@ -552,15 +558,17 @@ impl Collector {
                         let strong_after = claimed_header & crate::HEADER_RC_MASK;
                         if strong_after != 0 {
                             // Unclaim the object by clearing the claim bit.
-                            let _ = (*header_ptr)
-                                .fetch_and(!crate::HEADER_CLAIM_BIT, Ordering::AcqRel);
+                            let _ =
+                                (*header_ptr).fetch_and(!crate::HEADER_CLAIM_BIT, Ordering::AcqRel);
                             continue;
                         }
 
                         // At this point we hold the claim bit and strong==0.
                         let type_tag = crate::header_type_tag(claimed_header) as u32;
                         if type_tag == 1 {
-                            let dtor_ptr_ptr = (o as *mut u8).add(std::mem::size_of::<u64>()).cast::<*mut std::ffi::c_void>();
+                            let dtor_ptr_ptr = (o as *mut u8)
+                                .add(std::mem::size_of::<u64>())
+                                .cast::<*mut std::ffi::c_void>();
                             let dtor_raw = *dtor_ptr_ptr;
                             if !dtor_raw.is_null() {
                                 // Check recursion depth to prevent stack overflow
@@ -658,8 +666,8 @@ impl Collector {
                             // We don't call rc_weak_dec here because that would incorrectly
                             // decrement the weak count.
                             // Clear claim bit since we're not freeing here
-                            let _ = (*header_ptr)
-                                .fetch_and(!crate::HEADER_CLAIM_BIT, Ordering::AcqRel);
+                            let _ =
+                                (*header_ptr).fetch_and(!crate::HEADER_CLAIM_BIT, Ordering::AcqRel);
                         }
                     } else {
                         // header changed under us; retry later

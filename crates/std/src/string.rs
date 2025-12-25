@@ -29,7 +29,10 @@ pub unsafe extern "C" fn oats_std_string_split(
         Err(_) => return std::ptr::null_mut(),
     };
 
-    let parts: Vec<String> = str_val.split(delim).map(std::string::ToString::to_string).collect();
+    let parts: Vec<String> = str_val
+        .split(delim)
+        .map(std::string::ToString::to_string)
+        .collect();
     let count = parts.len();
 
     if count == 0 {
@@ -51,9 +54,11 @@ pub unsafe extern "C" fn oats_std_string_split(
 
     // Convert each part to CString and store pointer
     for (i, part) in parts.iter().enumerate() {
-        if let Ok(cstring) = CString::new(part.as_str()) { unsafe {
-            *array_ptr.add(i + 1) = cstring.into_raw();
-        } } else {
+        if let Ok(cstring) = CString::new(part.as_str()) {
+            unsafe {
+                *array_ptr.add(i + 1) = cstring.into_raw();
+            }
+        } else {
             // Cleanup on error
             unsafe {
                 for j in 0..i {

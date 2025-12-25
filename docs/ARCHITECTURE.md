@@ -1,34 +1,30 @@
-# Architecture & Language Design Reference
+# Architecture & Language Design
 
 **Last Updated:** October 18, 2025
 
-This reference summarizes the current compiler architecture, runtime object model, language design, and the non-negotiable contracts between codegen and the runtime. It is intended to be the authoritative overview for contributors touching core systems.
+## Current Status
 
-## Current Implementation Status
-
-**October 18, 2025:** Oats implements TypeScript/JavaScript with the following key features:
-
-- **Language**: Classes, async/await, generics, unions, interfaces, enums, destructuring, template literals
-- **Types**: Full primitive set (integers, floats, char), tuples, promises, weak/unowned references
-- **Memory**: ARC with cycle collection, escape analysis for RC elimination
-- **Runtime**: C-callable with helpers for strings, arrays, RC operations
+Oats implements TypeScript/JavaScript with:
+- Language: classes, async/await, generics, unions, interfaces, enums, destructuring, template literals
+- Types: full primitive set (integers, floats, char), tuples, promises, weak/unowned references
+- Memory: ARC with cycle collection, escape analysis for RC elimination
+- Runtime: C-callable with helpers for strings, arrays, RC operations
 
 ## Overview
 
-Oats is an ahead-of-time compiler that compiles TypeScript and JavaScript to native executables via LLVM. It targets predictable performance, a small safe runtime, and full compatibility with standard TypeScript/JavaScript. The memory model and ownership semantics are inspired by Swift's ARC (Automatic Reference Counting) adapted for a deterministic, low-level runtime.
+Oats is an AOT compiler that compiles TypeScript/JavaScript to native executables via LLVM. Goals: predictable performance, small safe runtime, full TypeScript/JavaScript compatibility. Memory model is inspired by Swift's ARC, adapted for a deterministic low-level runtime.
 
 ## Design Goals
 
-- Predictable performance and memory layout for interop with native code.
-- Clear, small semantics that map well to LLVM and a C-callable runtime.
-- Safe, deterministic reference-counted memory management with weak refs and cycle collector support.
-- Developer ergonomics with full TypeScript/JavaScript compatibility.
+- Predictable performance and memory layout for native interop
+- Simple semantics that map well to LLVM and C-callable runtime
+- Safe, deterministic reference counting with weak refs and cycle collection
+- Full TypeScript/JavaScript compatibility
 
 ## Source Model & Syntax
 
-- Full TypeScript/JavaScript syntax support:
-  - Standard TypeScript/JavaScript syntax including `let`, `const`, `function`, `class`, `import`/`export`, etc.
-  - Source size limits apply (enforced in parser).
+- Full TypeScript/JavaScript syntax support (`let`, `const`, `function`, `class`, `import`/`export`, etc.)
+- Source size limits enforced in parser
 - No dynamic eval. Modules are statically resolved at compile time.
 
 ## Types
@@ -88,16 +84,16 @@ Native executable
 - Async functions are lowered into poll-state machines with resume blocks and slot maps stored on `CodeGen`. Escape analysis is async-aware by tracking locals live across `await` points.
 - Nested generic functions are monomorphized on demand; `CodeGen` caches specialization keys to avoid regenerating IR for the same instantiation.
 
-## Heap Object Layout (Canonical Contract)
+## Heap Object Layout
 
-All heap-allocated objects share a 64-bit header at offset 0. Violating this layout risks memory corruption.
+All heap objects share a 64-bit header at offset 0. Don't violate this layout or you'll corrupt memory.
 
 - Offset 0: 64-bit header (atomic)
   - Bits 0–31: strong reference count (`u32`)
   - Bit 32: `STATIC` flag (1 = immortal literal; ARC ops are no-ops)
   - Bits 33–48: weak reference count (`u16`)
   - Bits 49–63: reserved for type tags / flags
-- Offset 8: meta-slot (pointer to metadata / vtable). Never store user data here.
+- Offset 8: meta-slot (pointer to metadata / vtable). Don't store user data here.
 - Offset 16+: user fields or element data.
 
 ### Object Shapes
@@ -108,15 +104,15 @@ All heap-allocated objects share a 64-bit header at offset 0. Violating this lay
 
 ## Reference Counting Protocol
 
-- All codegen paths must call `rc_inc` before storing a strong pointer into a local, struct field, or array slot.
-- Always call `rc_dec` on the old value before overwriting a pointer slot and when leaving a scope (`emit_rc_dec_for_locals` handles block cleanup).
-- Weak references use `rc_weak_inc`, `rc_weak_dec`, and `rc_weak_upgrade`; they do not affect the strong count and are zeroed when the referent drops.
-- Escape analysis may elide `rc_inc`/`rc_dec` pairs for locals that provably do not escape. Field stores and returns are conservative and still emit RC ops.
+- Call `rc_inc` before storing a strong pointer into a local, struct field, or array slot.
+- Call `rc_dec` on the old value before overwriting a pointer slot and when leaving a scope (`emit_rc_dec_for_locals` handles block cleanup).
+- Weak references use `rc_weak_inc`, `rc_weak_dec`, and `rc_weak_upgrade`. They don't affect the strong count and are zeroed when the referent drops.
+- Escape analysis can skip `rc_inc`/`rc_dec` pairs for locals that don't escape. Field stores and returns are conservative and still emit RC ops.
 - Static literals have the `STATIC` bit set; RC helpers detect this and skip mutations.
 
 ## Values & Heap Object Layout
 
-All heap objects share a 64-bit header at offset 0. This header layout is the canonical contract between codegen and runtime. The runtime implements deterministic ARC-style ownership similar to Swift's ARC: references are strong by default, weak references are non-owning and will be zeroed when the referent is deallocated, and a small set of explicit ownership annotations control reference behaviour in generated code.
+All heap objects share a 64-bit header at offset 0. This is the contract between codegen and runtime. The runtime implements deterministic ARC-style ownership similar to Swift's ARC: references are strong by default, weak references are non-owning and get zeroed when the referent is deallocated, and explicit ownership annotations control reference behavior in generated code.
 
 Header (64 bits):
 
@@ -152,13 +148,14 @@ Pointer rules and ARC semantics:
 
 ## Reference Counting & Memory Management
 
-- Mandatory ARC discipline (compiler responsibilities):
-  - Strong is the default: storing a pointer in a field/local must emit `rc_inc` for the new value and `rc_dec` for the old value (if any) before overwrite.
-  - Overwriting a pointer: `rc_dec` the old value before replacing it.
-  - Returning from a function: release (`rc_dec`) any function-scoped strong locals before returning as required by the calling convention and ownership contract.
-  - Breaking/continuing loops: release (`rc_dec`) loop-scoped strong locals before jumping out of scope.
-  - Prefer `weak` for breaking cycles. Use `rc_weak_inc`, `rc_weak_dec`, and `rc_weak_upgrade` for weak operations; `rc_weak_upgrade` returns an optional strong reference.
-- Runtime exposes helpers for allocation, string/array ops, RC ops, and a cycle collector. New runtime helpers require both runtime implementation and declaration in the CodeGen struct.
+ARC discipline (compiler responsibilities):
+- Strong is the default: storing a pointer in a field/local must emit `rc_inc` for the new value and `rc_dec` for the old value (if any) before overwrite.
+- Overwriting a pointer: `rc_dec` the old value before replacing it.
+- Returning from a function: release (`rc_dec`) any function-scoped strong locals before returning.
+- Breaking/continuing loops: release (`rc_dec`) loop-scoped strong locals before jumping out of scope.
+- Prefer `weak` for breaking cycles. Use `rc_weak_inc`, `rc_weak_dec`, and `rc_weak_upgrade` for weak operations; `rc_weak_upgrade` returns an optional strong reference.
+
+Runtime exposes helpers for allocation, string/array ops, RC ops, and a cycle collector. New runtime helpers need both runtime implementation and declaration in the CodeGen struct.
 
 ## Runtime ABI Contracts
 
@@ -200,7 +197,7 @@ Pointer rules and ARC semantics:
 ## Diagnostics and Error Handling
 
 - All fallible compiler APIs return `Result<T, Diagnostic>`.
-- `.unwrap()`/`.expect()` are forbidden within `crates/oats/src` (enforced by ongoing audits). Use `Diagnostic::simple` or `Diagnostic::simple_with_span` and propagate via `?`.
+- `.unwrap()`/`.expect()` are forbidden within `crates/oats/src`. Use `Diagnostic::simple` or `Diagnostic::simple_with_span` and propagate via `?`.
 
 ## Testing Expectations
 
@@ -220,22 +217,20 @@ Pointer rules and ARC semantics:
 
 ### Overall Structure
 
-The compiler follows a clean pipeline architecture:
+The compiler follows a clean pipeline:
 
 ```text
 Source → Parser → Type Checker → Code Generator → LLVM IR → Object File → Executable
 ```
 
 **Strengths:**
-
 - Clear separation between `oats_parser`, `oats_ast`, `oatsc` (compiler), `runtime`, and `toasty` (build system)
 - Well-defined interfaces between components
 - Modular design allows independent development
 
 **Observations:**
-
-- The `builder.rs` file is quite large (1370+ lines) and handles multiple concerns
-- Consider splitting into smaller modules: compilation orchestration, linking
+- `builder.rs` is quite large (1370+ lines) and handles multiple concerns
+- Could split into smaller modules: compilation orchestration, linking
 - Note: Package-level concerns (manifest parsing, dependency resolution) are handled by `toasty`, not `oatsc`
 
 ### Parser
@@ -285,89 +280,53 @@ Source → Parser → Type Checker → Code Generator → LLVM IR → Object Fil
 
 ### Security Measures
 
-**Strengths:**
-
 - Source file size limits (10MB default, configurable)
 - AST depth limits (100 default, configurable)
 - Runtime recursion depth limits (128, non-configurable)
 - Heap limits (1GB default, configurable)
 - Allocation size limits (256MB default, configurable)
 
-**Observations:**
-
-- Good defense-in-depth approach
-- Limits are configurable via environment variables (good for flexibility)
-- Some limits are hardcoded for security (good for safety)
+Good defense-in-depth approach. Limits are configurable via environment variables. Some limits are hardcoded for security.
 
 ### Memory Safety
-
-**Strengths:**
 
 - ARC system with proper reference counting
 - Cycle collector for handling circular references
 - Escape analysis to optimize RC operations
 - Weak references properly implemented
 
-**Potential Issues:**
-
-- Runtime uses `unsafe` blocks (necessary for C FFI)
-- Need to ensure all unsafe code is properly documented
-- Should verify all pointer operations are safe
-
-**Recommendation:**
-
-- Audit all `unsafe` blocks for safety
-- Add safety comments explaining why each `unsafe` is needed
-- Consider using `miri` for testing unsafe code
+Runtime uses `unsafe` blocks (necessary for C FFI). Need to ensure all unsafe code is properly documented and verified.
 
 ### Type Safety
-
-**Strengths:**
 
 - Strong type system with comprehensive type checking
 - Type inference for expressions
 - Generic type support with monomorphization
 - Union types properly handled
 
-**Observations:**
-
-- Type system is well-designed
-- Some type checking could be more strict (see TODOs in DEVELOPMENT.md)
+Type system is well-designed. Some type checking could be more strict (see TODOs in DEVELOPMENT.md).
 
 ## Performance Considerations
 
-### Compilation Performance
+**Compilation Performance:**
+- Single-pass parsing
+- Const evaluation and interning (reduces code size)
+- Escape analysis (optimizes RC operations)
 
-**Observations:**
+Could optimize LLVM IR generation and improve const evaluation caching. Module caching and parallelization are handled by `toasty` at the package level.
 
-- Single-pass parsing (good)
-- Const evaluation and interning (good for reducing code size)
-- Escape analysis (good for optimizing RC operations)
-
-**Potential Optimizations:**
-
-- Could optimize LLVM IR generation
-- Could improve const evaluation caching
-- Note: Module caching and parallelization are handled by `toasty` at the package level
-
-### Runtime Performance
-
-**Strengths:**
-
+**Runtime Performance:**
 - ARC with escape analysis optimization
 - Cycle collector runs in background
 - Efficient object layouts
 - Static literals avoid RC overhead
 
-**Observations:**
-
-- Runtime is designed for performance
-- Good balance between safety and speed
+Runtime is designed for performance with a good balance between safety and speed.
 
 ## Future Work
 
-- Expand type system for generics and better nominal typing.
-- Improve cycle collector heuristics and diagnostics.
-- Compiler optimizations: escape analysis to elide RC ops where safe.
+- Expand type system for generics and better nominal typing
+- Improve cycle collector heuristics and diagnostics
+- Compiler optimizations: escape analysis to elide RC ops where safe
 - Refactor large files (especially `builder.rs`) into smaller modules
 - Complete error handling audit (remove all `.unwrap()`/`.expect()` calls)

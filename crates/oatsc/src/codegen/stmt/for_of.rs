@@ -1,7 +1,7 @@
 use crate::diagnostics::Severity;
 use inkwell::types::BasicType;
 use inkwell::values::{BasicValueEnum, FunctionValue};
-use oxc_ast::ast::{ForOfStatement, ForStatementLeft, BindingPatternKind, Statement};
+use oxc_ast::ast::{BindingPatternKind, ForOfStatement, ForStatementLeft, Statement};
 use std::collections::HashMap;
 
 #[allow(dead_code)]
@@ -73,7 +73,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     && let BasicValueEnum::PointerValue(arr_ptr) = iter_val
                 {
                     // create index
-                    let idx_alloca = if let Ok(a) = self.builder.build_alloca(self.i64_t, "for_idx") { a } else {
+                    let idx_alloca = if let Ok(a) = self.builder.build_alloca(self.i64_t, "for_idx")
+                    {
+                        a
+                    } else {
                         crate::diagnostics::emit_diagnostic(
                             &crate::diagnostics::Diagnostic::simple_boxed(
                                 Severity::Error,
@@ -170,16 +173,19 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         };
                         if let inkwell::values::ValueKind::Basic(bv) = cs.try_as_basic_value() {
                             let ty = bv.get_type().as_basic_type_enum();
-                            let alloca = if let Ok(a) = self.builder.build_alloca(ty, &loop_var_name) { a } else {
-                                crate::diagnostics::emit_diagnostic(
-                                    &crate::diagnostics::Diagnostic::simple_boxed(
-                                        Severity::Error,
-                                        "alloca failed for loop variable",
-                                    ),
-                                    Some(self.source),
-                                );
-                                return Ok(false);
-                            };
+                            let alloca =
+                                if let Ok(a) = self.builder.build_alloca(ty, &loop_var_name) {
+                                    a
+                                } else {
+                                    crate::diagnostics::emit_diagnostic(
+                                        &crate::diagnostics::Diagnostic::simple_boxed(
+                                            Severity::Error,
+                                            "alloca failed for loop variable",
+                                        ),
+                                        Some(self.source),
+                                    );
+                                    return Ok(false);
+                                };
                             let _ = self.builder.build_store(alloca, bv);
                             self.insert_local_current_scope(
                                 locals_stack,
@@ -208,16 +214,19 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         if let inkwell::values::ValueKind::Basic(bv) = cs.try_as_basic_value() {
                             let pv = bv.into_pointer_value();
                             let ty = pv.get_type().as_basic_type_enum();
-                            let alloca = if let Ok(a) = self.builder.build_alloca(ty, &loop_var_name) { a } else {
-                                crate::diagnostics::emit_diagnostic(
-                                    &crate::diagnostics::Diagnostic::simple_boxed(
-                                        Severity::Error,
-                                        "alloca failed for loop variable (ptr)",
-                                    ),
-                                    Some(self.source),
-                                );
-                                return Ok(false);
-                            };
+                            let alloca =
+                                if let Ok(a) = self.builder.build_alloca(ty, &loop_var_name) {
+                                    a
+                                } else {
+                                    crate::diagnostics::emit_diagnostic(
+                                        &crate::diagnostics::Diagnostic::simple_boxed(
+                                            Severity::Error,
+                                            "alloca failed for loop variable (ptr)",
+                                        ),
+                                        Some(self.source),
+                                    );
+                                    return Ok(false);
+                                };
                             if !self.should_elide_rc_for_local(&loop_var_name) {
                                 let rc_inc = self.get_rc_inc();
                                 let _ = self.builder.build_call(

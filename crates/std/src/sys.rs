@@ -9,7 +9,7 @@ use std::ptr::NonNull;
 // Safe wrappers
 
 /// Allocate memory using the runtime allocator
-#[must_use] 
+#[must_use]
 pub fn malloc(size: usize) -> Option<NonNull<c_void>> {
     let ptr = runtime::heap::runtime_malloc(size);
     NonNull::new(ptr)
@@ -23,7 +23,7 @@ pub fn free(ptr: NonNull<c_void>) {
 }
 
 /// Create a new string in the runtime heap
-#[must_use] 
+#[must_use]
 pub fn create_string(content: &str) -> Option<NonNull<c_char>> {
     let cstr = std::ffi::CString::new(content).ok()?;
     let ptr = unsafe { runtime::string::heap_str_from_cstr_pub(cstr.as_ptr()) };
@@ -41,14 +41,14 @@ pub fn rc_dec_string(s: NonNull<c_char>) {
 }
 
 /// Create a new array in the runtime heap
-#[must_use] 
+#[must_use]
 pub fn create_array(element_size: usize, length: usize) -> Option<NonNull<c_void>> {
     let ptr = runtime::array::array_alloc_pub(element_size, length);
     NonNull::new(ptr)
 }
 
 /// Get an element from an array
-#[must_use] 
+#[must_use]
 pub fn array_get_element(array: NonNull<c_void>, index: usize) -> Option<NonNull<c_void>> {
     let ptr = runtime::array::array_get_pub(array.as_ptr(), index);
     NonNull::new(ptr)

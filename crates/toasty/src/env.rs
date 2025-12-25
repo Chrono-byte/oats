@@ -40,14 +40,14 @@ pub mod names {
 
 /// Get the source file path from environment
 /// Returns `None` if not set
-#[must_use] 
+#[must_use]
 pub fn get_src_file() -> Option<String> {
     std::env::var(names::SRC_FILE).ok()
 }
 
 /// Get the oatsc compiler path from environment
 /// Returns the default "oatsc" if not set
-#[must_use] 
+#[must_use]
 pub fn get_oatsc_path() -> String {
     match std::env::var(names::OATSC_PATH) {
         Ok(path) => path,
@@ -57,35 +57,35 @@ pub fn get_oatsc_path() -> String {
 
 /// Get the runtime path from environment
 /// Returns `None` if not set
-#[must_use] 
+#[must_use]
 pub fn get_runtime_path() -> Option<String> {
     std::env::var(names::RUNTIME_PATH).ok()
 }
 
 /// Get the standard library path from environment
 /// Returns `None` if not set
-#[must_use] 
+#[must_use]
 pub fn get_std_path() -> Option<String> {
     std::env::var(names::STD_PATH).ok()
 }
 
 /// Get the output directory from environment
 /// Returns `None` if not set
-#[must_use] 
+#[must_use]
 pub fn get_out_dir() -> Option<String> {
     std::env::var(names::OUT_DIR).ok()
 }
 
 /// Get the linker from environment
 /// Returns `None` if not set
-#[must_use] 
+#[must_use]
 pub fn get_linker() -> Option<String> {
     std::env::var(names::LINKER).ok()
 }
 
 /// Check if ARC elision is enabled
 /// Returns `true` if `OATS_ELIDE_ARC=1` is set
-#[must_use] 
+#[must_use]
 pub fn is_elide_arc_enabled() -> bool {
     match std::env::var(names::ELIDE_ARC) {
         Ok(v) => v == "1",

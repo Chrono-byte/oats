@@ -118,9 +118,7 @@ pub unsafe extern "C" fn oats_std_process_command_exists(cmd: *const c_char) -> 
     };
 
     match Command::new(cmd_str).arg("--version").output() {
-        Ok(output) => {
-            i32::from(output.status.success())
-        }
+        Ok(output) => i32::from(output.status.success()),
         Err(_) => 0,
     }
 }

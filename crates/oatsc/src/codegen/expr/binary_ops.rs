@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use inkwell::builder::Builder;
 use inkwell::types::BasicTypeEnum;
 use inkwell::values::{BasicValue, PointerValue};
-use oxc_ast::ast::{Expression, UnaryOperator, BinaryOperator};
+use oxc_ast::ast::{BinaryOperator, Expression, UnaryOperator};
 
 // LocalEntry now includes an Option<String> for an optional nominal type name
 // LocalEntry now includes an Option<OatsType> for union tracking
@@ -529,7 +529,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 BinaryOperator::Exponential => {
                     // Exponentiation: use standard library pow function
                     // Declare pow(double, double) -> double if not already declared
-                    let pow_fn = if let Some(f) = self.module.get_function("pow") { f } else {
+                    let pow_fn = if let Some(f) = self.module.get_function("pow") {
+                        f
+                    } else {
                         let fn_type = self
                             .f64_t
                             .fn_type(&[self.f64_t.into(), self.f64_t.into()], false);

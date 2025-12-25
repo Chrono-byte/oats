@@ -197,7 +197,7 @@ pub fn add_root_candidate(p: *mut c_void) {
 /// `meta` must be a valid pointer to readable memory for at least the size of one `u64`,
 /// plus `max_len * sizeof(i32)` bytes if the header is valid. This function ensures
 /// that if it returns `true`, the full metadata block can be safely read.
-#[must_use] 
+#[must_use]
 pub unsafe fn validate_meta_block(meta: *const u64, max_len: usize) -> bool {
     unsafe {
         // Reject null pointers

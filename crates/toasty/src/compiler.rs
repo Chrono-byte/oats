@@ -118,9 +118,7 @@ pub fn invoke_oatsc(options: &CompileOptions) -> Result<Option<PathBuf>> {
         }
 
         return Err(ToastyError::CompilerInternalError {
-            message: format!(
-                "oatsc compilation failed:\nSTDOUT:\n{stdout}\n\nSTDERR:\n{stderr}"
-            ),
+            message: format!("oatsc compilation failed:\nSTDOUT:\n{stdout}\n\nSTDERR:\n{stderr}"),
         });
     }
 

@@ -29,7 +29,9 @@ impl<'a> CodeGen<'a> {
         self.builder.position_at_end(entry);
 
         // Call oats_main (user defined or generated main function)
-        let oats_main = if let Some(f) = self.module.get_function("oats_main") { f } else {
+        let oats_main = if let Some(f) = self.module.get_function("oats_main") {
+            f
+        } else {
             crate::diagnostics::emit_diagnostic(
                 &Diagnostic::simple_boxed(
                     Severity::Error,
@@ -83,7 +85,10 @@ impl<'a> CodeGen<'a> {
             let rv_int = bv.into_int_value();
             if let Ok(c) = self
                 .builder
-                .build_int_truncate_or_bit_cast(rv_int, i32_t, "ret_i32") { c } else {
+                .build_int_truncate_or_bit_cast(rv_int, i32_t, "ret_i32")
+            {
+                c
+            } else {
                 crate::diagnostics::emit_diagnostic(
                     &Diagnostic::simple_boxed(
                         Severity::Error,
@@ -96,7 +101,9 @@ impl<'a> CodeGen<'a> {
         } else if bv.get_type().is_float_type() {
             // cast float to i32 via fptosi
             let fv = bv.into_float_value();
-            if let Ok(c) = self.builder.build_float_to_signed_int(fv, i32_t, "f_to_i") { c } else {
+            if let Ok(c) = self.builder.build_float_to_signed_int(fv, i32_t, "f_to_i") {
+                c
+            } else {
                 crate::diagnostics::emit_diagnostic(
                     &Diagnostic::simple_boxed(
                         Severity::Error,

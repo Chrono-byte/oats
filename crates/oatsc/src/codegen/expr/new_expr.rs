@@ -3,7 +3,7 @@ use crate::diagnostics::{Diagnostic, Severity};
 use crate::types::OatsType;
 use inkwell::types::BasicTypeEnum;
 use inkwell::values::{BasicValue, BasicValueEnum, FunctionValue};
-use oxc_ast::ast::{NewExpression, Expression};
+use oxc_ast::ast::{Expression, NewExpression};
 use std::collections::HashMap;
 
 // LocalEntry now includes an Option<String> for an optional nominal type name

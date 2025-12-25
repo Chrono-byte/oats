@@ -593,9 +593,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             }
                             return Err(Diagnostic::simple_with_span_boxed(
                                 Severity::Error,
-                                format!(
-                                    "field '{field_name}' not found in class '{class_name}'"
-                                ),
+                                format!("field '{field_name}' not found in class '{class_name}'"),
                                 assign.span.start as usize,
                             ));
                         }
@@ -681,9 +679,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 } else {
                                     return Err(Diagnostic::simple_with_span_boxed(
                                         Severity::Error,
-                                        format!(
-                                            "field '{s}' not found in class '{class_name}'"
-                                        ),
+                                        format!("field '{s}' not found in class '{class_name}'"),
                                         assign.span.start as usize,
                                     ));
                                 }

@@ -10,7 +10,9 @@ use crate::codegen::helpers::extract_basic_value_from_valuekind;
 use crate::diagnostics::{Diagnostic, Severity};
 use crate::types::SymbolTable;
 use inkwell::values::BasicValue;
-use oxc_ast::ast::{Expression, BindingPatternKind, ClassElement, MethodDefinitionKind, PropertyKey, Statement};
+use oxc_ast::ast::{
+    BindingPatternKind, ClassElement, Expression, MethodDefinitionKind, PropertyKey, Statement,
+};
 
 impl<'a> CodeGen<'a> {
     /// Specializes a generic type with concrete type arguments.

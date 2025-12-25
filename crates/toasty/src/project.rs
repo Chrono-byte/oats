@@ -154,7 +154,7 @@ pub struct PackageNode {
 
 impl PackageNode {
     /// Get the absolute path to the package entry point
-    #[must_use] 
+    #[must_use]
     pub fn entry_point(&self) -> PathBuf {
         self.manifest.entry_point(&self.root_dir)
     }
@@ -258,7 +258,7 @@ impl Manifest {
     }
 
     /// Get the absolute path to the entry point for this package
-    #[must_use] 
+    #[must_use]
     pub fn entry_point(&self, manifest_dir: &Path) -> PathBuf {
         manifest_dir.join(&self.package.entry)
     }
@@ -283,7 +283,7 @@ impl Manifest {
 /// 2. **Directory resolution**: Attempts `index.oats` for directories
 /// 3. **Index fallbacks**: Additional index file patterns for compatibility
 /// 4. **Security check**: Ensures resolved path is within project root
-#[must_use] 
+#[must_use]
 pub fn resolve_relative_import(from: &str, spec: &str, project_root: &Path) -> Option<String> {
     // Canonicalize the project root to ensure consistent path comparison
     let canonical_root = match std::fs::canonicalize(project_root) {
@@ -389,9 +389,8 @@ pub fn load_modules_with_verbosity(
 
     // Compile regex once outside the loop
     use regex::Regex;
-    let import_re = Regex::new(r#"import\s+.*?\s+from\s+["']([^"']+)["']"#).map_err(|e| {
-        ToastyError::other(format!("Failed to compile import regex pattern: {e}"))
-    })?;
+    let import_re = Regex::new(r#"import\s+.*?\s+from\s+["']([^"']+)["']"#)
+        .map_err(|e| ToastyError::other(format!("Failed to compile import regex pattern: {e}")))?;
 
     // PHASE 1: Transitive module loading and dependency resolution
     while let Some(path) = queue.pop_front() {
@@ -409,14 +408,14 @@ pub fn load_modules_with_verbosity(
             .map_err(|e| ToastyError::other(format!("Failed to parse module {path}: {e}")))?;
 
         // Check if parsing was successful
-        let parsed = if let Some(pm) = parsed_opt { pm } else {
+        let parsed = if let Some(pm) = parsed_opt {
+            pm
+        } else {
             // Emit diagnostics for parsing failure
             for diag in parse_diags {
                 eprintln!("Parse error in {}: {}", path, diag.message);
             }
-            return Err(ToastyError::other(format!(
-                "Failed to parse module {path}"
-            )));
+            return Err(ToastyError::other(format!("Failed to parse module {path}")));
         };
 
         // Discover and enqueue relative imports from this module
@@ -487,9 +486,8 @@ pub fn build_dependency_graph(
 
     // Compile regex once outside the loop
     use regex::Regex;
-    let import_re = Regex::new(r#"import\s+.*?\s+from\s+["']([^"']+)["']"#).map_err(|e| {
-        ToastyError::other(format!("Failed to compile import regex pattern: {e}"))
-    })?;
+    let import_re = Regex::new(r#"import\s+.*?\s+from\s+["']([^"']+)["']"#)
+        .map_err(|e| ToastyError::other(format!("Failed to compile import regex pattern: {e}")))?;
 
     // PHASE 1: Build dependency graph
     while let Some(current_path) = queue.pop_front() {
@@ -498,16 +496,17 @@ pub fn build_dependency_graph(
         }
 
         // Parse the current file to discover imports
-        let source = std::fs::read_to_string(&current_path).map_err(|e| {
-            ToastyError::other(format!("Failed to read file {current_path}: {e}"))
-        })?;
+        let source = std::fs::read_to_string(&current_path)
+            .map_err(|e| ToastyError::other(format!("Failed to read file {current_path}: {e}")))?;
         let (parsed_opt, parse_diags) =
             oatsc::parser::parse_oats_module(&source, Some(&current_path)).map_err(|e| {
                 ToastyError::other(format!("Failed to parse module {current_path}: {e}"))
             })?;
 
         // Check if parsing was successful
-        let parsed = if let Some(pm) = parsed_opt { pm } else {
+        let parsed = if let Some(pm) = parsed_opt {
+            pm
+        } else {
             // Emit diagnostics for parsing failure
             for diag in parse_diags {
                 eprintln!("Parse error in {}: {}", current_path, diag.message);

@@ -612,7 +612,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     )
                 })?;
 
-            let loaded = if let inkwell::types::BasicMetadataTypeEnum::FloatType(ft) = llvm_ty_meta {
+            let loaded = if let inkwell::types::BasicMetadataTypeEnum::FloatType(ft) = llvm_ty_meta
+            {
                 // Cast slot_ptr to generic pointer type for loading
                 let f64_ptr = self
                     .builder
@@ -790,14 +791,16 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         )
                                     })?;
 
-                                let restored_val = if let inkwell::types::BasicTypeEnum::FloatType(ft) = local_ty {
+                                let restored_val = if let inkwell::types::BasicTypeEnum::FloatType(
+                                    ft,
+                                ) = local_ty
+                                {
                                     // Cast slot_ptr to generic pointer type for loading
                                     let f64_ptr = self
                                         .builder
                                         .build_pointer_cast(
                                             slot_ptr,
-                                            self.context
-                                                .ptr_type(inkwell::AddressSpace::default()),
+                                            self.context.ptr_type(inkwell::AddressSpace::default()),
                                             "f64_ptr",
                                         )
                                         .map_err(|_| {
@@ -808,11 +811,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         })?;
                                     // Load the float value - ft is used here to specify the load type
                                     self.builder
-                                        .build_load(
-                                            ft,
-                                            f64_ptr,
-                                            &format!("restore_{live_name}"),
-                                        )
+                                        .build_load(ft, f64_ptr, &format!("restore_{live_name}"))
                                         .map_err(|_| {
                                             crate::diagnostics::Diagnostic::simple_boxed(
                                                 Severity::Error,
@@ -825,8 +824,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         .builder
                                         .build_pointer_cast(
                                             slot_ptr,
-                                            self.context
-                                                .ptr_type(inkwell::AddressSpace::default()),
+                                            self.context.ptr_type(inkwell::AddressSpace::default()),
                                             "ptr_ptr",
                                         )
                                         .map_err(|_| {
@@ -1085,16 +1083,15 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             "union_box_f64 call failed",
                         )
                     })?;
-                let boxed_ptr =
-                    match extract_basic_value_from_valuekind(cs.try_as_basic_value()) {
-                        Some(bv) => bv.into_pointer_value(),
-                        None => {
-                            return Err(crate::diagnostics::Diagnostic::simple_boxed(
-                                Severity::Error,
-                                "boxing returned no value",
-                            ));
-                        }
-                    };
+                let boxed_ptr = match extract_basic_value_from_valuekind(cs.try_as_basic_value()) {
+                    Some(bv) => bv.into_pointer_value(),
+                    None => {
+                        return Err(crate::diagnostics::Diagnostic::simple_boxed(
+                            Severity::Error,
+                            "boxing returned no value",
+                        ));
+                    }
+                };
                 let f64_ptr = self
                     .builder
                     .build_pointer_cast(

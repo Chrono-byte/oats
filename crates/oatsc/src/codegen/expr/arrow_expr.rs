@@ -3,7 +3,9 @@ use crate::diagnostics::{Diagnostic, Severity};
 use crate::types::OatsType;
 use inkwell::types::{BasicType, BasicTypeEnum};
 use inkwell::values::{BasicValue, BasicValueEnum, FunctionValue};
-use oxc_ast::ast::{ArrowFunctionExpression, Expression, Statement, ObjectPropertyKind, BindingPatternKind};
+use oxc_ast::ast::{
+    ArrowFunctionExpression, BindingPatternKind, Expression, ObjectPropertyKind, Statement,
+};
 use std::collections::HashMap;
 
 // LocalEntry now includes an Option<String> for an optional nominal type name
@@ -439,19 +441,19 @@ impl<'a> CodeGen<'a> {
                         ));
                     }
                     // load current value
-                    let loaded = match self.builder.build_load(
-                        ty,
-                        alloca_ptr,
-                        &format!("cap_load_{cname}"),
-                    ) {
-                        Ok(v) => v,
-                        Err(_) => {
-                            return Err(Diagnostic::simple_boxed(
-                                Severity::Error,
-                                "failed to load captured local",
-                            ));
-                        }
-                    };
+                    let loaded =
+                        match self
+                            .builder
+                            .build_load(ty, alloca_ptr, &format!("cap_load_{cname}"))
+                        {
+                            Ok(v) => v,
+                            Err(_) => {
+                                return Err(Diagnostic::simple_boxed(
+                                    Severity::Error,
+                                    "failed to load captured local",
+                                ));
+                            }
+                        };
                     // If pointer, use directly. If float/int, box into union object.
                     match loaded {
                         BasicValueEnum::PointerValue(_) => {

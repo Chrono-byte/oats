@@ -103,9 +103,7 @@ pub unsafe extern "C" fn oats_std_env_remove_var(name: *const c_char) -> libc::c
 /// #[`oats_export`]
 #[no_mangle]
 pub extern "C" fn oats_std_env_vars() -> *mut *mut c_char {
-    let vars: Vec<String> = std::env::vars()
-        .map(|(k, v)| format!("{k}={v}"))
-        .collect();
+    let vars: Vec<String> = std::env::vars().map(|(k, v)| format!("{k}={v}")).collect();
 
     let count = vars.len();
     if count == 0 {
@@ -124,9 +122,11 @@ pub extern "C" fn oats_std_env_vars() -> *mut *mut c_char {
     }
 
     for (i, var) in vars.iter().enumerate() {
-        if let Ok(cstring) = std::ffi::CString::new(var.as_str()) { unsafe {
-            *array_ptr.add(i + 1) = cstring.into_raw();
-        } } else {
+        if let Ok(cstring) = std::ffi::CString::new(var.as_str()) {
+            unsafe {
+                *array_ptr.add(i + 1) = cstring.into_raw();
+            }
+        } else {
             unsafe {
                 for j in 0..i {
                     libc::free((*array_ptr.add(j + 1)).cast::<libc::c_void>());

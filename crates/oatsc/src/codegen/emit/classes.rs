@@ -5,7 +5,9 @@
 
 use crate::diagnostics::Diagnostic;
 use crate::types::SymbolTable;
-use oxc_ast::ast::{Class, Expression, ClassElement, MethodDefinitionKind, PropertyKey, BindingPatternKind};
+use oxc_ast::ast::{
+    BindingPatternKind, Class, ClassElement, Expression, MethodDefinitionKind, PropertyKey,
+};
 
 impl<'a> crate::codegen::CodeGen<'a> {
     /// Generates IR for a class declaration.

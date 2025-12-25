@@ -5,7 +5,7 @@
 
 use crate::diagnostics::{Diagnostic, Severity};
 use inkwell::values::{BasicValueEnum, FunctionValue};
-use oxc_ast::ast::{ForInStatement, ForStatementLeft, BindingPatternKind, Expression, Statement};
+use oxc_ast::ast::{BindingPatternKind, Expression, ForInStatement, ForStatementLeft, Statement};
 use std::collections::HashMap;
 
 #[allow(dead_code)]

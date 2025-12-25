@@ -18,7 +18,9 @@
 //! The analysis results are consumed by the code generator to perform optimizations.
 
 use crate::parser::ParsedModule;
-use oxc_ast::ast::{Statement, Expression, ClassElement, Argument, PropertyKey, Function, ForStatementInit};
+use oxc_ast::ast::{
+    Argument, ClassElement, Expression, ForStatementInit, Function, PropertyKey, Statement,
+};
 use std::collections::{HashMap, HashSet, VecDeque};
 
 /// Represents the class hierarchy as a directed graph.
@@ -49,7 +51,7 @@ pub struct RTAResults {
 
 impl RTAResults {
     /// Check if a class is live (instantiated at runtime).
-    #[must_use] 
+    #[must_use]
     pub fn is_class_live(&self, class_name: &str) -> bool {
         if self.live_classes.is_empty() {
             return true;
@@ -65,7 +67,7 @@ impl RTAResults {
     ///
     /// # Returns
     /// `true` if the method is live, `false` otherwise
-    #[must_use] 
+    #[must_use]
     pub fn is_method_live(&self, class_name: &str, method_name: &str) -> bool {
         if self.live_methods.is_empty() {
             return true;
@@ -89,7 +91,7 @@ impl RTAResults {
     ///
     /// # Returns
     /// `true` if the function is live, `false` otherwise
-    #[must_use] 
+    #[must_use]
     pub fn is_function_live(&self, function_name: &str) -> bool {
         // Entry points: main and exported functions are always live
         if function_name == "main" {
@@ -171,7 +173,7 @@ impl RTAResults {
     ///
     /// # Returns
     /// `Some(target_method_name)` if devirtualization is possible, `None` otherwise
-    #[must_use] 
+    #[must_use]
     pub fn can_devirtualize(&self, class_name: &str, method_name: &str) -> Option<String> {
         // Check if this method is only implemented in one class
         // For now, we do a simple check: if the method is only in one live class
@@ -210,7 +212,7 @@ impl RTAResults {
     ///
     /// # Returns
     /// Vector of possible target method names in format "`class_method`"
-    #[must_use] 
+    #[must_use]
     pub fn get_method_call_targets(&self, class_name: &str, method_name: &str) -> Vec<String> {
         let mut targets = Vec::new();
 
@@ -232,7 +234,7 @@ impl RTAResults {
     }
 
     /// Get all live methods for a class.
-    #[must_use] 
+    #[must_use]
     pub fn get_live_methods(&self, class_name: &str) -> Option<&HashSet<String>> {
         self.live_methods.get(class_name)
     }
@@ -253,7 +255,7 @@ fn extract_class_from_method_name(method_name: &str) -> Option<String> {
 }
 
 /// Performs Rapid Type Analysis on the given modules
-#[must_use] 
+#[must_use]
 pub fn analyze(modules: &HashMap<String, &ParsedModule>) -> RTAResults {
     let (hierarchy, _parent_map) = build_class_hierarchy(modules);
     let live_classes = find_instantiations(modules);

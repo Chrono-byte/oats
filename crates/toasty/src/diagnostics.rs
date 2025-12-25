@@ -98,7 +98,7 @@ impl ToastyError {
     ///
     /// Returns `true` if the error is `CompilationFailed`, which means oatsc
     /// has already printed the actual error diagnostics to the user.
-    #[must_use] 
+    #[must_use]
     pub fn is_user_code_error(&self) -> bool {
         matches!(self, ToastyError::CompilationFailed)
     }
@@ -300,7 +300,7 @@ pub struct WarningCollector {
 
 impl WarningCollector {
     /// Create a new empty warning collector
-    #[must_use] 
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -311,13 +311,13 @@ impl WarningCollector {
     }
 
     /// Check if any warnings have been collected
-    #[must_use] 
+    #[must_use]
     pub fn has_warnings(&self) -> bool {
         !self.warnings.is_empty()
     }
 
     /// Get the number of warnings
-    #[must_use] 
+    #[must_use]
     pub fn count(&self) -> usize {
         self.warnings.len()
     }

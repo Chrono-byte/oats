@@ -27,7 +27,7 @@ pub struct CompileOptions {
 }
 
 impl CompileOptions {
-    #[must_use] 
+    #[must_use]
     pub fn new(src_file: String) -> Self {
         Self {
             src_file,
@@ -48,7 +48,7 @@ impl CompileOptions {
         }
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn with_modules(entry_point: String) -> Self {
         Self {
             src_file: entry_point,

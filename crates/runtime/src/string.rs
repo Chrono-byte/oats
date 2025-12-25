@@ -15,13 +15,15 @@ use crate::{RUNTIME_LOG, rc_dec, rc_inc};
 /// the lifetime of the returned pointer. The returned pointer must be freed
 /// using appropriate reference counting mechanisms.
 pub unsafe extern "C" fn heap_str_alloc(str_len: size_t) -> *mut c_void {
-    let total_size = if let Some(total) = 16usize.checked_add(str_len).and_then(|s| s.checked_add(1)) { total } else {
+    let total_size = if let Some(total) =
+        16usize.checked_add(str_len).and_then(|s| s.checked_add(1))
+    {
+        total
+    } else {
         if RUNTIME_LOG.load(Ordering::Relaxed) {
             let _ = io::stderr().write_all(
-                format!(
-                    "[oats runtime] heap_str_alloc: integer overflow (str_len={str_len})\n"
-                )
-                .as_bytes(),
+                format!("[oats runtime] heap_str_alloc: integer overflow (str_len={str_len})\n")
+                    .as_bytes(),
             );
         }
         return ptr::null_mut();
@@ -69,7 +71,7 @@ pub unsafe extern "C" fn heap_str_from_cstr(s: *const c_char) -> *mut c_char {
 ///
 /// `s` must be a valid pointer to a null-terminated C string, or null.
 /// If non-null, the string must remain valid for the duration of this call.
-#[must_use] 
+#[must_use]
 pub unsafe fn heap_str_from_cstr_pub(s: *const c_char) -> *mut c_char {
     unsafe { heap_str_from_cstr(s) }
 }
@@ -79,7 +81,7 @@ pub unsafe fn heap_str_from_cstr_pub(s: *const c_char) -> *mut c_char {
 /// `data` must be a pointer to string data previously returned by this runtime.
 /// The pointer must point to valid string data with the expected memory layout.
 #[inline]
-#[must_use] 
+#[must_use]
 pub unsafe fn heap_str_to_obj(data: *const c_char) -> *mut c_void {
     if data.is_null() {
         return ptr::null_mut();
@@ -167,7 +169,9 @@ pub unsafe fn str_concat(a: *const c_char, b: *const c_char) -> *mut c_char {
         let la = CStr::from_ptr(a).to_bytes().len();
         let lb = CStr::from_ptr(b).to_bytes().len();
 
-        let total_len = if let Some(len) = la.checked_add(lb) { len } else {
+        let total_len = if let Some(len) = la.checked_add(lb) {
+            len
+        } else {
             if RUNTIME_LOG.load(Ordering::Relaxed) {
                 let _ = io::stderr().write_all(
                     format!(

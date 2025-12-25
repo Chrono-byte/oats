@@ -73,7 +73,7 @@ pub struct CompileOptions {
 
 impl CompileOptions {
     /// Create a new `CompileOptions` for single-file compilation
-    #[must_use] 
+    #[must_use]
     pub fn new(src_file: String) -> Self {
         Self {
             src_file,
@@ -97,7 +97,7 @@ impl CompileOptions {
     }
 
     /// Create a new `CompileOptions` for multi-module compilation
-    #[must_use] 
+    #[must_use]
     pub fn with_modules(src_file: String, additional_src_files: Vec<String>) -> Self {
         Self {
             src_file,
@@ -121,7 +121,7 @@ impl CompileOptions {
     }
 
     /// Create a new `CompileOptions` for package-based compilation
-    #[must_use] 
+    #[must_use]
     pub fn for_package(package_root: std::path::PathBuf) -> Self {
         Self {
             src_file: String::new(), // Will be determined from manifest

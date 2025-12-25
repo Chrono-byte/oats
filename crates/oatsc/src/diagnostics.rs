@@ -81,9 +81,7 @@ pub fn report_error(
     // Provide helpful suggestion for common syntax errors
     if message.contains("missing semicolon") {
         let green = "\x1b[32m";
-        eprintln!(
-            "{green}help{reset}: try adding a trailing ';' to this statement"
-        );
+        eprintln!("{green}help{reset}: try adding a trailing ';' to this statement");
     }
 }
 
@@ -264,9 +262,7 @@ pub fn report_error_span(
 
     if message.contains("missing semicolon") {
         let green = "\x1b[32m";
-        eprintln!(
-            "{green}help{reset}: add a trailing ';' to the highlighted statement"
-        );
+        eprintln!("{green}help{reset}: add a trailing ';' to the highlighted statement");
     }
 }
 
@@ -452,7 +448,7 @@ impl Diagnostic {
     ///
     /// # Returns
     /// A mutable reference to `self` for chaining
-    #[must_use] 
+    #[must_use]
     pub fn with_label(mut self, label: Label) -> Self {
         self.labels.push(label);
         self

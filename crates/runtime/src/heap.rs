@@ -53,7 +53,9 @@ pub fn runtime_malloc(size: size_t) -> *mut c_void {
         if size == 0 {
             return std::ptr::null_mut();
         }
-        let total = if let Some(total) = size.checked_add(std::mem::size_of::<u64>()) { total } else {
+        let total = if let Some(total) = size.checked_add(std::mem::size_of::<u64>()) {
+            total
+        } else {
             if RUNTIME_LOG.load(Ordering::Relaxed) {
                 let _ = io::stderr().write_all(
                     b"[oats runtime] runtime_malloc: integer overflow in allocation size\n",
@@ -92,13 +94,13 @@ pub fn runtime_malloc(size: size_t) -> *mut c_void {
             return std::ptr::null_mut();
         }
 
-        let layout = if let Ok(layout) = Layout::from_size_align(total, 8) { layout } else {
+        let layout = if let Ok(layout) = Layout::from_size_align(total, 8) {
+            layout
+        } else {
             if RUNTIME_LOG.load(Ordering::Relaxed) {
                 let _ = io::stderr().write_all(
-                    format!(
-                        "[oats runtime] runtime_malloc: invalid layout for size {total}\n"
-                    )
-                    .as_bytes(),
+                    format!("[oats runtime] runtime_malloc: invalid layout for size {total}\n")
+                        .as_bytes(),
                 );
             }
             release_allocation(total as u64);

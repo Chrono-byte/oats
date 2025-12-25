@@ -7,7 +7,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 // Import header helpers from sibling module (parent has already imported header)
 use crate::MAX_RECURSION_DEPTH;
-use crate::header::{HEADER_STATIC_BIT, HEADER_RC_MASK, HEADER_FLAGS_MASK, HEADER_TYPE_TAG_SHIFT, header_get_weak_bits, HEADER_CLAIM_BIT, HEADER_CYCLE_BIT, header_with_weak};
+use crate::header::{
+    HEADER_CLAIM_BIT, HEADER_CYCLE_BIT, HEADER_FLAGS_MASK, HEADER_RC_MASK, HEADER_STATIC_BIT,
+    HEADER_TYPE_TAG_SHIFT, header_get_weak_bits, header_with_weak,
+};
 
 // Thread-local recursion depth counter for rc_dec destructor calls
 thread_local! {
@@ -53,20 +56,19 @@ pub unsafe extern "C" fn rc_inc(p: *mut c_void) {
             if rc >= MAX_SAFE_RC {
                 if crate::RUNTIME_LOG.load(Ordering::Relaxed) {
                     let _ = io::stderr().write_all(
-                        format!(
-                            "[oats runtime] rc_inc: reference count {rc} exceeds safe limit\n"
-                        )
-                        .as_bytes(),
+                        format!("[oats runtime] rc_inc: reference count {rc} exceeds safe limit\n")
+                            .as_bytes(),
                     );
                 }
                 break;
             }
             // Use checked arithmetic to prevent overflow
-            let new_rc = if let Some(nrc) = rc.checked_add(1) { nrc & HEADER_RC_MASK } else {
+            let new_rc = if let Some(nrc) = rc.checked_add(1) {
+                nrc & HEADER_RC_MASK
+            } else {
                 if crate::RUNTIME_LOG.load(Ordering::Relaxed) {
-                    let _ = io::stderr().write_all(
-                        b"[oats runtime] rc_inc: integer overflow in reference count\n",
-                    );
+                    let _ = io::stderr()
+                        .write_all(b"[oats runtime] rc_inc: integer overflow in reference count\n");
                 }
                 break;
             };
@@ -281,7 +283,10 @@ pub unsafe extern "C" fn rc_dec(p: *mut c_void) {
 
                         let type_tag = (old_header >> HEADER_TYPE_TAG_SHIFT) as u32;
                         if type_tag == 1 {
-                            let dtor_ptr_ptr = obj_ptr.cast::<u8>().add(std::mem::size_of::<u64>()).cast::<*mut c_void>();
+                            let dtor_ptr_ptr = obj_ptr
+                                .cast::<u8>()
+                                .add(std::mem::size_of::<u64>())
+                                .cast::<*mut c_void>();
                             let dtor_raw = *dtor_ptr_ptr;
                             if !dtor_raw.is_null() {
                                 // Validate function pointer before transmute
@@ -412,7 +417,9 @@ pub unsafe extern "C" fn rc_weak_inc(p: *mut c_void) {
                 break;
             }
             // Use checked arithmetic to prevent overflow
-            let new_weak = if let Some(nw) = weak.checked_add(1) { nw & 0xffffu64 } else {
+            let new_weak = if let Some(nw) = weak.checked_add(1) {
+                nw & 0xffffu64
+            } else {
                 if crate::RUNTIME_LOG.load(Ordering::Relaxed) {
                     let _ = io::stderr().write_all(
                         b"[oats runtime] rc_weak_inc: integer overflow in weak reference count\n",
@@ -543,7 +550,9 @@ pub unsafe extern "C" fn rc_weak_upgrade(p: *mut c_void) -> *mut c_void {
                 return ptr::null_mut();
             }
             // Use checked arithmetic to prevent overflow
-            let new_strong = if let Some(ns) = strong.checked_add(1) { ns & HEADER_RC_MASK } else {
+            let new_strong = if let Some(ns) = strong.checked_add(1) {
+                ns & HEADER_RC_MASK
+            } else {
                 if crate::RUNTIME_LOG.load(Ordering::Relaxed) {
                     let _ = io::stderr().write_all(
                         b"[oats runtime] rc_weak_upgrade: integer overflow in reference count\n",

@@ -4,7 +4,9 @@ use crate::types::OatsType;
 use inkwell::AddressSpace;
 use inkwell::types::BasicTypeEnum;
 use inkwell::values::{BasicValue, BasicValueEnum, PointerValue};
-use oxc_ast::ast::{CallExpression, Expression, StaticMemberExpression, IdentifierReference, NewExpression};
+use oxc_ast::ast::{
+    CallExpression, Expression, IdentifierReference, NewExpression, StaticMemberExpression,
+};
 use std::collections::HashMap;
 
 type CallExpr<'a> = CallExpression<'a>;
@@ -188,7 +190,7 @@ impl<'a> CodeGen<'a> {
         locals: &mut Vec<HashMap<String, LocalEntry<'a>>>,
     ) -> crate::diagnostics::DiagnosticResult<inkwell::values::BasicValueEnum<'a>> {
         let prop_name = member.property.name.to_string();
-        
+
         // Debug: Print what we're processing
         eprintln!("DEBUG: lower_static_member_call: obj_name检查, prop_name={prop_name}");
 
@@ -853,9 +855,7 @@ impl<'a> CodeGen<'a> {
             Err(Box::new(
                 Diagnostic::simple(
                     Severity::Error,
-                    format!(
-                        "method '{method_name}' not found on object '{obj_name}'"
-                    ),
+                    format!("method '{method_name}' not found on object '{obj_name}'"),
                 )
                 .with_note(format!(
                     "The object '{obj_name}' does not have a method named '{method_name}'"
@@ -868,9 +868,7 @@ impl<'a> CodeGen<'a> {
             Err(Box::new(
                 Diagnostic::simple(
                     Severity::Error,
-                    format!(
-                        "failed to lower object expression for method call '{method_name}'"
-                    ),
+                    format!("failed to lower object expression for method call '{method_name}'"),
                 )
                 .with_note(format!(
                     "The object expression '{obj_name}' could not be evaluated"
@@ -1636,9 +1634,7 @@ impl<'a> CodeGen<'a> {
             }
             return Err(Diagnostic::simple_with_span_boxed(
                 Severity::Error,
-                format!(
-                    "cannot determine class from function name '{function_name}'"
-                ),
+                format!("cannot determine class from function name '{function_name}'"),
                 call.span.start as usize,
             ));
         };
@@ -1736,9 +1732,7 @@ impl<'a> CodeGen<'a> {
         } else {
             Err(Diagnostic::simple_with_span_boxed(
                 Severity::Error,
-                format!(
-                    "super method '{method_name}' not found in parent class '{parent}'"
-                ),
+                format!("super method '{method_name}' not found in parent class '{parent}'"),
                 call.span.start as usize,
             ))
         }

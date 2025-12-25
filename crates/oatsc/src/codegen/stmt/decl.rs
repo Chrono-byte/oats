@@ -2,7 +2,10 @@ use crate::diagnostics::{Diagnostic, Severity};
 use inkwell::AddressSpace;
 use inkwell::types::BasicType;
 use inkwell::values::{BasicValue, BasicValueEnum, FunctionValue};
-use oxc_ast::ast::{VariableDeclaration, VariableDeclarator, TSType, Expression, VariableDeclarationKind, ObjectPropertyKind, PropertyKey, ArrayPattern, BindingPatternKind, ObjectPattern};
+use oxc_ast::ast::{
+    ArrayPattern, BindingPatternKind, Expression, ObjectPattern, ObjectPropertyKind, PropertyKey,
+    TSType, VariableDeclaration, VariableDeclarationKind, VariableDeclarator,
+};
 use std::collections::HashMap;
 
 #[allow(dead_code)]
@@ -232,7 +235,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
             // type for member-call lowering that appears
             // after this declaration.
             let allocated_ty = self.i8ptr_t.as_basic_type_enum();
-            let alloca = if let Ok(a) = self.builder.build_alloca(allocated_ty, name) { a } else {
+            let alloca = if let Ok(a) = self.builder.build_alloca(allocated_ty, name) {
+                a
+            } else {
                 crate::diagnostics::emit_diagnostic(
                     &crate::diagnostics::Diagnostic::simple_boxed(
                         Severity::Error,
@@ -378,7 +383,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
         // Create an alloca for the local and store the tuple pointer
         let allocated_ty = self.i8ptr_t.as_basic_type_enum();
-        let alloca = if let Ok(a) = self.builder.build_alloca(allocated_ty, &var_ctx.name) { a } else {
+        let alloca = if let Ok(a) = self.builder.build_alloca(allocated_ty, &var_ctx.name) {
+            a
+        } else {
             crate::diagnostics::emit_diagnostic(
                 &crate::diagnostics::Diagnostic::simple_boxed(
                     Severity::Error,
@@ -1269,11 +1276,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             // Cast to i8ptr and load field value
             let field_ptr = self
                 .builder
-                .build_pointer_cast(
-                    field_i8ptr,
-                    self.i8ptr_t,
-                    &format!("field_{prop_name}_ptr"),
-                )
+                .build_pointer_cast(field_i8ptr, self.i8ptr_t, &format!("field_{prop_name}_ptr"))
                 .map_err(|_| {
                     Diagnostic::simple_boxed(
                         Severity::Error,
@@ -1283,11 +1286,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
             let loaded = self
                 .builder
-                .build_load(
-                    self.i8ptr_t,
-                    field_ptr,
-                    &format!("field_{prop_name}_load"),
-                )
+                .build_load(self.i8ptr_t, field_ptr, &format!("field_{prop_name}_load"))
                 .map_err(|_| {
                     Diagnostic::simple_boxed(
                         Severity::Error,
@@ -1835,7 +1834,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         )) = &maybe_existing
                         {
                             *existing_ptr
-                        } else if let Ok(a) = self.builder.build_alloca(allocated_ty, &name) { a } else {
+                        } else if let Ok(a) = self.builder.build_alloca(allocated_ty, &name) {
+                            a
+                        } else {
                             crate::diagnostics::emit_diagnostic(
                                 &crate::diagnostics::Diagnostic::simple_boxed(
                                     Severity::Error,
@@ -1929,7 +1930,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
         } else {
             self.i64_t.as_basic_type_enum()
         };
-        let alloca = if let Ok(a) = self.builder.build_alloca(ty, &var_ctx.name) { a } else {
+        let alloca = if let Ok(a) = self.builder.build_alloca(ty, &var_ctx.name) {
+            a
+        } else {
             crate::diagnostics::emit_diagnostic(
                 &crate::diagnostics::Diagnostic::simple_boxed(
                     Severity::Error,

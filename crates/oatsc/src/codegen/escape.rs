@@ -1,4 +1,7 @@
-use oxc_ast::ast::{Function, BindingPattern, BindingPatternKind, Statement, ForStatementInit, VariableDeclaration, BlockStatement, Expression, Argument, SimpleAssignmentTarget, ObjectPropertyKind};
+use oxc_ast::ast::{
+    Argument, BindingPattern, BindingPatternKind, BlockStatement, Expression, ForStatementInit,
+    Function, ObjectPropertyKind, SimpleAssignmentTarget, Statement, VariableDeclaration,
+};
 use std::collections::{HashMap, HashSet};
 
 /// Escape analysis results for a function.
@@ -22,13 +25,13 @@ pub struct EscapeInfo {
 
 impl EscapeInfo {
     /// Creates a new, empty `EscapeInfo`.
-    #[must_use] 
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Returns whether `name` escapes the function.
-    #[must_use] 
+    #[must_use]
     pub fn escapes(&self, name: &str) -> bool {
         self.escapes.contains(name)
     }
@@ -66,7 +69,7 @@ impl EscapeInfo {
     }
 
     /// Returns whether `name` is captured by closures.
-    #[must_use] 
+    #[must_use]
     pub fn is_captured(&self, name: &str) -> bool {
         self.captured.contains(name)
     }

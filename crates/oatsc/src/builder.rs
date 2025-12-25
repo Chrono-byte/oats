@@ -27,7 +27,10 @@ use crate::codegen::CodeGen;
 use crate::diagnostics;
 use crate::parser;
 use crate::types::{SymbolTable, check_function_strictness};
-use oxc_ast::ast::{Program, Statement, BindingPatternKind, Expression, Function, Declaration, TSModuleDeclarationName, VariableDeclarationKind};
+use oxc_ast::ast::{
+    BindingPatternKind, Declaration, Expression, Function, Program, Statement,
+    TSModuleDeclarationName, VariableDeclarationKind,
+};
 
 use inkwell::OptimizationLevel;
 use inkwell::context::Context;
@@ -374,9 +377,7 @@ pub fn run_from_args(
                     inkwell::types::BasicMetadataTypeEnum::ArrayType(at) => at.into(),
                     inkwell::types::BasicMetadataTypeEnum::VectorType(vt) => vt.into(),
                     inkwell::types::BasicMetadataTypeEnum::StructType(st) => st.into(),
-                    inkwell::types::BasicMetadataTypeEnum::ScalableVectorType(svt) => {
-                        svt.into()
-                    }
+                    inkwell::types::BasicMetadataTypeEnum::ScalableVectorType(svt) => svt.into(),
                     inkwell::types::BasicMetadataTypeEnum::MetadataType(_) => {
                         context.f64_type().into()
                     }
@@ -548,7 +549,7 @@ pub fn run_from_args(
             // Extract interface properties and their types
             let mut interface_props: Vec<(String, crate::types::OatsType)> = Vec::new();
 
-            for member in interface.body.body.iter() {
+            for member in &interface.body.body {
                 if let oxc_ast::ast::TSSignature::TSPropertySignature(prop) = member {
                     // Extract property name
                     let prop_name = match &prop.key {
@@ -1040,9 +1041,7 @@ pub fn run_from_args(
     // If requested, only emit the object and skip the final host linking step.
     if linking_config.emit_object_only {
         if emit_obj {
-            eprintln!(
-                "OATS_EMIT_OBJECT_ONLY set; emitted {out_obj} and skipping link"
-            );
+            eprintln!("OATS_EMIT_OBJECT_ONLY set; emitted {out_obj} and skipping link");
             println!("{out_obj}");
         } else {
             eprintln!(
@@ -1079,9 +1078,7 @@ pub fn run_from_args(
     // Clean up temporary object file if we created one
     if is_temp && let Err(e) = std::fs::remove_file(&link_obj_path) {
         // Log but don't fail - temp files will be cleaned up eventually
-        eprintln!(
-            "Warning: Failed to remove temporary object file {link_obj_path}: {e}"
-        );
+        eprintln!("Warning: Failed to remove temporary object file {link_obj_path}: {e}");
     }
 
     println!("{final_exe}");

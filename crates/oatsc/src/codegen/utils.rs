@@ -31,19 +31,19 @@ pub mod rc {
 /// Type checking utilities for LLVM types
 pub mod types {
     /// Check if an LLVM value is a pointer type (heap allocated)
-    #[must_use] 
+    #[must_use]
     pub fn is_pointer_type(value: &inkwell::values::BasicValueEnum<'_>) -> bool {
         value.get_type().is_pointer_type()
     }
 
     /// Check if an LLVM value is a float type
-    #[must_use] 
+    #[must_use]
     pub fn is_float_type(value: &inkwell::values::BasicValueEnum<'_>) -> bool {
         value.get_type().is_float_type()
     }
 
     /// Check if an LLVM value is an integer type
-    #[must_use] 
+    #[must_use]
     pub fn is_int_type(value: &inkwell::values::BasicValueEnum<'_>) -> bool {
         value.get_type().is_int_type()
     }
@@ -81,7 +81,7 @@ pub mod runtime {
 
 /// Memory allocation helpers
 pub mod memory {
-    use super::{CodeGen, PointerValue, Diagnostic, Severity};
+    use super::{CodeGen, Diagnostic, PointerValue, Severity};
 
     /// Allocate memory using the runtime malloc function
     pub fn allocate_memory<'a>(
@@ -161,7 +161,7 @@ pub mod constants {
 
 /// Variable resolution helpers
 pub mod variables {
-    use super::{PointerValue, OatsType, CodeGen, HashMap, FunctionValue, BasicValueEnum};
+    use super::{BasicValueEnum, CodeGen, FunctionValue, HashMap, OatsType, PointerValue};
 
     /// Information about a local variable in the codegen context
     type LocalVarInfo<'a> = (

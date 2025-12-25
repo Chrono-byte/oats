@@ -32,7 +32,7 @@ pub struct CompileOptions {
 }
 
 impl CompileOptions {
-    #[must_use] 
+    #[must_use]
     pub fn for_package(package_root: std::path::PathBuf) -> Self {
         Self {
             src_file: String::new(), // Will be set later

@@ -83,22 +83,20 @@ pub fn resolve_external_dependencies<'ctx>(
                 void_t.fn_type(&llvm_param_types, false)
             } else {
                 // Convert BasicMetadataTypeEnum to BasicTypeEnum for fn_type
-                let ret_basic_type: BasicTypeEnum =
-                    match map_oats_type_to_llvm(context, &ret_type) {
-                        inkwell::types::BasicMetadataTypeEnum::FloatType(ft) => ft.into(),
-                        inkwell::types::BasicMetadataTypeEnum::IntType(it) => it.into(),
-                        inkwell::types::BasicMetadataTypeEnum::PointerType(pt) => pt.into(),
-                        inkwell::types::BasicMetadataTypeEnum::ArrayType(at) => at.into(),
-                        inkwell::types::BasicMetadataTypeEnum::VectorType(vt) => vt.into(),
-                        inkwell::types::BasicMetadataTypeEnum::StructType(st) => st.into(),
-                        inkwell::types::BasicMetadataTypeEnum::ScalableVectorType(svt) => {
-                            svt.into()
-                        }
-                        inkwell::types::BasicMetadataTypeEnum::MetadataType(_) => {
-                            // Metadata types can't be return types, default to f64
-                            context.f64_type().into()
-                        }
-                    };
+                let ret_basic_type: BasicTypeEnum = match map_oats_type_to_llvm(context, &ret_type)
+                {
+                    inkwell::types::BasicMetadataTypeEnum::FloatType(ft) => ft.into(),
+                    inkwell::types::BasicMetadataTypeEnum::IntType(it) => it.into(),
+                    inkwell::types::BasicMetadataTypeEnum::PointerType(pt) => pt.into(),
+                    inkwell::types::BasicMetadataTypeEnum::ArrayType(at) => at.into(),
+                    inkwell::types::BasicMetadataTypeEnum::VectorType(vt) => vt.into(),
+                    inkwell::types::BasicMetadataTypeEnum::StructType(st) => st.into(),
+                    inkwell::types::BasicMetadataTypeEnum::ScalableVectorType(svt) => svt.into(),
+                    inkwell::types::BasicMetadataTypeEnum::MetadataType(_) => {
+                        // Metadata types can't be return types, default to f64
+                        context.f64_type().into()
+                    }
+                };
                 ret_basic_type.fn_type(&llvm_param_types, false)
             };
             module.add_function(&symbol, fn_type, None);
@@ -134,7 +132,7 @@ fn map_oats_type_to_llvm<'ctx>(
 ///
 /// # Returns
 /// Tuple of (function name, `FunctionSig`) if parsing succeeds
-#[must_use] 
+#[must_use]
 pub fn parse_function_signature_from_metadata(line: &str) -> Option<(String, FunctionSig)> {
     let line = line.trim().strip_suffix(';')?;
     if !line.starts_with("function ") {

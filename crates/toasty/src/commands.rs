@@ -269,8 +269,8 @@ pub fn handle_build(cli: &Cli, opts: BuildCommandOptions) -> Result<()> {
                         .file_stem()
                         .and_then(|s| s.to_str())
                         .unwrap_or("module");
-                    let potential_meta = std::path::Path::new(out_dir)
-                        .join(format!("{module_stem}_pkg.oats.meta"));
+                    let potential_meta =
+                        std::path::Path::new(out_dir).join(format!("{module_stem}_pkg.oats.meta"));
 
                     if potential_meta.exists() {
                         Some(potential_meta.to_string_lossy().to_string())
@@ -423,9 +423,7 @@ pub fn handle_run(
 
     // Ensure output directory exists
     std::fs::create_dir_all(&out_dir).map_err(|e| {
-        ToastyError::other(format!(
-            "Failed to create output directory {out_dir}: {e}"
-        ))
+        ToastyError::other(format!("Failed to create output directory {out_dir}: {e}"))
     })?;
 
     // Build compile options with all discovered modules

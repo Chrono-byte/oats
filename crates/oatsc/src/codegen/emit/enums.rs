@@ -36,11 +36,10 @@ impl crate::codegen::CodeGen<'_> {
                 oxc_ast::ast::TSEnumMemberName::ComputedTemplateString(tpl) => {
                     // Use the first quasi of the template literal as the string value, as a fallback
                     if let Some(first_quasi) = tpl.quasis.first() {
-                        first_quasi
-                            .value
-                            .cooked
-                            .as_ref()
-                            .map_or_else(|| "<invalid template>".to_string(), std::string::ToString::to_string)
+                        first_quasi.value.cooked.as_ref().map_or_else(
+                            || "<invalid template>".to_string(),
+                            std::string::ToString::to_string,
+                        )
                     } else {
                         return Err(crate::diagnostics::Diagnostic::simple_boxed(
                             Severity::Error,

@@ -12,13 +12,13 @@ pub struct OatsString {
 
 impl OatsString {
     /// Create a new Oats string from a Rust string
-    #[must_use] 
+    #[must_use]
     pub fn new(content: &str) -> Option<Self> {
         sys::create_string(content).map(|ptr| Self { ptr })
     }
 
     /// Get the underlying pointer (for FFI)
-    #[must_use] 
+    #[must_use]
     pub fn as_ptr(&self) -> *mut c_char {
         self.ptr.as_ptr()
     }
@@ -29,7 +29,7 @@ impl OatsString {
     ///
     /// The returned string slice is only valid as long as the `OatsString` is not dropped.
     /// The underlying string data must remain valid for the lifetime of the returned reference.
-    #[must_use] 
+    #[must_use]
     pub fn as_str(&self) -> &str {
         unsafe {
             // String layout: [header: u64][len: u64][data...]
@@ -65,7 +65,7 @@ pub struct OatsArray {
 
 impl OatsArray {
     /// Create a new Oats array
-    #[must_use] 
+    #[must_use]
     pub fn new(element_size: usize, length: usize) -> Option<Self> {
         sys::create_array(element_size, length).map(|ptr| Self {
             ptr,
@@ -75,19 +75,19 @@ impl OatsArray {
     }
 
     /// Get the length of the array
-    #[must_use] 
+    #[must_use]
     pub fn len(&self) -> usize {
         self.length
     }
 
     /// Check if the array is empty
-    #[must_use] 
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.length == 0
     }
 
     /// Get an element at the specified index
-    #[must_use] 
+    #[must_use]
     pub fn get(&self, index: usize) -> Option<NonNull<libc::c_void>> {
         if index >= self.length {
             return None;
@@ -122,13 +122,13 @@ impl OatsObject {
     ///
     /// `ptr` must be a valid pointer to an object managed by the Oats runtime.
     /// The caller must ensure the object remains valid for the lifetime of the `OatsObject`.
-    #[must_use] 
+    #[must_use]
     pub unsafe fn from_ptr(ptr: NonNull<libc::c_void>) -> Self {
         Self { ptr }
     }
 
     /// Get the underlying pointer
-    #[must_use] 
+    #[must_use]
     pub fn as_ptr(&self) -> *mut libc::c_void {
         self.ptr.as_ptr()
     }
@@ -155,7 +155,7 @@ pub struct Error {
 }
 
 impl Error {
-    #[must_use] 
+    #[must_use]
     pub fn new(code: i32, message: String) -> Self {
         Self { code, message }
     }

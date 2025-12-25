@@ -296,9 +296,7 @@ impl crate::codegen::CodeGen<'_> {
                 .map_err(|_| {
                     crate::diagnostics::Diagnostic::simple_boxed(
                         Severity::Error,
-                        format!(
-                            "alloca failed for param {pname} in constructor {class_name}"
-                        ),
+                        format!("alloca failed for param {pname} in constructor {class_name}"),
                     )
                 })?;
             let _ = self.builder.build_store(alloca, param_val);
@@ -326,9 +324,7 @@ impl crate::codegen::CodeGen<'_> {
                     .ok_or_else(|| {
                         crate::diagnostics::Diagnostic::simple_boxed(
                             Severity::Error,
-                            format!(
-                                "missing parameter {field_name} for constructor {class_name}"
-                            ),
+                            format!("missing parameter {field_name} for constructor {class_name}"),
                         )
                     })?;
                 let field_offset = header_size + meta_slot + (field_idx as u64 * 8);
@@ -387,8 +383,7 @@ impl crate::codegen::CodeGen<'_> {
                                 extract_basic_value_from_valuekind(cs.try_as_basic_value())
                         {
                             let boxed_ptr = bv.into_pointer_value();
-                            let boxed_bv =
-                                inkwell::values::BasicValueEnum::PointerValue(boxed_ptr);
+                            let boxed_bv = inkwell::values::BasicValueEnum::PointerValue(boxed_ptr);
                             let _ = self.builder.build_store(field_ptr_cast, boxed_bv);
 
                             // For union-boxed pointers we treat the stored pointer as strong by default.
@@ -415,8 +410,7 @@ impl crate::codegen::CodeGen<'_> {
                                 extract_basic_value_from_valuekind(cs.try_as_basic_value())
                         {
                             let boxed_ptr = bv.into_pointer_value();
-                            let boxed_bv =
-                                inkwell::values::BasicValueEnum::PointerValue(boxed_ptr);
+                            let boxed_bv = inkwell::values::BasicValueEnum::PointerValue(boxed_ptr);
                             let _ = self.builder.build_store(field_ptr_cast, boxed_bv);
 
                             // Use rc_weak_inc for weak fields
@@ -424,9 +418,9 @@ impl crate::codegen::CodeGen<'_> {
                                 OatsType::Weak(_) => self.get_rc_weak_inc(),
                                 _ => self.get_rc_inc(),
                             };
-                            let _ =
-                                self.builder
-                                    .build_call(rc_fn, &[boxed_ptr.into()], "rc_field");
+                            let _ = self
+                                .builder
+                                .build_call(rc_fn, &[boxed_ptr.into()], "rc_field");
                         }
                     } else {
                         // other param ABI not expected for unions
@@ -517,8 +511,7 @@ impl crate::codegen::CodeGen<'_> {
                                         "int_to_ptr failed",
                                     )
                                 })?
-                        } else if let inkwell::values::BasicValueEnum::PointerValue(pv) =
-                            param_val
+                        } else if let inkwell::values::BasicValueEnum::PointerValue(pv) = param_val
                         {
                             pv
                         } else {

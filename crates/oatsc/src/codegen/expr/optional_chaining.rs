@@ -307,9 +307,7 @@ impl<'a> CodeGen<'a> {
         // Fallback: if we can't determine the field offset, return an error
         Err(Diagnostic::simple_with_span_boxed(
             Severity::Error,
-            format!(
-                "could not determine field offset for '{field_name}' in optional chaining"
-            ),
+            format!("could not determine field offset for '{field_name}' in optional chaining"),
             member.span.start as usize,
         ))
     }

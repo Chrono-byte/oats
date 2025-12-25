@@ -7,7 +7,7 @@ use crate::diagnostics;
 use crate::types::{FunctionSig, OatsType};
 use anyhow::Result;
 use oxc_allocator::Allocator;
-use oxc_ast::ast::{Program, Statement, ForStatementInit, ForStatementLeft};
+use oxc_ast::ast::{ForStatementInit, ForStatementLeft, Program, Statement};
 use oxc_parser::Parser;
 use oxc_span::SourceType;
 

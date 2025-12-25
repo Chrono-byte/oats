@@ -19,9 +19,7 @@ use std::collections::HashMap;
 
 /// Helper function to extract `BasicValueEnum` from `ValueKind`
 /// `ValueKind` is an enum in inkwell that can be Basic or `CallSite`
-pub(crate) fn extract_basic_value_from_valuekind(
-    vk: ValueKind<'_>,
-) -> Option<BasicValueEnum<'_>> {
+pub(crate) fn extract_basic_value_from_valuekind(vk: ValueKind<'_>) -> Option<BasicValueEnum<'_>> {
     match vk {
         ValueKind::Basic(bv) => Some(bv),
         _ => None,

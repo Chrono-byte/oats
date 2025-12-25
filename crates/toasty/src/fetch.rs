@@ -59,9 +59,7 @@ fn get_artifact_name(artifact_type: ArtifactType) -> &'static str {
             ("macos", "aarch64") => "oatsc-macos-aarch64",
             ("windows", "x86_64") => "oatsc-windows-x86_64.exe",
             _ => {
-                eprintln!(
-                    "Warning: Unsupported platform {os}-{arch}, will build locally"
-                );
+                eprintln!("Warning: Unsupported platform {os}-{arch}, will build locally");
                 "oatsc-unsupported"
             }
         },
@@ -71,9 +69,7 @@ fn get_artifact_name(artifact_type: ArtifactType) -> &'static str {
             ("macos", "x86_64") => "libruntime-macos-x86_64.a",
             ("macos", "aarch64") => "libruntime-macos-aarch64.a",
             _ => {
-                eprintln!(
-                    "Warning: Unsupported platform {os}-{arch}, will build locally"
-                );
+                eprintln!("Warning: Unsupported platform {os}-{arch}, will build locally");
                 "libruntime-unsupported.a"
             }
         },
@@ -82,9 +78,7 @@ fn get_artifact_name(artifact_type: ArtifactType) -> &'static str {
 
 /// Fetch the latest release tag for a given artifact type from GitHub
 fn get_latest_tag(artifact_type: ArtifactType) -> Result<String> {
-    let url = format!(
-        "https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/releases"
-    );
+    let url = format!("https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/releases");
 
     let response = ureq::get(&url)
         .call()
@@ -184,9 +178,8 @@ fn download_artifact(
     }
 
     // Fetch digest from GitHub API for verification
-    let api_url = format!(
-        "https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/releases/tags/{tag}"
-    );
+    let api_url =
+        format!("https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/releases/tags/{tag}");
     let agent = ureq::agent();
     let release_resp = agent
         .get(&api_url)
@@ -412,22 +405,20 @@ fn try_fetch_artifact(artifact_type: ArtifactType, skip_env_var: &str) -> Option
 }
 
 /// Try to fetch pre-built compiler from GitHub releases
-#[must_use] 
+#[must_use]
 pub fn try_fetch_compiler() -> Option<PathBuf> {
     try_fetch_artifact(ArtifactType::Compiler, "OATS_NO_REMOTE_COMPILER")
 }
 
 /// Try to fetch pre-built runtime from GitHub releases
-#[must_use] 
+#[must_use]
 pub fn try_fetch_runtime() -> Option<PathBuf> {
     try_fetch_artifact(ArtifactType::Runtime, "OATS_NO_REMOTE_RUNTIME")
 }
 
 /// List all available versions for a given artifact type from GitHub releases
 fn list_available_versions(artifact_type: ArtifactType) -> Result<Vec<String>> {
-    let url = format!(
-        "https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/releases"
-    );
+    let url = format!("https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/releases");
 
     let response = ureq::get(&url)
         .call()
@@ -598,13 +589,13 @@ fn get_selected_artifact_path(artifact_type: ArtifactType) -> Option<PathBuf> {
 }
 
 /// Get the path to the currently selected compiler
-#[must_use] 
+#[must_use]
 pub fn get_selected_compiler_path() -> Option<PathBuf> {
     get_selected_artifact_path(ArtifactType::Compiler)
 }
 
 /// Get the path to the currently selected runtime
-#[must_use] 
+#[must_use]
 pub fn get_selected_runtime_path() -> Option<PathBuf> {
     get_selected_artifact_path(ArtifactType::Runtime)
 }

@@ -81,9 +81,7 @@ pub fn compile_to_object_bytes(module: &Module, config: &LinkingConfig) -> Resul
     let memory_buffer = tm
         .write_to_memory_buffer(module, FileType::Object)
         .map_err(|e| {
-            anyhow::anyhow!(
-                "TargetMachine failed to emit object file to memory: {e:?}"
-            )
+            anyhow::anyhow!("TargetMachine failed to emit object file to memory: {e:?}")
         })?;
 
     // Convert memory buffer to Vec<u8>

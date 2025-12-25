@@ -548,32 +548,8 @@ pub fn run_from_args(
             // Extract interface properties and their types
             let mut interface_props: Vec<(String, crate::types::OatsType)> = Vec::new();
 
-            // Log to file instead of stderr to avoid suppression
-            let log_path = "/home/chrono/Dev/oats/.cursor/debug.log";
-            let _ = std::fs::OpenOptions::new().create(true).append(true).open(log_path).and_then(|mut f| {
-                let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or(std::time::Duration::from_secs(0));
-                writeln!(f, r#"{{"id":"log_{}","timestamp":{},"location":"builder.rs:555","message":"processing interface","data":{{"interface_name":"{}","body_len":{}}},"sessionId":"debug-session","runId":"run1","hypothesisId":"K"}}"#,
-                    now.as_nanos(),
-                    now.as_millis(),
-                    interface_name, interface.body.body.len())
-            });
-
-            for (idx, member) in interface.body.body.iter().enumerate() {
-                let _ = std::fs::OpenOptions::new().create(true).append(true).open(log_path).and_then(|mut f| {
-                    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or(std::time::Duration::from_secs(0));
-                    writeln!(f, r#"{{"id":"log_{}","timestamp":{},"location":"builder.rs:560","message":"member type","data":{{"idx":{},"discriminant":"{:?}"}},"sessionId":"debug-session","runId":"run1","hypothesisId":"K"}}"#,
-                        now.as_nanos(),
-                        now.as_millis(),
-                        idx, std::mem::discriminant(member))
-                });
+            for member in interface.body.body.iter() {
                 if let oxc_ast::ast::TSSignature::TSPropertySignature(prop) = member {
-                    let _ = std::fs::OpenOptions::new().create(true).append(true).open(log_path).and_then(|mut f| {
-                        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or(std::time::Duration::from_secs(0));
-                        writeln!(f, r#"{{"id":"log_{}","timestamp":{},"location":"builder.rs:562","message":"found property signature","data":{{"key_discriminant":"{:?}"}},"sessionId":"debug-session","runId":"run1","hypothesisId":"K"}}"#,
-                            now.as_nanos(),
-                            now.as_millis(),
-                            std::mem::discriminant(&prop.key))
-                    });
                     // Extract property name
                     let prop_name = match &prop.key {
                         oxc_ast::ast::PropertyKey::StaticIdentifier(ident) => {
@@ -590,14 +566,6 @@ pub fn run_from_args(
                         }
                     };
 
-                    let _ = std::fs::OpenOptions::new().create(true).append(true).open(log_path).and_then(|mut f| {
-                        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or(std::time::Duration::from_secs(0));
-                        writeln!(f, r#"{{"id":"log_{}","timestamp":{},"location":"builder.rs:576","message":"property name extracted","data":{{"prop_name":"{}","has_type_ann":{}}},"sessionId":"debug-session","runId":"run1","hypothesisId":"K"}}"#,
-                            now.as_nanos(),
-                            now.as_millis(),
-                            prop_name, prop.type_annotation.is_some())
-                    });
-
                     // Extract property type
                     if let Some(type_ann) = &prop.type_annotation {
                         // Convert TSType to OatsType - use map_ts_type_with_aliases to support
@@ -607,21 +575,7 @@ pub fn run_from_args(
                             Some(&*codegen.type_aliases.borrow()),
                             Some(&*codegen.symbol_table.borrow()),
                         );
-                        let _ = std::fs::OpenOptions::new().create(true).append(true).open(log_path).and_then(|mut f| {
-                            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or(std::time::Duration::from_secs(0));
-                            writeln!(f, r#"{{"id":"log_{}","timestamp":{},"location":"builder.rs:587","message":"type mapping","data":{{"prop_name":"{}","oats_type_some":{}}},"sessionId":"debug-session","runId":"run1","hypothesisId":"K"}}"#,
-                                now.as_nanos(),
-                                now.as_millis(),
-                                prop_name, oats_type_opt.is_some())
-                        });
                         if let Some(oats_type) = oats_type_opt {
-                            let _ = std::fs::OpenOptions::new().create(true).append(true).open(log_path).and_then(|mut f| {
-                                let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or(std::time::Duration::from_secs(0));
-                                writeln!(f, r#"{{"id":"log_{}","timestamp":{},"location":"builder.rs:590","message":"adding property","data":{{"prop_name":"{}"}},"sessionId":"debug-session","runId":"run1","hypothesisId":"K"}}"#,
-                                    now.as_nanos(),
-                                    now.as_millis(),
-                                    prop_name)
-                            });
                             interface_props.push((prop_name.clone(), oats_type.clone()));
                         }
                         // Skip properties with unsupported types
@@ -631,14 +585,6 @@ pub fn run_from_args(
                     // They can be added in the future if needed for type checking
                 }
             }
-
-            let _ = std::fs::OpenOptions::new().create(true).append(true).open(log_path).and_then(|mut f| {
-                let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or(std::time::Duration::from_secs(0));
-                writeln!(f, r#"{{"id":"log_{}","timestamp":{},"location":"builder.rs:604","message":"interface final","data":{{"interface_name":"{}","props_count":{}}},"sessionId":"debug-session","runId":"run1","hypothesisId":"K"}}"#,
-                    now.as_nanos(),
-                    now.as_millis(),
-                    interface_name, interface_props.len())
-            });
 
             // Store interface metadata with mangled name (same as interface_name for top-level)
             codegen

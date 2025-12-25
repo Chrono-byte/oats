@@ -1,10 +1,9 @@
-# Rust/Cargo
-target/**
+# Rust/Cargo artifacts
 **/target/
 **/*.rlib
 **/*.rmeta
 
-# Generated LLVM/IR and object files (AOT pipeline)
+# Build artifacts and executables
 *.ll
 *.bc
 *.o
@@ -15,50 +14,43 @@ target/**
 *.exe
 *.out
 
-# Runtime build artifacts (Rust runtime crates)
-# (moved into the workspace under crates/runtime)
-crates/runtime/**/target/
-crates/runtime/**/target/*
+# Output directories
+dist/
+**/out
+aot_out/
+test_out/
+fuzz/artifacts/
+fuzz/corpus/
 
-# VS Code / JetBrains
+# Dependencies
+node_modules/
+third_party/
+
+# IDE and editor files
 .vscode/
 .idea/
 *.iml
+*.swp
+*.swo
 
-# OS files
+# OS generated files
 .DS_Store
 Thumbs.db
 
-# Temp files
+# Temporary files
 *.tmp
 *.temp
-*.swp
-*.swo
 *.bak
 *.orig
 *~
+/tmp/
 
 # Environment files
 .env
 .env.*
 
-# Misc
-dist/
-node_modules/
-
-# Keep local scripts/external tempdir outputs out
-/tmp/
-
-# Ignore build artifacts produced by clang in tempdirs
-**/out
-aot_out/**
-test_out/**
-fuzz/artifacts/**
-fuzz/corpus/**
-
-# Ignore all files in the root except for those with extensions
-# Also ignore any executable in the root that doesn't have an extension
-# (most compiled oats programs)
+# Root directory handling
+# Ignore all files in root except essential project files
 /*
 !/*.*
 !/*/
@@ -69,16 +61,20 @@ fuzz/corpus/**
 !README.md
 !TODO.md
 
-# Allow exceptions: keep README, scripts, source code tracked
+# Ignore aot_out directory
+aot_out/
+
+# Keep specific documentation files
 review.md
-docs/plans/*
+docs/plans/
 static.md
 
-# Ignore vendor directory if it exists
-third_party/*
-
-# Ignore object files & LLVM IR in source directories
-**/*.ll
-**/*.o
+# Build scripts and utilities
 update_diagnostics.py
-*.a
+
+# Specific files and directories generated in root (override root ignore)
+target/
+libruntime.a
+libruntime.so
+liboats_std.a
+liboats_std.so

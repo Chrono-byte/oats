@@ -449,7 +449,7 @@ fn link_package_modules(
         return Ok(());
     }
 
-    // If only one module, just copy it
+    // If only one module, copy it
     if compiled_modules.len() == 1 {
         let (_module_path, obj_path) = compiled_modules.iter().next().ok_or_else(|| {
             ToastyError::other(

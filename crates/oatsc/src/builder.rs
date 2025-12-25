@@ -46,7 +46,7 @@ use inkwell::types::BasicType;
 /// * `options` - The compilation options
 ///
 /// # Returns
-/// Path to the output file on success, or None if just object emission
+/// Path to the output file on success, or None if only object emission
 pub fn compile_with_options(options: crate::CompileOptions) -> Result<Option<String>> {
     // Pass options directly through the call stack
     let args = vec!["oatsc".to_string(), options.src_file.clone()];
@@ -177,8 +177,8 @@ pub fn run_from_args(
                 }
                 // Destructuring patterns not yet supported for arrow function bindings
             }
-            // Note: oxc_ast doesn't have separate export declarations in the AST
-            // Exports are handled differently - for now we only handle non-exported
+            // oxc_ast lacks separate export declarations in the AST
+            // Exports are handled differently - currently only handles non-exported
         }
         arrows
             .into_iter()
@@ -223,14 +223,14 @@ pub fn run_from_args(
     let func_decl: Option<&Function<'_>> = if let Some(f) = func_decl_opt {
         Some(f)
     } else {
-        // Check if we're in library mode (emitting object only)
+        // Check if in library mode (emitting object only)
         let emit_object_only = match options.as_ref().map(|o| o.emit_object_only) {
             Some(val) => val,
             None => std::env::var("OATS_EMIT_OBJECT_ONLY").is_ok(),
         };
         if emit_object_only {
-            // For library modules, we still need to compile but skip main function requirement
-            // We'll continue with compilation but won't require a main function
+            // For library modules, compilation still occurs but main function requirement is skipped
+            // Continues with compilation but does not require a main function
             // The actual return will happen after object file emission
             None
         } else {
@@ -289,7 +289,7 @@ pub fn run_from_args(
     );
 
     // Resolve external dependencies and declare them in the LLVM module
-    // We inline this to avoid lifetime issues with Module's invariant lifetime
+    // Inlined to avoid lifetime issues with Module's invariant lifetime
     let mut external_function_signatures: std::collections::HashMap<
         String,
         (Vec<crate::types::OatsType>, crate::types::OatsType),
@@ -487,7 +487,7 @@ pub fn run_from_args(
     };
 
     // Note: class field metadata is computed per-class when emitting
-    // constructors below. We avoid a global pre-scan of the module so
+    // constructors below. A global pre-scan of the module is avoided so
     // member-field inference is based on declared/annotated types only.
 
     // Emit IR for class methods/constructors. Emit for both exported and
@@ -514,7 +514,7 @@ pub fn run_from_args(
         // Handle type alias declarations: `type Name<T?> = Type;`
         if let oxc_ast::ast::Statement::TSTypeAliasDeclaration(ta) = stmt {
             // Store the alias: name -> (type_params, aliased_type)
-            // We store a reference to the type annotation since TSType doesn't implement Clone/Copy
+            // Stores a reference to the type annotation since TSType doesn't implement Clone/Copy
             // The AST nodes live in the allocator for the lifetime of codegen, so this is safe
             let alias_name = ta.id.name.to_string();
             let type_params = ta.type_parameters.as_ref().map(|params| {
@@ -532,7 +532,7 @@ pub fn run_from_args(
 
         // Handle interface declarations: `interface Name { ... }`
         // Interfaces are structural types in TypeScript/Oats - they don't generate runtime code
-        // but are used for type checking. We store interface metadata (property names and types)
+        // but are used for type checking. Interface metadata (property names and types) is stored
         // for potential future type checking passes.
         if let Statement::TSInterfaceDeclaration(interface) = stmt {
             let interface_name = interface.id.name.to_string();
@@ -563,7 +563,7 @@ pub fn run_from_args(
                                 "Skipping property key: {:?}",
                                 std::mem::discriminant(&prop.key)
                             );
-                            continue; // Skip computed keys for now
+                            continue; // Skip computed keys
                         }
                     };
 
@@ -595,7 +595,7 @@ pub fn run_from_args(
         }
 
         // Handle namespace declarations: `namespace Name { ... }`
-        // Namespaces provide scoping and name mangling. For now, we handle them
+        // Namespaces provide scoping and name mangling. Currently handles them
         // by processing their body statements in the same scope (simplified approach).
         // TODO: Implement proper namespace scoping and name mangling
         if let Statement::TSModuleDeclaration(namespace) = stmt {
@@ -603,7 +603,7 @@ pub fn run_from_args(
                 TSModuleDeclarationName::Identifier(id) => id.name.to_string(),
                 _ => continue,
             };
-            // For now, process namespace body statements as if they were at module level
+            // Processes namespace body statements as if they were at module level
             // This is a simplified approach - proper implementation would need:
             // 1. Namespace scoping (qualified names like Namespace::member)
             // 2. Name mangling for codegen (e.g., Namespace_member)
@@ -616,7 +616,7 @@ pub fn run_from_args(
     }
 
     // Emit top-level helper functions (non-exported) found in the module so
-    // calls to them can be lowered. Skip exported `main` which we handle
+    // calls to them can be lowered. Skip exported `main` which is handled
     // separately.
     // Before emitting functions, evaluate and emit top-level `const`
     // declarations. This pass collects all top-level consts, builds a
@@ -782,7 +782,7 @@ pub fn run_from_args(
                     Some(&source),
                     "cyclic dependency among top-level const declarations",
                     Some(
-                        "Top-level `const` declarations form a cycle; Rust-style `const` requires acyclic compile-time dependencies.",
+                        "Top-level `const` declarations form a cycle.",
                     ),
                 );
             }
@@ -807,7 +807,7 @@ pub fn run_from_args(
             }
 
             if let Some(fsig) = sig_opt {
-                // skip exported `main` (we handle exported main separately)
+                // skip exported `main` (exported main is handled separately)
                 if fname != "main" {
                     // Register in symbol table
                     codegen.symbol_table.borrow_mut().insert_std_function(
@@ -839,7 +839,7 @@ pub fn run_from_args(
             continue;
         }
 
-        // For arrows, we need to infer the signature if missing
+        // For arrows, infer the signature if missing
         let mut param_types = Vec::new();
         for p in &arrow.params.items {
             if let Some(ann) = &p.pattern.type_annotation
@@ -882,7 +882,7 @@ pub fn run_from_args(
 
     // Emit the user's exported `main` under an internal symbol name to avoid
     // conflicting with the C runtime entrypoint. The script must export
-    // `main`, but we generate `oats_main` as the emitted symbol the host
+    // `main`, but `oats_main` is generated as the emitted symbol the host
     // runtime will call.
     if let (Some(func), Some(sig)) = (func_decl, func_sig.as_ref()) {
         codegen
@@ -925,7 +925,7 @@ pub fn run_from_args(
         .and_then(|s| s.to_str())
         .unwrap_or("out");
 
-    // Determine if we should emit IR and object files
+    // Determine if IR and object files should be emitted
     let emit_ir = options.as_ref().is_some_and(|o| o.emit_ir);
     let emit_obj = options.as_ref().is_some_and(|o| o.emit_obj);
 
@@ -945,7 +945,7 @@ pub fn run_from_args(
     // Determine object file path (only needed if emit_obj is true or for emit_object_only)
     let out_obj = format!("{out_dir}/{src_filename}.o");
 
-    // Ensure output directory exists (only needed if we're emitting files there)
+    // Ensure output directory exists (only needed if files are being emitted there)
     if (emit_ir || emit_obj)
         && let Err(e) = std::fs::create_dir_all(&out_dir)
     {
@@ -1057,7 +1057,7 @@ pub fn run_from_args(
     // Locate or compile rt_main object
     let rt_main_obj = crate::linking::locate_rt_main(&out_dir, emitted_host_main)?;
 
-    // For linking, we need the object file on disk. Write to temp file if emit_obj is false.
+    // For linking, the object file must be on disk. Write to temp file if emit_obj is false.
     let (link_obj_path, is_temp) = if emit_obj {
         (out_obj.clone(), false)
     } else {
@@ -1075,7 +1075,7 @@ pub fn run_from_args(
     let final_exe =
         crate::linking::link_executable(&linking_config, &link_obj_path, &rust_libs, &rt_main_obj)?;
 
-    // Clean up temporary object file if we created one
+    // Clean up temporary object file if one was created
     if is_temp && let Err(e) = std::fs::remove_file(&link_obj_path) {
         // Log but don't fail - temp files will be cleaned up eventually
         eprintln!("Warning: Failed to remove temporary object file {link_obj_path}: {e}");

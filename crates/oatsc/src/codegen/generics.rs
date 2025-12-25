@@ -18,7 +18,7 @@ impl<'a> CodeGen<'a> {
     /// Specializes a generic type with concrete type arguments.
     ///
     /// Creates a specialized instance of a generic type (e.g., `Array<Number>`).
-    /// For now, this handles simple generic types like Array and Option.
+    /// Currently handles simple generic types like Array and Option.
     /// The `type_params` represent the generic type parameter names, and the
     /// first element of `type_params` should be the base generic type (e.g., Array).
     /// The `args` are expressions that may contain constructor arguments.
@@ -34,14 +34,14 @@ impl<'a> CodeGen<'a> {
             ));
         }
 
-        // For now, handle Array<T> specialization
-        // The first type_param should indicate the generic type (Array), and we need
-        // to determine the element type from context or args
+        // Handles Array<T> specialization
+        // The first type_param should indicate the generic type (Array), and the element type
+        // must be determined from context or args
         // This is a simplified implementation - a full version would need to track
         // generic type definitions and apply substitutions
 
-        // If we have Array<ElementType>, create an empty array
-        // For now, create a minimal array allocation
+        // If Array<ElementType> is present, create an empty array
+        // Creates a minimal array allocation
         let array_alloc_fn = self.get_array_alloc();
         let len_const = self.i64_t.const_int(0, false);
         let elem_size_const = self.i32_t.const_int(8, false); // Default to pointer size
@@ -106,8 +106,8 @@ impl<'a> CodeGen<'a> {
         }
 
         // Lookup the generic function AST and its signature
-        // Note: Function doesn't implement Clone, so we work with references
-        // We need to keep the borrow alive for the entire function
+        // Function doesn't implement Clone, so works with references
+        // The borrow must be kept alive for the entire function
         let nested_fns_borrow = self.nested_generic_fns.borrow();
         let (func_ast, fsig) = match nested_fns_borrow.get(func_name) {
             Some((func_ast, fsig)) => (*func_ast, fsig.clone()),
@@ -146,7 +146,7 @@ impl<'a> CodeGen<'a> {
         // Pre-allocate with estimated capacity (most params will be processed)
         let mut concrete_params = Vec::with_capacity(func_ast.params.items.len());
         for param in &func_ast.params.items {
-            // Only handle simple identifier parameters for now
+            // Only handles simple identifier parameters
             if !matches!(
                 &param.pattern.kind,
                 BindingPatternKind::BindingIdentifier(_)
@@ -290,8 +290,8 @@ impl<'a> CodeGen<'a> {
             .insert(key.clone(), specialized_name.clone());
 
         // Generate the specialized class IR
-        // We need to create a modified class AST with substituted types
-        // For now, we'll generate the class with the specialized name and handle type substitution in field resolution
+        // Creates a modified class AST with substituted types
+        // Generates the class with the specialized name and handles type substitution in field resolution
         self.gen_monomorphized_class_ir(&specialized_name, class_ast, &subst)?;
 
         Ok(specialized_name)
@@ -305,7 +305,7 @@ impl<'a> CodeGen<'a> {
         subst: &std::collections::HashMap<String, crate::types::OatsType>,
     ) -> crate::diagnostics::DiagnosticResult<()> {
         // Create a temporary class AST with the specialized name
-        // This is a simplified implementation - in a full implementation we'd need to
+        // This is a simplified implementation - a full implementation would need to
         // deep clone and modify the AST with type substitutions
 
         let raw_name = specialized_name.to_string();
@@ -315,7 +315,7 @@ impl<'a> CodeGen<'a> {
             .borrow_mut()
             .insert_type(raw_name.clone(), specialized_name.to_string());
 
-        // 1. Record parent class (none for now)
+        // 1. Record parent class (none currently)
         let parent_name_opt = None;
         self.class_parents
             .borrow_mut()
@@ -460,7 +460,7 @@ impl<'a> CodeGen<'a> {
                 Ok(crate::types::OatsType::Void)
             } else {
                 // Deduplicate types by comparing with existing types
-                // Note: OatsType doesn't implement Hash, so we use manual comparison
+                // OatsType doesn't implement Hash, so uses manual comparison
                 let mut unique_types = Vec::with_capacity(return_types.len());
                 for ty in return_types {
                     if !unique_types
@@ -552,7 +552,7 @@ impl<'a> CodeGen<'a> {
         &self,
         expr: &Expression<'_>,
     ) -> crate::diagnostics::DiagnosticResult<crate::types::OatsType> {
-        // Check if we already have type information from lowering
+        // Check if type information already exists from lowering
         if let Some(ty) = self.last_expr_oats_type.borrow().as_ref() {
             return Ok(ty.clone());
         }

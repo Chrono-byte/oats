@@ -1,7 +1,7 @@
 //! Try/Catch/Finally and Throw statement lowering
 //!
 //! This module handles lowering of exception handling constructs.
-//! For now, this is a basic implementation that uses error codes.
+//! Currently uses a basic implementation with error codes.
 //! A more sophisticated implementation could use LLVM's exception
 //! handling (invoke, landingpad) or setjmp/longjmp.
 
@@ -145,12 +145,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
             // Handle catch parameter binding
             if let Some(param) = &catch_clause.param {
-                // For now, we'll create a local variable for the exception
+                // Creates a local variable for the exception
                 // In a full implementation, this would be the actual exception object
                 match &param.pattern.kind {
                     BindingPatternKind::BindingIdentifier(ident) => {
                         // Create a local for the exception parameter
-                        // For now, we'll use a null pointer as a placeholder
+                        // Uses a null pointer as a placeholder
                         let exception_local = self
                             .builder
                             .build_alloca(self.i8ptr_t, ident.name.as_ref())
@@ -242,7 +242,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             })?;
 
         // Set exception flag to indicate an exception was thrown
-        // In a full implementation, we would also store the exception object
+        // In a full implementation, the exception object would also be stored
         let exception_flag_name = format!(
             "__exception_flag_{}",
             function.get_name().to_str().unwrap_or("unknown")
@@ -266,7 +266,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
         // Store the exception value (for catch parameter)
         // In a full implementation, this would be stored in a thread-local or global
-        // For now, we'll just set the flag and let the catch block handle it
+        // Sets the flag and lets the catch block handle it
 
         // Build unreachable - control will be transferred to catch block
         // by the exception checking mechanism in try blocks

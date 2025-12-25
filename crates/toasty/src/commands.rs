@@ -252,7 +252,7 @@ pub fn handle_build(cli: &Cli, opts: BuildCommandOptions) -> Result<()> {
         if i > 0 {
             for prev_module in &compilation_order[0..i] {
                 // Determine the import path (relative to current module)
-                // For now, use the module file stem as the import path
+                // Uses the module file stem as the import path
                 let import_path = match std::path::Path::new(prev_module)
                     .file_stem()
                     .and_then(|s| s.to_str())
@@ -311,7 +311,7 @@ pub fn handle_build(cli: &Cli, opts: BuildCommandOptions) -> Result<()> {
                     None
                 };
 
-                // Add to extern_oats if we have a metadata file
+                // Add to extern_oats if a metadata file exists
                 if let Some(meta) = meta_path {
                     options.extern_oats.insert(import_path, meta);
                 }
@@ -331,7 +331,7 @@ pub fn handle_build(cli: &Cli, opts: BuildCommandOptions) -> Result<()> {
         if !opts.quiet && (verbose || cfg!(debug_assertions)) {
             eprintln!("{}", "Skipping linking due to emit-object-only...".blue());
         }
-        // For multi-module builds with emit_object_only, just report the object files
+        // For multi-module builds with emit_object_only, report the object files
         if !opts.quiet && (verbose || cfg!(debug_assertions)) {
             eprintln!("{}", "Compiled object files:".green());
             for (module_path, obj_file) in &compiled_modules {

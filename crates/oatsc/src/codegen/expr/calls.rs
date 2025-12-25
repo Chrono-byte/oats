@@ -35,7 +35,7 @@ impl<'a> CodeGen<'a> {
         eprintln!("DEBUG: lower_call_expr: entered for {:?}", call.callee);
         // Support simple identifier callees and member-callee method calls.
         //
-        // We intentionally support a small set of call shapes in the
+        // Intentionally supports a small set of call shapes in the
         // emitter: plain identifier calls (e.g., `foo()`), and
         // member method calls (e.g., `obj.method()`). More complex
         // call expressions (computed callees, dynamic property lookups)
@@ -191,7 +191,7 @@ impl<'a> CodeGen<'a> {
     ) -> crate::diagnostics::DiagnosticResult<inkwell::values::BasicValueEnum<'a>> {
         let prop_name = member.property.name.to_string();
 
-        // Debug: Print what we're processing
+        // Debug: Print what is being processed
         eprintln!("DEBUG: lower_static_member_call: obj_name检查, prop_name={prop_name}");
 
         // Get object name if it's an identifier
@@ -237,7 +237,7 @@ impl<'a> CodeGen<'a> {
                 }
             };
 
-            // Ensure we pass an `i8*` payload to the runtime
+            // Ensure an `i8*` payload is passed to the runtime
             let payload_ptr = match arg_val {
                 BasicValueEnum::PointerValue(pv) => pv.as_basic_value_enum(),
                 BasicValueEnum::FloatValue(fv) => {
@@ -327,7 +327,7 @@ impl<'a> CodeGen<'a> {
                         ));
                     }
                 };
-                // console.log returns void, so we return a dummy value
+                // console.log returns void, so return a dummy value
                 Ok(self.f64_t.const_float(0.0).as_basic_value_enum())
             } else {
                 Err(Diagnostic::simple_with_span_boxed(
@@ -628,7 +628,7 @@ impl<'a> CodeGen<'a> {
                 }
                 _ => {
                     // Other types (arrays, structs, vectors) - convert to string
-                    // For now, return error - can be extended later
+                    // Returns error - can be extended later
                     return Err(Diagnostic::simple_with_span_boxed(
                         Severity::Error,
                         "console.log: unsupported argument type".to_string(),
@@ -638,8 +638,8 @@ impl<'a> CodeGen<'a> {
             }
         }
 
-        // Multiple arguments - convert all to strings and concatenate, or just use first
-        // For now, handle first argument only (can be extended later)
+        // Multiple arguments - convert all to strings and concatenate, or use first
+        // Currently handles first argument only (can be extended later)
         if let Some(expr) = call.arguments[0].as_expression() {
             let arg_val = self.lower_expr(expr, function, param_map, locals)?;
             // Convert to string pointer if needed
@@ -904,7 +904,7 @@ impl<'a> CodeGen<'a> {
                         Err(d) => return Err(d)?,
                     };
 
-                    // Check if we need to coerce the argument to match the parameter type
+                    // Check if argument needs coercion to match the parameter type
                     if let Some(param_type) = sig.params.get(i) {
                         val = self.coerce_argument_to_parameter_type(val, param_type)?;
                     }

@@ -236,7 +236,7 @@ pub unsafe fn validate_meta_block(meta: *const u64, max_len: usize) -> bool {
         // let header_size = std::mem::size_of::<u64>();
         // let offsets_size = len.saturating_mul(std::mem::size_of::<i32>());
 
-        // Ensure we can safely iterate over all offsets
+        // Ensure safe iteration over all offsets
         for i in 0..len {
             // Read each offset safely
             let off_i32 = *offsets_ptr.add(i);
@@ -356,14 +356,14 @@ pub extern "C" fn promise_poll_into(
         }
         // Strategy: support three shapes used by codegen/runtime
         // 1) Legacy: the `promise` pointer is actually the state object and
-        //    state[0] is a non-null poll function pointer. We detect this by
+        //    state[0] is a non-null poll function pointer. Detected by
         //    reading the first word and calling it if present.
         // 2) Promise wrapper: the `promise` is an allocated wrapper whose
-        //    second word (offset 8) points to a state object. We read the
-        //    state pointer and dispatch to its poll function (state[0]).
+        //    second word (offset 8) points to a state object. The state
+        //    pointer is read and dispatched to its poll function (state[0]).
         // 3) Tiny resolver: an earlier `promise_resolve` returns a tiny box
-        //    that stores the payload at offset 8; in this case we treat the
-        //    second word as the payload and return it as ready.
+        //    that stores the payload at offset 8; in this case the
+        //    second word is treated as the payload and returned as ready.
 
         // Read the first word
         let first_ptr = promise.cast::<*mut std::ffi::c_void>();
@@ -480,7 +480,7 @@ pub extern "C" fn executor_run() {
                 exec.cv.notify_one();
             } else {
                 runtime_free(out_mem.cast::<c_void>());
-                // We don't free `p` because it may be the state object owned by the generator
+                // `p` is not freed because it may be the state object owned by the generator
             }
         }
     }
@@ -548,9 +548,9 @@ fn init_executor() -> std::sync::Arc<Exec> {
         .clone()
 }
 
-// A trivial waker representation: in Phase-1 we'll create an object that
-// can be cloned and invoked from native code. For now, we return a null
-// pointer as a placeholder and make `waker_wake` a no-op.
+// A trivial waker representation: Phase-1 will create an object that
+// can be cloned and invoked from native code. Currently returns a null
+// pointer as a placeholder and makes `waker_wake` a no-op.
 #[unsafe(no_mangle)]
 pub extern "C" fn waker_create_for_task(_task: *mut std::ffi::c_void) -> *mut std::ffi::c_void {
     if _task.is_null() {

@@ -296,7 +296,7 @@ pub unsafe extern "C" fn number_parse_float(str_ptr: *const c_char) -> f64 {
         return f64::NAN;
     }
 
-    // SAFETY: We assume the string is valid UTF-8 as per Oats string encoding
+    // SAFETY: The string is assumed to be valid UTF-8 as per Oats string encoding
     let c_str = unsafe { CStr::from_ptr(str_ptr) };
     let str_slice = match c_str.to_str() {
         Ok(s) => s,

@@ -245,10 +245,10 @@ pub unsafe extern "C" fn rc_dec(p: *mut c_void) {
                             *depth
                         });
 
-                        // If we exceed the recursion limit, defer the destructor call
+                        // If recursion limit is exceeded, defer the destructor call
                         // to prevent stack overflow. The object will be cleaned up
-                        // by the cycle collector. We still need to decrement weak refs
-                        // and add to collector candidates for deferred cleanup.
+                        // by the cycle collector. Weak refs still need to be decremented
+                        // and added to collector candidates for deferred cleanup.
                         if depth > MAX_RECURSION_DEPTH {
                             if should_log {
                                 let _ = io::stderr().write_all(
@@ -293,14 +293,14 @@ pub unsafe extern "C" fn rc_dec(p: *mut c_void) {
                                 let dtor_addr = dtor_raw as usize;
                                 // Function pointers should be aligned and in plausible address range
                                 // On most platforms, function pointers need to be aligned (typically 1-byte aligned is sufficient)
-                                // but we check for reasonable alignment and address range
+                                // but reasonable alignment and address range are checked
                                 if crate::is_plausible_addr(dtor_addr) {
                                     // Additional validation: check that the address is reasonably aligned
                                     // Function pointers should typically be aligned (platform-dependent, but usually at least 1-byte)
-                                    // We use a conservative check: ensure it's not obviously misaligned
+                                    // Uses a conservative check: ensure it's not obviously misaligned
                                     const MIN_FN_ALIGN: usize = 1; // Minimum alignment for function pointers
                                     if dtor_addr.is_multiple_of(MIN_FN_ALIGN) {
-                                        // SAFETY: We've validated the pointer is in a plausible address range and aligned.
+                                        // SAFETY: The pointer has been validated to be in a plausible address range and aligned.
                                         // The pointer was stored by the code generator and should be a valid function pointer.
                                         // However, if the memory is corrupted, this could still be invalid. The is_plausible_addr
                                         // check provides defense-in-depth but cannot guarantee the pointer is actually executable.
@@ -328,8 +328,8 @@ pub unsafe extern "C" fn rc_dec(p: *mut c_void) {
                         }
 
                         // Check weak count before deciding whether to free
-                        // We need to reload the header to get the current weak count
-                        // since it may have changed since we last read it
+                        // Header must be reloaded to get the current weak count
+                        // since it may have changed since last read
                         let current_header = (*header).load(Ordering::Acquire);
                         let weak_count = header_get_weak_bits(current_header);
 
@@ -344,7 +344,7 @@ pub unsafe extern "C" fn rc_dec(p: *mut c_void) {
                             // the last weak reference is dropped. rc_weak_dec will free
                             // the object when it's called for the last weak reference
                             // and sees both strong and weak are 0.
-                            // We don't call rc_weak_dec here because that would incorrectly
+                            // rc_weak_dec is not called here because that would incorrectly
                             // decrement the weak count - weak references should only be
                             // decremented when they are actually dropped.
                         }

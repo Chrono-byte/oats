@@ -7,7 +7,7 @@ function testValueUnions(): void {
     
     // Reassign to boolean
     x = true;
-    // Can't directly print boolean, so we'll use a workaround
+    // Can't directly print boolean, so use a workaround
     if (x) {
         console.log(1);  // Should print 1 if true
     }

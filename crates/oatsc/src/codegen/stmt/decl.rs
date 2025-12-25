@@ -247,7 +247,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 );
                 return Ok(false);
             };
-            // Insert local early as uninitialized; we'll store to it below
+            // Insert local early as uninitialized; stores to it below
             self.insert_local_current_scope(
                 locals_stack,
                 crate::codegen::helpers::LocalVarInfo {
@@ -593,7 +593,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     allocated_ty = self.i8ptr_t.as_basic_type_enum();
                 } else if val.get_type().is_pointer_type() {
                     // Pointer value - don't box it, might already be boxed
-                    // Just use it directly
+                    // Use it directly
                     allocated_ty = self.i8ptr_t.as_basic_type_enum();
                 }
             } else {
@@ -656,7 +656,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         let is_mut_decl = matches!(var_decl.kind, VariableDeclarationKind::Let);
 
         // Rest element is represented separately on ArrayPattern in OXC; if present,
-        // we still walk all explicit elements (rest not lowered yet).
+        // still walks all explicit elements (rest not lowered yet).
         let rest_pos: Option<usize> = arr_pat.rest.as_ref().map(|_| arr_pat.elements.len());
 
         // Extract each element
@@ -775,10 +775,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             );
 
                             // Create a synthetic identifier expression for the temporary
-                            // Note: We can't easily create synthetic AST nodes with oxc_allocator
-                            // Instead, we'll pass the temporary name and create the expression differently
-                            // For now, we'll use a workaround by creating an identifier reference manually
-                            // This is a limitation - we may need to refactor to avoid synthetic AST creation
+                            // Synthetic AST nodes cannot be created with oxc_allocator.
+                            // Pass the temporary name and create the expression differently.
+                            // Uses a workaround by creating an identifier reference manually.
+                            // A refactor may be needed to avoid synthetic AST creation.
                             return Err(Diagnostic::simple_boxed(
                                 Severity::Error,
                                 "Nested array destructuring with temporaries not yet supported - needs refactoring",
@@ -880,7 +880,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             // Infer element type from array metadata if available
             let (elem_size, is_number) = if let Expression::Identifier(ident) = init {
                 let arr_name = ident.name.to_string();
-                // Check if we have type information for this array
+                // Check if type information exists for this array
                 if let Some((_, _, _, _, _, _, oats_type)) =
                     self.find_local(locals_stack, &arr_name)
                 {
@@ -948,7 +948,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     )
                 }
             } else {
-                // Fallback: assume pointer elements when we can't infer
+                // Fallback: assume pointer elements when type cannot be inferred
                 (
                     self.i32_t.const_int(8, false),
                     self.i32_t.const_int(0, false),
@@ -1221,8 +1221,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
             std::collections::HashSet::new();
 
         // First pass: identify rest pattern and track destructured fields
-        // Note: ObjectPatternPropertyKind doesn't exist in oxc_ast - need to check actual structure
-        // For now, we'll iterate and handle properties based on their actual structure
+        // ObjectPatternPropertyKind doesn't exist in oxc_ast - need to check actual structure
+        // Iterates and handles properties based on their actual structure
         for prop in &obj_pat.properties {
             // ObjectPattern properties are ObjectPatternProperty structs
             // They have a 'key' field and a 'value' field (BindingPattern)
@@ -1391,10 +1391,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         );
 
                         // Create a synthetic identifier expression for the temporary
-                        // Note: We can't easily create synthetic AST nodes with oxc_allocator
-                        // Instead, we'll pass the temporary name and create the expression differently
-                        // For now, we'll use a workaround by creating an identifier reference manually
-                        // This is a limitation - we may need to refactor to avoid synthetic AST creation
+                        // Synthetic AST nodes cannot be created with oxc_allocator.
+                        // Passes the temporary name and creates the expression differently.
+                        // Uses a workaround by creating an identifier reference manually.
+                        // A refactor may be needed to avoid synthetic AST creation.
                         return Err(Diagnostic::simple_boxed(
                             Severity::Error,
                             "Nested object destructuring with temporaries not yet supported - needs refactoring",
@@ -1450,10 +1450,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         );
 
                         // Create a synthetic identifier expression for the temporary
-                        // Note: We can't easily create synthetic AST nodes with oxc_allocator
-                        // Instead, we'll pass the temporary name and create the expression differently
-                        // For now, we'll use a workaround by creating an identifier reference manually
-                        // This is a limitation - we may need to refactor to avoid synthetic AST creation
+                        // Synthetic AST nodes cannot be created with oxc_allocator.
+                        // Passes the temporary name and creates the expression differently.
+                        // Uses a workaround by creating an identifier reference manually.
+                        // A refactor may be needed to avoid synthetic AST creation.
                         return Err(Diagnostic::simple_boxed(
                             Severity::Error,
                             "Nested array destructuring with temporaries not yet supported - needs refactoring",
@@ -1818,9 +1818,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         let (val, allocated_ty) = self.handle_union_boxing(val, &declared_union)?;
 
                         // If a local with this name was pre-inserted (for
-                        // example when we pre-allocated a slot for `new`
-                        // or `await` initializers), reuse its alloca so we
-                        // don't create duplicate slots. Otherwise allocate
+                        // example when a slot was pre-allocated for `new`
+                        // or `await` initializers), reuse its alloca to
+                        // avoid creating duplicate slots. Otherwise allocate
                         // a fresh alloca for the local.
                         let maybe_existing = self.find_local(locals_stack, &name);
                         let alloca = if let Some((
@@ -1858,7 +1858,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 .build_call(rc_inc, &[pv.into()], "rc_inc_local");
                         }
                         let _ = self.builder.build_store(alloca, val);
-                        // If we reused an existing local, mark it initialized.
+                        // If an existing local was reused, mark it initialized.
                         if maybe_existing.is_some() {
                             self.set_local_initialized(locals_stack, &name, true);
                         } else {

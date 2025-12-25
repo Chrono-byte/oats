@@ -106,7 +106,7 @@ fn default_debug() -> bool {
 /// Basic semver validation (major.minor.patch with optional pre-release and build)
 fn is_valid_semver(version: &str) -> bool {
     // Split into core version and optional pre-release/build
-    // splitn always returns at least one element, so we can safely get the first
+    // splitn always returns at least one element, so the first can be safely obtained
     let mut parts = version.splitn(2, ['-', '+']);
     let core = parts.next().unwrap_or_default();
     if core.is_empty() {
@@ -578,7 +578,7 @@ pub fn topological_sort(
     // Perform topological sort
     match petgraph::algo::toposort(graph, None) {
         Ok(sorted_nodes) => {
-            // Convert back to paths and reverse (we want dependencies first)
+            // Convert back to paths and reverse (dependencies should be first)
             let mut sorted_paths: Vec<String> = sorted_nodes
                 .into_iter()
                 .filter_map(|node| index_to_path.get(&node).cloned())
@@ -699,7 +699,7 @@ pub fn build_package_graph(
                 )));
             }
 
-            // Check if we've already processed this package
+            // Check if this package has already been processed
             let dep_idx = if let Some(&existing_idx) = path_to_node.get(&dep_dir) {
                 // Verify the package name matches
                 let existing_node = &graph[existing_idx];

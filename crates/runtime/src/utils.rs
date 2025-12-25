@@ -36,7 +36,7 @@ pub fn stringify_value_raw(val_raw: u64, depth: usize) -> String {
         // Validate pointer before creating CStr to avoid undefined behavior
         if crate::is_plausible_addr(p as usize) {
             // CStr::from_ptr can still fail if the string is not null-terminated,
-            // but we've validated the pointer is in a reasonable address range
+            // but the pointer has been validated to be in a reasonable address range
             let maybe = unsafe { CStr::from_ptr(p as *const c_char) };
             if let Ok(st) = maybe.to_str() {
                 return format!("\"{st}\"");

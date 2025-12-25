@@ -36,9 +36,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
         // Special-case: typeof <expr> === "string"/"number" patterns
         //
         // This pattern is common in guard code. When the left side is
-        // a `typeof` unary we can lower the inner expression and, for
-        // pointer-like (boxed union) values, consult the runtime
-        // discriminant instead of performing a heavier dynamic check.
+        // a `typeof` unary, the inner expression can be lowered and, for
+        // pointer-like (boxed union) values, the runtime
+        // discriminant is consulted instead of performing a heavier dynamic check.
         // This keeps the emitted IR small for the common guarded
         // branches used in tests and examples.
         if let Expression::UnaryExpression(unary) = &bin.left
@@ -55,7 +55,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 // returns an i64 so the compiler can cheaply implement `typeof`
                 // without re-running generic dynamic checks. This fast-path is
                 // intentionally optimistic: if the inner value is unboxed or a
-                // different representation, we fall back to the general path
+                // different representation, falls back to the general path
                 // below.
                 let get_disc = self.get_union_get_discriminant();
                 let cs = self.builder.build_call(get_disc, &[pv.into()], "get_disc");
@@ -130,7 +130,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         BasicValueEnum::PointerValue(pv) => {
                             // Check if this is a union that needs unboxing
                             if matches!(val_type, Some(crate::types::OatsType::Union(_))) {
-                                // This is a union - we need to unbox it properly
+                                // This is a union - unbox it properly
                                 // Check discriminant: 0 = number, 1 = string
                                 let get_disc = self.get_union_get_discriminant();
                                 let disc = self
@@ -303,7 +303,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         inkwell::values::ValueKind::Basic(bv) => {
                             // After creating the concatenated string, decrement
                             // temporary operands that didn't originate from locals.
-                            // Also decrement any number-to-string conversions we created.
+                            // Also decrement any number-to-string conversions that were created.
                             if left_origin.is_none()
                                 && let Some(rc_dec_fn) = self.module.get_function("rc_dec")
                             {
@@ -341,9 +341,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
         // - `coerce_to_f64` will convert ints/bools to f64 where
         //   appropriate and will also attempt to unbox numeric payloads
         //   from union-boxed pointers by calling the runtime `union_unbox_f64`.
-        // - We attempt the float-path first because numeric arithmetic is
+        // - Attempts the float-path first because numeric arithmetic is
         //   the most common case and produces simpler IR.
-        // - If coercion fails we fall back to pointer/other handling.
+        // - Falls back to pointer/other handling if coercion fails.
         // coercion now handled by self.coerce_to_f64
 
         // Helper to handle float arithmetic
@@ -479,7 +479,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
     }
 
     /// Helper method to perform binary operations on already-lowered values.
-    /// This is used for compound assignments where we need to operate on loaded values.
+    /// Used for compound assignments where operations are performed on loaded values.
     pub(super) fn lower_binary_expr_with_values(
         &self,
         op: &BinaryOperator,
@@ -612,9 +612,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         .map_err(|_| Diagnostic::error("right shift failed"))?;
                     Ok(v.as_basic_value_enum())
                 }
-                // Note: UnsignedShiftRight (>>>) variant doesn't exist in oxc_ast::ast::BinaryOperator.
-                // If oxc_ast adds support for it, we should handle it here using build_right_shift
-                // with is_arithmetic=false (logical shift). For now, unsigned right shift is
+                // UnsignedShiftRight (>>>) variant doesn't exist in oxc_ast::ast::BinaryOperator.
+                // If oxc_ast adds support for it, should handle it here using build_right_shift
+                // with is_arithmetic=false (logical shift). Currently, unsigned right shift is
                 // properly implemented in compound assignments (>>>=) in assignments.rs.
                 BinaryOperator::BitwiseAnd => {
                     let li64 = if li.get_type().get_bit_width() < 64 {

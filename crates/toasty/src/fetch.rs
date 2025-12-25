@@ -250,7 +250,7 @@ fn download_runtime(tag: &str, artifact_name: &str, dest_path: &Path) -> Result<
 fn try_fetch_artifact(artifact_type: ArtifactType, skip_env_var: &str) -> Option<PathBuf> {
     let verbose = std::env::var("TOASTY_VERBOSE").is_ok();
 
-    // Check if we should skip remote fetch
+    // Check if remote fetch should be skipped
     if std::env::var(skip_env_var).is_ok() {
         if verbose {
             eprintln!(
@@ -346,7 +346,7 @@ fn try_fetch_artifact(artifact_type: ArtifactType, skip_env_var: &str) -> Option
         }
     };
 
-    // Check if we already have this version cached
+    // Check if this version is already cached
     let cached_path = oats_home.join(&tag).join(artifact_name);
     if cached_path.exists() {
         eprintln!(

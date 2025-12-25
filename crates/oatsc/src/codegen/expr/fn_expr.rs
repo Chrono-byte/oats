@@ -26,7 +26,7 @@ impl<'a> CodeGen<'a> {
     /// Lowers a function expression.
     ///
     /// Function expressions contain `Box<Function>` which has a different structure
-    /// than `ArrowFunctionExpression`. We convert it to a closure similar to arrow functions,
+    /// than `ArrowFunctionExpression`. Converts it to a closure similar to arrow functions,
     /// but note that function expressions have their own `this` binding (unlike arrow functions).
     #[allow(clippy::result_large_err)]
     pub(super) fn lower_fn_expr(
@@ -44,13 +44,13 @@ impl<'a> CodeGen<'a> {
         // - async: bool
         // - etc.
 
-        // For now, we'll treat function expressions similarly to arrow functions
+        // Treats function expressions similarly to arrow functions
         // by creating a closure. The main difference is `this` binding:
         // - Arrow functions: inherit `this` from enclosing scope
         // - Function expressions: have their own `this` (bound when called)
 
-        // Since we can't easily convert Function to ArrowFunctionExpression,
-        // we'll use the arrow function lowering logic but note that `this` handling
+        // Function cannot be easily converted to ArrowFunctionExpression.
+        // Uses the arrow function lowering logic. `this` handling
         // may need adjustment in the future.
 
         // Extract parameters and body from Function
@@ -59,7 +59,7 @@ impl<'a> CodeGen<'a> {
 
         // Convert Function to arrow function-like structure for lowering
         // Function expressions have their own `this` binding, unlike arrow functions
-        // For now, we'll treat them similarly to arrow functions but note the `this` difference
+        // Treats them similarly to arrow functions but notes the `this` difference
 
         // Create a synthetic environment for the function expression
         // Function expressions can capture variables from their containing scope
@@ -80,8 +80,8 @@ impl<'a> CodeGen<'a> {
             }
         };
 
-        // For now, create an empty environment - in a full implementation,
-        // we'd capture variables from the containing scope
+        // Creates an empty environment - in a full implementation,
+        // would capture variables from the containing scope
         let _ = self
             .builder
             .build_store(env_alloca, self.i8ptr_t.const_null());
@@ -118,7 +118,7 @@ impl<'a> CodeGen<'a> {
 
         // Create the function type
         let return_type = match &fn_expr.return_type {
-            Some(_) => self.i8ptr_t, // Assume pointer return for now
+            Some(_) => self.i8ptr_t, // Assume pointer return
             None => self.i8ptr_t,    // Default to pointer
         };
         let fn_type = return_type.fn_type(&param_types, false);
@@ -141,7 +141,7 @@ impl<'a> CodeGen<'a> {
         let fn_entry = self.context.append_basic_block(fn_value, "entry");
         self.builder.position_at_end(fn_entry);
 
-        // For now, return a dummy value
+        // Returns a dummy value
         // A full implementation would:
         // 1. Lower the function body statements
         // 2. Handle return values properly

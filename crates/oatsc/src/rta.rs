@@ -99,15 +99,15 @@ impl RTAResults {
         }
 
         // Check if function is reachable from any entry point via call graph
-        // We do a simple reachability analysis: if any live function calls this one,
+        // Performs a simple reachability analysis: if any live function calls this one,
         // or if this function is called by any live function, it's live.
         // Start from entry points and propagate reachability.
         let mut visited = HashSet::new();
         let mut worklist = VecDeque::new();
 
         // Add entry points: main and all functions that are called
-        // For now, we consider main as the only entry point
-        // In the future, we could track exported functions
+        // Currently considers main as the only entry point
+        // In the future, exported functions could be tracked
         worklist.push_back("main".to_string());
         visited.insert("main".to_string());
 
@@ -143,7 +143,7 @@ impl RTAResults {
         }
 
         // Default: consider top-level functions as live for safety
-        // This is conservative - we could make it more aggressive in the future
+        // This is conservative - could be made more aggressive in the future
         true
     }
 
@@ -176,7 +176,7 @@ impl RTAResults {
     #[must_use]
     pub fn can_devirtualize(&self, class_name: &str, method_name: &str) -> Option<String> {
         // Check if this method is only implemented in one class
-        // For now, we do a simple check: if the method is only in one live class
+        // Performs a simple check: if the method is only in one live class
         let mut found_classes = Vec::new();
 
         // Check the class itself
@@ -193,7 +193,7 @@ impl RTAResults {
             }
         }
 
-        // If only one class has this method live, we can devirtualize
+        // If only one class has this method live, devirtualization is possible
         if found_classes.len() == 1 {
             return Some(format!("{}_{}", found_classes[0], method_name));
         }
@@ -623,16 +623,16 @@ fn find_method_calls_in_expr_with_depth(
             // Check if callee is a static member expression (obj.method)
             if let Expression::StaticMemberExpression(static_member) = &call_expr.callee {
                 // Try to resolve the object to a class name
-                // For now, we'll try to extract from 'this' or variable names
+                // Attempts to extract from 'this' or variable names.
                 // This is a simplification; full RTA would need type inference
                 if let Expression::Identifier(obj_ident) = &static_member.object {
-                    // If it's 'this', we'd need context to know the class
-                    // For now, we'll record the call and let the caller resolve it
-                    // For non-'this' identifiers, we can't easily resolve the class
-                    // This is a limitation of the current implementation
+                    // 'this' requires context to determine the class
+                    // Records the call and lets the caller resolve it
+                    // Non-'this' identifiers cannot be easily resolved to a class
+                    // Current implementation cannot resolve 'this' without class context
                     if obj_ident.name == "this" {
-                        // We can't resolve 'this' without context, so skip for now
-                        // In a full implementation, we'd track the current class context
+                        // Cannot resolve 'this' without context; skipped
+                        // A full implementation would track the current class context
                     } else {
                         // Assume the identifier might be a class instance
                         // This is a heuristic and may not always be correct

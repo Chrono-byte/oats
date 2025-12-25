@@ -3,7 +3,7 @@
 //! This handles error messages in a rustc-like style, with colors and source context.
 //! Keeps it simple but useful for debugging.
 //!
-//! Basically, it prints errors/warnings to stderr with file locations and code snippets.
+//! Emits diagnostic messages (errors/warnings) to stderr with file locations and code snippets.
 //! Supports notes and help messages too.
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -18,7 +18,7 @@ pub enum Severity {
 static DIAGNOSTICS_ENABLED: AtomicBool = AtomicBool::new(true);
 
 /// Sanitizes a file path for display in diagnostic messages.
-/// Currently just returns the path as-is, but can be extended
+/// Currently returns the path as-is, but can be extended
 /// to normalize paths or make them relative to project root.
 fn sanitize_file_path(path: &str) -> String {
     path.to_string()
@@ -122,8 +122,7 @@ pub fn report_error_and_bail<T>(
 /// * `color` - ANSI color code for the title
 /// * `file` - Optional file path to display in the diagnostic header
 /// * `source` - Source text containing the error (required for span calculation)
-/// * `span_start` - Zero-based byte index of the error location
-/// * `span_end` - Zero-based byte index of the end of the error span
+/// * `span` - Span containing the start and end byte indices of the error
 /// * `message` - Primary error message to display
 /// * `note` - Optional additional diagnostic note
 ///
@@ -138,8 +137,7 @@ pub fn report_error_span(
     color: &str,
     file: Option<&str>,
     source: &str,
-    span_start: usize,
-    span_end: usize,
+    span: Span,
     message: &str,
     note: Option<&str>,
 ) {
@@ -157,15 +155,15 @@ pub fn report_error_span(
     for (lineno, line) in source.lines().enumerate() {
         let line_len = line.len() + 1; // Account for newline character
 
-        if !start_found && span_start >= byte_idx && span_start < byte_idx + line_len {
+        if !start_found && span.start >= byte_idx && span.start < byte_idx + line_len {
             line_no = lineno + 1;
-            col = span_start - byte_idx;
+            col = span.start - byte_idx;
             start_found = true;
         }
 
-        if !end_found && span_end >= byte_idx && span_end < byte_idx + line_len {
+        if !end_found && span.end >= byte_idx && span.end < byte_idx + line_len {
             end_line_no = lineno + 1;
-            end_col = span_end - byte_idx;
+            end_col = span.end - byte_idx;
             end_found = true;
         }
 
@@ -288,7 +286,16 @@ pub fn report_error_span_and_bail<T>(
     note: Option<&str>,
 ) -> anyhow::Result<T> {
     report_error_span(
-        "error", "\x1b[31m", file, source, span_start, span_end, message, note,
+        "error",
+        "\x1b[31m",
+        file,
+        source,
+        Span {
+            start: span_start,
+            end: span_end,
+        },
+        message,
+        note,
     );
     // Enhance error text with contextual hints for test assertion compatibility
     let mut err_text = message.to_string();
@@ -313,7 +320,7 @@ pub struct Label {
 /// Represents a compiler diagnostic (error, warning, etc.).
 ///
 /// This struct holds all the info for a diagnostic message, like severity, message, file, etc.
-/// We use it to collect errors before printing them out.
+/// Used to collect errors before printing them out.
 /// The optional `span_start` helps point to exact locations in the code.
 #[derive(Debug, Clone)]
 pub struct Diagnostic {
@@ -505,15 +512,14 @@ pub fn emit_diagnostic(d: &Diagnostic, source: Option<&str>) {
         Severity::Note => ("note", "\x1b[34m"),       // Blue
     };
 
-    // For now, use the first label if available
+    // Uses the first label if available
     if let (Some(src), Some(label)) = (source, d.labels.first()) {
         report_error_span(
             title,
             color,
             d.file.as_deref(),
             src,
-            label.span.start,
-            label.span.end,
+            label.span,
             &d.message,
             d.note.as_deref(),
         );

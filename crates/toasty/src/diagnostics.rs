@@ -70,7 +70,7 @@ pub enum ToastyError {
     /// User's code failed to compile (oatsc already printed diagnostics)
     ///
     /// This is a signal to the CLI that oatsc has already emitted human-readable
-    /// error messages, so we should exit quietly without additional output.
+    /// error messages, so should exit quietly without additional output.
     #[error("Build failed due to previous errors")]
     CompilationFailed,
 

@@ -75,7 +75,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             // If not initialized -> TDZ: generate a trap (unreachable).
             //
             // Emitting `unreachable` here is a simple way to guard
-            // against invalid reads in generated code. In future we
+            // against invalid reads in generated code. In future,
             // could lower a runtime diagnostic or insert a proper
             // throw.
             if !initialized {

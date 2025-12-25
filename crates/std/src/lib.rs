@@ -29,13 +29,13 @@ pub use core::{Error, OatsArray, OatsObject, OatsString, Result};
 
 // Initialize the standard library
 #[unsafe(no_mangle)]
-pub extern "C" fn oats_std_init() {
+pub const extern "C" fn oats_std_init() {
     // Initialize any global state needed by the std library
     // This would be called during program startup
 }
 
 /// Clean up standard library resources
 #[unsafe(no_mangle)]
-pub extern "C" fn oats_std_cleanup() {
+pub const extern "C" fn oats_std_cleanup() {
     // Clean up any global state
 }

@@ -91,10 +91,7 @@ pub unsafe extern "C" fn oats_std_time_parse_rfc3339(
         return -1;
     }
 
-    let str_val = match unsafe { std::ffi::CStr::from_ptr(rfc3339_str).to_str() } {
-        Ok(s) => s,
-        Err(_) => return -1,
-    };
+    let str_val = (unsafe { std::ffi::CStr::from_ptr(rfc3339_str).to_str() }).unwrap_or_default();
 
     match chrono::DateTime::parse_from_rfc3339(str_val) {
         Ok(dt) => dt.timestamp(),

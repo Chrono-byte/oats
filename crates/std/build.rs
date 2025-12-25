@@ -50,7 +50,8 @@ fn generate_type_definitions() -> String {
             if let Ok(content) = fs::read_to_string(file_path) {
                 let module_defs = parse_module(&content, module_name);
                 if !module_defs.is_empty() {
-                    output.push_str(&format!("declare namespace {module_name} {{\n"));
+                    use std::fmt::Write;
+                    let _ = writeln!(output, "declare namespace {module_name} {{");
                     output.push_str(&module_defs);
                     output.push_str("}\n\n");
                 }
@@ -137,11 +138,7 @@ fn parse_function_signature(line: &str) -> Option<String> {
     // Parse return type
     let return_type = if after_paren[close_paren_pos + 1..].trim().starts_with("->") {
         let return_part = &after_paren[close_paren_pos + 1..].trim();
-        if let Some(stripped) = return_part.strip_prefix("-> ") {
-            stripped.trim()
-        } else {
-            "void"
-        }
+        return_part.strip_prefix("-> ").map_or("void", |s| s.trim())
     } else {
         "void"
     };

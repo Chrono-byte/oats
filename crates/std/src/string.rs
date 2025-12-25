@@ -206,7 +206,7 @@ pub unsafe extern "C" fn oats_std_string_trim(str: *const c_char) -> *mut c_char
 /// `str` must be a valid pointer to a null-terminated C string, or null.
 /// #[`oats_export`]
 #[no_mangle]
-pub unsafe extern "C" fn oats_std_string_len(str: *const c_char) -> usize {
+pub const unsafe extern "C" fn oats_std_string_len(str: *const c_char) -> usize {
     if str.is_null() {
         return 0;
     }

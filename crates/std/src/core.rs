@@ -19,7 +19,7 @@ impl OatsString {
 
     /// Get the underlying pointer (for FFI)
     #[must_use]
-    pub fn as_ptr(&self) -> *mut c_char {
+    pub const fn as_ptr(&self) -> *mut c_char {
         self.ptr.as_ptr()
     }
 
@@ -58,31 +58,26 @@ impl Drop for OatsString {
 #[derive(Debug)]
 pub struct OatsArray {
     ptr: NonNull<libc::c_void>,
-    #[allow(dead_code)]
-    element_size: usize,
+
     length: usize,
 }
 
 impl OatsArray {
     /// Create a new Oats array
     #[must_use]
-    pub fn new(element_size: usize, length: usize) -> Option<Self> {
-        sys::create_array(element_size, length).map(|ptr| Self {
-            ptr,
-            element_size,
-            length,
-        })
+    pub fn new(length: usize) -> Option<Self> {
+        sys::create_array(0, length).map(|ptr| Self { ptr, length })
     }
 
     /// Get the length of the array
     #[must_use]
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.length
     }
 
     /// Check if the array is empty
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.length == 0
     }
 
@@ -123,13 +118,13 @@ impl OatsObject {
     /// `ptr` must be a valid pointer to an object managed by the Oats runtime.
     /// The caller must ensure the object remains valid for the lifetime of the `OatsObject`.
     #[must_use]
-    pub unsafe fn from_ptr(ptr: NonNull<libc::c_void>) -> Self {
+    pub const unsafe fn from_ptr(ptr: NonNull<libc::c_void>) -> Self {
         Self { ptr }
     }
 
     /// Get the underlying pointer
     #[must_use]
-    pub fn as_ptr(&self) -> *mut libc::c_void {
+    pub const fn as_ptr(&self) -> *mut libc::c_void {
         self.ptr.as_ptr()
     }
 }
@@ -156,7 +151,7 @@ pub struct Error {
 
 impl Error {
     #[must_use]
-    pub fn new(code: i32, message: String) -> Self {
+    pub const fn new(code: i32, message: String) -> Self {
         Self { code, message }
     }
 }

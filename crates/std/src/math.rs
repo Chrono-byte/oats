@@ -89,42 +89,42 @@ pub extern "C" fn oats_std_math_exp(x: c_double) -> c_double {
 /// Calculate absolute value
 /// #[`oats_export`]
 #[no_mangle]
-pub extern "C" fn oats_std_math_abs(x: c_double) -> c_double {
+pub const extern "C" fn oats_std_math_abs(x: c_double) -> c_double {
     x.abs()
 }
 
 /// Calculate ceiling
 /// #[`oats_export`]
 #[no_mangle]
-pub extern "C" fn oats_std_math_ceil(x: c_double) -> c_double {
+pub const extern "C" fn oats_std_math_ceil(x: c_double) -> c_double {
     x.ceil()
 }
 
 /// Calculate floor
 /// #[`oats_export`]
 #[no_mangle]
-pub extern "C" fn oats_std_math_floor(x: c_double) -> c_double {
+pub const extern "C" fn oats_std_math_floor(x: c_double) -> c_double {
     x.floor()
 }
 
 /// Round to nearest integer
 /// #[`oats_export`]
 #[no_mangle]
-pub extern "C" fn oats_std_math_round(x: c_double) -> c_double {
+pub const extern "C" fn oats_std_math_round(x: c_double) -> c_double {
     x.round()
 }
 
 /// Get maximum of two values
 /// #[`oats_export`]
 #[no_mangle]
-pub extern "C" fn oats_std_math_max(a: c_double, b: c_double) -> c_double {
+pub const extern "C" fn oats_std_math_max(a: c_double, b: c_double) -> c_double {
     a.max(b)
 }
 
 /// Get minimum of two values
 /// #[`oats_export`]
 #[no_mangle]
-pub extern "C" fn oats_std_math_min(a: c_double, b: c_double) -> c_double {
+pub const extern "C" fn oats_std_math_min(a: c_double, b: c_double) -> c_double {
     a.min(b)
 }
 
@@ -152,21 +152,21 @@ pub extern "C" fn oats_std_math_tanh(x: c_double) -> c_double {
 /// Get value of π
 /// #[`oats_export`]
 #[no_mangle]
-pub extern "C" fn oats_std_math_pi() -> c_double {
+pub const extern "C" fn oats_std_math_pi() -> c_double {
     std::f64::consts::PI
 }
 
 /// Get value of e
 /// #[`oats_export`]
 #[no_mangle]
-pub extern "C" fn oats_std_math_e() -> c_double {
+pub const extern "C" fn oats_std_math_e() -> c_double {
     std::f64::consts::E
 }
 
 /// Integer division
 /// #[`oats_export`]
 #[no_mangle]
-pub extern "C" fn oats_std_math_div(a: i64, b: i64) -> i64 {
+pub const extern "C" fn oats_std_math_div(a: i64, b: i64) -> i64 {
     if b == 0 {
         return 0;
     }
@@ -176,7 +176,7 @@ pub extern "C" fn oats_std_math_div(a: i64, b: i64) -> i64 {
 /// Integer modulo
 /// #[`oats_export`]
 #[no_mangle]
-pub extern "C" fn oats_std_math_mod(a: i64, b: i64) -> i64 {
+pub const extern "C" fn oats_std_math_mod(a: i64, b: i64) -> i64 {
     if b == 0 {
         return 0;
     }
@@ -186,28 +186,28 @@ pub extern "C" fn oats_std_math_mod(a: i64, b: i64) -> i64 {
 /// Bitwise AND
 /// #[`oats_export`]
 #[no_mangle]
-pub extern "C" fn oats_std_math_bit_and(a: i64, b: i64) -> i64 {
+pub const extern "C" fn oats_std_math_bit_and(a: i64, b: i64) -> i64 {
     a & b
 }
 
 /// Bitwise OR
 /// #[`oats_export`]
 #[no_mangle]
-pub extern "C" fn oats_std_math_bit_or(a: i64, b: i64) -> i64 {
+pub const extern "C" fn oats_std_math_bit_or(a: i64, b: i64) -> i64 {
     a | b
 }
 
 /// Bitwise XOR
 /// #[`oats_export`]
 #[no_mangle]
-pub extern "C" fn oats_std_math_bit_xor(a: i64, b: i64) -> i64 {
+pub const extern "C" fn oats_std_math_bit_xor(a: i64, b: i64) -> i64 {
     a ^ b
 }
 
 /// Bitwise NOT
 /// #[`oats_export`]
 #[no_mangle]
-pub extern "C" fn oats_std_math_bit_not(a: i64) -> i64 {
+pub const extern "C" fn oats_std_math_bit_not(a: i64) -> i64 {
     !a
 }
 

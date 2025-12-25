@@ -95,7 +95,7 @@ pub extern "C" fn oats_std_random_float_range(min: c_double, max: c_double) -> c
         return min;
     }
     let range = max - min;
-    min + (oats_std_random_float() * range)
+    oats_std_random_float().mul_add(range, min)
 }
 
 /// Generate a random boolean

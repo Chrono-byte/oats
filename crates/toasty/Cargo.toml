@@ -27,7 +27,7 @@ regex = "1.10"
 path = "../oatsc"
 
 [dependencies.oxc_ast]
-version = "0.102.0"
+version = "0.105.0"
 
 [dev-dependencies]
 assert_cmd = "2.0"
@@ -37,3 +37,6 @@ tempfile = "3.5"
 [[bin]]
 name = "toasty"
 path = "src/main.rs"
+
+[lints]
+workspace = true

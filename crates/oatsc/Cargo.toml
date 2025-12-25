@@ -4,15 +4,15 @@ version = "0.1.0"
 edition = "2024"
 license = "zlib-acknowledgement"
 description = "Oats compiler"
-repository = "https://github.com/Chrono-byte/oats"
+repository = "https://gitlab.com/Chrono-byte/oats"
 
 [dependencies]
-oxc_parser = "0.101.0"
-oxc_allocator = "0.101.0"
-oxc_ast = "0.101.0"
-oxc_span = "0.101.0"
-oxc_syntax = "0.101.0"
-inkwell = { version = "0.7.1", features = ["llvm18-1", "llvm18-1-prefer-dynamic"] }
+oxc_parser = "0.105.0"
+oxc_allocator = "0.105.0"
+oxc_ast = "0.105.0"
+oxc_span = "0.105.0"
+oxc_syntax = "0.105.0"
+inkwell = { version = "0.7.1", features = ["llvm20-1", "llvm20-1-prefer-dynamic"] }
 either = "1.15.0"
 anyhow = "1.0"
 url = "2.4"
@@ -21,11 +21,10 @@ ureq = { version = "3.1.4", features = ["json"] }
 serde_json = "1.0"
 dirs = "6.0"
 
-
 [dev-dependencies]
 insta = "1.30.0"
 tempfile = "3.5"
 walkdir = "2.4"
 
-[features]
-collector-test = []
+[lints]
+workspace = true

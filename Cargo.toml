@@ -1,21 +1,9 @@
 [workspace]
 resolver = "2"
-members = ["crates/oatsc", "crates/runtime", "crates/toasty", "crates/std"]
-exclude = ["fuzz"]
+members = ["crates/oatsc", "crates/runtime", "crates/std", "crates/toasty"]
 
-[profile.dev]
-debug-assertions = false
-
-[profile.test]
-debug-assertions = false
-
-[profile.release]
-opt-level = 3
-lto = "fat"
-codegen-units = 1
-panic = "abort"
-strip = true
-debug = false
-incremental = false
-overflow-checks = false
-
+[workspace.lints.clippy]
+enum_glob_use = "deny"
+pedantic = { level = "deny", priority = 1 }
+nursery = { level = "deny", priority = 2 }
+unwrap_used = "deny"

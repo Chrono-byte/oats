@@ -7,17 +7,11 @@ description = "Runtime library for Oats AOT compiler"
 repository = "https://github.com/Chrono-byte/oats"
 
 [lib]
-crate-type = ["rlib", "staticlib"]
+crate-type = ["rlib", "staticlib", "cdylib"]
 
 [dependencies]
 libc = "0.2"
 num_cpus = "1.16"
 
-# Features
-[features]
-# When enabled the runtime binary will call `oats_entry` via a direct
-# extern declaration and therefore requires that symbol to be resolved at
-# link time. When disabled (default) the binary uses dlsym and does not
-# require the symbol at link time.
-link_entry = []
-collector-test = []
+[lints]
+workspace = true

@@ -81,3 +81,4 @@ third_party/*
 **/*.ll
 **/*.o
 update_diagnostics.py
+*.a

@@ -190,11 +190,7 @@ pub fn report_error_span(
     if let Some(path) = file {
         let sanitized_path = sanitize_file_path(path);
         eprintln!("{color}{title}{reset}: {message}");
-        if line_no == end_line_no {
-            eprintln!("  --> {}:{}:{}", sanitized_path, line_no, col + 1);
-        } else {
-            eprintln!("  --> {}:{}:{}", sanitized_path, line_no, col + 1);
-        }
+        eprintln!("  --> {}:{}:{}", sanitized_path, line_no, col + 1);
     } else {
         eprintln!("{color}{title}{reset}: {message}");
     }

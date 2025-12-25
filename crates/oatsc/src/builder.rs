@@ -58,12 +58,12 @@ pub fn compile_with_options(options: crate::CompileOptions) -> Result<Option<Str
 /// This is the main function that handles everything: parsing, type checking, codegen, linking.
 /// It takes command-line args or uses options/env vars for config.
 ///
-/// Basically, it goes through:
-/// - Figuring out the source file
-/// - Parsing the code
-/// - Generating LLVM IR
-/// - Compiling to object files
-/// - Linking everything together
+/// The compilation pipeline consists of:
+/// - Source file resolution
+/// - Code parsing
+/// - LLVM IR generation
+/// - Object file compilation
+/// - Linking
 ///
 /// Returns Ok(()) on success, or an error if something goes wrong.
 pub fn run_from_args(

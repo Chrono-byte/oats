@@ -243,6 +243,7 @@ fn format_js_number(num: f64) -> String {
         if (MIN_I64_AS_F64..=MAX_I64_AS_F64).contains(&num) {
             // Safe to convert: number is within i64 range
             // Use truncation which is safe here since we've verified the range
+            #[allow(clippy::cast_possible_truncation)]
             let num_i64 = num.trunc() as i64;
             format!("{num_i64}")
         } else {
@@ -303,6 +304,7 @@ pub unsafe extern "C" fn number_parse_float(str_ptr: *const c_char) -> f64 {
     // f64 can exactly represent integers up to 2^53 (9007199254740992)
     // For values <= 2^53, the conversion is exact (no precision loss)
     // For larger values, precision loss is unavoidable but we round to nearest representable value
+    #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     fn u64_to_f64_safe(n: u64) -> f64 {
         // Helper function to convert u64 to f64 with proper handling of precision loss
         // f64 can exactly represent integers up to 2^53 (9007199254740992)
@@ -315,8 +317,9 @@ pub unsafe extern "C" fn number_parse_float(str_ptr: *const c_char) -> f64 {
             // This conversion is lossless for integers in this range
             let result = n as f64;
             // Verify the conversion was exact (sanity check)
+            let check_value = result as u64;
             debug_assert_eq!(
-                result as u64, n,
+                check_value, n,
                 "u64 to f64 conversion should be exact for n <= 2^53"
             );
             result

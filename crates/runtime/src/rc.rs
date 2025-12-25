@@ -23,6 +23,10 @@ thread_local! {
 /// string-data pointer); passing arbitrary or freed pointers is undefined behavior.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rc_inc(p: *mut c_void) {
+    // Overflow protection: don't increment beyond safe limit
+    // Ensure version index doesn't conflict with special flags
+    const MAX_SAFE_RC: u64 = 0x7FFF_FFFF;
+
     if p.is_null() {
         return;
     }
@@ -47,9 +51,6 @@ pub unsafe extern "C" fn rc_inc(p: *mut c_void) {
             return;
         }
 
-        // Overflow protection: don't increment beyond safe limit
-        // Ensure version index doesn't conflict with special flags
-        const MAX_SAFE_RC: u64 = 0x7FFF_FFFF;
         // Optimized loop: reuse loaded value, only reload on CAS failure
         loop {
             let rc = old_header & HEADER_RC_MASK;
@@ -167,6 +168,153 @@ pub(crate) unsafe fn get_object_base(p: *mut c_void) -> *mut c_void {
     }
 }
 
+/// Initialize runtime logging for `rc_dec` operations.
+unsafe fn rc_dec_init_logging() {
+    // Lazy initialization of logging - only initialize once
+    static LOG_INIT: std::sync::Once = std::sync::Once::new();
+    LOG_INIT.call_once(|| {
+        crate::init_runtime_log();
+    });
+}
+
+/// Validate pointer and return whether logging is enabled.
+/// Returns (`should_log`, `is_valid`) tuple.
+unsafe fn rc_dec_validate_pointer(p: *mut c_void, should_log: bool) -> bool {
+    let p_addr = p as usize;
+    if !crate::is_plausible_addr(p_addr) {
+        if should_log {
+            let _ = io::stdout().write_all(
+                format!("[oats runtime] rc_dec: implausible p={p:p}, ignoring\n").as_bytes(),
+            );
+            let _ = io::stdout().flush();
+        }
+        return false;
+    }
+    true
+}
+
+/// Handle the case when reference count reaches zero.
+/// This includes destructor calling, recursion depth management, and cleanup.
+unsafe fn rc_dec_handle_zero_refcount(obj_ptr: *mut c_void, old_header: u64, should_log: bool) {
+    // Use a guard to ensure depth counter is always decremented, even if destructor panics
+    struct DepthGuard;
+    impl Drop for DepthGuard {
+        fn drop(&mut self) {
+            RC_DEC_DEPTH.with(|d| {
+                *d.borrow_mut() -= 1;
+            });
+        }
+    }
+
+    std::sync::atomic::fence(Ordering::Acquire);
+
+    // Check recursion depth to prevent stack overflow from destructor chains
+    let depth = RC_DEC_DEPTH.with(|d| {
+        let mut depth = d.borrow_mut();
+        *depth += 1;
+        *depth
+    });
+
+    // If recursion limit is exceeded, defer the destructor call
+    // to prevent stack overflow. The object will be cleaned up
+    // by the cycle collector. Weak refs still need to be decremented
+    // and added to collector candidates for deferred cleanup.
+    if depth > MAX_RECURSION_DEPTH {
+        if should_log {
+            let _ = io::stderr().write_all(
+                format!(
+                    "[oats runtime] rc_dec: recursion depth {depth} exceeded limit {MAX_RECURSION_DEPTH}, deferring destructor for obj={obj_ptr:p}\n"
+                ).as_bytes(),
+            );
+            let _ = io::stderr().flush();
+        }
+        // Decrement depth counter before returning
+        RC_DEC_DEPTH.with(|d| {
+            *d.borrow_mut() -= 1;
+        });
+        // Still decrement weak references (this is safe even at depth limit)
+        unsafe { crate::rc_weak_dec(obj_ptr) };
+        // Add to cycle collector candidates for deferred cleanup
+        // This ensures the destructor will be called later when depth is lower
+        crate::add_root_candidate(obj_ptr);
+        return;
+    }
+
+    let _depth_guard = DepthGuard;
+
+    let type_tag = u32::try_from(old_header >> HEADER_TYPE_TAG_SHIFT).unwrap_or(0);
+    if type_tag == 1 {
+        let dtor_addr = obj_ptr as usize + std::mem::size_of::<u64>();
+        // Adding 8 bytes to 8-byte aligned pointer maintains alignment
+        debug_assert!(
+            dtor_addr.is_multiple_of(std::mem::align_of::<*mut c_void>())
+        );
+        let dtor_ptr_ptr = dtor_addr as *mut *mut c_void;
+        let dtor_raw = unsafe { *dtor_ptr_ptr };
+        if !dtor_raw.is_null() {
+            // Validate function pointer before transmute
+            let dtor_addr = dtor_raw as usize;
+            // Function pointers should be aligned and in plausible address range
+            // On most platforms, function pointers need to be aligned (typically 1-byte aligned is sufficient)
+            // but reasonable alignment and address range are checked
+            if crate::is_plausible_addr(dtor_addr) {
+                // Additional validation: check that the address is reasonably aligned
+                // Function pointers should typically be aligned (platform-dependent, but usually at least 1-byte)
+                // Uses a conservative check: ensure it's not obviously misaligned
+                const MIN_FN_ALIGN: usize = 1; // Minimum alignment for function pointers
+                if dtor_addr.is_multiple_of(MIN_FN_ALIGN) {
+                    // SAFETY: The pointer has been validated to be in a plausible address range and aligned.
+                    // The pointer was stored by the code generator and should be a valid function pointer.
+                    // However, if the memory is corrupted, this could still be invalid. The is_plausible_addr
+                    // check provides defense-in-depth but cannot guarantee the pointer is actually executable.
+                    // In practice, destructor pointers are set by the code generator and should be valid.
+                    let dtor: extern "C" fn(*mut c_void) = unsafe { std::mem::transmute(dtor_raw) };
+                    dtor(obj_ptr);
+                } else if should_log {
+                    let _ = io::stderr().write_all(
+                        format!(
+                            "[oats runtime] rc_dec: destructor pointer {dtor_raw:p} has invalid alignment, skipping\n"
+                        ).as_bytes(),
+                    );
+                    let _ = io::stderr().flush();
+                }
+            } else if should_log {
+                let _ = io::stderr().write_all(
+                    format!(
+                        "[oats runtime] rc_dec: invalid destructor pointer {dtor_raw:p}, skipping\n"
+                    ).as_bytes(),
+                );
+                let _ = io::stderr().flush();
+            }
+        }
+    }
+
+    // Check weak count before deciding whether to free
+    // Header must be reloaded to get the current weak count
+    // since it may have changed since last read
+    let current_header = unsafe { (*obj_ptr.cast::<AtomicU64>()).load(Ordering::Acquire) };
+    let weak_count = header_get_weak_bits(current_header);
+
+    if weak_count == 0 {
+        // No weak references, free immediately
+        std::sync::atomic::fence(Ordering::Acquire);
+        let header_atomic = obj_ptr.cast::<AtomicU64>();
+        let _ = unsafe { (*header_atomic).fetch_and(!HEADER_CLAIM_BIT, Ordering::AcqRel) };
+        unsafe { crate::runtime_free(obj_ptr) };
+    } else {
+        // There are weak references - object stays allocated until
+        // the last weak reference is dropped. rc_weak_dec will free
+        // the object when it's called for the last weak reference
+        // and sees both strong and weak are 0.
+        // rc_weak_dec is not called here because that would incorrectly
+        // decrement the weak count - weak references should only be
+        // decremented when they are actually dropped.
+        unsafe { crate::rc_weak_dec(obj_ptr) };
+    }
+
+    // Depth guard will decrement counter on drop (normal return or panic)
+}
+
 /// Atomically decrement the strong reference count and free the object if the count reaches zero.
 /// # Safety
 /// `p` must be a valid pointer returned by the runtime allocator (or a
@@ -177,11 +325,7 @@ pub unsafe extern "C" fn rc_dec(p: *mut c_void) {
         return;
     }
     unsafe {
-        // Lazy initialization of logging - only initialize once
-        static LOG_INIT: std::sync::Once = std::sync::Once::new();
-        LOG_INIT.call_once(|| {
-            crate::init_runtime_log();
-        });
+        rc_dec_init_logging();
         let should_log = crate::RUNTIME_LOG.load(Ordering::Relaxed);
 
         if should_log {
@@ -190,14 +334,7 @@ pub unsafe extern "C" fn rc_dec(p: *mut c_void) {
             let _ = io::stdout().flush();
         }
 
-        let p_addr = p as usize;
-        if !crate::is_plausible_addr(p_addr) {
-            if should_log {
-                let _ = io::stdout().write_all(
-                    format!("[oats runtime] rc_dec: implausible p={p:p}, ignoring\n").as_bytes(),
-                );
-                let _ = io::stdout().flush();
-            }
+        if !rc_dec_validate_pointer(p, should_log) {
             return;
         }
         let obj_ptr = get_object_base(p);
@@ -233,123 +370,7 @@ pub unsafe extern "C" fn rc_dec(p: *mut c_void) {
             ) {
                 Ok(_) => {
                     if new_rc == 0 {
-                        std::sync::atomic::fence(Ordering::Acquire);
-
-                        // Check recursion depth to prevent stack overflow from destructor chains
-                        let depth = RC_DEC_DEPTH.with(|d| {
-                            let mut depth = d.borrow_mut();
-                            *depth += 1;
-                            *depth
-                        });
-
-                        // If recursion limit is exceeded, defer the destructor call
-                        // to prevent stack overflow. The object will be cleaned up
-                        // by the cycle collector. Weak refs still need to be decremented
-                        // and added to collector candidates for deferred cleanup.
-                        if depth > MAX_RECURSION_DEPTH {
-                            if should_log {
-                                let _ = io::stderr().write_all(
-                                    format!(
-                                        "[oats runtime] rc_dec: recursion depth {depth} exceeded limit {MAX_RECURSION_DEPTH}, deferring destructor for obj={obj_ptr:p}\n"
-                                    ).as_bytes(),
-                                );
-                                let _ = io::stderr().flush();
-                            }
-                            // Decrement depth counter before returning
-                            RC_DEC_DEPTH.with(|d| {
-                                *d.borrow_mut() -= 1;
-                            });
-                            // Still decrement weak references (this is safe even at depth limit)
-                            crate::rc_weak_dec(obj_ptr);
-                            // Add to cycle collector candidates for deferred cleanup
-                            // This ensures the destructor will be called later when depth is lower
-                            crate::add_root_candidate(obj_ptr);
-                            break;
-                        }
-
-                        // Use a guard to ensure depth counter is always decremented, even if destructor panics
-                        struct DepthGuard;
-                        impl Drop for DepthGuard {
-                            fn drop(&mut self) {
-                                RC_DEC_DEPTH.with(|d| {
-                                    *d.borrow_mut() -= 1;
-                                });
-                            }
-                        }
-                        let _depth_guard = DepthGuard;
-
-                        let type_tag =
-                            u32::try_from(old_header >> HEADER_TYPE_TAG_SHIFT).unwrap_or(0);
-                        if type_tag == 1 {
-                            let dtor_addr = obj_ptr as usize + std::mem::size_of::<u64>();
-                            // Adding 8 bytes to 8-byte aligned pointer maintains alignment
-                            debug_assert!(
-                                dtor_addr.is_multiple_of(std::mem::align_of::<*mut c_void>())
-                            );
-                            let dtor_ptr_ptr = dtor_addr as *mut *mut c_void;
-                            let dtor_raw = *dtor_ptr_ptr;
-                            if !dtor_raw.is_null() {
-                                // Validate function pointer before transmute
-                                let dtor_addr = dtor_raw as usize;
-                                // Function pointers should be aligned and in plausible address range
-                                // On most platforms, function pointers need to be aligned (typically 1-byte aligned is sufficient)
-                                // but reasonable alignment and address range are checked
-                                if crate::is_plausible_addr(dtor_addr) {
-                                    // Additional validation: check that the address is reasonably aligned
-                                    // Function pointers should typically be aligned (platform-dependent, but usually at least 1-byte)
-                                    // Uses a conservative check: ensure it's not obviously misaligned
-                                    const MIN_FN_ALIGN: usize = 1; // Minimum alignment for function pointers
-                                    if dtor_addr.is_multiple_of(MIN_FN_ALIGN) {
-                                        // SAFETY: The pointer has been validated to be in a plausible address range and aligned.
-                                        // The pointer was stored by the code generator and should be a valid function pointer.
-                                        // However, if the memory is corrupted, this could still be invalid. The is_plausible_addr
-                                        // check provides defense-in-depth but cannot guarantee the pointer is actually executable.
-                                        // In practice, destructor pointers are set by the code generator and should be valid.
-                                        let dtor: extern "C" fn(*mut c_void) =
-                                            std::mem::transmute(dtor_raw);
-                                        dtor(obj_ptr);
-                                    } else if should_log {
-                                        let _ = io::stderr().write_all(
-                                            format!(
-                                                "[oats runtime] rc_dec: destructor pointer {dtor_raw:p} has invalid alignment, skipping\n"
-                                            ).as_bytes(),
-                                        );
-                                        let _ = io::stderr().flush();
-                                    }
-                                } else if should_log {
-                                    let _ = io::stderr().write_all(
-                                        format!(
-                                            "[oats runtime] rc_dec: invalid destructor pointer {dtor_raw:p}, skipping\n"
-                                        ).as_bytes(),
-                                    );
-                                    let _ = io::stderr().flush();
-                                }
-                            }
-                        }
-
-                        // Check weak count before deciding whether to free
-                        // Header must be reloaded to get the current weak count
-                        // since it may have changed since last read
-                        let current_header = (*header).load(Ordering::Acquire);
-                        let weak_count = header_get_weak_bits(current_header);
-
-                        if weak_count == 0 {
-                            // No weak references, free immediately
-                            std::sync::atomic::fence(Ordering::Acquire);
-                            let header_atomic = obj_ptr.cast::<AtomicU64>();
-                            let _ = (*header_atomic).fetch_and(!HEADER_CLAIM_BIT, Ordering::AcqRel);
-                            crate::runtime_free(obj_ptr);
-                        } else {
-                            // There are weak references - object stays allocated until
-                            // the last weak reference is dropped. rc_weak_dec will free
-                            // the object when it's called for the last weak reference
-                            // and sees both strong and weak are 0.
-                            // rc_weak_dec is not called here because that would incorrectly
-                            // decrement the weak count - weak references should only be
-                            // decremented when they are actually dropped.
-                        }
-
-                        // Depth guard will decrement counter on drop (normal return or panic)
+                        rc_dec_handle_zero_refcount(obj_ptr, old_header, should_log);
                     } else {
                         // Check if this object can form cycles - if not, skip GC
                         if (old_header & HEADER_CYCLE_BIT) == 0 {
@@ -384,6 +405,9 @@ pub unsafe fn rc_dec_pub(p: *mut c_void) {
 /// `p` must be a valid pointer previously returned by the runtime.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rc_weak_inc(p: *mut c_void) {
+    // Overflow protection: don't increment beyond 16-bit limit
+    const MAX_SAFE_WEAK: u64 = 0xffff;
+
     if p.is_null() {
         return;
     }
@@ -403,8 +427,6 @@ pub unsafe extern "C" fn rc_weak_inc(p: *mut c_void) {
         // Optimized loop: reuse loaded values
         loop {
             let weak = header_get_weak_bits(old_header);
-            // Overflow protection: don't increment beyond 16-bit limit
-            const MAX_SAFE_WEAK: u64 = 0xffff;
             if weak >= MAX_SAFE_WEAK {
                 if crate::RUNTIME_LOG.load(Ordering::Relaxed) {
                     let _ = io::stderr().write_all(
@@ -519,6 +541,9 @@ pub unsafe extern "C" fn rc_weak_upgrade(p: *mut c_void) -> *mut c_void {
         return ptr::null_mut();
     }
     unsafe {
+        // Overflow protection: ensure version index doesn't conflict with special flags
+        const MAX_SAFE_RC: u64 = 0x7FFF_FFFF;
+
         let obj_ptr = get_object_base(p);
         if obj_ptr.is_null() {
             return ptr::null_mut();
@@ -536,8 +561,6 @@ pub unsafe extern "C" fn rc_weak_upgrade(p: *mut c_void) -> *mut c_void {
             if strong == 0 {
                 return ptr::null_mut();
             }
-            // Overflow protection: ensure version index doesn't conflict with special flags
-            const MAX_SAFE_RC: u64 = 0x7FFF_FFFF;
             if strong >= MAX_SAFE_RC {
                 if crate::RUNTIME_LOG.load(Ordering::Relaxed) {
                     let _ = io::stderr().write_all(

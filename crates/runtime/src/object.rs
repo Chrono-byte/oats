@@ -19,8 +19,16 @@ use libc::size_t;
 /// # Safety
 /// `obj` must be a valid object pointer allocated by this runtime and contain a
 /// valid metadata pointer at +8. Passing arbitrary pointers is undefined behavior.
+///
+/// # Panics
+/// This function may panic if the metadata contains an offset that cannot be
+/// converted to usize (which would indicate corrupted metadata).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tuple_to_string(obj: *mut c_void) -> *mut c_char {
+    // Validate metadata length is reasonable
+    const MAX_META_LEN: usize = 10_000; // 10K fields max
+    const MAX_FIELD_OFFSET: usize = 1 << 20; // 1 MiB conservative bound
+
     if obj.is_null() {
         return ptr::null_mut();
     }
@@ -41,8 +49,6 @@ pub unsafe extern "C" fn tuple_to_string(obj: *mut c_void) -> *mut c_char {
     }
 
     let len = unsafe { ((*meta) & 0xffff_ffff_u64) as usize };
-    // Validate metadata length is reasonable
-    const MAX_META_LEN: usize = 10_000; // 10K fields max
     if len > MAX_META_LEN {
         return ptr::null_mut();
     }
@@ -56,14 +62,13 @@ pub unsafe extern "C" fn tuple_to_string(obj: *mut c_void) -> *mut c_char {
             // Invalid offset - skip this field
             continue;
         }
-        let off = usize::try_from(off_i32).unwrap();
+        let off = usize::try_from(off_i32).expect("field offset must be valid usize");
         // Validate offset alignment and bounds
         if (off & 7) != 0 {
             // Offset must be 8-byte aligned
             continue;
         }
         // Validate offset doesn't exceed reasonable object size
-        const MAX_FIELD_OFFSET: usize = 1 << 20; // 1 MiB conservative bound
         if off > MAX_FIELD_OFFSET {
             // Offset too large - skip this field
             continue;
@@ -116,12 +121,16 @@ fn union_dtor(obj_ptr: *mut c_void) {
 ///
 /// The returned control block pointer follows the runtime union layout
 /// and must be released with `rc_dec` when no longer needed.
+///
+/// # Panics
+/// This function may panic if memory allocation fails or if the total size
+/// calculation overflows usize.
 #[unsafe(no_mangle)]
 pub extern "C" fn union_box_f64(v: f64) -> *mut c_void {
     unsafe {
         // layout: header(8) | dtor_ptr(8) | discrim(8) | payload(8)
         let total = 8 * 4;
-        let mem = runtime_malloc(usize::try_from(total).unwrap() as size_t).cast::<u8>();
+        let mem = runtime_malloc(usize::try_from(total).expect("total size must fit in usize") as size_t).cast::<u8>();
         if mem.is_null() {
             return ptr::null_mut();
         }
@@ -130,7 +139,7 @@ pub extern "C" fn union_box_f64(v: f64) -> *mut c_void {
         // weak=1 represents the object's own existence
         // mem is allocated with 8-byte alignment, so casting to u64 is safe
         debug_assert!((mem as usize).is_multiple_of(std::mem::align_of::<u64>()));
-        let header_ptr = mem.cast::<u64>();
+        let header_ptr = ptr::with_exposed_provenance_mut::<u64>(mem as usize);
         let type_tag: u64 = 1u64 << HEADER_TYPE_TAG_SHIFT;
         let refcount: u64 = 1u64;
         *header_ptr = header_with_weak(type_tag | refcount, 1);
@@ -159,18 +168,22 @@ pub extern "C" fn union_box_f64(v: f64) -> *mut c_void {
 /// # Safety
 /// `p` must be a valid pointer previously returned by the runtime or NULL. The
 /// returned control block is an owning object and must be released with `rc_dec`.
+///
+/// # Panics
+/// This function may panic if memory allocation fails or if the total size
+/// calculation overflows usize.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn union_box_ptr(p: *mut c_void) -> *mut c_void {
     unsafe {
         let total = 8 * 4;
-        let mem = runtime_malloc(usize::try_from(total).unwrap() as size_t).cast::<u8>();
+        let mem = runtime_malloc(usize::try_from(total).expect("total size must fit in usize") as size_t).cast::<u8>();
         if mem.is_null() {
             return ptr::null_mut();
         }
 
         // mem is allocated with 8-byte alignment, so casting to u64 is safe
         debug_assert!((mem as usize).is_multiple_of(std::mem::align_of::<u64>()));
-        let header_ptr = mem.cast::<u64>();
+        let header_ptr = ptr::with_exposed_provenance_mut::<u64>(mem as usize);
         let type_tag: u64 = 1u64 << HEADER_TYPE_TAG_SHIFT;
         let refcount: u64 = 1u64;
         *header_ptr = header_with_weak(type_tag | refcount, 1);
@@ -280,6 +293,6 @@ pub extern "C" fn union_get_discriminant(u: *mut c_void) -> i64 {
         if discrim > 1 {
             return -1; // Invalid discriminant
         }
-        discrim as i64
+        i64::try_from(discrim).unwrap_or(-1)
     }
 }

@@ -24,6 +24,7 @@
 
 use libc::c_void;
 use std::mem;
+use std::ptr;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 // Metadata magic used by codegen: ASCII 'OATS' (0x4F415453)
@@ -199,6 +200,10 @@ pub fn add_root_candidate(p: *mut c_void) {
 /// This function panics if the metadata pointer is not valid.
 #[must_use]
 pub unsafe fn validate_meta_block(meta: *const u64, max_len: usize) -> bool {
+    // Validate each offset safely
+    const MAX_OFFSET: usize = 1 << 20; // 1 MiB conservative bound
+    const MIN_OFFSET: usize = 16; // header (8) + meta_slot (8)
+
     unsafe {
         // Reject null pointers
         if meta.is_null() {
@@ -225,11 +230,7 @@ pub unsafe fn validate_meta_block(meta: *const u64, max_len: usize) -> bool {
             return false;
         }
 
-        // Validate each offset safely
-        const MAX_OFFSET: usize = 1 << 20; // 1 MiB conservative bound
-        const MIN_OFFSET: usize = 16; // header (8) + meta_slot (8)
-
-        // Calculate the offsets array pointer and total required size
+        // Calculate the offsets array pointer
         let offsets_ptr = meta.add(1).cast::<i32>();
 
         // Check for arithmetic overflow in required size
@@ -243,9 +244,7 @@ pub unsafe fn validate_meta_block(meta: *const u64, max_len: usize) -> bool {
             if off_i32 < 0 {
                 return false;
             }
-            let off = usize::try_from(off_i32).unwrap();
-
-            // Validate offset constraints
+            let off = usize::try_from(off_i32).unwrap_or(0);
             if !(MIN_OFFSET..=MAX_OFFSET).contains(&off) || (off & 7) != 0 {
                 return false;
             }
@@ -339,7 +338,7 @@ pub extern "C" fn promise_resolve(ptr: *mut std::ffi::c_void) -> *mut std::ffi::
         // Store a magic sentinel (usize::MAX) at offset 0 to mark this as a resolved promise
         // mem is allocated with 8-byte alignment, so casting to usize is safe
         debug_assert!((mem as usize).is_multiple_of(std::mem::align_of::<usize>()));
-        let header_ptr = mem.cast::<usize>();
+        let header_ptr = ptr::with_exposed_provenance_mut::<usize>(mem as usize);
         *header_ptr = usize::MAX; // Magic value to distinguish from wrapper/state
         // store the payload pointer at offset 8
         let payload_addr = mem as usize + 8;
@@ -386,7 +385,8 @@ pub extern "C" fn promise_poll_into(
         if first_as_usize == usize::MAX {
             // This is a resolved promise: [usize::MAX, payload]
             // Read payload at offset 8 and return it as ready
-            let payload_ptr = promise.cast::<u8>().add(8).cast::<*mut std::ffi::c_void>();
+            let payload_addr = promise as usize + 8;
+            let payload_ptr = ptr::with_exposed_provenance::<*mut std::ffi::c_void>(payload_addr);
             let payload = *payload_ptr;
             // out_ptr is allocated with 8-byte alignment, so casting is safe
             debug_assert!(
@@ -405,7 +405,8 @@ pub extern "C" fn promise_poll_into(
         }
 
         // Read second word at offset 8
-        let second_ptr = promise.cast::<u8>().add(8).cast::<*mut std::ffi::c_void>();
+        let second_addr = promise as usize + 8;
+        let second_ptr = ptr::with_exposed_provenance::<*mut std::ffi::c_void>(second_addr);
         let second_word = *second_ptr;
         if second_word.is_null() {
             // Nothing useful; treat as pending
@@ -452,7 +453,7 @@ pub extern "C" fn promise_new_from_state(
         }
         // mem is allocated with 8-byte alignment, so casting to *mut c_void is safe
         debug_assert!((mem as usize).is_multiple_of(std::mem::align_of::<*mut std::ffi::c_void>()));
-        let first = mem.cast::<*mut std::ffi::c_void>();
+        let first = ptr::with_exposed_provenance_mut::<*mut std::ffi::c_void>(mem as usize);
         *first = std::ptr::null_mut();
         let second_addr = mem as usize + 8;
         // Adding 8 bytes to 8-byte aligned pointer maintains alignment
@@ -586,7 +587,7 @@ pub extern "C" fn waker_create_for_task(task: *mut std::ffi::c_void) -> *mut std
         }
         // mem is allocated with 8-byte alignment, so casting to *mut c_void is safe
         debug_assert!((mem as usize).is_multiple_of(std::mem::align_of::<*mut std::ffi::c_void>()));
-        let first = mem.cast::<*mut std::ffi::c_void>();
+        let first = ptr::with_exposed_provenance_mut::<*mut std::ffi::c_void>(mem as usize);
         *first = std::ptr::null_mut();
         let second_addr = mem as usize + 8;
         // Adding 8 bytes to 8-byte aligned pointer maintains alignment
@@ -603,7 +604,8 @@ pub extern "C" fn waker_wake(w: *mut std::ffi::c_void) {
         return;
     }
     unsafe {
-        let task_ptr_ptr = w.cast::<u8>().add(8).cast::<*mut std::ffi::c_void>();
+        let task_addr = w as usize + 8;
+        let task_ptr_ptr = ptr::with_exposed_provenance::<*mut std::ffi::c_void>(task_addr);
         let task = *task_ptr_ptr;
         if task.is_null() {
             return;
@@ -636,24 +638,25 @@ mod tests {
         unsafe {
             // allocate two u64 words: header + dtor pointer via runtime_malloc
             let size = std::mem::size_of::<u64>() * 2;
-            let mem = runtime_malloc(size) as *mut u8;
+            let mem = runtime_malloc(size).cast::<u8>();
             assert!(!mem.is_null());
 
             // set header: type_tag=1, refcount=1, weak=1
             // weak=1 represents the object's own existence; when strong reaches 0,
             // rc_weak_dec will decrement weak from 1→0 and free the memory.
-            let header_ptr = mem as *mut u64;
+            let header_ptr = ptr::with_exposed_provenance_mut::<u64>(mem as usize);
             let type_tag: u64 = 1u64 << HEADER_TYPE_TAG_SHIFT;
             let refcount: u64 = 1u64;
             let header_val: u64 = header_with_weak(type_tag | refcount, 1);
             *header_ptr = header_val;
 
             // store destructor pointer at second word
-            let dtor_ptr = mem.add(std::mem::size_of::<u64>()) as *mut *mut c_void;
+            let dtor_addr = mem as usize + std::mem::size_of::<u64>();
+            let dtor_ptr = ptr::with_exposed_provenance_mut::<*mut c_void>(dtor_addr);
             *dtor_ptr = my_dtor as *mut c_void;
 
             // call rc_dec which should call the destructor and free
-            rc_dec(mem as *mut c_void);
+            rc_dec(mem.cast::<c_void>());
 
             // destructor should have been called
             assert!(CALLED.load(Ordering::SeqCst));
@@ -668,8 +671,9 @@ mod tests {
             let words = 1 + (len * 4).div_ceil(8);
             let mut buf: Vec<u64> = vec![0u64; words];
             buf[0] = (META_MAGIC << 32) | (len as u64 & 0xffff_ffff_u64);
-            let ptr_u8 = buf.as_mut_ptr() as *mut u8;
-            let offsets_ptr = ptr_u8.add(8) as *mut i32;
+            let ptr_u8 = buf.as_mut_ptr().cast::<u8>();
+            let offsets_addr = ptr_u8 as usize + 8;
+            let offsets_ptr = ptr::with_exposed_provenance_mut::<i32>(offsets_addr);
             *offsets_ptr.add(0) = 16;
             *offsets_ptr.add(1) = 24;
             assert!(validate_meta_block(buf.as_mut_ptr(), 10));
@@ -696,8 +700,9 @@ mod tests {
             let words = 1 + (len * 4).div_ceil(8);
             let mut buf: Vec<u64> = vec![0u64; words];
             buf[0] = (META_MAGIC << 32) | (len as u64 & 0xffff_ffff_u64);
-            let ptr_u8 = buf.as_mut_ptr() as *mut u8;
-            let offsets_ptr = ptr_u8.add(8) as *mut i32;
+            let ptr_u8 = buf.as_mut_ptr().cast::<u8>();
+            let offsets_addr = ptr_u8 as usize + 8;
+            let offsets_ptr = ptr::with_exposed_provenance_mut::<i32>(offsets_addr);
             // offset too small (points to metadata area)
             *offsets_ptr.add(0) = 8;
             assert!(!validate_meta_block(buf.as_mut_ptr(), 10));
@@ -711,8 +716,9 @@ mod tests {
             let words = 1 + (len * 4).div_ceil(8);
             let mut buf: Vec<u64> = vec![0u64; words];
             buf[0] = (META_MAGIC << 32) | (len as u64 & 0xffff_ffff_u64);
-            let ptr_u8 = buf.as_mut_ptr() as *mut u8;
-            let offsets_ptr = ptr_u8.add(8) as *mut i32;
+            let ptr_u8 = buf.as_mut_ptr().cast::<u8>();
+            let offsets_addr = ptr_u8 as usize + 8;
+            let offsets_ptr = ptr::with_exposed_provenance_mut::<i32>(offsets_addr);
             // unaligned offset (not multiple of 8)
             *offsets_ptr.add(0) = 18;
             assert!(!validate_meta_block(buf.as_mut_ptr(), 10));

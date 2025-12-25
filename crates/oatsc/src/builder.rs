@@ -47,10 +47,13 @@ use inkwell::types::BasicType;
 ///
 /// # Returns
 /// Path to the output file on success, or None if only object emission
+///
+/// # Errors
+/// Returns an error if the compilation fails.
 pub fn compile_with_options(options: crate::CompileOptions) -> Result<Option<String>> {
     // Pass options directly through the call stack
     let args = vec!["oatsc".to_string(), options.src_file.clone()];
-    run_from_args(&args, Some(options))
+    run_from_args(&args, Some(&options))
 }
 
 /// Executes the complete AOT compilation pipeline from source to executable.
@@ -65,15 +68,19 @@ pub fn compile_with_options(options: crate::CompileOptions) -> Result<Option<Str
 /// - Object file compilation
 /// - Linking
 ///
-/// Returns Ok(()) on success, or an error if something goes wrong.
+/// # Returns
+/// Path to the output file on success, or None if only object emission
+///
+/// # Errors
+/// Returns an error if the compilation fails or if the source file is not provided.
 pub fn run_from_args(
     args: &[String],
-    options: Option<crate::CompileOptions>,
+    options: Option<&crate::CompileOptions>,
 ) -> Result<Option<String>> {
     // Resolve source file location from arguments, options, or environment
     let src_path = if args.len() > 1 {
         args[1].clone()
-    } else if let Some(ref opts) = options {
+    } else if let Some(opts) = options {
         opts.src_file.clone()
     } else if let Ok(p) = std::env::var("OATS_SRC_FILE") {
         p
@@ -84,10 +91,6 @@ pub fn run_from_args(
     };
 
     let source = std::fs::read_to_string(&src_path)?;
-
-    // OPTIMIZATION: Arrow functions declared as `let foo = (...) => ...` are now
-    // processed directly during codegen without intermediate source transformation.
-    // This eliminates redundant parsing passes and improves compilation performance.
 
     // Parse source into AST representation (single pass, no transformations)
     let (parsed_mod_opt, parse_diags) = parser::parse_oats_module(&source, Some(&src_path))?;
@@ -110,7 +113,7 @@ pub fn run_from_args(
     let parsed = &parsed_mod.parsed;
 
     // Read extern_oats from options or environment if provided
-    let extern_oats: std::collections::HashMap<String, String> = if let Some(ref opts) = options {
+    let extern_oats: std::collections::HashMap<String, String> = if let Some(opts) = options {
         // Validate that all metadata file paths exist
         for (import_path, meta_path) in &opts.extern_oats {
             let path = std::path::Path::new(meta_path);
@@ -298,7 +301,7 @@ pub fn run_from_args(
     // First pass: read metadata files and extract function signatures
     for meta_path in extern_oats.values() {
         let meta_content = match std::fs::read_to_string(meta_path) {
-            Ok(content) => content,
+            Ok(meta_content) => meta_content,
             Err(e) => {
                 eprintln!("Warning: Failed to read metadata file {meta_path}: {e}");
                 continue;
@@ -421,10 +424,6 @@ pub fn run_from_args(
         fn_rc_inc: std::cell::RefCell::new(None),
         fn_rc_dec: std::cell::RefCell::new(None),
         fn_number_to_string: std::cell::RefCell::new(None),
-        fn_number_is_nan: std::cell::RefCell::new(None),
-        fn_number_is_finite: std::cell::RefCell::new(None),
-        fn_number_is_infinite: std::cell::RefCell::new(None),
-        fn_number_parse_float: std::cell::RefCell::new(None),
         fn_number_new: std::cell::RefCell::new(None),
         fn_number_is_nan_static: std::cell::RefCell::new(None),
         fn_number_is_finite_static: std::cell::RefCell::new(None),
@@ -899,7 +898,7 @@ pub fn run_from_args(
 
     // Try to emit a host `main` into the module so no external shim is
     // required. Recompute IR after emission.
-    let emitted_host_main = if let Some(sig) = func_sig.clone() {
+    let emitted_host_main = if let Some(sig) = func_sig {
         codegen.emit_host_main(&sig.params, &sig.ret)
     } else {
         false
@@ -928,7 +927,7 @@ pub fn run_from_args(
     let emit_obj = options.as_ref().is_some_and(|o| o.emit_obj);
 
     let out_ll = format!("{out_dir}/{src_filename}.ll");
-    let out_exe = if let Some(ref opts) = options {
+    let out_exe = if let Some(opts) = options {
         if let Some(ref name) = opts.out_name {
             format!("{out_dir}/{name}")
         } else {
@@ -964,7 +963,7 @@ pub fn run_from_args(
         .cloned()
         .or_else(|| std::env::var("OATS_BUILD_PROFILE").ok())
         .unwrap_or_default();
-    let opt_level = if let Some(ref opts) = options {
+    let opt_level = if let Some(opts) = options {
         if let Some(ref opt_str) = opts.opt_level {
             match opt_str.as_str() {
                 "none" | "0" => OptimizationLevel::None,
@@ -994,7 +993,7 @@ pub fn run_from_args(
     let linking_config = crate::linking::LinkingConfig {
         out_dir: out_dir.clone(),
         out_obj: out_obj.clone(),
-        out_exe: out_exe.clone(),
+        out_exe,
         opt_level,
         target_triple: options
             .as_ref()
@@ -1057,7 +1056,7 @@ pub fn run_from_args(
 
     // For linking, the object file must be on disk. Write to temp file if emit_obj is false.
     let (link_obj_path, is_temp) = if emit_obj {
-        (out_obj.clone(), false)
+        (out_obj, false)
     } else {
         // Write to temporary file for linking
         let temp_dir = std::env::temp_dir();

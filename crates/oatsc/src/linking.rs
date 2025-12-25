@@ -120,8 +120,10 @@ pub fn compile_to_object(module: &Module, config: &LinkingConfig) -> Result<Stri
 
 /// Returns paths to the runtime libraries (runtime and std).
 ///
-/// Respects `OATS_RUNTIME_PATH` and `OATS_STD_PATH` env vars.
-/// If not set, builds them using cargo.
+/// Looks for libraries in the following order:
+/// 1. `OATS_RUNTIME_PATH` / `OATS_STD_PATH` environment variables
+/// 2. Current directory (libruntime.so / `liboats_std.so`)
+/// 3. Standard library directories (/usr/lib, /usr/local/lib)
 pub fn get_runtime_libraries() -> Result<Vec<String>> {
     let mut libs = Vec::new();
 
@@ -129,106 +131,81 @@ pub fn get_runtime_libraries() -> Result<Vec<String>> {
     if let Ok(path) = std::env::var("OATS_RUNTIME_PATH") {
         libs.push(path);
     } else {
-        let mut cargo_cmd = Command::new("cargo");
-        cargo_cmd
-            .arg("build")
-            .arg("--release")
-            .arg("--package")
-            .arg("runtime");
-        match cargo_cmd.status() {
-            Ok(status) => {
-                if !status.success() {
-                    anyhow::bail!("cargo failed to build runtime");
-                }
-            }
-            Err(e) => {
-                if e.kind() == std::io::ErrorKind::NotFound {
-                    anyhow::bail!("cargo not found in PATH");
-                }
-                return Err(e.into());
+        // Try current directory first, then standard library directories
+        let candidates = [
+            "libruntime.so",
+            "/usr/lib/libruntime.so",
+            "/usr/local/lib/libruntime.so",
+        ];
+        let mut found = false;
+        for candidate in &candidates {
+            if std::path::Path::new(candidate).exists() {
+                libs.push(candidate.to_string());
+                found = true;
+                break;
             }
         }
-        libs.push("target/release/libruntime.a".to_string());
+        if !found {
+            anyhow::bail!(
+                "Could not find libruntime.so. Set OATS_RUNTIME_PATH or install the runtime library."
+            );
+        }
     }
 
     // 2. Standard Library
     if let Ok(path) = std::env::var("OATS_STD_PATH") {
         libs.push(path);
     } else {
-        let mut cargo_cmd = Command::new("cargo");
-        cargo_cmd
-            .arg("build")
-            .arg("--release")
-            .arg("--package")
-            .arg("oats_std");
-        match cargo_cmd.status() {
-            Ok(status) => {
-                if !status.success() {
-                    anyhow::bail!("cargo failed to build oats_std");
-                }
-            }
-            Err(e) => {
-                if e.kind() == std::io::ErrorKind::NotFound {
-                    anyhow::bail!("cargo not found in PATH");
-                }
-                return Err(e.into());
+        // Try current directory first, then standard library directories
+        let candidates = [
+            "liboats_std.so",
+            "/usr/lib/liboats_std.so",
+            "/usr/local/lib/liboats_std.so",
+        ];
+        let mut found = false;
+        for candidate in &candidates {
+            if std::path::Path::new(candidate).exists() {
+                libs.push(candidate.to_string());
+                found = true;
+                break;
             }
         }
-        libs.push("target/release/liboats_std.a".to_string());
+        if !found {
+            anyhow::bail!(
+                "Could not find liboats_std.so. Set OATS_STD_PATH or install the standard library."
+            );
+        }
     }
 
     Ok(libs)
 }
 
-/// Locates or compiles the runtime main object file.
+/// Locates the runtime main object file.
 ///
 /// # Arguments
-/// * `out_dir` - Output directory for the object file
+/// * `out_dir` - Output directory (unused, kept for API compatibility)
 /// * `emitted_host_main` - Whether host main was emitted into the module
 ///
 /// # Returns
 /// Path to `rt_main.o`, or empty string if not needed
-pub fn locate_rt_main(out_dir: &str, emitted_host_main: bool) -> Result<String> {
+pub fn locate_rt_main(_out_dir: &str, emitted_host_main: bool) -> Result<String> {
     if emitted_host_main {
         return Ok(String::new());
     }
 
-    if Path::new("rt_main.o").exists() {
-        return Ok(String::from("rt_main.o"));
-    }
-
-    if Path::new("crates/runtime/rt_main/src/main.rs").exists() {
-        let rt_main_obj = format!("{out_dir}/rt_main.o");
-        let mut rustc_cmd = Command::new("rustc");
-        rustc_cmd
-            .arg("--crate-type")
-            .arg("bin")
-            .arg("--emit=obj")
-            .arg("crates/runtime/rt_main/src/main.rs")
-            .arg("-O")
-            .arg("-o")
-            .arg(&rt_main_obj);
-        match rustc_cmd.status() {
-            Ok(status) => {
-                if !status.success() {
-                    anyhow::bail!("rustc failed to compile rt_main to object");
-                }
-            }
-            Err(e) => {
-                if e.kind() == std::io::ErrorKind::NotFound {
-                    anyhow::bail!(
-                        "`rustc` not found in PATH; please install Rust toolchain or ensure `rustc` is available"
-                    );
-                }
-                return Err(e.into());
-            }
+    // Look for rt_main.o in standard locations
+    let candidates = [
+        "rt_main.o",
+        "/usr/lib/rt_main.o",
+        "/usr/local/lib/rt_main.o",
+    ];
+    for candidate in &candidates {
+        if Path::new(candidate).exists() {
+            return Ok(candidate.to_string());
         }
-        return Ok(rt_main_obj);
     }
 
-    anyhow::bail!(
-        "No rt_main.o found and no runtime/rt_main/src/main.rs available; please provide a runtime main (rt_main.o) or add a runtime/rt_main/src/main.rs"
-    );
+    anyhow::bail!("rt_main.o not found. Please install the Oats runtime or set the correct path.");
 }
 
 /// Links object files into a final executable.
@@ -295,6 +272,10 @@ pub fn link_executable(
             cmd.arg(lib);
         }
 
+        // Add RPATH to find libraries in current directory
+        cmd.arg("-rpath");
+        cmd.arg(".");
+
         // Add native system libraries required by oats_std (e.g. OpenSSL)
         cmd.arg("-lssl");
         cmd.arg("-lcrypto");
@@ -343,6 +324,9 @@ pub fn link_executable(
             cmd.arg(lib);
         }
 
+        // Add RPATH to find libraries in current directory
+        cmd.arg("-Wl,-rpath,.");
+
         // Add native system libraries required by oats_std (e.g. OpenSSL)
         cmd.arg("-lssl");
         cmd.arg("-lcrypto");
@@ -371,6 +355,10 @@ pub fn link_executable(
         for lib in rust_libs {
             cmd.arg(lib);
         }
+
+        // Add RPATH to find libraries in current directory
+        cmd.arg("-rpath");
+        cmd.arg(".");
 
         // Add native system libraries required by oats_std (e.g. OpenSSL)
         cmd.arg("-lssl");

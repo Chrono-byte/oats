@@ -35,7 +35,7 @@ pub fn resolve_external_dependencies<'ctx>(
     // First pass: read metadata files and extract function signatures
     for meta_path in extern_oats.values() {
         let meta_content = match std::fs::read_to_string(meta_path) {
-            Ok(content) => content,
+            Ok(file_content) => file_content,
             Err(e) => {
                 eprintln!("Warning: Failed to read metadata file {meta_path}: {e}");
                 continue;
@@ -67,10 +67,10 @@ pub fn resolve_external_dependencies<'ctx>(
 
         for symbol in symbols {
             // Get function signature or use default
-            let (param_types, ret_type) = match external_function_signatures.get(&symbol).cloned() {
-                Some(types) => types,
-                None => (vec![], OatsType::Number),
-            };
+            let (param_types, ret_type) = external_function_signatures
+                .get(&symbol)
+                .cloned()
+                .unwrap_or_else(|| (vec![], OatsType::Number));
 
             // Convert OatsType to LLVM types
             let llvm_param_types: Vec<inkwell::types::BasicMetadataTypeEnum> = param_types
@@ -148,11 +148,9 @@ pub fn parse_function_signature_from_metadata(line: &str) -> Option<(String, Fun
 
     // Parse return type
     let ret_str = after_paren[close_paren_pos + 1..].trim();
-    let ret_type = if let Some(stripped) = ret_str.strip_prefix(": ") {
-        parse_oats_type_from_string(stripped)
-    } else {
-        OatsType::Void
-    };
+    let ret_type = ret_str
+        .strip_prefix(": ")
+        .map_or_else(|| OatsType::Void, parse_oats_type_from_string);
 
     // Parse parameters
     let mut param_types = Vec::new();

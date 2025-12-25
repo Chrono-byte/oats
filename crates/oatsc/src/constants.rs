@@ -20,8 +20,8 @@ pub const STATIC_HEADER_BIT: u64 = 1u64 << 32;
 /// This is the magic number used in metadata structures to identify
 /// field maps. The value is 'OATS' in ASCII.
 ///
-/// Value: `0x4F415453u64`
-pub const META_MAGIC: u64 = 0x4F415453u64; // 'OATS'
+/// Value: `0x4F41_5453_u64`
+pub const META_MAGIC: u64 = 0x4F41_5453_u64; // 'OATS'
 
 /// Type tag value for closure objects
 ///

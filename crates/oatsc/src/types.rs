@@ -69,32 +69,32 @@ pub enum OatsType {
     Isize,
     Usize,
     // Union of multiple possible types (e.g. number | string)
-    Union(Vec<OatsType>),
+    Union(Vec<Self>),
     // Array of element type (e.g. number[])
-    Array(Box<OatsType>),
+    Array(Box<Self>),
     // Weak reference wrapper (non-owning)
-    Weak(Box<OatsType>),
+    Weak(Box<Self>),
     // Unowned reference wrapper (non-owning, no RC operations)
-    Unowned(Box<OatsType>),
+    Unowned(Box<Self>),
     // Optional wrapper, represented as nullable/Option
-    Option(Box<OatsType>),
+    Option(Box<Self>),
     Void,
     String,
     // Fixed-size tuple type with ordered element types
-    Tuple(Vec<OatsType>),
+    Tuple(Vec<Self>),
     NominalStruct(String),
     // Promise type wrapping a result type (e.g. Promise<number>)
-    Promise(Box<OatsType>),
+    Promise(Box<Self>),
     // Anonymous struct-like type (object literal type) with named fields
-    StructLiteral(Vec<(String, OatsType)>),
+    StructLiteral(Vec<(String, Self)>),
     // Generic type with type parameters
-    Generic(Vec<OatsType>),
+    Generic(Vec<Self>),
     // Enum type with name and variant names
     Enum(String, Vec<String>),
     // Generic type instance with concrete type arguments
     GenericInstance {
         base_name: String,
-        type_args: Vec<OatsType>,
+        type_args: Vec<Self>,
     },
     // Process-related types
     ProcessId,  // Process identifier (u64)
@@ -1178,22 +1178,22 @@ fn apply_inferred_subst_depth(ty: &OatsType, inferred: &[OatsType], depth: usize
 impl OatsType {
     /// Check if this type is a Promise
     #[must_use]
-    pub fn is_promise(&self) -> bool {
-        matches!(self, OatsType::Promise(_))
+    pub const fn is_promise(&self) -> bool {
+        matches!(self, Self::Promise(_))
     }
 
     /// Unwrap the inner type of a Promise, if this is a Promise type
     #[must_use]
-    pub fn unwrap_promise_inner(&self) -> Option<&OatsType> {
+    pub fn unwrap_promise_inner(&self) -> Option<&Self> {
         match self {
-            OatsType::Promise(inner) => Some(inner),
+            Self::Promise(inner) => Some(inner),
             _ => None,
         }
     }
 
     /// Create a Promise wrapping the given type
     #[must_use]
-    pub fn wrap_in_promise(inner: OatsType) -> Self {
-        OatsType::Promise(Box::new(inner))
+    pub fn wrap_in_promise(inner: Self) -> Self {
+        Self::Promise(Box::new(inner))
     }
 }

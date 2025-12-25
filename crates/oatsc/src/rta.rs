@@ -114,9 +114,8 @@ impl RTAResults {
         // Also consider all class constructors as entry points
         for class_name in &self.live_classes {
             let ctor_name = format!("{class_name}_ctor");
-            if !visited.contains(&ctor_name) {
-                worklist.push_back(ctor_name.clone());
-                visited.insert(ctor_name);
+            if visited.insert(ctor_name.clone()) {
+                worklist.push_back(ctor_name);
             }
         }
 
@@ -243,15 +242,10 @@ impl RTAResults {
 /// Extracts the class name from a method name in format "`class_method`"
 /// Returns None if it's not a method name (doesn't contain underscore)
 fn extract_class_from_method_name(method_name: &str) -> Option<String> {
-    if let Some(last_underscore) = method_name.rfind('_') {
-        if last_underscore > 0 && last_underscore < method_name.len() - 1 {
-            Some(method_name[..last_underscore].to_string())
-        } else {
-            None
-        }
-    } else {
-        None
-    }
+    method_name
+        .rfind('_')
+        .filter(|&last_underscore| last_underscore > 0 && last_underscore < method_name.len() - 1)
+        .map(|last_underscore| method_name[..last_underscore].to_string())
 }
 
 /// Performs Rapid Type Analysis on the given modules

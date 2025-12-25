@@ -355,7 +355,7 @@ impl Diagnostic {
     /// * `severity` - The severity level of the diagnostic
     /// * `msg` - Error message describing the issue
     pub fn simple(severity: Severity, msg: impl Into<String>) -> Self {
-        Diagnostic {
+        Self {
             severity,
             code: None,
             message: msg.into(),
@@ -383,7 +383,7 @@ impl Diagnostic {
     /// * `msg` - Error message describing the issue
     /// * `span_start` - Zero-based byte index into the source text
     pub fn simple_with_span(severity: Severity, msg: impl Into<String>, span_start: usize) -> Self {
-        Diagnostic {
+        Self {
             severity,
             code: None,
             message: msg.into(),

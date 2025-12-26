@@ -46,7 +46,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
         if let Some(loop_ctx) = target_ctx {
             // Emit RC decrements for locals owned by the target loop
-            self.emit_rc_dec_for_locals_from(locals_stack, loop_ctx.locals_start);
+            self.emit_rc_dec_for_locals_from(locals_stack, loop_ctx.locals_start)?;
 
             // Branch to break block
             let _ = self
@@ -86,7 +86,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
         if let Some(loop_ctx) = target_ctx {
             // Emit RC decrements for locals owned by the target loop
-            self.emit_rc_dec_for_locals_from(locals_stack, loop_ctx.locals_start);
+            self.emit_rc_dec_for_locals_from(locals_stack, loop_ctx.locals_start)?;
 
             // Branch to continue block
             let _ = self

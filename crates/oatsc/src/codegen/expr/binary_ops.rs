@@ -306,20 +306,28 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             if left_origin.is_none()
                                 && let Some(rc_dec_fn) = self.module.get_function("rc_dec")
                             {
-                                self.builder.build_call(
-                                    rc_dec_fn,
-                                    &[left_str.into()],
-                                    "rc_dec_tmp_left",
-                                );
+                                self.builder
+                                    .build_call(rc_dec_fn, &[left_str.into()], "rc_dec_tmp_left")
+                                    .map_err(|_| {
+                                        Diagnostic::simple_with_span_boxed(
+                                            Severity::Error,
+                                            "failed to build rc_dec call",
+                                            bin.span.start as usize,
+                                        )
+                                    })?;
                             }
                             if right_origin.is_none()
                                 && let Some(rc_dec_fn) = self.module.get_function("rc_dec")
                             {
-                                self.builder.build_call(
-                                    rc_dec_fn,
-                                    &[right_str.into()],
-                                    "rc_dec_tmp_right",
-                                );
+                                self.builder
+                                    .build_call(rc_dec_fn, &[right_str.into()], "rc_dec_tmp_right")
+                                    .map_err(|_| {
+                                        Diagnostic::simple_with_span_boxed(
+                                            Severity::Error,
+                                            "failed to build rc_dec call",
+                                            bin.span.start as usize,
+                                        )
+                                    })?;
                             }
                             self.returned_ownership.set(true);
                             return Ok(bv);

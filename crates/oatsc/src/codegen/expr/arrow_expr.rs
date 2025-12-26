@@ -648,7 +648,7 @@ impl<'a> CodeGen<'a> {
                     )?;
 
                     // RC cleanup for locals before return
-                    self.emit_rc_dec_for_locals(&arrow_locals);
+                    self.emit_rc_dec_for_locals(&arrow_locals)?;
 
                     let _ = self.builder.build_return(Some(&result));
                 } else {

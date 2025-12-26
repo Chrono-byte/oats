@@ -622,7 +622,10 @@ impl<'a> super::CodeGen<'a> {
     // locals stack. This is used at function exit or before early returns to
     // ensure pointer locals are decref'd so the runtime can free them.
     // Respects escape analysis: skips rc_dec for non-escaping variables.
-    pub fn emit_rc_dec_for_locals(&self, locals: &LocalsStackLocal<'a>) {
+    pub fn emit_rc_dec_for_locals(
+        &self,
+        locals: &LocalsStackLocal<'a>,
+    ) -> crate::diagnostics::DiagnosticResult<()> {
         // Find the rc_dec declaration (declare if needed)
         let rc_dec = self.get_rc_dec();
         let rc_weak_dec = self.get_rc_weak_dec();
@@ -643,21 +646,29 @@ impl<'a> super::CodeGen<'a> {
                     {
                         // If this local is a weak reference, call rc_weak_dec; otherwise rc_dec
                         if *is_weak {
-                            let _ = self.builder.build_call(
-                                rc_weak_dec,
-                                &[pv.into()],
-                                "rc_weak_dec_local",
-                            );
+                            self.builder
+                                .build_call(rc_weak_dec, &[pv.into()], "rc_weak_dec_local")
+                                .map_err(|_| {
+                                    crate::diagnostics::Diagnostic::simple_boxed(
+                                        Severity::Error,
+                                        "failed to build rc_weak_dec call",
+                                    )
+                                })?;
                         } else {
-                            // Silently ignore build_call errors during cleanup
-                            let _ = self
-                                .builder
-                                .build_call(rc_dec, &[pv.into()], "rc_dec_local");
+                            self.builder
+                                .build_call(rc_dec, &[pv.into()], "rc_dec_local")
+                                .map_err(|_| {
+                                    crate::diagnostics::Diagnostic::simple_boxed(
+                                        Severity::Error,
+                                        "failed to build rc_dec call",
+                                    )
+                                })?;
                         }
                     }
                 }
             }
         }
+        Ok(())
     }
 
     // Emit rc_dec for locals in a suffix of the locals stack starting at
@@ -668,10 +679,10 @@ impl<'a> super::CodeGen<'a> {
         &self,
         locals: &LocalsStackLocal<'a>,
         start_index: usize,
-    ) {
+    ) -> crate::diagnostics::DiagnosticResult<()> {
         let rc_dec = self.get_rc_dec();
         if start_index >= locals.len() {
-            return;
+            return Ok(());
         }
         // iterate from innermost scope down to start_index
         let rc_weak_dec = self.get_rc_weak_dec();
@@ -691,18 +702,28 @@ impl<'a> super::CodeGen<'a> {
                         continue;
                     }
                     if *is_weak {
-                        let _ =
-                            self.builder
-                                .build_call(rc_weak_dec, &[pv.into()], "rc_weak_dec_local");
+                        self.builder
+                            .build_call(rc_weak_dec, &[pv.into()], "rc_weak_dec_local")
+                            .map_err(|_| {
+                                crate::diagnostics::Diagnostic::simple_boxed(
+                                    Severity::Error,
+                                    "failed to build rc_weak_dec call",
+                                )
+                            })?;
                     } else {
-                        // Silently ignore build_call errors during cleanup
-                        let _ = self
-                            .builder
-                            .build_call(rc_dec, &[pv.into()], "rc_dec_local");
+                        self.builder
+                            .build_call(rc_dec, &[pv.into()], "rc_dec_local")
+                            .map_err(|_| {
+                                crate::diagnostics::Diagnostic::simple_boxed(
+                                    Severity::Error,
+                                    "failed to build rc_dec call",
+                                )
+                            })?;
                     }
                 }
             }
         }
+        Ok(())
     }
 
     pub(crate) fn gen_str_concat(&self) {
@@ -850,12 +871,24 @@ impl<'a> super::CodeGen<'a> {
             {
                 if *is_weak {
                     let rc_weak_inc = self.get_rc_weak_inc();
-                    let _ = self
-                        .builder
-                        .build_call(rc_weak_inc, &[pv.into()], "rc_weak_inc_env");
+                    self.builder
+                        .build_call(rc_weak_inc, &[pv.into()], "rc_weak_inc_env")
+                        .map_err(|_| {
+                            crate::diagnostics::Diagnostic::simple_boxed(
+                                Severity::Error,
+                                "failed to build rc_weak_inc call",
+                            )
+                        })?;
                 } else {
                     let rc_inc = self.get_rc_inc();
-                    let _ = self.builder.build_call(rc_inc, &[pv.into()], "rc_inc_env");
+                    self.builder
+                        .build_call(rc_inc, &[pv.into()], "rc_inc_env")
+                        .map_err(|_| {
+                            crate::diagnostics::Diagnostic::simple_boxed(
+                                Severity::Error,
+                                "failed to build rc_inc call",
+                            )
+                        })?;
                 }
             }
         }

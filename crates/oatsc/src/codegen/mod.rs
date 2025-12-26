@@ -860,11 +860,14 @@ impl<'a> CodeGen<'a> {
                                             bv
                                     {
                                         let rc_inc = self.get_rc_inc();
-                                        let _ = self.builder.build_call(
-                                            rc_inc,
-                                            &[pv.into()],
-                                            "rc_inc_param",
-                                        );
+                                        self.builder
+                                            .build_call(rc_inc, &[pv.into()], "rc_inc_param")
+                                            .map_err(|_| {
+                                                crate::diagnostics::Diagnostic::simple_boxed(
+                                                    Severity::Error,
+                                                    "failed to build rc_inc call",
+                                                )
+                                            })?;
                                     }
                                 } else if arg_val.get_type().is_pointer_type() {
                                     // box pointer payload
@@ -881,11 +884,14 @@ impl<'a> CodeGen<'a> {
                                             bv
                                     {
                                         let rc_inc = self.get_rc_inc();
-                                        let _ = self.builder.build_call(
-                                            rc_inc,
-                                            &[pv.into()],
-                                            "rc_inc_param",
-                                        );
+                                        self.builder
+                                            .build_call(rc_inc, &[pv.into()], "rc_inc_param")
+                                            .map_err(|_| {
+                                                crate::diagnostics::Diagnostic::simple_boxed(
+                                                    Severity::Error,
+                                                    "failed to build rc_inc call",
+                                                )
+                                            })?;
                                     }
                                 }
                             }

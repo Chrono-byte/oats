@@ -167,11 +167,14 @@ impl<'a> CodeGen<'a> {
                                         };
                                         // Increment RC for the returned pointer
                                         let rc_inc_fn = self.get_rc_inc();
-                                        let _ = self.builder.build_call(
-                                            rc_inc_fn,
-                                            &[boxed_ptr.into()],
-                                            "rc_inc_tuple_elem",
-                                        );
+                                        self.builder
+                                            .build_call(rc_inc_fn, &[boxed_ptr.into()], "rc_inc_tuple_elem")
+                                            .map_err(|_| {
+                                                Diagnostic::simple_boxed(
+                                                    Severity::Error,
+                                                    "failed to build rc_inc call",
+                                                )
+                                            })?;
 
                                         // Unbox based on element type
                                         eprintln!("DEBUG: Unboxing element type: {:?}", elem_ty);
@@ -215,11 +218,14 @@ impl<'a> CodeGen<'a> {
                                                 };
                                                 // Decrement RC for the boxed pointer (we extracted the value)
                                                 let rc_dec_fn = self.get_rc_dec();
-                                                let _ = self.builder.build_call(
-                                                    rc_dec_fn,
-                                                    &[boxed_ptr.into()],
-                                                    "rc_dec_tuple_elem",
-                                                );
+                                                self.builder
+                                                    .build_call(rc_dec_fn, &[boxed_ptr.into()], "rc_dec_tuple_elem")
+                                                    .map_err(|_| {
+                                                        Diagnostic::simple_boxed(
+                                                            Severity::Error,
+                                                            "failed to build rc_dec call",
+                                                        )
+                                                    })?;
                                                 eprintln!("DEBUG: Returning unboxed f64 value");
                                                 return Ok(f64_val);
                                             }
@@ -338,11 +344,14 @@ impl<'a> CodeGen<'a> {
                                     };
                                     // Increment RC for the returned pointer
                                     let rc_inc_fn = self.get_rc_inc();
-                                    let _ = self.builder.build_call(
-                                        rc_inc_fn,
-                                        &[boxed_ptr.into()],
-                                        "rc_inc_tuple_elem",
-                                    );
+                                    self.builder
+                                        .build_call(rc_inc_fn, &[boxed_ptr.into()], "rc_inc_tuple_elem")
+                                        .map_err(|_| {
+                                            Diagnostic::simple_boxed(
+                                                Severity::Error,
+                                                "failed to build rc_inc call",
+                                            )
+                                        })?;
 
                                     match field_ty {
                                         crate::types::OatsType::Number => {
@@ -369,11 +378,14 @@ impl<'a> CodeGen<'a> {
                                             };
                                             // Decrement RC for the boxed pointer (we extracted the value)
                                             let rc_dec_fn = self.get_rc_dec();
-                                            let _ = self.builder.build_call(
-                                                rc_dec_fn,
-                                                &[boxed_ptr.into()],
-                                                "rc_dec_tuple_elem",
-                                            );
+                                            self.builder
+                                                .build_call(rc_dec_fn, &[boxed_ptr.into()], "rc_dec_tuple_elem")
+                                                .map_err(|_| {
+                                                    Diagnostic::simple_boxed(
+                                                        Severity::Error,
+                                                        "failed to build rc_dec call",
+                                                    )
+                                                })?;
                                             return Ok(f64_val);
                                         }
                                         crate::types::OatsType::String
@@ -742,6 +754,10 @@ impl<'a> CodeGen<'a> {
                                     static_member.span.start as usize,
                                 )
                             })?;
+                        // Set the type to Number so string concatenation can convert it properly
+                        self.last_expr_oats_type
+                            .borrow_mut()
+                            .replace(crate::types::OatsType::Number);
                         return Ok(loaded.as_basic_value_enum());
                     }
                 }

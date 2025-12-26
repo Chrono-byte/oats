@@ -13,18 +13,34 @@ use crate::types::OatsType;
 
 /// Reference counting operation helpers
 pub mod rc {
-    use super::{CodeGen, PointerValue};
+    use super::{CodeGen, Diagnostic, PointerValue, Severity};
 
     /// Increment reference count for a pointer value
-    pub fn rc_inc_value<'a>(codegen: &CodeGen<'a>, ptr: PointerValue<'a>, name: &str) {
+    pub fn rc_inc_value<'a>(
+        codegen: &CodeGen<'a>,
+        ptr: PointerValue<'a>,
+        name: &str,
+    ) -> crate::diagnostics::DiagnosticResult<()> {
         let rc_inc = codegen.get_rc_inc();
-        let _ = codegen.builder.build_call(rc_inc, &[ptr.into()], name);
+        codegen
+            .builder
+            .build_call(rc_inc, &[ptr.into()], name)
+            .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "failed to build rc_inc call"))?;
+        Ok(())
     }
 
     /// Decrement reference count for a pointer value
-    pub fn rc_dec_value<'a>(codegen: &CodeGen<'a>, ptr: PointerValue<'a>, name: &str) {
+    pub fn rc_dec_value<'a>(
+        codegen: &CodeGen<'a>,
+        ptr: PointerValue<'a>,
+        name: &str,
+    ) -> crate::diagnostics::DiagnosticResult<()> {
         let rc_dec = codegen.get_rc_dec();
-        let _ = codegen.builder.build_call(rc_dec, &[ptr.into()], name);
+        codegen
+            .builder
+            .build_call(rc_dec, &[ptr.into()], name)
+            .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "failed to build rc_dec call"))?;
+        Ok(())
     }
 }
 

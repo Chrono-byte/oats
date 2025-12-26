@@ -132,7 +132,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         };
                     }
                     // emit rc decs for locals
-                    self.emit_rc_dec_for_locals(locals_stack);
+                    self.emit_rc_dec_for_locals(locals_stack)?;
                     // build return with the lowered value
                     let _ = self.builder.build_return(Some(&val));
                     Ok(true)
@@ -144,7 +144,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 }
             }
         } else {
-            self.emit_rc_dec_for_locals(locals_stack);
+            self.emit_rc_dec_for_locals(locals_stack)?;
             let _ = self.builder.build_return(None);
             Ok(true)
         }

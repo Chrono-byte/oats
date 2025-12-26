@@ -324,11 +324,14 @@ impl crate::codegen::CodeGen<'_> {
                                 | OatsType::Option(_)
                         ) {
                             let rc_inc = self.get_rc_inc();
-                            let _ = self.builder.build_call(
-                                rc_inc,
-                                &[param_val.into()],
-                                "rc_inc_field",
-                            );
+                            self.builder
+                                .build_call(rc_inc, &[param_val.into()], "rc_inc_field")
+                                .map_err(|_| {
+                                    crate::diagnostics::Diagnostic::simple_boxed(
+                                        Severity::Error,
+                                        "failed to build rc_inc call",
+                                    )
+                                })?;
                         }
 
                         let store = self.builder.build_store(field_ptr, param_val);

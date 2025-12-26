@@ -228,11 +228,14 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 };
                             if !self.should_elide_rc_for_local(&loop_var_name) {
                                 let rc_inc = self.get_rc_inc();
-                                let _ = self.builder.build_call(
-                                    rc_inc,
-                                    &[pv.into()],
-                                    "rc_inc_loop_var",
-                                );
+                                self.builder
+                                    .build_call(rc_inc, &[pv.into()], "rc_inc_loop_var")
+                                    .map_err(|_| {
+                                        crate::diagnostics::Diagnostic::simple_boxed(
+                                            Severity::Error,
+                                            "failed to build rc_inc call",
+                                        )
+                                    })?;
                             }
                             let _ = self.builder.build_store(alloca, bv);
                         }

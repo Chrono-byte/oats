@@ -233,13 +233,46 @@ impl<'a> crate::codegen::CodeGen<'a> {
             && let Expression::Identifier(ident) = &new_expr.callee
         {
             let cname = ident.name.to_string();
+            
+            // Check if this is a generic class instantiation and monomorphize if needed
+            let actual_class_name = if let Some(type_args) = &new_expr.type_arguments {
+                // This is a generic instantiation - monomorphize the class
+                let type_arg_types = type_args
+                    .params
+                    .iter()
+                    .filter_map(|ta| {
+                        crate::types::map_ts_type_with_aliases(
+                            ta,
+                            Some(&*self.type_aliases.borrow()),
+                            Some(&*self.symbol_table.borrow()),
+                        )
+                    })
+                    .collect::<Vec<_>>();
+
+                if type_arg_types.len() == type_args.params.len() {
+                    // Successfully parsed all type arguments
+                    match self.monomorphize_class(&cname, &type_arg_types) {
+                        Ok(specialized_name) => specialized_name,
+                        Err(_) => {
+                            // Fallback to original name if monomorphization failed
+                            cname.clone()
+                        }
+                    }
+                } else {
+                    // Fallback to original name if type args couldn't be parsed
+                    cname
+                }
+            } else {
+                cname
+            };
+            
             // Resolve class name through symbol table
             let class_name = if let Some(crate::types::Symbol::Type { mangled_name }) =
-                self.symbol_table.borrow().get(&cname)
+                self.symbol_table.borrow().get(&actual_class_name)
             {
                 mangled_name.clone()
             } else {
-                cname
+                actual_class_name
             };
             *declared_nominal = Some(class_name);
 
@@ -570,7 +603,14 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 if let inkwell::values::BasicValueEnum::PointerValue(p) = ev {
                     if !self.returned_ownership.get() {
                         let rc_inc = self.get_rc_inc();
-                        let _ = self.builder.build_call(rc_inc, &[p.into()], "rc_inc_field");
+                        self.builder
+                            .build_call(rc_inc, &[p.into()], "rc_inc_field")
+                            .map_err(|_| {
+                                crate::diagnostics::Diagnostic::simple_boxed(
+                                    Severity::Error,
+                                    "failed to build rc_inc call",
+                                )
+                            })?;
                     }
                     let _ = self.builder.build_store(field_ptr, ev);
                 } else {
@@ -804,11 +844,14 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
                             // Increment RC for the nested array
                             let rc_inc = self.get_rc_inc();
-                            let _ = self.builder.build_call(
-                                rc_inc,
-                                &[nested_arr_ptr.into()],
-                                &format!("rc_inc_nested_arr_elem_{idx}"),
-                            );
+                            self.builder
+                                .build_call(rc_inc, &[nested_arr_ptr.into()], &format!("rc_inc_nested_arr_elem_{idx}"))
+                                .map_err(|_| {
+                                    crate::diagnostics::Diagnostic::simple_boxed(
+                                        Severity::Error,
+                                        "failed to build rc_inc call",
+                                    )
+                                })?;
 
                             // Store the loaded nested array
                             let _ = self.builder.build_store(temp_alloca, elem_val);
@@ -865,11 +908,14 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
                             // Increment RC for the nested object
                             let rc_inc = self.get_rc_inc();
-                            let _ = self.builder.build_call(
-                                rc_inc,
-                                &[nested_obj_ptr.into()],
-                                &format!("rc_inc_nested_obj_elem_{idx}"),
-                            );
+                            self.builder
+                                .build_call(rc_inc, &[nested_obj_ptr.into()], &format!("rc_inc_nested_obj_elem_{idx}"))
+                                .map_err(|_| {
+                                    crate::diagnostics::Diagnostic::simple_boxed(
+                                        Severity::Error,
+                                        "failed to build rc_inc call",
+                                    )
+                                })?;
 
                             // Store the loaded nested object
                             let _ = self.builder.build_store(temp_alloca, elem_val);
@@ -1356,11 +1402,14 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     // Increment RC for the loaded pointer
                     if let BasicValueEnum::PointerValue(loaded_ptr) = loaded {
                         let rc_inc = self.get_rc_inc();
-                        let _ = self.builder.build_call(
-                            rc_inc,
-                            &[loaded_ptr.into()],
-                            &format!("rc_inc_{binding_name}"),
-                        );
+                        self.builder
+                            .build_call(rc_inc, &[loaded_ptr.into()], &format!("rc_inc_{binding_name}"))
+                            .map_err(|_| {
+                                crate::diagnostics::Diagnostic::simple_boxed(
+                                    Severity::Error,
+                                    "failed to build rc_inc call",
+                                )
+                            })?;
                     }
 
                     // Create alloca for the binding
@@ -1412,11 +1461,14 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
                         // Increment RC for the nested object
                         let rc_inc = self.get_rc_inc();
-                        let _ = self.builder.build_call(
-                            rc_inc,
-                            &[nested_obj_ptr.into()],
-                            &format!("rc_inc_nested_{prop_name}"),
-                        );
+                        self.builder
+                            .build_call(rc_inc, &[nested_obj_ptr.into()], &format!("rc_inc_nested_{prop_name}"))
+                            .map_err(|_| {
+                                crate::diagnostics::Diagnostic::simple_boxed(
+                                    Severity::Error,
+                                    "failed to build rc_inc call",
+                                )
+                            })?;
 
                         // Store the loaded nested object
                         let _ = self.builder.build_store(temp_alloca, loaded);
@@ -1479,11 +1531,14 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
                         // Increment RC for the nested array
                         let rc_inc = self.get_rc_inc();
-                        let _ = self.builder.build_call(
-                            rc_inc,
-                            &[nested_arr_ptr.into()],
-                            &format!("rc_inc_nested_arr_{prop_name}"),
-                        );
+                        self.builder
+                            .build_call(rc_inc, &[nested_arr_ptr.into()], &format!("rc_inc_nested_arr_{prop_name}"))
+                            .map_err(|_| {
+                                crate::diagnostics::Diagnostic::simple_boxed(
+                                    Severity::Error,
+                                    "failed to build rc_inc call",
+                                )
+                            })?;
 
                         // Store the loaded nested array
                         let _ = self.builder.build_store(temp_alloca, loaded);

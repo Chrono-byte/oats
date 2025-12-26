@@ -444,7 +444,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 .get_insert_block()
                 .is_none_or(|b| b.get_terminator().is_none())
         {
-            self.emit_rc_dec_for_locals(&locals_stack);
+            self.emit_rc_dec_for_locals(&locals_stack)?;
 
             // Get the out_ptr parameter
             let out_param = poll_f.get_nth_param(1).ok_or_else(|| {

@@ -385,11 +385,14 @@ impl crate::codegen::CodeGen<'_> {
                             // The weak/strong distinction will be added later.
                             // Use the strong `rc_inc` path for current allocations.
                             let rc_inc_fn = self.get_rc_inc();
-                            let _ = self.builder.build_call(
-                                rc_inc_fn,
-                                &[boxed_ptr.into()],
-                                "rc_inc_field",
-                            );
+                            self.builder
+                                .build_call(rc_inc_fn, &[boxed_ptr.into()], "rc_inc_field")
+                                .map_err(|_| {
+                                    crate::diagnostics::Diagnostic::simple_boxed(
+                                        Severity::Error,
+                                        "failed to build rc_inc call",
+                                    )
+                                })?;
                         }
                     } else if param_val.get_type().is_pointer_type() {
                         // box the pointer payload
@@ -507,18 +510,24 @@ impl crate::codegen::CodeGen<'_> {
                         // If the declared field type is Weak<T>, use rc_weak_inc; otherwise rc_inc
                         if let OatsType::Weak(_) = _field_type {
                             let rc_weak_inc = self.get_rc_weak_inc();
-                            let _ = self.builder.build_call(
-                                rc_weak_inc,
-                                &[rc_ptr.into()],
-                                "rc_weak_inc_field",
-                            );
+                            self.builder
+                                .build_call(rc_weak_inc, &[rc_ptr.into()], "rc_weak_inc_field")
+                                .map_err(|_| {
+                                    crate::diagnostics::Diagnostic::simple_boxed(
+                                        Severity::Error,
+                                        "failed to build rc_weak_inc call",
+                                    )
+                                })?;
                         } else {
                             let rc_inc_fn = self.get_rc_inc();
-                            let _ = self.builder.build_call(
-                                rc_inc_fn,
-                                &[rc_ptr.into()],
-                                "rc_inc_field",
-                            );
+                            self.builder
+                                .build_call(rc_inc_fn, &[rc_ptr.into()], "rc_inc_field")
+                                .map_err(|_| {
+                                    crate::diagnostics::Diagnostic::simple_boxed(
+                                        Severity::Error,
+                                        "failed to build rc_inc call",
+                                    )
+                                })?;
                         }
                     }
                 }

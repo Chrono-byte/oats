@@ -135,7 +135,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
             // Create an array of string keys at compile time
             // We'll create a static array of string pointers
-            let keys_array = self.create_string_keys_array(&field_names)?;
+            let keys_array = self.create_string_keys_array(&field_names, for_in.span.start as usize)?;
 
             // Create loop variable (string pointer)
             let loop_var_alloca = self
@@ -288,6 +288,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
     fn create_string_keys_array(
         &self,
         field_names: &[String],
+        span_start: usize,
     ) -> crate::diagnostics::DiagnosticResult<inkwell::values::PointerValue<'a>> {
         // Create string constants for each field name
         let mut key_strings: Vec<inkwell::values::PointerValue<'a>> = Vec::new();
@@ -350,11 +351,19 @@ impl<'a> crate::codegen::CodeGen<'a> {
         let array_set_ptr_fn = self.get_array_set_ptr();
         for (idx, key_str) in key_strings.iter().enumerate() {
             let idx_val = self.i64_t.const_int(idx as u64, false);
-            let _ = self.builder.build_call(
-                array_set_ptr_fn,
-                &[array_ptr_alloca.into(), idx_val.into(), (*key_str).into()],
-                "set_key",
-            );
+            self.builder
+                .build_call(
+                    array_set_ptr_fn,
+                    &[array_ptr_alloca.into(), idx_val.into(), (*key_str).into()],
+                    "set_key",
+                )
+                .map_err(|_| {
+                    crate::diagnostics::Diagnostic::simple_with_span_boxed(
+                        Severity::Error,
+                        "failed to build array_set_ptr call",
+                        span_start,
+                    )
+                })?;
         }
 
         // Load final array pointer (in case reallocation occurred)

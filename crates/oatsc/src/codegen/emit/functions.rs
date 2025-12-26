@@ -163,7 +163,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 .get_insert_block()
                 .is_none_or(|b| b.get_terminator().is_none())
         {
-            self.emit_rc_dec_for_locals(&locals_stack);
+            self.emit_rc_dec_for_locals(&locals_stack)?;
             // If the declared return type is Void, emit a bare `ret void`.
             // Otherwise, return a sensible zero/null value matching the ABI
             // (0.0 for numbers, null ptr for pointer-like returns).
@@ -464,7 +464,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             {
                 let val =
                     self.lower_expr(&estmt.expression, function, &param_map, &mut locals_stack)?;
-                self.emit_rc_dec_for_locals(&locals_stack);
+                self.emit_rc_dec_for_locals(&locals_stack)?;
                 self.builder.build_return(Some(&val)).map_err(|_| {
                     crate::diagnostics::Diagnostic::simple_boxed(
                         Severity::Error,
@@ -485,7 +485,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
         // 5. Implicit return
         if !emitted_terminator {
-            self.emit_rc_dec_for_locals(&locals_stack);
+            self.emit_rc_dec_for_locals(&locals_stack)?;
             if matches!(ret_type, crate::types::OatsType::Void) {
                 self.builder.build_return(None).map_err(|_| {
                     crate::diagnostics::Diagnostic::simple_boxed(

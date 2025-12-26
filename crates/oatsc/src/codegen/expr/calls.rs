@@ -389,7 +389,15 @@ impl<'a> CodeGen<'a> {
         // Handle no arguments - print newline
         if call.arguments.is_empty() {
             if let Some(fv) = self.module.get_function("oats_std_console_log_newline") {
-                let _ = self.builder.build_call(fv, &[], "console_log_newline");
+                self.builder
+                    .build_call(fv, &[], "console_log_newline")
+                    .map_err(|_| {
+                        Diagnostic::simple_with_span_boxed(
+                            Severity::Error,
+                            "failed to build console_log_newline call",
+                            call.span.start as usize,
+                        )
+                    })?;
                 return Ok(self.f64_t.const_float(0.0).as_basic_value_enum());
             }
             return Err(Diagnostic::simple_with_span_boxed(
@@ -535,11 +543,15 @@ impl<'a> CodeGen<'a> {
                             .module
                             .get_function(crate::runtime_functions::names::STD_CONSOLE_LOG)
                         {
-                            let _ = self.builder.build_call(
-                                fv,
-                                &[str_ptr.into()],
-                                "console_log_string",
-                            );
+                            self.builder
+                                .build_call(fv, &[str_ptr.into()], "console_log_string")
+                                .map_err(|_| {
+                                    Diagnostic::simple_with_span_boxed(
+                                        Severity::Error,
+                                        "failed to build console_log_string call",
+                                        call.span.start as usize,
+                                    )
+                                })?;
                         } else {
                             return Err(Diagnostic::simple_with_span_boxed(
                                 Severity::Error,
@@ -583,11 +595,15 @@ impl<'a> CodeGen<'a> {
                             }
                         };
                         if let Some(fv) = self.module.get_function("oats_std_console_log_number") {
-                            let _ = self.builder.build_call(
-                                fv,
-                                &[num_val.into()],
-                                "console_log_number",
-                            );
+                            self.builder
+                                .build_call(fv, &[num_val.into()], "console_log_number")
+                                .map_err(|_| {
+                                    Diagnostic::simple_with_span_boxed(
+                                        Severity::Error,
+                                        "failed to build console_log_number call",
+                                        call.span.start as usize,
+                                    )
+                                })?;
                         } else {
                             return Err(Diagnostic::simple_with_span_boxed(
                                 Severity::Error,
@@ -654,11 +670,15 @@ impl<'a> CodeGen<'a> {
                                         call.span.start as usize,
                                     )
                                 })?;
-                            let _ = self.builder.build_call(
-                                rc_dec_str_fn,
-                                &[str_ptr.into()],
-                                "rc_dec_str_array",
-                            );
+                            self.builder
+                                .build_call(rc_dec_str_fn, &[str_ptr.into()], "rc_dec_str_array")
+                                .map_err(|_| {
+                                    Diagnostic::simple_with_span_boxed(
+                                        Severity::Error,
+                                        "failed to build rc_dec call",
+                                        call.span.start as usize,
+                                    )
+                                })?;
                             return Ok(self.f64_t.const_float(0.0).as_basic_value_enum());
                         }
                         return Err(Diagnostic::simple_with_span_boxed(
@@ -672,7 +692,15 @@ impl<'a> CodeGen<'a> {
                         .module
                         .get_function(crate::runtime_functions::names::STD_CONSOLE_LOG)
                     {
-                        let _ = self.builder.build_call(fv, &[pv.into()], "console_log");
+                        self.builder
+                            .build_call(fv, &[pv.into()], "console_log")
+                            .map_err(|_| {
+                                Diagnostic::simple_with_span_boxed(
+                                    Severity::Error,
+                                    "failed to build console_log call",
+                                    call.span.start as usize,
+                                )
+                            })?;
                         return Ok(self.f64_t.const_float(0.0).as_basic_value_enum());
                     }
                     return Err(Diagnostic::simple_with_span_boxed(
@@ -972,16 +1000,27 @@ impl<'a> CodeGen<'a> {
                     {
                         eprintln!("DEBUG: console.log: cleaning up temporary left operand");
                         self.builder
-                            .build_call(rc_dec_str_fn, &[left.into()], "rc_dec_left_tmp");
+                            .build_call(rc_dec_str_fn, &[left.into()], "rc_dec_left_tmp")
+                            .map_err(|_| {
+                                Diagnostic::simple_with_span_boxed(
+                                    Severity::Error,
+                                    "failed to build rc_dec call",
+                                    call.span.start as usize,
+                                )
+                            })?;
                     }
                     // Clean up the current right operand if it was temporary
                     if is_tmp && let Some(rc_dec_str_fn) = self.module.get_function("rc_dec_str") {
                         eprintln!("DEBUG: console.log: cleaning up temporary right operand");
-                        self.builder.build_call(
-                            rc_dec_str_fn,
-                            &[str_ptr.into()],
-                            "rc_dec_right_tmp",
-                        );
+                        self.builder
+                            .build_call(rc_dec_str_fn, &[str_ptr.into()], "rc_dec_right_tmp")
+                            .map_err(|_| {
+                                Diagnostic::simple_with_span_boxed(
+                                    Severity::Error,
+                                    "failed to build rc_dec call",
+                                    call.span.start as usize,
+                                )
+                            })?;
                     }
 
                     // str_concat returns a new string with RC=1 (data pointer format)
@@ -1042,11 +1081,15 @@ impl<'a> CodeGen<'a> {
                                 call.span.start as usize,
                             )
                         })?;
-                    let _ = self.builder.build_call(
-                        rc_dec_str_fn,
-                        &[final_str.into()],
-                        "rc_dec_final_str",
-                    );
+                    self.builder
+                        .build_call(rc_dec_str_fn, &[final_str.into()], "rc_dec_final_str")
+                        .map_err(|_| {
+                            Diagnostic::simple_with_span_boxed(
+                                Severity::Error,
+                                "failed to build rc_dec call",
+                                call.span.start as usize,
+                            )
+                        })?;
                 } else {
                     eprintln!(
                         "DEBUG: console.log: final string is not temporary, skipping cleanup"
@@ -1103,7 +1146,15 @@ impl<'a> CodeGen<'a> {
                 }
                 if let BasicValueEnum::PointerValue(pv) = obj_val {
                     let f = self.get_rc_weak_inc();
-                    let _ = self.builder.build_call(f, &[pv.into()], "rc_weak_inc_call");
+                    self.builder
+                        .build_call(f, &[pv.into()], "rc_weak_inc_call")
+                        .map_err(|_| {
+                            Diagnostic::simple_with_span_boxed(
+                                Severity::Error,
+                                "failed to build rc_weak_inc call",
+                                call.span.start as usize,
+                            )
+                        })?;
                     return Ok(pv.as_basic_value_enum());
                 }
                 return Err(Diagnostic::simple_boxed(

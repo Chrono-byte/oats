@@ -177,7 +177,6 @@ pub fn parse_function_signature_from_metadata(line: &str) -> Option<(String, Fun
 /// Parses an Oats type from a string representation.
 fn parse_oats_type_from_string(type_str: &str) -> OatsType {
     match type_str.trim() {
-        "number" => OatsType::Number,
         "f64" => OatsType::F64,
         "f32" => OatsType::F32,
         "i64" => OatsType::I64,

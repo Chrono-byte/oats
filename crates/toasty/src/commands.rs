@@ -26,7 +26,6 @@ fn get_verbosity_and_color(cli: &Cli, color: Option<String>) -> bool {
     let enable_color = match color.as_deref() {
         Some("always") => true,
         Some("never") => false,
-        Some("auto") | None => atty::is(AtStream::Stderr),
         _ => atty::is(AtStream::Stderr),
     };
     colored::control::set_override(enable_color);
@@ -249,8 +248,10 @@ pub fn handle_build(cli: &Cli, opts: BuildCommandOptions) -> Result<()> {
 
         // For Phase 2: if this is not the first module, add extern_oats for previous modules
         // Extract exported symbols from package metadata or source files
-        if i > 0 {
-            for prev_module in &compilation_order[0..i] {
+        if i > 0
+            && let Some(prev_modules) = compilation_order.get(0..i)
+        {
+            for prev_module in prev_modules {
                 // Determine the import path (relative to current module)
                 // Uses the module file stem as the import path
                 let import_path = match std::path::Path::new(prev_module)

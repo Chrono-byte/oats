@@ -745,11 +745,6 @@ pub fn run_from_args(
                         collect_idents(&c.consequent, out);
                         collect_idents(&c.alternate, out);
                     }
-                    Expression::TemplateLiteral(_)
-                    | Expression::NumericLiteral(_)
-                    | Expression::StringLiteral(_)
-                    | Expression::BooleanLiteral(_)
-                    | Expression::NullLiteral(_) => {}
                     _ => {}
                 }
             }
@@ -981,7 +976,6 @@ pub fn run_from_args(
         if let Some(ref opt_str) = opts.opt_level {
             match opt_str.as_str() {
                 "none" | "0" => OptimizationLevel::None,
-                "1" | "default" => OptimizationLevel::Default,
                 "2" | "3" | "aggressive" => OptimizationLevel::Aggressive,
                 _ => OptimizationLevel::Default,
             }
@@ -993,7 +987,6 @@ pub fn run_from_args(
     } else if let Ok(opt_str) = std::env::var("OATS_OPT_LEVEL") {
         match opt_str.as_str() {
             "none" | "0" => OptimizationLevel::None,
-            "1" | "default" => OptimizationLevel::Default,
             "2" | "3" | "aggressive" => OptimizationLevel::Aggressive,
             _ => OptimizationLevel::Default,
         }

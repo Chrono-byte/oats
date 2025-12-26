@@ -100,13 +100,6 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     flatten_expr(&c.consequent, out);
                     flatten_expr(&c.alternate, out);
                 }
-                oxc_ast::ast::Expression::TemplateLiteral(_)
-                | oxc_ast::ast::Expression::NumericLiteral(_)
-                | oxc_ast::ast::Expression::StringLiteral(_)
-                | oxc_ast::ast::Expression::BooleanLiteral(_)
-                | oxc_ast::ast::Expression::NullLiteral(_) => {
-                    // literals: no idents to record
-                }
                 oxc_ast::ast::Expression::ArrowFunctionExpression(_a) => {
                     // don't recurse into nested function/arrow bodies
                     // Function bodies are not flattened, so we don't need to recurse
@@ -196,24 +189,6 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 flatten_expr(&e.test, out);
                                 flatten_expr(&e.consequent, out);
                                 flatten_expr(&e.alternate, out);
-                            }
-                            oxc_ast::ast::ForStatementInit::TemplateLiteral(_) => {
-                                // Template literals in for init: no idents to record
-                            }
-                            oxc_ast::ast::ForStatementInit::NumericLiteral(_) => {
-                                // no idents to record
-                            }
-                            oxc_ast::ast::ForStatementInit::StringLiteral(_) => {
-                                // no idents to record
-                            }
-                            oxc_ast::ast::ForStatementInit::BooleanLiteral(_) => {
-                                // no idents to record
-                            }
-                            oxc_ast::ast::ForStatementInit::NullLiteral(_) => {
-                                // no idents to record
-                            }
-                            oxc_ast::ast::ForStatementInit::ThisExpression(_) => {
-                                // no idents to record
                             }
                             _ => {
                                 // conservative: don't traverse into other statement types

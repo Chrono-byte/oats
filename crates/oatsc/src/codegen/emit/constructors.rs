@@ -112,7 +112,6 @@ impl crate::codegen::CodeGen<'_> {
                 | OatsType::Unowned(_)
                 | OatsType::Option(_)
                 | OatsType::Enum(_, _)
-                // ProcessId and MonitorRef are represented as i8* (pointers to heap-allocated u64)
                 | OatsType::ProcessId
                 | OatsType::MonitorRef => self.i8ptr_t.into(),
                 OatsType::Boolean => self.bool_t.into(),
@@ -147,11 +146,10 @@ impl crate::codegen::CodeGen<'_> {
                     // Return a fallback type to avoid panicking, but this indicates a bug.
                     self.i8ptr_t.into()
                 }
-                OatsType::GenericInstance { .. } => {
-                    // Generic instances are specialized, so treat as pointer types
+                OatsType::GenericInstance { .. } | OatsType::NumberObject => {
+                    // Generic instances and NumberObject are specialized, so treat as pointer types
                     self.i8ptr_t.into()
                 }
-                OatsType::NumberObject => self.i8ptr_t.into(),
             };
             llvm_param_types.push(llvm_ty);
         }

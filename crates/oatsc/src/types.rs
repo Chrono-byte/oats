@@ -180,8 +180,7 @@ impl SymbolTable {
     pub fn get_type(&self, name: &str) -> Option<&OatsType> {
         self.get(name).and_then(|symbol| match symbol {
             Symbol::Variable { ty } => Some(ty),
-            Symbol::StdFunction { .. } => None,
-            Symbol::Type { .. } => None,
+            Symbol::StdFunction { .. } | Symbol::Type { .. } => None,
         })
     }
 

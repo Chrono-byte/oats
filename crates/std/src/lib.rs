@@ -10,18 +10,24 @@ pub mod raw;
 pub mod sys;
 
 // Public API modules
+pub mod array;
 pub mod console;
+pub mod date;
 pub mod env;
 pub mod format;
 pub mod fs;
 pub mod hash;
 pub mod io;
+pub mod json;
 pub mod math;
 pub mod net;
+pub mod object;
 pub mod path;
 pub mod process;
+pub mod promise;
 pub mod random;
 pub mod string;
+pub mod string_prototype;
 pub mod time;
 
 // Re-export commonly used types

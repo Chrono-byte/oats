@@ -16,7 +16,6 @@ use std::collections::HashMap;
 ///
 /// This helper sets up a minimal CodeGen context with an LLVM module,
 /// suitable for unit testing individual codegen components.
-
 pub fn create_test_codegen<'a>(context: &'a Context, source: &'a str) -> CodeGen<'a> {
     let module = context.create_module("test");
     let builder = context.create_builder();
@@ -148,7 +147,6 @@ pub fn parse_snippet(
 /// Asserts that a code snippet compiles successfully.
 ///
 /// Panics if compilation fails or produces errors.
-
 pub fn assert_compiles(code: &str) {
     let (parsed_mod, diags) = parse_snippet(code).expect("Code should parse successfully");
 
@@ -176,7 +174,6 @@ pub fn assert_compiles(code: &str) {
 /// Asserts that a code snippet fails to compile with a specific error message.
 ///
 /// Panics if compilation succeeds or if the error message doesn't match.
-
 pub fn assert_compilation_error(code: &str, expected_error: &str) {
     match parse_snippet(code) {
         Ok((_parsed_mod, diags)) => {
@@ -219,25 +216,21 @@ pub fn assert_compilation_error(code: &str, expected_error: &str) {
 /// Extracts LLVM IR from a CodeGen instance.
 ///
 /// Returns the IR as a string for inspection in tests.
-
 pub fn get_llvm_ir<'a>(codegen: &CodeGen<'a>) -> String {
     codegen.module.print_to_string().to_string()
 }
 
 /// Creates a minimal symbol table for testing.
-
 pub fn create_test_symbol_table() -> SymbolTable {
     SymbolTable::new()
 }
 
 /// Helper to create a test context and module.
-
 pub fn create_test_context() -> Context {
     Context::create()
 }
 
 /// Asserts that a diagnostic has a specific severity and message pattern.
-
 pub fn assert_diagnostic(
     diag: &Diagnostic,
     expected_severity: Severity,
@@ -256,7 +249,6 @@ pub fn assert_diagnostic(
 }
 
 /// Helper to create a test function signature.
-
 pub fn create_test_function_sig(params: Vec<OatsType>, ret: OatsType) -> FunctionSig {
     FunctionSig {
         type_params: vec![],
@@ -266,7 +258,6 @@ pub fn create_test_function_sig(params: Vec<OatsType>, ret: OatsType) -> Functio
 }
 
 /// Helper to create a test OatsType.
-
 pub fn create_test_type(ty: &str) -> OatsType {
     match ty {
         "number" => OatsType::Number,
@@ -280,7 +271,6 @@ pub fn create_test_type(ty: &str) -> OatsType {
 /// Compiles a code snippet to LLVM IR and returns it.
 ///
 /// This is a convenience function that combines parsing and codegen.
-
 pub fn compile_to_ir(code: &str) -> Result<String, Box<Diagnostic>> {
     let (_parsed_mod, _diags) = parse_snippet(code)?;
     let context = create_test_context();

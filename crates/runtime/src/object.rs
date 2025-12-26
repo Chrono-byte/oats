@@ -62,7 +62,7 @@ pub unsafe extern "C" fn tuple_to_string(obj: *mut c_void) -> *mut c_char {
             // Invalid offset - skip this field
             continue;
         }
-        let off = usize::try_from(off_i32).expect("field offset must be valid usize");
+        let off = off_i32 as usize;
         // Validate offset alignment and bounds
         if (off & 7) != 0 {
             // Offset must be 8-byte aligned
@@ -130,9 +130,7 @@ pub extern "C" fn union_box_f64(v: f64) -> *mut c_void {
     unsafe {
         // layout: header(8) | dtor_ptr(8) | discrim(8) | payload(8)
         let total = 8 * 4;
-        let mem =
-            runtime_malloc(usize::try_from(total).expect("total size must fit in usize") as size_t)
-                .cast::<u8>();
+        let mem = runtime_malloc(total as usize as size_t).cast::<u8>();
         if mem.is_null() {
             return ptr::null_mut();
         }
@@ -178,9 +176,7 @@ pub extern "C" fn union_box_f64(v: f64) -> *mut c_void {
 pub unsafe extern "C" fn union_box_ptr(p: *mut c_void) -> *mut c_void {
     unsafe {
         let total = 8 * 4;
-        let mem =
-            runtime_malloc(usize::try_from(total).expect("total size must fit in usize") as size_t)
-                .cast::<u8>();
+        let mem = runtime_malloc(total as usize as size_t).cast::<u8>();
         if mem.is_null() {
             return ptr::null_mut();
         }

@@ -1,0 +1,39 @@
+# Clippy configuration for Oats compiler development
+# This configuration balances strictness with allowances for compiler patterns
+
+# Allow short identifiers in AST and IR nodes (common in compilers)
+allowed-idents-below-min-chars = [
+    "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m",
+    "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z",
+    "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M",
+    "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z",
+    # Common compiler variable names
+    "ty", "ir", "ll", "op", "fn", "id", "idx", "len", "ptr", "val",
+    "lhs", "rhs", "src", "dst", "tmp", "ret", "arg", "ctx", "env"
+]
+
+# Allow debug macros in development and tests
+allow-dbg-in-tests = true
+
+# Allow panics and unwraps in tests (common in compiler tests)
+allow-unwrap-in-tests = true
+allow-panic-in-tests = true
+
+# Allow indexing/slicing in tests (AST/IR manipulation is common)
+allow-indexing-slicing-in-tests = true
+
+# Allow expect in tests
+allow-expect-in-tests = true
+
+# Allow expect in const contexts (often used in compilation)
+allow-expect-in-consts = true
+allow-unwrap-in-consts = true
+
+# Allow comparison to zero (common in compiler optimizations)
+allow-comparison-to-zero = true
+
+# MSRV - adjust as needed for your project
+# msrv = "1.70.0"
+
+# Standard library and runtime crates may need different rules
+# These can be overridden in individual crate Cargo.toml files

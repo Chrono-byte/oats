@@ -880,7 +880,7 @@ pub unsafe extern "C" fn array_to_string(arr: *mut c_void) -> *mut c_char {
                 if i != 0 {
                     s.push_str(", ");
                 }
-                write!(s, "{v}").expect("failed to write to string");
+                let _ = write!(s, "{v}"); // Should never fail for String
             }
         } else {
             for i in 0..len {
@@ -918,7 +918,7 @@ pub unsafe extern "C" fn array_to_string(arr: *mut c_void) -> *mut c_char {
                 }
                 if !printed {
                     use std::fmt::Write;
-                    write!(s, "<ptr {p:p}>").expect("failed to write to string");
+                    let _ = write!(s, "<ptr {p:p}>"); // Should never fail for String
                 }
                 rc_dec(p);
             }

@@ -25,6 +25,3 @@ dirs = "6.0"
 insta = "1.30.0"
 tempfile = "3.5"
 walkdir = "2.4"
-
-[lints]
-workspace = true

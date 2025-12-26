@@ -163,6 +163,99 @@ pub const extern "C" fn oats_std_math_e() -> c_double {
     std::f64::consts::E
 }
 
+/// Get value of LN2 (natural log of 2)
+/// #[`oats_export`]
+#[no_mangle]
+pub const extern "C" fn oats_std_math_ln2() -> c_double {
+    std::f64::consts::LN_2
+}
+
+/// Get value of LN10 (natural log of 10)
+/// #[`oats_export`]
+#[no_mangle]
+pub const extern "C" fn oats_std_math_ln10() -> c_double {
+    std::f64::consts::LN_10
+}
+
+/// Get value of LOG2E (log base 2 of E)
+/// #[`oats_export`]
+#[no_mangle]
+pub const extern "C" fn oats_std_math_log2e() -> c_double {
+    std::f64::consts::LOG2_E
+}
+
+/// Get value of LOG10E (log base 10 of E)
+/// #[`oats_export`]
+#[no_mangle]
+pub const extern "C" fn oats_std_math_log10e() -> c_double {
+    std::f64::consts::LOG10_E
+}
+
+/// Get value of SQRT2 (square root of 2)
+/// #[`oats_export`]
+#[no_mangle]
+pub const extern "C" fn oats_std_math_sqrt2() -> c_double {
+    std::f64::consts::SQRT_2
+}
+
+/// Get value of `SQRT1_2` (square root of 1/2)
+/// #[`oats_export`]
+#[no_mangle]
+pub const extern "C" fn oats_std_math_sqrt1_2() -> c_double {
+    std::f64::consts::FRAC_1_SQRT_2
+}
+
+/// Get sign of number (-1, 0, or 1)
+/// #[`oats_export`]
+#[no_mangle]
+pub extern "C" fn oats_std_math_sign(x: c_double) -> c_double {
+    if x.is_nan() {
+        return f64::NAN;
+    }
+    if x > 0.0 {
+        1.0
+    } else if x < 0.0 {
+        -1.0
+    } else {
+        0.0
+    }
+}
+
+/// Calculate cube root
+/// #[`oats_export`]
+#[no_mangle]
+pub extern "C" fn oats_std_math_cbrt(x: c_double) -> c_double {
+    x.cbrt()
+}
+
+/// Calculate hypotenuse (sqrt(x^2 + y^2))
+/// #[`oats_export`]
+#[no_mangle]
+pub extern "C" fn oats_std_math_hypot(x: c_double, y: c_double) -> c_double {
+    x.hypot(y)
+}
+
+/// Integer multiplication (32-bit)
+/// #[`oats_export`]
+#[no_mangle]
+pub extern "C" fn oats_std_math_imul(a: i32, b: i32) -> i32 {
+    a.wrapping_mul(b)
+}
+
+/// Round to nearest float32
+/// #[`oats_export`]
+#[no_mangle]
+pub extern "C" fn oats_std_math_fround(x: c_double) -> c_double {
+    x as f32 as f64
+}
+
+/// Truncate to integer
+/// #[`oats_export`]
+#[no_mangle]
+pub extern "C" fn oats_std_math_trunc(x: c_double) -> c_double {
+    x.trunc()
+}
+
 /// Integer division
 /// #[`oats_export`]
 #[no_mangle]
@@ -222,7 +315,7 @@ pub const extern "C" fn oats_std_math_bit_not(a: i64) -> i64 {
 pub extern "C" fn oats_std_math_shl(a: i64, b: i64) -> i64 {
     let shift_amount = b.clamp(0, 63);
     // shift_amount is guaranteed to be 0 <= shift_amount <= 63 due to clamp(0, 63)
-    let shift = u32::try_from(shift_amount).expect("shift_amount should be 0-63");
+    let shift = shift_amount as u32;
     a << shift
 }
 
@@ -237,6 +330,6 @@ pub extern "C" fn oats_std_math_shl(a: i64, b: i64) -> i64 {
 pub extern "C" fn oats_std_math_shr(a: i64, b: i64) -> i64 {
     let shift_amount = b.clamp(0, 63);
     // shift_amount is guaranteed to be 0 <= shift_amount <= 63 due to clamp(0, 63)
-    let shift = u32::try_from(shift_amount).expect("shift_amount should be 0-63");
+    let shift = shift_amount as u32;
     a >> shift
 }

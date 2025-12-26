@@ -610,9 +610,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         "cannot determine object type for compound assignment: all types must be known at compile time",
                         assign.span.start as usize,
                     ));
-                } else if let oxc_ast::ast::MemberExpression::ComputedMemberExpression(
-                    computed_member,
-                ) = member_expr
+                }
+                if let oxc_ast::ast::MemberExpression::ComputedMemberExpression(computed_member) =
+                    member_expr
                 {
                     // Compound assignment for computed member access (e.g., obj["field"] += 5 or obj[0] += 5)
                     // Support both string literal indices and compile-time constant integer indices

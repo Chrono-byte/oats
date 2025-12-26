@@ -917,7 +917,40 @@ pub fn run_from_args(
         false
     };
 
-    // Note: LLVM optimizations (inlining, loop opts) are applied via clang -O3 during compilation
+    // Note: LLVM optimizations are now applied directly in the compiler before object emission
+    // Check if we should dump IR for debugging before optimization
+    let dump_ir_before =
+        options.as_ref().is_some_and(|o| o.dump_ir) || std::env::var("OATS_DUMP_IR").is_ok();
+
+    if dump_ir_before {
+        let out_dir = match options
+            .as_ref()
+            .and_then(|o| o.out_dir.as_ref())
+            .cloned()
+            .or_else(|| std::env::var("OATS_OUT_DIR").ok())
+        {
+            Some(dir) => dir,
+            None => ".".to_string(),
+        };
+        let src_filename = std::path::Path::new(&src_path)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("out");
+        let out_ll_before = format!("{out_dir}/{src_filename}.before.ll");
+
+        if let Err(e) = std::fs::create_dir_all(&out_dir) {
+            eprintln!("Warning: failed to create output directory for IR dump: {e}");
+        } else {
+            let ir_before = codegen.module.print_to_string().to_string();
+            if let Err(e) = std::fs::write(&out_ll_before, ir_before) {
+                eprintln!("Warning: failed to write pre-optimization IR to {out_ll_before}: {e}");
+            } else {
+                eprintln!("Dumped pre-optimization IR to {out_ll_before}");
+            }
+        }
+    }
+
+    // Note: LLVM optimizations (inlining, loop opts) are applied in linking.rs before object emission
     let ir = codegen.module.print_to_string().to_string();
 
     // Determine output directory and file names

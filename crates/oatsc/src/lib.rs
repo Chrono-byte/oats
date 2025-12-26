@@ -49,6 +49,9 @@ pub struct CompileOptions {
     /// Whether to emit LLVM IR to .ll file
     pub emit_ir: bool,
 
+    /// Whether to dump IR before and after optimization (for debugging)
+    pub dump_ir: bool,
+
     /// Whether to emit object file to .o file in output directory
     pub emit_obj: bool,
 
@@ -86,6 +89,7 @@ impl CompileOptions {
             linker: None,
             emit_object_only: false,
             emit_ir: false,
+            dump_ir: false,
             emit_obj: false,
             opt_level: None,
             lto: None,
@@ -110,6 +114,7 @@ impl CompileOptions {
             linker: None,
             emit_object_only: false,
             emit_ir: false,
+            dump_ir: false,
             emit_obj: false,
             opt_level: None,
             lto: None,
@@ -132,8 +137,9 @@ impl CompileOptions {
             out_dir: None,
             out_name: None,
             linker: None,
-            emit_object_only: true, // Package mode always emits objects
+            emit_object_only: false,
             emit_ir: false,
+            dump_ir: false,
             emit_obj: false,
             opt_level: None,
             lto: None,

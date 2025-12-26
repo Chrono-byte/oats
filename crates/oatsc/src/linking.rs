@@ -77,6 +77,17 @@ pub fn compile_to_object_bytes(module: &Module, config: &LinkingConfig) -> Resul
     let tm =
         tm.ok_or_else(|| anyhow::anyhow!("Failed to create TargetMachine with any CPU candidate"))?;
 
+    // Note: LLVM optimizations are applied via clang -O3 during linking phase.
+    // TargetMachine's write_to_memory_buffer will also apply some optimizations
+    // based on the opt_level parameter provided during creation.
+    //
+    // TODO: For LLVM 20, direct pass manager integration requires either:
+    // 1. Using llvm_sys bindings directly for new pass manager API
+    // 2. Upgrading to inkwell version with LLVM 20 pass manager support
+    //
+    // Function attributes like 'nounwind' have been added during code generation
+    // to help the optimizer.
+
     // Emit object file to memory buffer
     let memory_buffer = tm
         .write_to_memory_buffer(module, FileType::Object)

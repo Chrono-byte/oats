@@ -61,6 +61,7 @@ pub fn compile_to_object_bytes(module: &Module, config: &LinkingConfig) -> Resul
 
     // Create TargetMachine, trying CPU candidates in order
     let mut tm = None;
+    let mut failed_cpus = Vec::new();
     for cpu in &cpu_candidates {
         if let Some(machine) = target.create_target_machine(
             &triple,
@@ -72,10 +73,21 @@ pub fn compile_to_object_bytes(module: &Module, config: &LinkingConfig) -> Resul
         ) {
             tm = Some(machine);
             break;
+        } else {
+            failed_cpus.push(cpu.clone());
         }
     }
-    let tm =
-        tm.ok_or_else(|| anyhow::anyhow!("Failed to create TargetMachine with any CPU candidate"))?;
+    let tm = tm.ok_or_else(|| {
+        let cpu_list = if failed_cpus.is_empty() {
+            "none specified".to_string()
+        } else {
+            format!("'{}'", failed_cpus.join("', '"))
+        };
+        anyhow::anyhow!(
+            "Failed to create TargetMachine with any CPU candidate. Tried CPUs: {cpu_list}. Target triple: '{}'",
+            triple.as_str().to_string_lossy()
+        )
+    })?;
 
     // Note: LLVM optimizations are applied via clang -O3 during linking phase.
     // TargetMachine's write_to_memory_buffer will also apply some optimizations

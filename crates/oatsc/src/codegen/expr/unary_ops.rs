@@ -36,7 +36,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
             let inner = self.lower_expr(&unary.argument, function, param_map, locals)?;
             // If we can coerce to f64 (including union-unboxed numbers), it's a number
             if self.coerce_to_f64(inner).is_some() {
-                let ptr = self.intern_string_literal("number");
+                let ptr = self
+                    .intern_string_literal("number")
+                    .map_err(|_| Diagnostic::error("failed to intern string literal 'number'"))?;
                 return Ok(ptr.as_basic_value_enum());
             }
 
@@ -73,10 +75,18 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         .build_int_compare(inkwell::IntPredicate::EQ, disc, two, "disc_eq_bool")
                         .map_err(|_| Diagnostic::error("failed to build int compare for typeof"))?;
 
-                    let s_num = self.intern_string_literal("number");
-                    let s_str = self.intern_string_literal("string");
-                    let s_bool = self.intern_string_literal("boolean");
-                    let s_obj = self.intern_string_literal("object");
+                    let s_num = self.intern_string_literal("number").map_err(|_| {
+                        Diagnostic::error("failed to intern string literal 'number'")
+                    })?;
+                    let s_str = self.intern_string_literal("string").map_err(|_| {
+                        Diagnostic::error("failed to intern string literal 'string'")
+                    })?;
+                    let s_bool = self.intern_string_literal("boolean").map_err(|_| {
+                        Diagnostic::error("failed to intern string literal 'boolean'")
+                    })?;
+                    let s_obj = self.intern_string_literal("object").map_err(|_| {
+                        Diagnostic::error("failed to intern string literal 'object'")
+                    })?;
 
                     // Build nested selects: if num -> s_num else if str -> s_str else if bool -> s_bool else s_obj
                     let num_str_select = self
@@ -104,17 +114,23 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     return Ok(final_sel);
                 }
                 // If the discriminant call failed, fall back to "string"
-                let ptr = self.intern_string_literal("string");
+                let ptr = self
+                    .intern_string_literal("string")
+                    .map_err(|_| Diagnostic::error("failed to intern string literal 'string'"))?;
                 return Ok(ptr.as_basic_value_enum());
             }
 
             // integer/boolean-like values -> "boolean"
             if let BasicValueEnum::IntValue(_iv) = inner {
-                let ptr = self.intern_string_literal("boolean");
+                let ptr = self
+                    .intern_string_literal("boolean")
+                    .map_err(|_| Diagnostic::error("failed to intern string literal 'boolean'"))?;
                 return Ok(ptr.as_basic_value_enum());
             }
 
-            let ptr = self.intern_string_literal("object");
+            let ptr = self
+                .intern_string_literal("object")
+                .map_err(|_| Diagnostic::error("failed to intern string literal 'object'"))?;
             return Ok(ptr.as_basic_value_enum());
         }
 

@@ -293,11 +293,26 @@ pub fn parse_oats_module_with_options(
 
     let source_type = SourceType::default().with_typescript(true);
 
-    // Create a leaked allocator to get 'static lifetime
+    // Create a leaked allocator to get 'static lifetime.
+    //
+    // MEMORY LEAK NOTE: This intentionally leaks the allocator for the lifetime of the
+    // compilation. This is necessary because oxc_parser requires a reference to an allocator
+    // that outlives the AST, but we need the ParsedModule to be self-contained
+    // without complex lifetime parameters.
+    //
+    // In practice:
+    // - For single-file compilation (most common), this is acceptable since the process
+    //   exits after compilation
+    // - For long-running compiler processes (e.g., language servers), this could cause
+    //   memory growth. Consider using a scoped allocator pattern or refactoring to
+    //   avoid 'static lifetime requirements.
     let allocator = Box::leak(Box::new(Allocator::default()));
 
     // Convert source to 'static string by leaking it
-    // This is safe because we store the source in ParsedModule anyway
+    //
+    // MEMORY LEAK NOTE: This intentionally leaks the source string. The same tradeoff
+    // applies as for the allocator - this is acceptable for single-shot compilation
+    // but problematic for long-running processes.
     let source_static: &'static str = Box::leak(source_without_bom.to_string().into_boxed_str());
 
     let program_static: Program<'static> = {

@@ -717,10 +717,13 @@ impl<'a> CodeGen<'a> {
     // section (same layout as Lit::Str handling in expression lowering). This
     // reuses the `string_literals` cache so identical literals share the same
     // global and pointer value.
-    pub fn intern_string_literal(&self, s: &str) -> inkwell::values::PointerValue<'a> {
+    pub fn intern_string_literal(
+        &self,
+        s: &str,
+    ) -> crate::diagnostics::DiagnosticResult<inkwell::values::PointerValue<'a>> {
         // Check cache first
         if let Some(ptr) = self.string_literals.borrow().get(s) {
-            return *ptr;
+            return Ok(*ptr);
         }
 
         let bytes = s.as_bytes();
@@ -755,28 +758,19 @@ impl<'a> CodeGen<'a> {
         gv.set_initializer(&initializer);
 
         // Return pointer to data section (offset 16 bytes: header + len)
-        let gv_i8 = match self.builder.build_pointer_cast(
-            gv.as_pointer_value(),
-            self.i8ptr_t,
-            "str_data_base",
-        ) {
-            Ok(p) => p,
-            Err(_) => {
-                return self
-                    .context
-                    .ptr_type(inkwell::AddressSpace::default())
-                    .const_null();
-            }
-        };
-        if let Ok(ptr) = self.offset_i8_ptr(gv_i8, 16, "strptr") {
-            self.string_literals.borrow_mut().insert(s.to_string(), ptr);
-            return ptr;
-        }
-
-        // Fallback: null pointer (shouldn't happen)
-        self.context
-            .ptr_type(inkwell::AddressSpace::default())
-            .const_null()
+        let gv_i8 = self
+            .builder
+            .build_pointer_cast(gv.as_pointer_value(), self.i8ptr_t, "str_data_base")
+            .map_err(|_| {
+                crate::diagnostics::Diagnostic::error("failed to cast string literal global to i8*")
+            })?;
+        let ptr = self.offset_i8_ptr(gv_i8, 16, "strptr").map_err(|_| {
+            crate::diagnostics::Diagnostic::error(
+                "failed to offset string literal pointer to data section",
+            )
+        })?;
+        self.string_literals.borrow_mut().insert(s.to_string(), ptr);
+        Ok(ptr)
     }
 
     // Creates stack allocations (`alloca`) for all function parameters, making them

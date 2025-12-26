@@ -611,6 +611,12 @@ pub fn run_from_args(
         // Handle namespace declarations: `namespace Name { ... }`
         // Namespaces provide scoping and name mangling. Currently handles them
         // by processing their body statements in the same scope (simplified approach).
+        //
+        // WARNING: This simplified implementation may cause:
+        // - Name collisions between namespaced and non-namespaced symbols
+        // - Incorrect symbol resolution for qualified names like `Namespace::member`
+        // - Incorrect code generation for namespaced identifiers
+        //
         // TODO: Implement proper namespace scoping and name mangling
         if let Statement::TSModuleDeclaration(namespace) = stmt {
             let namespace_name = match &namespace.id {

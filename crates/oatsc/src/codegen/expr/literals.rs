@@ -1012,10 +1012,9 @@ pub fn lower_template<'a>(
             // value is no longer needed. Only rc_dec it if it was a
             // temporary we owned. We track `result_is_tmp` for that.
             if result_is_tmp {
-                let _ = codegen
+                codegen
                     .builder
-                    .build_call(rc_dec_fn, &[left.into()], "rc_dec_left_tmp")
-                    .ok();
+                    .build_call(rc_dec_fn, &[left.into()], "rc_dec_left_tmp");
             }
 
             // New result is a freshly-allocated string from concat, so mark tmp=true

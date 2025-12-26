@@ -66,11 +66,18 @@ pub fn resolve_external_dependencies<'ctx>(
         };
 
         for symbol in symbols {
-            // Get function signature or use default
-            let (param_types, ret_type) = external_function_signatures
-                .get(&symbol)
-                .cloned()
-                .unwrap_or_else(|| (vec![], OatsType::Number));
+            // Get function signature or emit warning for missing metadata
+            let (param_types, ret_type) = match external_function_signatures.get(&symbol).cloned() {
+                Some(sig) => sig,
+                None => {
+                    // Missing signature metadata - warn and use conservative default
+                    eprintln!(
+                        "Warning: No type signature found for external function '{}'. Using conservative default (all params: number, return: number). Add metadata entry to avoid incorrect code generation.",
+                        symbol
+                    );
+                    (vec![], OatsType::Number)
+                }
+            };
 
             // Convert OatsType to LLVM types
             let llvm_param_types: Vec<inkwell::types::BasicMetadataTypeEnum> = param_types
@@ -115,11 +122,38 @@ fn map_oats_type_to_llvm<'ctx>(
         OatsType::Number | OatsType::F64 => context.f64_type().into(),
         OatsType::F32 => context.f32_type().into(),
         OatsType::I64 => context.i64_type().into(),
+        OatsType::U64 => context.i64_type().into(),
         OatsType::I32 => context.i32_type().into(),
+        OatsType::U32 => context.i32_type().into(),
+        OatsType::I16 => context.i16_type().into(),
+        OatsType::U16 => context.i16_type().into(),
         OatsType::I8 => context.i8_type().into(),
+        OatsType::U8 => context.i8_type().into(),
         OatsType::Boolean => context.bool_type().into(),
         OatsType::String => context.ptr_type(inkwell::AddressSpace::default()).into(),
-        _ => context.f64_type().into(), // Default to f64 for complex types
+        OatsType::Array(_) => context.ptr_type(inkwell::AddressSpace::default()).into(),
+        OatsType::Tuple(_) => context.ptr_type(inkwell::AddressSpace::default()).into(),
+        OatsType::NominalStruct(_) => context.ptr_type(inkwell::AddressSpace::default()).into(),
+        OatsType::StructLiteral(_) => context.ptr_type(inkwell::AddressSpace::default()).into(),
+        OatsType::Promise(_) => context.ptr_type(inkwell::AddressSpace::default()).into(),
+        OatsType::Option(_) => context.ptr_type(inkwell::AddressSpace::default()).into(),
+        OatsType::Weak(_) => context.ptr_type(inkwell::AddressSpace::default()).into(),
+        OatsType::Unowned(_) => context.ptr_type(inkwell::AddressSpace::default()).into(),
+        OatsType::Enum(_, _) => context.i32_type().into(),
+        OatsType::GenericInstance { .. } => {
+            context.ptr_type(inkwell::AddressSpace::default()).into()
+        }
+        OatsType::NumberObject => context.ptr_type(inkwell::AddressSpace::default()).into(),
+        OatsType::ProcessId | OatsType::MonitorRef => context.i64_type().into(),
+        OatsType::Union(_) | OatsType::Generic(_) => {
+            context.ptr_type(inkwell::AddressSpace::default()).into()
+        }
+        OatsType::Char => context.i32_type().into(),
+        OatsType::Isize | OatsType::Usize => context.i64_type().into(),
+        // Note: Void types can't be used as parameter types in external function declarations.
+        // They're only valid as return types, which is handled separately.
+        // If void somehow appears here, it's an error in metadata - use i8ptr as fallback.
+        OatsType::Void => context.ptr_type(inkwell::AddressSpace::default()).into(),
     }
 }
 

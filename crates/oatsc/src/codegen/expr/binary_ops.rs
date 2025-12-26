@@ -306,18 +306,20 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             if left_origin.is_none()
                                 && let Some(rc_dec_fn) = self.module.get_function("rc_dec")
                             {
-                                let _ = self
-                                    .builder
-                                    .build_call(rc_dec_fn, &[left_str.into()], "rc_dec_tmp_left")
-                                    .ok();
+                                self.builder.build_call(
+                                    rc_dec_fn,
+                                    &[left_str.into()],
+                                    "rc_dec_tmp_left",
+                                );
                             }
                             if right_origin.is_none()
                                 && let Some(rc_dec_fn) = self.module.get_function("rc_dec")
                             {
-                                let _ = self
-                                    .builder
-                                    .build_call(rc_dec_fn, &[right_str.into()], "rc_dec_tmp_right")
-                                    .ok();
+                                self.builder.build_call(
+                                    rc_dec_fn,
+                                    &[right_str.into()],
+                                    "rc_dec_tmp_right",
+                                );
                             }
                             self.returned_ownership.set(true);
                             return Ok(bv);

@@ -519,19 +519,15 @@ pub fn map_ts_type_with_aliases(
                     );
                     ty
                 } else {
-                    // TSTupleElement inherits all TSType variants, so we can use it directly
-                    // as a TSType reference via a transmute or by matching on the discriminant
+                    // TSTupleElement inherits all TSType variants
+                    // Most inherited TSType variants are not directly usable in Oats tuples
+                    // Return None for unsupported inherited variants (rare in practice)
+                    // This is safer than transmute and avoids undefined behavior
                     eprintln!(
-                        "DEBUG: tuple_elem_to_ts_type returned None for element {}, using elem as TSType directly",
+                        "WARNING: Tuple element {} uses unsupported type variant - skipping",
                         i
                     );
-                    // Since TSTupleElement is a type alias/wrapper around TSType variants,
-                    // we can safely cast it. The oxc_ast library should allow this.
-                    // For now, let's try to match on the element directly
-                    unsafe {
-                        // SAFETY: TSTupleElement is a newtype wrapper around TSType, so this is safe
-                        std::mem::transmute::<&TSTupleElement, &TSType>(elem)
-                    }
+                    return None;
                 };
                 eprintln!(
                     "DEBUG: Mapping element type {}: {:?}",

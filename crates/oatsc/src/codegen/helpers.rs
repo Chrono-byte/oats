@@ -355,28 +355,26 @@ impl<'a> super::CodeGen<'a> {
 
                 // Compute pointer to i64 length at offset +8
                 let offset = self.i64_t.const_int(8, false);
-                let gep_res = self.i8_ptr_from_offset_i64(pv, offset, "len_i8ptr").ok();
-                if let Some(gep_ptr) = gep_res {
-                    // cast i8* -> i64*
-                    let len_ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
-                    if let Ok(len_ptr) =
+                let gep_ptr = self.i8_ptr_from_offset_i64(pv, offset, "len_i8ptr").ok()?;
+                // cast i8* -> i64*
+                let len_ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+                if let Ok(len_ptr) =
+                    self.builder
+                        .build_pointer_cast(gep_ptr, len_ptr_ty, "len_ptr_cast")
+                    && let Ok(loaded) = self.builder.build_load(self.i64_t, len_ptr, "len_load")
+                {
+                    let len_iv = loaded.into_int_value();
+                    let zero64 = self.i64_t.const_int(0, false);
+                    if let Ok(len_nonzero) = self.builder.build_int_compare(
+                        inkwell::IntPredicate::NE,
+                        len_iv,
+                        zero64,
+                        "len_nonzero",
+                    ) && let Ok(cond) =
                         self.builder
-                            .build_pointer_cast(gep_ptr, len_ptr_ty, "len_ptr_cast")
-                        && let Ok(loaded) = self.builder.build_load(self.i64_t, len_ptr, "len_load")
+                            .build_and(is_not_null, len_nonzero, "ptr_truth")
                     {
-                        let len_iv = loaded.into_int_value();
-                        let zero64 = self.i64_t.const_int(0, false);
-                        if let Ok(len_nonzero) = self.builder.build_int_compare(
-                            inkwell::IntPredicate::NE,
-                            len_iv,
-                            zero64,
-                            "len_nonzero",
-                        ) && let Ok(cond) =
-                            self.builder
-                                .build_and(is_not_null, len_nonzero, "ptr_truth")
-                        {
-                            return Some(cond);
-                        }
+                        return Some(cond);
                     }
                 }
                 // Fallback: treat non-null pointer as truthy

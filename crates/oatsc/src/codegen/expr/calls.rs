@@ -971,18 +971,17 @@ impl<'a> CodeGen<'a> {
                         && let Some(rc_dec_str_fn) = self.module.get_function("rc_dec_str")
                     {
                         eprintln!("DEBUG: console.log: cleaning up temporary left operand");
-                        let _ = self
-                            .builder
-                            .build_call(rc_dec_str_fn, &[left.into()], "rc_dec_left_tmp")
-                            .ok();
+                        self.builder
+                            .build_call(rc_dec_str_fn, &[left.into()], "rc_dec_left_tmp");
                     }
                     // Clean up the current right operand if it was temporary
                     if is_tmp && let Some(rc_dec_str_fn) = self.module.get_function("rc_dec_str") {
                         eprintln!("DEBUG: console.log: cleaning up temporary right operand");
-                        let _ = self
-                            .builder
-                            .build_call(rc_dec_str_fn, &[str_ptr.into()], "rc_dec_right_tmp")
-                            .ok();
+                        self.builder.build_call(
+                            rc_dec_str_fn,
+                            &[str_ptr.into()],
+                            "rc_dec_right_tmp",
+                        );
                     }
 
                     // str_concat returns a new string with RC=1 (data pointer format)

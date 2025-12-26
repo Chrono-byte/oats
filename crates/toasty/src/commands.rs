@@ -89,29 +89,58 @@ pub struct BuildCommandOptions {
     pub color: Option<String>,
 }
 
-/// Handle the build command
-pub fn handle_build(cli: &Cli, opts: BuildCommandOptions) -> Result<()> {
-    let verbose = get_verbosity_and_color(cli, opts.color.clone());
+/// Handle package-based build
+fn handle_package_build(
+    manifest_path_str: &str,
+    opts: &BuildCommandOptions,
+    verbose: bool,
+) -> Result<()> {
+    let manifest_path = std::path::PathBuf::from(manifest_path_str);
+    let build_config = crate::build::BuildConfig {
+        verbose,
+        quiet: opts.quiet,
+        release: opts.release,
+        out_dir: opts.out_dir.clone(),
+        out_name: opts.out_name.clone(),
+        linker: opts.linker.clone(),
+        opt_level: opts.opt_level.clone(),
+        lto: opts.lto.clone(),
+        target_triple: opts.target_triple.clone(),
+        target_cpu: opts.target_cpu.clone(),
+        target_features: opts.target_features.clone(),
+        no_link_runtime: opts.no_link_runtime,
+    };
 
-    if opts.release {
-        if !opts.quiet && (verbose || cfg!(debug_assertions)) {
-            eprintln!("{}", "Building in release mode...".green());
-        }
-    } else if !opts.quiet && (verbose || cfg!(debug_assertions)) {
-        eprintln!("{}", "Building in debug mode...".yellow());
+    let exe_path = build::build_package_project(&manifest_path, build_config)?;
+
+    if !opts.quiet && (verbose || cfg!(debug_assertions)) {
+        eprintln!(
+            "{}",
+            format!("Build complete: {}", exe_path.display()).green()
+        );
     }
 
-    // Determine source file
-    let src_file = determine_source_file(opts.src.clone(), opts.quiet, verbose)?;
+    Ok(())
+}
 
-    // Check if this is a package-based build
-    if let Some(manifest_path_str) = src_file.strip_prefix("package:") {
-        let manifest_path = std::path::PathBuf::from(manifest_path_str);
-        let build_config = crate::build::BuildConfig {
-            verbose,
-            quiet: opts.quiet,
-            release: opts.release,
-            out_dir: opts.out_dir.clone(),
+/// Handle single file `emit_object_only` build
+fn handle_single_file_emit_object_only(
+    src_file: String,
+    opts: &BuildCommandOptions,
+    out_dir: Option<String>,
+    verbose: bool,
+) -> Result<()> {
+    if !opts.quiet && (verbose || cfg!(debug_assertions)) {
+        eprintln!(
+            "{}",
+            "Compiling single file with emit-object-only...".blue()
+        );
+    }
+
+    let options = set_compile_options_from_cli(
+        CompileOptions::new(src_file),
+        CliBuildOptions {
+            out_dir,
             out_name: opts.out_name.clone(),
             linker: opts.linker.clone(),
             opt_level: opts.opt_level.clone(),
@@ -119,100 +148,111 @@ pub fn handle_build(cli: &Cli, opts: BuildCommandOptions) -> Result<()> {
             target_triple: opts.target_triple.clone(),
             target_cpu: opts.target_cpu.clone(),
             target_features: opts.target_features.clone(),
-            no_link_runtime: opts.no_link_runtime,
-        };
+            release: opts.release,
+            emit_object_only: true,
+            link_runtime: !opts.no_link_runtime,
+        },
+    );
 
-        let exe_path = build::build_package_project(&manifest_path, build_config)?;
-
-        if !opts.quiet && (verbose || cfg!(debug_assertions)) {
-            eprintln!(
-                "{}",
-                format!("Build complete: {}", exe_path.display()).green()
-            );
-        }
-
-        return Ok(());
-    }
-
-    // Read out_dir from environment variable if not provided
-    let out_dir = opts
-        .out_dir
-        .clone()
-        .or_else(|| std::env::var("OATS_OUT_DIR").ok());
-
-    // Special case: if emit_object_only is requested and this is a single file with no dependencies,
-    // compile it directly without the multi-module system
-    if opts.emit_object_only {
-        if !opts.quiet && (verbose || cfg!(debug_assertions)) {
-            eprintln!(
-                "{}",
-                "Compiling single file with emit-object-only...".blue()
-            );
-        }
-
-        let options = set_compile_options_from_cli(
-            CompileOptions::new(src_file),
-            CliBuildOptions {
-                out_dir,
-                out_name: opts.out_name.clone(),
-                linker: opts.linker.clone(),
-                opt_level: opts.opt_level.clone(),
-                lto: opts.lto.clone(),
-                target_triple: opts.target_triple.clone(),
-                target_cpu: opts.target_cpu.clone(),
-                target_features: opts.target_features.clone(),
-                release: opts.release,
-                emit_object_only: true,
-                link_runtime: !opts.no_link_runtime,
-            },
-        );
-
-        let build_out = compiler::invoke_oatsc(&options)?;
-        if let Some(out_path) = build_out
-            && !opts.quiet
-            && (verbose || cfg!(debug_assertions))
-        {
-            eprintln!(
-                "{}",
-                format!("Build finished: {}", out_path.display()).green()
-            );
-        }
-        return Ok(());
-    }
-
-    // Build dependency graph starting from entry point
-    if !opts.quiet && (verbose || cfg!(debug_assertions)) {
-        eprintln!("{}", "Building dependency graph...".blue());
-    }
-    let (dep_graph, node_indices, _entry_node) =
-        project::build_dependency_graph(&src_file, verbose)?;
-
-    if !opts.quiet && (verbose || cfg!(debug_assertions)) {
+    let build_out = compiler::invoke_oatsc(&options)?;
+    if let Some(out_path) = build_out
+        && !opts.quiet
+        && (verbose || cfg!(debug_assertions))
+    {
         eprintln!(
             "{}",
-            format!("Found {} module(s) to compile", node_indices.len()).green()
+            format!("Build finished: {}", out_path.display()).green()
         );
     }
+    Ok(())
+}
 
-    // Perform topological sort to get compilation order
-    if !opts.quiet && (verbose || cfg!(debug_assertions)) {
-        eprintln!("{}", "Computing compilation order...".blue());
-    }
-    let compilation_order = project::topological_sort(&dep_graph, &node_indices)?;
+/// Find or generate metadata file for a module
+fn find_or_generate_metadata(
+    prev_module: &str,
+    out_dir: &str,
+) -> Option<String> {
+    let module_stem = std::path::Path::new(prev_module)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("module");
+    let potential_meta =
+        std::path::Path::new(out_dir).join(format!("{module_stem}_pkg.oats.meta"));
 
-    if verbose {
-        eprintln!("Compilation order:");
-        for (i, path) in compilation_order.iter().enumerate() {
-            eprintln!("  {}. {}", i + 1, path);
+    if potential_meta.exists() {
+        Some(potential_meta.to_string_lossy().to_string())
+    } else {
+        // Extract exported symbols from source and create metadata file
+        if let Ok(exported_symbols) = crate::build::extract_exported_symbols(prev_module) {
+            if exported_symbols.is_empty() {
+                None
+            } else {
+                // Generate metadata file with function signatures
+                let meta_content = exported_symbols
+                    .iter()
+                    .map(|name| format!("function {name}(): number;"))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+
+                let meta_file = std::path::Path::new(out_dir)
+                    .join(format!("{module_stem}.oats.meta"));
+
+                if let Err(e) = std::fs::write(&meta_file, meta_content) {
+                    eprintln!(
+                        "Warning: Failed to write metadata file {}: {}",
+                        meta_file.display(),
+                        e
+                    );
+                    None
+                } else {
+                    Some(meta_file.to_string_lossy().to_string())
+                }
+            }
+        } else {
+            None
         }
     }
+}
 
-    if !opts.quiet && (verbose || cfg!(debug_assertions)) {
-        eprintln!("{}", "Orchestrating compilation...".blue());
+/// Add `extern_oats` dependencies for previous modules
+fn add_extern_oats_dependencies(
+    options: &mut CompileOptions,
+    prev_modules: &[String],
+    out_dir: &Option<String>,
+) {
+    for prev_module in prev_modules {
+        // Determine the import path (relative to current module)
+        // Uses the module file stem as the import path
+        let import_path = match std::path::Path::new(prev_module)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .map(|s| format!("./{s}"))
+        {
+            Some(path) => path,
+            None => "./module".to_string(),
+        };
+
+        // Try to find or generate metadata file for this module
+        let meta_path = if let Some(out_dir) = out_dir {
+            find_or_generate_metadata(prev_module, out_dir)
+        } else {
+            None
+        };
+
+        // Add to extern_oats if a metadata file exists
+        if let Some(meta) = meta_path {
+            options.extern_oats.insert(import_path, meta);
+        }
     }
+}
 
-    // Phase 1: Compile each module separately with extern_oats for dependencies
-    // In Phase 2, this will use separate oatsc processes for each package
+/// Compile all modules in the dependency graph
+fn compile_modules(
+    compilation_order: &[String],
+    opts: &BuildCommandOptions,
+    out_dir: Option<String>,
+    verbose: bool,
+) -> Result<std::collections::HashMap<String, PathBuf>> {
     let mut compiled_modules = std::collections::HashMap::new();
 
     for (i, module_path) in compilation_order.iter().enumerate() {
@@ -247,76 +287,10 @@ pub fn handle_build(cli: &Cli, opts: BuildCommandOptions) -> Result<()> {
         );
 
         // For Phase 2: if this is not the first module, add extern_oats for previous modules
-        // Extract exported symbols from package metadata or source files
         if i > 0
             && let Some(prev_modules) = compilation_order.get(0..i)
         {
-            for prev_module in prev_modules {
-                // Determine the import path (relative to current module)
-                // Uses the module file stem as the import path
-                let import_path = match std::path::Path::new(prev_module)
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .map(|s| format!("./{s}"))
-                {
-                    Some(path) => path,
-                    None => "./module".to_string(),
-                };
-
-                // Try to find or generate metadata file for this module
-                let meta_path = if let Some(out_dir) = &out_dir {
-                    // Check if metadata file exists in output directory
-                    let module_stem = std::path::Path::new(prev_module)
-                        .file_stem()
-                        .and_then(|s| s.to_str())
-                        .unwrap_or("module");
-                    let potential_meta =
-                        std::path::Path::new(out_dir).join(format!("{module_stem}_pkg.oats.meta"));
-
-                    if potential_meta.exists() {
-                        Some(potential_meta.to_string_lossy().to_string())
-                    } else {
-                        // Extract exported symbols from source and create metadata file
-                        if let Ok(exported_symbols) =
-                            crate::build::extract_exported_symbols(prev_module)
-                        {
-                            if exported_symbols.is_empty() {
-                                None
-                            } else {
-                                // Generate metadata file with function signatures
-                                let meta_content = exported_symbols
-                                    .iter()
-                                    .map(|name| format!("function {name}(): number;"))
-                                    .collect::<Vec<_>>()
-                                    .join("\n");
-
-                                let meta_file = std::path::Path::new(out_dir)
-                                    .join(format!("{module_stem}.oats.meta"));
-
-                                if let Err(e) = std::fs::write(&meta_file, meta_content) {
-                                    eprintln!(
-                                        "Warning: Failed to write metadata file {}: {}",
-                                        meta_file.display(),
-                                        e
-                                    );
-                                    None
-                                } else {
-                                    Some(meta_file.to_string_lossy().to_string())
-                                }
-                            }
-                        } else {
-                            None
-                        }
-                    }
-                } else {
-                    None
-                };
-
-                // Add to extern_oats if a metadata file exists
-                if let Some(meta) = meta_path {
-                    options.extern_oats.insert(import_path, meta);
-                }
-            }
+            add_extern_oats_dependencies(&mut options, prev_modules, &out_dir);
         }
 
         // Compile this module
@@ -326,8 +300,17 @@ pub fn handle_build(cli: &Cli, opts: BuildCommandOptions) -> Result<()> {
         }
     }
 
-    // Phase 1: Link all compiled modules together
-    // In Phase 2, this will be done by toasty after all packages are compiled
+    Ok(compiled_modules)
+}
+
+/// Handle linking phase of the build
+fn handle_linking(
+    compiled_modules: &std::collections::HashMap<String, PathBuf>,
+    src_file: &str,
+    opts: &BuildCommandOptions,
+    out_dir: Option<String>,
+    verbose: bool,
+) -> Result<()> {
     if opts.emit_object_only {
         if !opts.quiet && (verbose || cfg!(debug_assertions)) {
             eprintln!("{}", "Skipping linking due to emit-object-only...".blue());
@@ -335,7 +318,7 @@ pub fn handle_build(cli: &Cli, opts: BuildCommandOptions) -> Result<()> {
         // For multi-module builds with emit_object_only, report the object files
         if !opts.quiet && (verbose || cfg!(debug_assertions)) {
             eprintln!("{}", "Compiled object files:".green());
-            for (module_path, obj_file) in &compiled_modules {
+            for (module_path, obj_file) in compiled_modules {
                 eprintln!("  {} -> {}", module_path, obj_file.display());
             }
         }
@@ -350,7 +333,7 @@ pub fn handle_build(cli: &Cli, opts: BuildCommandOptions) -> Result<()> {
     let exe_name = match opts.out_name.clone() {
         Some(name) => name,
         None => {
-            match std::path::Path::new(&src_file)
+            match std::path::Path::new(src_file)
                 .file_stem()
                 .and_then(|s| s.to_str())
             {
@@ -365,7 +348,7 @@ pub fn handle_build(cli: &Cli, opts: BuildCommandOptions) -> Result<()> {
     };
 
     // Link the executable
-    linker::link_executable(&compiled_modules, &exe_path, opts.linker.clone(), verbose)?;
+    linker::link_executable(compiled_modules, &exe_path, opts.linker.clone(), verbose)?;
 
     if !opts.quiet && (verbose || cfg!(debug_assertions)) {
         eprintln!(
@@ -374,6 +357,76 @@ pub fn handle_build(cli: &Cli, opts: BuildCommandOptions) -> Result<()> {
         );
     }
     Ok(())
+}
+
+/// Handle the build command
+pub fn handle_build(cli: &Cli, opts: BuildCommandOptions) -> Result<()> {
+    let verbose = get_verbosity_and_color(cli, opts.color.clone());
+
+    if opts.release {
+        if !opts.quiet && (verbose || cfg!(debug_assertions)) {
+            eprintln!("{}", "Building in release mode...".green());
+        }
+    } else if !opts.quiet && (verbose || cfg!(debug_assertions)) {
+        eprintln!("{}", "Building in debug mode...".yellow());
+    }
+
+    // Determine source file
+    let src_file = determine_source_file(opts.src.clone(), opts.quiet, verbose)?;
+
+    // Check if this is a package-based build
+    if let Some(manifest_path_str) = src_file.strip_prefix("package:") {
+        return handle_package_build(manifest_path_str, &opts, verbose);
+    }
+
+    // Read out_dir from environment variable if not provided
+    let out_dir = opts
+        .out_dir
+        .clone()
+        .or_else(|| std::env::var("OATS_OUT_DIR").ok());
+
+    // Special case: if emit_object_only is requested and this is a single file with no dependencies,
+    // compile it directly without the multi-module system
+    if opts.emit_object_only {
+        return handle_single_file_emit_object_only(src_file, &opts, out_dir, verbose);
+    }
+
+    // Build dependency graph starting from entry point
+    if !opts.quiet && (verbose || cfg!(debug_assertions)) {
+        eprintln!("{}", "Building dependency graph...".blue());
+    }
+    let (dep_graph, node_indices, _entry_node) =
+        project::build_dependency_graph(&src_file, verbose)?;
+
+    if !opts.quiet && (verbose || cfg!(debug_assertions)) {
+        eprintln!(
+            "{}",
+            format!("Found {} module(s) to compile", node_indices.len()).green()
+        );
+    }
+
+    // Perform topological sort to get compilation order
+    if !opts.quiet && (verbose || cfg!(debug_assertions)) {
+        eprintln!("{}", "Computing compilation order...".blue());
+    }
+    let compilation_order = project::topological_sort(&dep_graph, &node_indices)?;
+
+    if verbose {
+        eprintln!("Compilation order:");
+        for (i, path) in compilation_order.iter().enumerate() {
+            eprintln!("  {}. {}", i + 1, path);
+        }
+    }
+
+    if !opts.quiet && (verbose || cfg!(debug_assertions)) {
+        eprintln!("{}", "Orchestrating compilation...".blue());
+    }
+
+    // Compile all modules
+    let compiled_modules = compile_modules(&compilation_order, &opts, out_dir.clone(), verbose)?;
+
+    // Link all compiled modules together
+    handle_linking(&compiled_modules, &src_file, &opts, out_dir, verbose)
 }
 
 /// Handle the run command
@@ -433,7 +486,10 @@ pub fn handle_run(
     if let Some(pos) = all_src_files.iter().position(|p| p == &src_file) {
         all_src_files.swap(0, pos);
     }
-    let entry_point = all_src_files[0].clone();
+    let entry_point = all_src_files
+        .first()
+        .ok_or_else(|| ToastyError::other("No source files found to compile"))?
+        .clone();
     let mut options = CompileOptions::with_modules(entry_point);
     options.out_name = out_name.clone();
     options.out_dir = Some(out_dir.clone());

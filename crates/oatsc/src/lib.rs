@@ -137,7 +137,7 @@ impl CompileOptions {
             out_dir: None,
             out_name: None,
             linker: None,
-            emit_object_only: false,
+            emit_object_only: true,
             emit_ir: false,
             dump_ir: false,
             emit_obj: false,

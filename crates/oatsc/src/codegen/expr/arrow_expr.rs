@@ -237,6 +237,16 @@ impl<'a> CodeGen<'a> {
         // Create the arrow function (may accept env param as first arg)
         let arrow_fn = self.module.add_function(&arrow_fn_name, fn_type, None);
 
+        // Add function attributes for optimization
+        // nounwind: function does not throw exceptions (Oats has no C++-style exceptions)
+        arrow_fn.add_attribute(
+            inkwell::attributes::AttributeLoc::Function,
+            self.context.create_enum_attribute(
+                inkwell::attributes::Attribute::get_named_enum_kind_id("nounwind"),
+                0,
+            ),
+        );
+
         // Record parameter types for the generated arrow function so
         // member-access lowering can consult `fn_param_types` to infer
         // nominal types for parameters (and `this` receiver when

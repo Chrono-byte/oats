@@ -172,6 +172,16 @@ impl crate::codegen::CodeGen<'_> {
         let ctor_fn_ty = self.i8ptr_t.fn_type(&llvm_param_types, false);
         let impl_f = self.module.add_function(&impl_fname, ctor_fn_ty, None);
 
+        // Add function attributes for optimization
+        // nounwind: function does not throw exceptions (Oats has no C++-style exceptions)
+        impl_f.add_attribute(
+            inkwell::attributes::AttributeLoc::Function,
+            self.context.create_enum_attribute(
+                inkwell::attributes::Attribute::get_named_enum_kind_id("nounwind"),
+                0,
+            ),
+        );
+
         // Emit init function body first
         let init_entry = self.context.append_basic_block(init_f, "entry");
         self.builder.position_at_end(init_entry);
@@ -711,6 +721,16 @@ impl crate::codegen::CodeGen<'_> {
         // and then indirect-call the final constructor pointer. The wrapper
         // has the same signature as the impl function.
         let wrapper_f = self.module.add_function(&fname, ctor_fn_ty, None);
+
+        // Add function attributes for optimization
+        wrapper_f.add_attribute(
+            inkwell::attributes::AttributeLoc::Function,
+            self.context.create_enum_attribute(
+                inkwell::attributes::Attribute::get_named_enum_kind_id("nounwind"),
+                0,
+            ),
+        );
+
         let wrapper_entry = self.context.append_basic_block(wrapper_f, "entry");
         self.builder.position_at_end(wrapper_entry);
 
@@ -809,9 +829,27 @@ impl crate::codegen::CodeGen<'_> {
         let init_fn_ty = self.i8ptr_t.fn_type(&init_param_types, false);
         let init_f = self.module.add_function(&init_name, init_fn_ty, None);
 
+        // Add function attributes for optimization
+        init_f.add_attribute(
+            inkwell::attributes::AttributeLoc::Function,
+            self.context.create_enum_attribute(
+                inkwell::attributes::Attribute::get_named_enum_kind_id("nounwind"),
+                0,
+            ),
+        );
+
         // Create public constructor: takes no parameters, allocates and calls init
         let ctor_fn_ty = self.i8ptr_t.fn_type(&[], false);
         let ctor_f = self.module.add_function(&fname, ctor_fn_ty, None);
+
+        // Add function attributes for optimization
+        ctor_f.add_attribute(
+            inkwell::attributes::AttributeLoc::Function,
+            self.context.create_enum_attribute(
+                inkwell::attributes::Attribute::get_named_enum_kind_id("nounwind"),
+                0,
+            ),
+        );
 
         // Emit init function body
         let init_entry = self.context.append_basic_block(init_f, "entry");

@@ -153,6 +153,15 @@ impl crate::codegen::CodeGen<'_> {
             let fn_type = return_type.fn_type(&param_types, false);
             let ctor_fn = self.module.add_function(&ctor_name, fn_type, None);
 
+            // Add function attributes for optimization
+            ctor_fn.add_attribute(
+                inkwell::attributes::AttributeLoc::Function,
+                self.context.create_enum_attribute(
+                    inkwell::attributes::Attribute::get_named_enum_kind_id("nounwind"),
+                    0,
+                ),
+            );
+
             // Create function body
             let entry_bb = self.context.append_basic_block(ctor_fn, "entry");
             self.builder.position_at_end(entry_bb);

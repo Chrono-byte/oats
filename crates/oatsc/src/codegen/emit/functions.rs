@@ -68,6 +68,17 @@ impl<'a> crate::codegen::CodeGen<'a> {
         // 2. Add the function to the module and set up the entry block.
         self.gen_str_concat(); // Ensure runtime helpers are available.
         let function = self.module.add_function(func_name, fn_type, None);
+
+        // Add function attributes for optimization
+        // nounwind: function does not throw exceptions (Oats has no C++-style exceptions)
+        function.add_attribute(
+            inkwell::attributes::AttributeLoc::Function,
+            self.context.create_enum_attribute(
+                inkwell::attributes::Attribute::get_named_enum_kind_id("nounwind"),
+                0,
+            ),
+        );
+
         let entry = self.context.append_basic_block(function, "entry");
         self.builder.position_at_end(entry);
 

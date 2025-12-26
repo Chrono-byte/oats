@@ -102,6 +102,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             if let Some(ref otype) = oats_type {
                 self.last_expr_oats_type.borrow_mut().replace(otype.clone());
             }
+            self.returned_ownership.set(false);
             return Ok(loaded);
         }
 

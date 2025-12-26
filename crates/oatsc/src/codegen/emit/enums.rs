@@ -196,7 +196,7 @@ impl crate::codegen::CodeGen<'_> {
                 })?;
 
             // Initialize header (RC = 1, no flags) at offset 0
-            let header_val = self.i64_t.const_int(1, false);
+            let header_val = self.i64_t.const_int(0, false);
             let header_i8ptr = enum_i8ptr;
             let header_ptr = self
                 .builder
@@ -211,7 +211,10 @@ impl crate::codegen::CodeGen<'_> {
                         "failed to get header pointer",
                     )
                 })?;
-            let _ = self.builder.build_store(header_ptr, header_val);
+            let store = self.builder.build_store(header_ptr, header_val);
+            if let Ok(st) = store {
+                let _ = st.set_alignment(8);
+            }
 
             // Initialize metadata pointer (null for now) at offset 8
             let meta_i8ptr = self
@@ -232,7 +235,10 @@ impl crate::codegen::CodeGen<'_> {
                     )
                 })?;
             let null_meta = self.i8ptr_t.const_null();
-            let _ = self.builder.build_store(meta_ptr, null_meta);
+            let store = self.builder.build_store(meta_ptr, null_meta);
+            if let Ok(st) = store {
+                let _ = st.set_alignment(8);
+            }
 
             // Set discriminant (variant tag) at offset 16
             let disc_i8ptr = self
@@ -316,7 +322,10 @@ impl crate::codegen::CodeGen<'_> {
                             );
                         }
 
-                        let _ = self.builder.build_store(field_ptr, param_val);
+                        let store = self.builder.build_store(field_ptr, param_val);
+                        if let Ok(st) = store {
+                            let _ = st.set_alignment(8);
+                        }
 
                         // Update offset for next field (align to 8 bytes)
                         let field_size =

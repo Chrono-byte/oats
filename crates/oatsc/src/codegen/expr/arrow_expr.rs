@@ -280,24 +280,18 @@ impl<'a> CodeGen<'a> {
                 .ok_or_else(|| Diagnostic::error("missing env parameter for arrow"))?;
             let env_ptr = env_param.into_pointer_value();
             // Convert env pointer to integer for offset math
-            let obj_ptr_int = self
-                .builder
-                .build_ptr_to_int(env_ptr, self.i64_t, "env_addr")
-                .map_err(|_| Diagnostic::error("ptr_to_int failed"))?;
             let header_size = 8u64;
             let meta_slot = 8u64;
 
             for (i, cname) in captures.iter().enumerate() {
                 let field_offset = header_size + meta_slot + (i as u64 * 8);
                 let off_const = self.i64_t.const_int(field_offset, false);
-                let field_addr = self
-                    .builder
-                    .build_int_add(obj_ptr_int, off_const, "cap_field_addr")
-                    .map_err(|_| Diagnostic::error("int_add failed"))?;
-                let field_ptr = self
-                    .builder
-                    .build_int_to_ptr(field_addr, self.i8ptr_t, "cap_field_ptr")
-                    .map_err(|_| Diagnostic::error("int_to_ptr failed"))?;
+                // Use GEP instead of ptrtoint/add/inttoptr to preserve pointer provenance
+                let field_ptr = unsafe {
+                    self.builder
+                        .build_gep(self.i8_t, env_ptr, &[off_const], "cap_field_ptr")
+                        .map_err(|_| Diagnostic::error("GEP failed"))?
+                };
                 let loaded = self
                     .builder
                     .build_load(self.i8ptr_t, field_ptr, &format!("cap_load_{cname}"))
@@ -531,19 +525,13 @@ impl<'a> CodeGen<'a> {
                 .emit_field_map_global(&env_gv_name, &env_offsets)
                 .map_err(|_| Diagnostic::error("failed to emit env field_map"))?;
             // store into env meta slot
-            let env_ptr_int = self
-                .builder
-                .build_ptr_to_int(env_ptr, self.i64_t, "env_addr_for_meta")
-                .map_err(|_| Diagnostic::error("ptr_to_int failed"))?;
             let off_const = self.i64_t.const_int(8, false);
-            let meta_addr = self
-                .builder
-                .build_int_add(env_ptr_int, off_const, "env_meta_addr")
-                .map_err(|_| Diagnostic::error("int_add failed"))?;
-            let meta_ptr = self
-                .builder
-                .build_int_to_ptr(meta_addr, self.i8ptr_t, "env_meta_ptr")
-                .map_err(|_| Diagnostic::error("int_to_ptr failed"))?;
+            // Use GEP instead of ptrtoint/add/inttoptr to preserve pointer provenance
+            let meta_ptr = unsafe {
+                self.builder
+                    .build_gep(self.i8_t, env_ptr, &[off_const], "env_meta_ptr")
+                    .map_err(|_| Diagnostic::error("GEP failed"))?
+            };
             let _ = self
                 .builder
                 .build_store(meta_ptr, env_gv_i8.as_basic_value_enum());
@@ -582,18 +570,12 @@ impl<'a> CodeGen<'a> {
                 .emit_field_map_global(&closure_gv_name, &closure_offsets)
                 .map_err(|_| Diagnostic::error("failed to emit closure field_map"))?;
             // store into closure meta slot
-            let closure_ptr_int = self
-                .builder
-                .build_ptr_to_int(closure_obj, self.i64_t, "closure_addr_for_meta")
-                .map_err(|_| Diagnostic::error("ptr_to_int failed"))?;
-            let closure_meta_addr = self
-                .builder
-                .build_int_add(closure_ptr_int, off_const, "closure_meta_addr")
-                .map_err(|_| Diagnostic::error("int_add failed"))?;
-            let closure_meta_ptr = self
-                .builder
-                .build_int_to_ptr(closure_meta_addr, self.i8ptr_t, "closure_meta_ptr")
-                .map_err(|_| Diagnostic::error("int_to_ptr failed"))?;
+            // Use GEP instead of ptrtoint/add/inttoptr to preserve pointer provenance
+            let closure_meta_ptr = unsafe {
+                self.builder
+                    .build_gep(self.i8_t, closure_obj, &[off_const], "closure_meta_ptr")
+                    .map_err(|_| Diagnostic::error("GEP failed"))?
+            };
             let _ = self
                 .builder
                 .build_store(closure_meta_ptr, closure_gv_i8.as_basic_value_enum());

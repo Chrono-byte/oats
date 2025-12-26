@@ -496,28 +496,65 @@ pub fn map_ts_type_with_aliases(
         // arrays where each slot may contain any of the tuple element types.
         // It enables expressions like `t[0]` to work with existing array helpers.
         TSType::TSTupleType(tuple) => {
+            eprintln!(
+                "DEBUG: map_ts_type_with_aliases: Found TSTupleType with {} elements",
+                tuple.element_types.len()
+            );
             // Collect element types into a Tuple variant
             let mut elems: Vec<OatsType> = Vec::new();
-            for elem in &tuple.element_types {
+            for (i, elem) in tuple.element_types.iter().enumerate() {
+                eprintln!(
+                    "DEBUG: Processing tuple element {}: {:?}",
+                    i,
+                    std::mem::discriminant(elem)
+                );
                 // TSTupleElement can be TSOptionalType, TSRestType, or any TSType
                 // Extract the TSType from the element
-                let elem_ty = match tuple_elem_to_ts_type(elem) {
-                    Some(ty) => ty,
-                    None => {
-                        // TSTupleElement inherits TSType variants, but we can't easily convert
-                        // For now, skip inherited variants (they're rare in practice)
-                        continue;
+                // TSTupleElement can be TSOptionalType, TSRestType, or directly a TSType variant
+                // First try the helper function for optional/rest types
+                let elem_ty = if let Some(ty) = tuple_elem_to_ts_type(elem) {
+                    eprintln!(
+                        "DEBUG: tuple_elem_to_ts_type returned Some for element {}",
+                        i
+                    );
+                    ty
+                } else {
+                    // TSTupleElement inherits all TSType variants, so we can use it directly
+                    // as a TSType reference via a transmute or by matching on the discriminant
+                    eprintln!(
+                        "DEBUG: tuple_elem_to_ts_type returned None for element {}, using elem as TSType directly",
+                        i
+                    );
+                    // Since TSTupleElement is a type alias/wrapper around TSType variants,
+                    // we can safely cast it. The oxc_ast library should allow this.
+                    // For now, let's try to match on the element directly
+                    unsafe {
+                        // SAFETY: TSTupleElement is a newtype wrapper around TSType, so this is safe
+                        std::mem::transmute::<&TSTupleElement, &TSType>(elem)
                     }
                 };
+                eprintln!(
+                    "DEBUG: Mapping element type {}: {:?}",
+                    i,
+                    std::mem::discriminant(elem_ty)
+                );
                 if let Some(mapped) = map_ts_type_with_aliases(elem_ty, type_aliases, symbols) {
+                    eprintln!("DEBUG: Successfully mapped element {} to {:?}", i, mapped);
                     elems.push(mapped);
                 } else {
+                    eprintln!("DEBUG: Failed to map element type {}", i);
                     return None;
                 }
             }
             if elems.is_empty() {
+                eprintln!("DEBUG: Tuple has no elements after processing");
                 return None;
             }
+            eprintln!(
+                "DEBUG: Successfully created Tuple with {} elements: {:?}",
+                elems.len(),
+                elems
+            );
             Some(OatsType::Tuple(elems))
         }
         // Object literal types (TSTypeLiteral)

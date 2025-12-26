@@ -16,6 +16,7 @@ use std::collections::HashMap;
 ///
 /// This helper sets up a minimal CodeGen context with an LLVM module,
 /// suitable for unit testing individual codegen components.
+#[allow(dead_code)]
 pub fn create_test_codegen<'a>(context: &'a Context, source: &'a str) -> CodeGen<'a> {
     let module = context.create_module("test");
     let builder = context.create_builder();
@@ -123,12 +124,14 @@ pub fn create_test_codegen<'a>(context: &'a Context, source: &'a str) -> CodeGen
         current_label: RefCell::new(None),
         last_expr_oats_type: RefCell::new(None),
         nested_generic_classes: RefCell::new(HashMap::new()),
+        returned_ownership: Cell::new(false),
     }
 }
 
 /// Compiles a code snippet and returns the parsed module.
 ///
 /// Returns the parsed module on success, or a diagnostic error on failure.
+#[allow(dead_code)]
 pub fn parse_snippet(
     code: &str,
 ) -> Result<(parser::ParsedModule, Vec<Diagnostic>), Box<Diagnostic>> {
@@ -147,6 +150,7 @@ pub fn parse_snippet(
 /// Asserts that a code snippet compiles successfully.
 ///
 /// Panics if compilation fails or produces errors.
+#[allow(dead_code)]
 pub fn assert_compiles(code: &str) {
     let (parsed_mod, diags) = parse_snippet(code).expect("Code should parse successfully");
 
@@ -174,6 +178,7 @@ pub fn assert_compiles(code: &str) {
 /// Asserts that a code snippet fails to compile with a specific error message.
 ///
 /// Panics if compilation succeeds or if the error message doesn't match.
+#[allow(dead_code)]
 pub fn assert_compilation_error(code: &str, expected_error: &str) {
     match parse_snippet(code) {
         Ok((_parsed_mod, diags)) => {
@@ -216,21 +221,25 @@ pub fn assert_compilation_error(code: &str, expected_error: &str) {
 /// Extracts LLVM IR from a CodeGen instance.
 ///
 /// Returns the IR as a string for inspection in tests.
+#[allow(dead_code)]
 pub fn get_llvm_ir<'a>(codegen: &CodeGen<'a>) -> String {
     codegen.module.print_to_string().to_string()
 }
 
 /// Creates a minimal symbol table for testing.
+#[allow(dead_code)]
 pub fn create_test_symbol_table() -> SymbolTable {
     SymbolTable::new()
 }
 
 /// Helper to create a test context and module.
+#[allow(dead_code)]
 pub fn create_test_context() -> Context {
     Context::create()
 }
 
 /// Asserts that a diagnostic has a specific severity and message pattern.
+#[allow(dead_code)]
 pub fn assert_diagnostic(
     diag: &Diagnostic,
     expected_severity: Severity,
@@ -249,6 +258,7 @@ pub fn assert_diagnostic(
 }
 
 /// Helper to create a test function signature.
+#[allow(dead_code)]
 pub fn create_test_function_sig(params: Vec<OatsType>, ret: OatsType) -> FunctionSig {
     FunctionSig {
         type_params: vec![],
@@ -258,6 +268,7 @@ pub fn create_test_function_sig(params: Vec<OatsType>, ret: OatsType) -> Functio
 }
 
 /// Helper to create a test OatsType.
+#[allow(dead_code)]
 pub fn create_test_type(ty: &str) -> OatsType {
     match ty {
         "number" => OatsType::Number,
@@ -271,6 +282,7 @@ pub fn create_test_type(ty: &str) -> OatsType {
 /// Compiles a code snippet to LLVM IR and returns it.
 ///
 /// This is a convenience function that combines parsing and codegen.
+#[allow(dead_code)]
 pub fn compile_to_ir(code: &str) -> Result<String, Box<Diagnostic>> {
     let (_parsed_mod, _diags) = parse_snippet(code)?;
     let context = create_test_context();

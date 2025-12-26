@@ -190,6 +190,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             // RC protocol: increment new value before storing
                             if !self.should_elide_rc_for_local(&name)
                                 && !self.is_unowned_local(locals, &name)
+                                && !self.returned_ownership.get()
                             {
                                 let rc_inc = self.get_rc_inc();
                                 let _ = self
@@ -1076,6 +1077,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         if let BasicValueEnum::PointerValue(newpv) = val
                             && !self.should_elide_rc_for_local(&name)
                             && !self.is_unowned_local(locals, &name)
+                            && !self.returned_ownership.get()
                         {
                             let rc_inc = self.get_rc_inc();
                             let _ =

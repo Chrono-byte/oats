@@ -82,7 +82,7 @@ pub extern "C" fn array_alloc(len: usize, elem_size: usize, elem_is_number: i32)
         };
         let elem_is_number_flag = u64::from(elem_is_number_u32) & 1;
         let flags = (elem_is_number_flag << 32) & 0xffff_ffff_0000_0000_u64;
-        let initial_rc = 1u64;
+        let initial_rc = 0u64;
         ptr::write_unaligned(p.cast::<u64>(), flags | initial_rc);
 
         // Write length

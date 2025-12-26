@@ -38,4 +38,7 @@ pub mod flags {
 
     /// Emit object only: `--emit-object-only`
     pub const EMIT_OBJECT_ONLY: &str = "--emit-object-only";
+
+    /// Emit object file: `--emit-obj`
+    pub const EMIT_OBJ: &str = "--emit-obj";
 }

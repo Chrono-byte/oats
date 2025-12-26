@@ -208,18 +208,6 @@ pub fn lower_array<'a>(
             )
         })?;
 
-    // Create a temporary alloca holding the array pointer. We must
-    // pass a pointer-to-pointer (i8**) to `array_set_ptr` so the
-    // runtime can update the array pointer if it reallocates. After
-    // element initialization we will load the (possibly updated)
-    // pointer and return it.
-    let arr_ptr_tmp = match codegen.builder.build_alloca(codegen.i8ptr_t, "arr_ptr_tmp") {
-        Ok(a) => a,
-        Err(_) => return Err(Diagnostic::simple_boxed(Severity::Error, "alloca failed")),
-    };
-    let _ = codegen.builder.build_store(arr_ptr_tmp, arr_ptr);
-    let array_set_ptr_fn = codegen.get_array_set_ptr();
-
     if all_numbers {
         // For each element, compute byte offset = i * 8, GEP from data_ptr_i8, bitcast to f64* and store
         for (i, v) in lowered_elems.into_iter().enumerate() {
@@ -258,6 +246,18 @@ pub fn lower_array<'a>(
         }
         Ok(arr_ptr.as_basic_value_enum())
     } else {
+        // Create a temporary alloca holding the array pointer. We must
+        // pass a pointer-to-pointer (i8**) to `array_set_ptr` so the
+        // runtime can update the array pointer if it reallocates. After
+        // element initialization we will load the (possibly updated)
+        // pointer and return it.
+        let arr_ptr_tmp = match codegen.builder.build_alloca(codegen.i8ptr_t, "arr_ptr_tmp") {
+            Ok(a) => a,
+            Err(_) => return Err(Diagnostic::simple_boxed(Severity::Error, "alloca failed")),
+        };
+        let _ = codegen.builder.build_store(arr_ptr_tmp, arr_ptr);
+        let array_set_ptr_fn = codegen.get_array_set_ptr();
+
         // pointer array: elements stored as machine pointers; element byte offset = i * ptr_size
         let ptr_size = 8u64;
         for (i, v) in lowered_elems.into_iter().enumerate() {
@@ -387,6 +387,7 @@ pub fn lower_array<'a>(
                 }
             }
         }
+        codegen.returned_ownership.set(true);
         Ok(arr_ptr.as_basic_value_enum())
     }
 }
@@ -655,30 +656,62 @@ pub fn lower_object<'a>(
         }
     };
 
-    // Initialize header (refcount=1, no flags)
+    // Initialize header (refcount= refcount=1, no flags)
+    // Cast to i8* first for subsequent field GEPs
+    let obj_ptr = codegen
+        .builder
+        .build_pointer_cast(malloc_ret, codegen.i8ptr_t, "obj_ptr")
+        .map_err(|_| Diagnostic::error("pointer cast failed"))?;
+    // Cast to i64* directly for aligned store
     let header_ptr = codegen
         .builder
-        .build_pointer_cast(malloc_ret, codegen.i8ptr_t, "hdr_ptr")
+        .build_pointer_cast(
+            obj_ptr,
+            codegen.context.ptr_type(AddressSpace::default()),
+            "hdr_ptr",
+        )
         .map_err(|_| Diagnostic::error("pointer cast failed"))?;
     let header_val = codegen.i64_t.const_int(1u64, false);
-    let _ = codegen.builder.build_store(header_ptr, header_val);
+    let store_inst = codegen
+        .builder
+        .build_store(header_ptr, header_val)
+        .map_err(|_| Diagnostic::error("store failed"))?;
+    let _ = store_inst.set_alignment(8);
+
+    // Initialize meta_slot (offset 8) to null
+    let meta_offset = codegen.i64_t.const_int(8u64, false);
+    let meta_ptr_cast = unsafe {
+        codegen
+            .builder
+            .build_gep(codegen.i8_t, obj_ptr, &[meta_offset], "meta_ptr_gep")
+            .map_err(|_| Diagnostic::error("GEP failed for meta_slot"))?
+    };
+    let meta_slot_ptr = codegen
+        .builder
+        .build_pointer_cast(
+            meta_ptr_cast,
+            codegen.context.ptr_type(AddressSpace::default()),
+            "meta_slot_ptr",
+        )
+        .map_err(|_| Diagnostic::error("pointer cast failed for meta_slot"))?;
+    let null_ptr = codegen.i8ptr_t.const_null();
+    let meta_store = codegen
+        .builder
+        .build_store(meta_slot_ptr, null_ptr)
+        .map_err(|_| Diagnostic::error("meta_slot store failed"))?;
+    let _ = meta_store.set_alignment(8);
 
     // Store fields sequentially (fields start after header+meta_slot)
     for (idx, fv) in field_values.into_iter().enumerate() {
         let offset = header_size + meta_slot + (idx as u64 * 8);
-        let obj_addr = codegen
-            .builder
-            .build_ptr_to_int(malloc_ret, codegen.i64_t, "obj_addr")
-            .map_err(|_| Diagnostic::error("ptr_to_int failed"))?;
         let offset_const = codegen.i64_t.const_int(offset, false);
-        let field_addr = codegen
-            .builder
-            .build_int_add(obj_addr, offset_const, "field_addr")
-            .map_err(|_| Diagnostic::error("int_add failed"))?;
-        let field_ptr = codegen
-            .builder
-            .build_int_to_ptr(field_addr, codegen.i8ptr_t, "field_ptr")
-            .map_err(|_| Diagnostic::error("int_to_ptr failed"))?;
+        // Use GEP instead of ptrtoint/add/inttoptr to preserve pointer provenance
+        let field_ptr = unsafe {
+            codegen
+                .builder
+                .build_gep(codegen.i8_t, obj_ptr, &[offset_const], "field_ptr")
+                .map_err(|_| Diagnostic::error("GEP failed"))?
+        };
 
         // If it's a float, store as raw f64 in the slot (no boxing).
         if fv.get_type().is_float_type() {
@@ -718,6 +751,7 @@ pub fn lower_object<'a>(
     }
 
     // Return the base pointer
+    codegen.returned_ownership.set(true);
     Ok(malloc_ret.as_basic_value_enum())
 }
 
@@ -848,6 +882,13 @@ pub fn lower_template<'a>(
             // paths set when the lowered expr was an identifier/param.
             // Lowering interpolated expression
             let expr_val = codegen.lower_expr(&tpl.expressions[i], function, param_map, locals)?;
+            eprintln!(
+                "DEBUG: Template expr[{}] lowered: is_float={}, is_pointer={}, is_int={}",
+                i,
+                expr_val.is_float_value(),
+                expr_val.is_pointer_value(),
+                expr_val.is_int_value()
+            );
             let mut expr_str_is_num_tmp = false;
             // Determine whether the resulting expr_str is a temporary
             // heap string that we must rc_dec after use.
@@ -856,6 +897,7 @@ pub fn lower_template<'a>(
 
             // Convert to string based on type
             let expr_str = if expr_val.is_float_value() {
+                eprintln!("DEBUG: Template expr[{}] is float, converting to string", i);
                 // Number: use number_to_string
                 let num_val = expr_val.into_float_value();
                 let num_to_str_fn = codegen.get_number_to_string();
@@ -863,6 +905,7 @@ pub fn lower_template<'a>(
                     .builder
                     .build_call(num_to_str_fn, &[num_val.into()], "num_to_str")
                     .map_err(|_| {
+                        eprintln!("DEBUG: number_to_string call failed");
                         Diagnostic::simple_with_span(
                             Severity::Error,
                             "failed to build call",
@@ -870,8 +913,12 @@ pub fn lower_template<'a>(
                         )
                     })?;
                 let tmp_ptr = match call_site.try_as_basic_value() {
-                    inkwell::values::ValueKind::Basic(bv) => bv.into_pointer_value(),
+                    inkwell::values::ValueKind::Basic(bv) => {
+                        eprintln!("DEBUG: number_to_string succeeded, got pointer");
+                        bv.into_pointer_value()
+                    }
                     _ => {
+                        eprintln!("DEBUG: number_to_string returned no value");
                         return Err(Diagnostic::simple_with_span_boxed(
                             Severity::Error,
                             "num_to_str returned no value",
@@ -977,6 +1024,7 @@ pub fn lower_template<'a>(
         }
     }
 
+    codegen.returned_ownership.set(true);
     Ok(result
         .ok_or_else(|| Diagnostic::error("empty template literal"))?
         .as_basic_value_enum())

@@ -416,45 +416,17 @@ impl<'a> crate::codegen::CodeGen<'a> {
         let state_ptr = state_param.into_pointer_value();
 
         // Read state u32 at offset 8
-        let state_addr_int =
-            match self
-                .builder
-                .build_ptr_to_int(state_ptr, self.i64_t, "state_addr")
-            {
-                Ok(v) => v,
-                Err(_) => {
-                    return Err(crate::diagnostics::Diagnostic::simple_boxed(
-                        Severity::Error,
-                        "ptr_to_int failed in next",
-                    ));
-                }
-            };
         let state_off = self.i64_t.const_int(8, false);
-        let state_field_int =
-            match self
-                .builder
-                .build_int_add(state_addr_int, state_off, "state_field_addr")
-            {
-                Ok(v) => v,
-                Err(_) => {
-                    return Err(crate::diagnostics::Diagnostic::simple_boxed(
+        // Use GEP instead of ptrtoint/add/inttoptr to preserve pointer provenance
+        let state_field_ptr = unsafe {
+            self.builder
+                .build_gep(self.i8_t, state_ptr, &[state_off], "state_field_ptr")
+                .map_err(|_| {
+                    crate::diagnostics::Diagnostic::simple_boxed(
                         Severity::Error,
-                        "int_add failed in next",
-                    ));
-                }
-            };
-        let state_field_ptr = match self.builder.build_int_to_ptr(
-            state_field_int,
-            self.context.ptr_type(inkwell::AddressSpace::default()),
-            "state_field_ptr",
-        ) {
-            Ok(p) => p,
-            Err(_) => {
-                return Err(crate::diagnostics::Diagnostic::simple_boxed(
-                    Severity::Error,
-                    "int_to_ptr failed in next",
-                ));
-            }
+                        "GEP failed in next",
+                    )
+                })?
         };
         let state_val = match self
             .builder
@@ -990,47 +962,38 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     "next fn pointer cast failed",
                 )
             })?;
-        let _ = self
+        let store = self
             .builder
             .build_store(next_fn_ptr, next_fn_ptr_val.as_basic_value_enum());
+        if let Ok(st) = store {
+            let _ = st.set_alignment(8);
+        }
 
         // Store initial state (0) at offset 8
-        let state_addr_int = self
-            .builder
-            .build_ptr_to_int(state_ptr_wrapper, self.i64_t, "state_addr_wrapper")
-            .map_err(|_| {
-                crate::diagnostics::Diagnostic::simple_boxed(
-                    Severity::Error,
-                    "ptr_to_int failed in wrapper",
-                )
-            })?;
         let state_off = self.i64_t.const_int(8, false);
-        let state_field_int = self
-            .builder
-            .build_int_add(state_addr_int, state_off, "state_field_addr_wrapper")
-            .map_err(|_| {
-                crate::diagnostics::Diagnostic::simple_boxed(
-                    Severity::Error,
-                    "int_add failed in wrapper",
+        // Use GEP instead of ptrtoint/add/inttoptr to preserve pointer provenance
+        let state_field_ptr = unsafe {
+            self.builder
+                .build_gep(
+                    self.i8_t,
+                    state_ptr_wrapper,
+                    &[state_off],
+                    "state_field_ptr_wrapper",
                 )
-            })?;
-        let state_field_ptr = self
-            .builder
-            .build_int_to_ptr(
-                state_field_int,
-                self.context.ptr_type(inkwell::AddressSpace::default()),
-                "state_field_ptr_wrapper",
-            )
-            .map_err(|_| {
-                crate::diagnostics::Diagnostic::simple_boxed(
-                    Severity::Error,
-                    "int_to_ptr failed in wrapper",
-                )
-            })?;
+                .map_err(|_| {
+                    crate::diagnostics::Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "GEP failed in wrapper",
+                    )
+                })?
+        };
         let zero_state = self.i32_t.const_int(0, false);
-        let _ = self
+        let store = self
             .builder
             .build_store(state_field_ptr, zero_state.as_basic_value_enum());
+        if let Ok(st) = store {
+            let _ = st.set_alignment(8);
+        }
 
         // Store parameters in state slots (starting at offset 16)
         for (i, _param) in func_decl.params.items.iter().enumerate() {
@@ -1104,9 +1067,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             "f64 ptr cast failed",
                         )
                     })?;
-                let _ = self
+                let store = self
                     .builder
                     .build_store(f64_ptr, boxed_ptr.as_basic_value_enum());
+                if let Ok(st) = store {
+                    let _ = st.set_alignment(8);
+                }
             } else {
                 // Pointer types - store directly
                 let ptr_ptr = self
@@ -1132,9 +1098,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             "param pointer cast failed",
                         )
                     })?;
-                let _ = self
+                let store = self
                     .builder
                     .build_store(ptr_ptr, param_i8ptr.as_basic_value_enum());
+                if let Ok(st) = store {
+                    let _ = st.set_alignment(8);
+                }
             }
         }
 

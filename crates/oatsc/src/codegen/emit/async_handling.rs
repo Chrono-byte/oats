@@ -350,45 +350,17 @@ impl<'a> crate::codegen::CodeGen<'a> {
         let state_ptr = state_param.into_pointer_value();
 
         // Read state u32 at offset 8
-        let state_addr_int =
-            match self
-                .builder
-                .build_ptr_to_int(state_ptr, self.i64_t, "state_addr")
-            {
-                Ok(v) => v,
-                Err(_) => {
-                    return Err(crate::diagnostics::Diagnostic::simple_boxed(
-                        Severity::Error,
-                        "ptr_to_int failed in poll",
-                    ));
-                }
-            };
         let state_off = self.i64_t.const_int(8, false);
-        let state_field_int =
-            match self
-                .builder
-                .build_int_add(state_addr_int, state_off, "state_field_addr")
-            {
-                Ok(v) => v,
-                Err(_) => {
-                    return Err(crate::diagnostics::Diagnostic::simple_boxed(
+        // Use GEP instead of ptrtoint/add/inttoptr to preserve pointer provenance
+        let state_field_ptr = unsafe {
+            self.builder
+                .build_gep(self.i8_t, state_ptr, &[state_off], "state_field_ptr")
+                .map_err(|_| {
+                    crate::diagnostics::Diagnostic::simple_boxed(
                         Severity::Error,
-                        "int_add failed in poll",
-                    ));
-                }
-            };
-        let state_field_ptr = match self.builder.build_int_to_ptr(
-            state_field_int,
-            self.context.ptr_type(inkwell::AddressSpace::default()),
-            "state_field_ptr",
-        ) {
-            Ok(p) => p,
-            Err(_) => {
-                return Err(crate::diagnostics::Diagnostic::simple_boxed(
-                    Severity::Error,
-                    "int_to_ptr failed in poll",
-                ));
-            }
+                        "GEP failed in poll",
+                    )
+                })?
         };
         let state_loaded = match self
             .builder
@@ -524,11 +496,17 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 }
             };
 
-            let _ = self.builder.build_store(out_ptr_cast, payload_bv);
+            let store = self.builder.build_store(out_ptr_cast, payload_bv);
+            if let Ok(st) = store {
+                let _ = st.set_alignment(8);
+            }
 
             // Set state to done (1)
             let one_i32 = self.i32_t.const_int(1, false);
-            let _ = self.builder.build_store(state_field_ptr, one_i32);
+            let store = self.builder.build_store(state_field_ptr, one_i32);
+            if let Ok(st) = store {
+                let _ = st.set_alignment(8);
+            }
 
             // Return Ready (1)
             let one = self.i32_t.const_int(1, false);
@@ -607,57 +585,33 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     ));
                 }
             };
-        let _ = self
+        let store = self
             .builder
             .build_store(state_ptr_wrapper, poll_ptr_i8.as_basic_value_enum());
+        if let Ok(st) = store {
+            let _ = st.set_alignment(8);
+        }
 
         // Store each incoming parameter into the state slots starting at offset 16
         for (i, pty) in llvm_param_types.iter().enumerate().take(param_count) {
             if let Some(arg_val) = function.get_nth_param(i as u32) {
                 let slot_offset = 16 + (i as u64 * 8);
-                let obj_ptr_int = match self.builder.build_ptr_to_int(
-                    state_ptr_wrapper,
-                    self.i64_t,
-                    &format!("state_addr_store_{i}"),
-                ) {
-                    Ok(v) => v,
-                    Err(_) => {
-                        return Err(crate::diagnostics::Diagnostic::simple_boxed(
-                            Severity::Error,
-                            "ptr_to_int failed when storing captures",
-                        ));
-                    }
-                };
                 let off_const = self.i64_t.const_int(slot_offset, false);
-                let field_addr = match self.builder.build_int_add(
-                    obj_ptr_int,
-                    off_const,
-                    &format!("slot_addr_store_{i}"),
-                ) {
-                    Ok(v) => v,
-                    Err(_) => {
-                        return Err(crate::diagnostics::Diagnostic::simple_boxed(
-                            Severity::Error,
-                            "int_add failed when storing captures",
-                        ));
-                    }
-                };
-
-                // Use i8* slots for stored captures. If the parameter ABI is
-                // a float (Number), box it into a union object before
-                // storing; otherwise store the pointer/value directly.
-                let slot_ptr = match self.builder.build_int_to_ptr(
-                    field_addr,
-                    self.i8ptr_t,
-                    &format!("slot_ptr_store_{i}"),
-                ) {
-                    Ok(p) => p,
-                    Err(_) => {
-                        return Err(crate::diagnostics::Diagnostic::simple_boxed(
-                            Severity::Error,
-                            "int_to_ptr failed when storing captures",
-                        ));
-                    }
+                // Use GEP instead of ptrtoint/add/inttoptr to preserve pointer provenance
+                let slot_ptr = unsafe {
+                    self.builder
+                        .build_gep(
+                            self.i8_t,
+                            state_ptr_wrapper,
+                            &[off_const],
+                            &format!("slot_ptr_store_{i}"),
+                        )
+                        .map_err(|_| {
+                            crate::diagnostics::Diagnostic::simple_boxed(
+                                Severity::Error,
+                                "GEP failed when storing captures",
+                            )
+                        })?
                 };
 
                 // If the function parameter ABI is a float, box it.
@@ -701,13 +655,19 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     ));
                                 }
                             };
-                        let _ = self
+                        let store = self
                             .builder
                             .build_store(slot_ptr, boxed_ptr.as_basic_value_enum());
+                        if let Ok(st) = store {
+                            let _ = st.set_alignment(8);
+                        }
                     }
                     _ => {
                         // store pointer-like or integer param directly into i8* slot
-                        let _ = self.builder.build_store(slot_ptr, arg_val);
+                        let store = self.builder.build_store(slot_ptr, arg_val);
+                        if let Ok(st) = store {
+                            let _ = st.set_alignment(8);
+                        }
                     }
                 }
             }
@@ -810,46 +770,23 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             }
                             if let Some((alloca_ptr, ty)) = target_alloca {
                                 // compute slot addr and load i8*
-                                let base_int = match self.builder.build_ptr_to_int(
-                                    state_ptr,
-                                    self.i64_t,
-                                    "resume_state_addr",
-                                ) {
-                                    Ok(v) => v,
-                                    Err(_) => {
-                                        return Err(crate::diagnostics::Diagnostic::simple_boxed(
-                                            Severity::Error,
-                                            "ptr_to_int failed when resuming locals",
-                                        ));
-                                    }
-                                };
                                 let off_const =
                                     self.i64_t.const_int(16 + (*slot_idx as u64 * 8), false);
-                                let slot_addr_int = match self.builder.build_int_add(
-                                    base_int,
-                                    off_const,
-                                    "slot_addr_resume",
-                                ) {
-                                    Ok(v) => v,
-                                    Err(_) => {
-                                        return Err(crate::diagnostics::Diagnostic::simple_boxed(
-                                            Severity::Error,
-                                            "int_add failed when resuming locals",
-                                        ));
-                                    }
-                                };
-                                let slot_ptr = match self.builder.build_int_to_ptr(
-                                    slot_addr_int,
-                                    self.i8ptr_t,
-                                    "slot_ptr_resume",
-                                ) {
-                                    Ok(p) => p,
-                                    Err(_) => {
-                                        return Err(crate::diagnostics::Diagnostic::simple_boxed(
-                                            Severity::Error,
-                                            "int_to_ptr failed when resuming locals",
-                                        ));
-                                    }
+                                // Use GEP instead of ptrtoint/add/inttoptr to preserve pointer provenance
+                                let slot_ptr = unsafe {
+                                    self.builder
+                                        .build_gep(
+                                            self.i8_t,
+                                            state_ptr,
+                                            &[off_const],
+                                            "slot_ptr_resume",
+                                        )
+                                        .map_err(|_| {
+                                            crate::diagnostics::Diagnostic::simple_boxed(
+                                                Severity::Error,
+                                                "GEP failed when resuming locals",
+                                            )
+                                        })?
                                 };
                                 let loaded_slot = match self.builder.build_load(
                                     self.i8ptr_t,
@@ -943,45 +880,22 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 let param_count = llvm_param_types.len();
                 let local_slot_count = all_live_names.len();
                 let await_slot_offset = 16 + (param_count * 8) + (local_slot_count * 8) + (i * 8);
-                let base_int = match self.builder.build_ptr_to_int(
-                    poll_state_ptr,
-                    self.i64_t,
-                    "resume_state_addr_promise",
-                ) {
-                    Ok(v) => v,
-                    Err(_) => {
-                        return Err(crate::diagnostics::Diagnostic::simple_boxed(
-                            Severity::Error,
-                            "ptr_to_int failed when loading awaited promise",
-                        ));
-                    }
-                };
                 let off_const = self.i64_t.const_int(await_slot_offset as u64, false);
-                let slot_addr_int = match self.builder.build_int_add(
-                    base_int,
-                    off_const,
-                    "promise_slot_addr_resume",
-                ) {
-                    Ok(v) => v,
-                    Err(_) => {
-                        return Err(crate::diagnostics::Diagnostic::simple_boxed(
-                            Severity::Error,
-                            "int_add failed when loading awaited promise",
-                        ));
-                    }
-                };
-                let slot_ptr = match self.builder.build_int_to_ptr(
-                    slot_addr_int,
-                    self.i8ptr_t,
-                    "promise_slot_ptr_resume",
-                ) {
-                    Ok(p) => p,
-                    Err(_) => {
-                        return Err(crate::diagnostics::Diagnostic::simple_boxed(
-                            Severity::Error,
-                            "int_to_ptr failed when loading awaited promise",
-                        ));
-                    }
+                // Use GEP instead of ptrtoint/add/inttoptr to preserve pointer provenance
+                let slot_ptr = unsafe {
+                    self.builder
+                        .build_gep(
+                            self.i8_t,
+                            poll_state_ptr,
+                            &[off_const],
+                            "promise_slot_ptr_resume",
+                        )
+                        .map_err(|_| {
+                            crate::diagnostics::Diagnostic::simple_boxed(
+                                Severity::Error,
+                                "GEP failed when loading awaited promise",
+                            )
+                        })?
                 };
                 // Load the promise pointer
                 let promise_ptr =

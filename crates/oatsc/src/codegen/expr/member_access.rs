@@ -32,6 +32,11 @@ impl<'a> CodeGen<'a> {
         // Support both computed member access (obj[expr]) and dot-member (obj.prop)
         match member {
             Expression::ComputedMemberExpression(computed) => {
+                eprintln!("DEBUG: ComputedMemberExpression entry");
+                eprintln!(
+                    "DEBUG: computed.object type: {:?}",
+                    std::mem::discriminant(&computed.object)
+                );
                 // lower object and index separately so we can produce clearer diagnostics
                 let obj_res = self.lower_expr(&computed.object, function, param_map, locals);
                 let idx_res = self.lower_expr(&computed.expression, function, param_map, locals);
@@ -47,6 +52,10 @@ impl<'a> CodeGen<'a> {
                         "failed to lower member index expression",
                     )
                 })?;
+                eprintln!(
+                    "DEBUG: obj_val type: {:?}",
+                    std::mem::discriminant(&obj_val)
+                );
 
                 // Only support pointer-array indexing (i8**). Try to
                 // infer a nominal class for the object (this may be a
@@ -54,16 +63,203 @@ impl<'a> CodeGen<'a> {
                 // fixed-field access without calling generic array_get
                 // runtime helpers.
                 if let BasicValueEnum::PointerValue(arr_ptr) = obj_val {
+                    eprintln!("DEBUG: obj_val is PointerValue, checking for tuple type");
                     // Try to infer a nominal class name from the object
                     let mut class_name_opt: Option<String> = None;
                     if let Expression::Identifier(ident) = &computed.object {
                         let arr_name = ident.as_ref().name.to_string();
-                        // check locals for nominal annotation
-                        if let Some((_, _ty, _init, _is_const, _is_weak, nominal, _oats_type)) =
-                            self.find_local(locals, &arr_name)
-                            && let Some(nom) = nominal
+                        eprintln!(
+                            "DEBUG: ComputedMemberExpression: checking local '{}'",
+                            arr_name
+                        );
+                        // check locals for tuple type or nominal annotation
+                        let found_local = self.find_local(locals, &arr_name);
+                        eprintln!(
+                            "DEBUG: find_local('{}') returned: found={}, oats_type={:?}",
+                            arr_name,
+                            found_local.is_some(),
+                            found_local.as_ref().map(|(_, _, _, _, _, _, ot)| ot)
+                        );
+                        if let Some((_, _ty, _init, _is_const, _is_weak, nominal, oats_type)) =
+                            found_local
                         {
-                            class_name_opt = Some(nom);
+                            // First check if this is a tuple type
+                            let is_tuple =
+                                matches!(oats_type, Some(crate::types::OatsType::Tuple(_)));
+                            eprintln!(
+                                "DEBUG: Local '{}' oats_type={:?}, is_tuple={}",
+                                arr_name, oats_type, is_tuple
+                            );
+                            if let Some(crate::types::OatsType::Tuple(elem_types)) = oats_type {
+                                eprintln!(
+                                    "DEBUG: Entering tuple access path for '{}', elem_count={}",
+                                    arr_name,
+                                    elem_types.len()
+                                );
+                                // This is a tuple - handle tuple element access
+                                let idx_i64 = match idx_val {
+                                    BasicValueEnum::IntValue(iv) => self
+                                        .builder
+                                        .build_int_cast(iv, self.i64_t, "idx_i64")
+                                        .map_err(|_| Diagnostic::error("LLVM builder error"))?,
+                                    BasicValueEnum::FloatValue(fv) => self
+                                        .builder
+                                        .build_float_to_signed_int(fv, self.i64_t, "f2i")
+                                        .map_err(|_| Diagnostic::error("LLVM builder error"))?,
+                                    _ => {
+                                        return Err(Diagnostic::simple_with_span_boxed(
+                                            Severity::Error,
+                                            "unsupported index type for tuple access",
+                                            computed.span.start as usize,
+                                        ));
+                                    }
+                                };
+
+                                // Get the array pointer (tuples are stored as arrays)
+                                let arr_ptr = match obj_val {
+                                    BasicValueEnum::PointerValue(pv) => pv,
+                                    _ => {
+                                        return Err(Diagnostic::simple_with_span_boxed(
+                                            Severity::Error,
+                                            "tuple must be a pointer value",
+                                            computed.span.start as usize,
+                                        ));
+                                    }
+                                };
+
+                                // If index is a compile-time constant, use it to get element type
+                                eprintln!("DEBUG: Checking if index is compile-time constant");
+                                if let Some(const_idx) = idx_i64.get_zero_extended_constant() {
+                                    let idx_usize = const_idx as usize;
+                                    eprintln!("DEBUG: Index is constant: {}", idx_usize);
+                                    if let Some(elem_ty) = elem_types.get(idx_usize) {
+                                        eprintln!(
+                                            "DEBUG: Element type at index {}: {:?}",
+                                            idx_usize, elem_ty
+                                        );
+                                        // Use array_get_ptr to get the element (tuples are arrays at runtime)
+                                        let array_get_ptr_fn = self.get_array_get_ptr();
+                                        let idx_const =
+                                            self.i64_t.const_int(idx_usize as u64, false);
+                                        let elem_ptr = self
+                                            .builder
+                                            .build_call(
+                                                array_get_ptr_fn,
+                                                &[arr_ptr.into(), idx_const.into()],
+                                                "tuple_elem_ptr",
+                                            )
+                                            .map_err(|_| {
+                                                Diagnostic::simple_boxed(
+                                                    Severity::Error,
+                                                    "array_get_ptr failed",
+                                                )
+                                            })?;
+                                        let boxed_ptr = match elem_ptr.try_as_basic_value() {
+                                            inkwell::values::ValueKind::Basic(bv) => {
+                                                bv.into_pointer_value()
+                                            }
+                                            _ => {
+                                                return Err(Diagnostic::simple_boxed(
+                                                    Severity::Error,
+                                                    "array_get_ptr returned non-pointer",
+                                                ));
+                                            }
+                                        };
+                                        // Increment RC for the returned pointer
+                                        let rc_inc_fn = self.get_rc_inc();
+                                        let _ = self.builder.build_call(
+                                            rc_inc_fn,
+                                            &[boxed_ptr.into()],
+                                            "rc_inc_tuple_elem",
+                                        );
+
+                                        // Unbox based on element type
+                                        eprintln!("DEBUG: Unboxing element type: {:?}", elem_ty);
+                                        match elem_ty {
+                                            crate::types::OatsType::Number => {
+                                                eprintln!("DEBUG: Unboxing Number element");
+                                                // Unbox the union box to get the f64 value
+                                                let unbox_f64_fn = self.get_union_unbox_f64();
+                                                let unboxed = self
+                                                    .builder
+                                                    .build_call(
+                                                        unbox_f64_fn,
+                                                        &[boxed_ptr.into()],
+                                                        "tuple_unbox_f64",
+                                                    )
+                                                    .map_err(|_| {
+                                                        eprintln!(
+                                                            "DEBUG: union_unbox_f64 call failed"
+                                                        );
+                                                        Diagnostic::simple_boxed(
+                                                            Severity::Error,
+                                                            "union_unbox_f64 failed",
+                                                        )
+                                                    })?;
+                                                let f64_val = match unboxed.try_as_basic_value() {
+                                                    inkwell::values::ValueKind::Basic(bv) => {
+                                                        eprintln!(
+                                                            "DEBUG: Successfully unboxed f64 value"
+                                                        );
+                                                        bv
+                                                    }
+                                                    _ => {
+                                                        eprintln!(
+                                                            "DEBUG: union_unbox_f64 returned non-basic value"
+                                                        );
+                                                        return Err(Diagnostic::simple_boxed(
+                                                            Severity::Error,
+                                                            "union_unbox_f64 returned non-basic value",
+                                                        ));
+                                                    }
+                                                };
+                                                // Decrement RC for the boxed pointer (we extracted the value)
+                                                let rc_dec_fn = self.get_rc_dec();
+                                                let _ = self.builder.build_call(
+                                                    rc_dec_fn,
+                                                    &[boxed_ptr.into()],
+                                                    "rc_dec_tuple_elem",
+                                                );
+                                                eprintln!("DEBUG: Returning unboxed f64 value");
+                                                return Ok(f64_val);
+                                            }
+                                            crate::types::OatsType::String
+                                            | crate::types::OatsType::NominalStruct(_)
+                                            | crate::types::OatsType::Array(_) => {
+                                                eprintln!("DEBUG: Returning pointer type element");
+                                                // For pointer types, return the boxed pointer directly
+                                                self.returned_ownership.set(true);
+                                                return Ok(boxed_ptr.as_basic_value_enum());
+                                            }
+                                            _ => {
+                                                eprintln!(
+                                                    "DEBUG: Returning unknown type element as pointer"
+                                                );
+                                                // For other types, try to unbox or return pointer
+                                                self.returned_ownership.set(true);
+                                                return Ok(boxed_ptr.as_basic_value_enum());
+                                            }
+                                        }
+                                    } else {
+                                        eprintln!(
+                                            "DEBUG: Index {} out of bounds for tuple with {} elements",
+                                            idx_usize,
+                                            elem_types.len()
+                                        );
+                                    }
+                                } else {
+                                    eprintln!(
+                                        "DEBUG: Index is not a compile-time constant, falling through to generic array access"
+                                    );
+                                }
+                                // Non-constant index - fall through to generic array access
+                                eprintln!(
+                                    "DEBUG: Falling through to generic array access for tuple"
+                                );
+                            } else if let Some(nom) = nominal {
+                                // Not a tuple, but has nominal type
+                                class_name_opt = Some(nom);
+                            }
                         } else if let Some(param_idx) = param_map.get(&arr_name) {
                             let fname = function.get_name().to_str().unwrap_or_default();
                             if let Some(param_types) = self.fn_param_types.borrow().get(fname) {
@@ -115,6 +311,87 @@ impl<'a> CodeGen<'a> {
                             if let Some((field_idx, (_fname, field_ty))) =
                                 fields.iter().enumerate().find(|(i, _)| *i == idx_usize)
                             {
+                                // Check if this is a tuple (stored as array) by checking if class_name starts with "tuple_"
+                                let is_tuple = class_name.starts_with("tuple_");
+                                if is_tuple {
+                                    // Tuples are stored as arrays, so use array_get_ptr and unbox based on field type
+                                    let array_get_ptr_fn = self.get_array_get_ptr();
+                                    let idx_const = self.i64_t.const_int(field_idx as u64, false);
+                                    let elem_ptr = self
+                                        .builder
+                                        .build_call(
+                                            array_get_ptr_fn,
+                                            &[arr_ptr.into(), idx_const.into()],
+                                            "tuple_elem_ptr",
+                                        )
+                                        .map_err(|_| Diagnostic::error("array_get_ptr failed"))?;
+                                    let boxed_ptr = match elem_ptr.try_as_basic_value() {
+                                        inkwell::values::ValueKind::Basic(bv) => {
+                                            bv.into_pointer_value()
+                                        }
+                                        _ => {
+                                            return Err(Diagnostic::simple_boxed(
+                                                Severity::Error,
+                                                "array_get_ptr returned non-pointer",
+                                            ));
+                                        }
+                                    };
+                                    // Increment RC for the returned pointer
+                                    let rc_inc_fn = self.get_rc_inc();
+                                    let _ = self.builder.build_call(
+                                        rc_inc_fn,
+                                        &[boxed_ptr.into()],
+                                        "rc_inc_tuple_elem",
+                                    );
+
+                                    match field_ty {
+                                        crate::types::OatsType::Number => {
+                                            // Unbox the union box to get the f64 value
+                                            let unbox_f64_fn = self.get_union_unbox_f64();
+                                            let unboxed = self
+                                                .builder
+                                                .build_call(
+                                                    unbox_f64_fn,
+                                                    &[boxed_ptr.into()],
+                                                    "tuple_unbox_f64",
+                                                )
+                                                .map_err(|_| {
+                                                    Diagnostic::error("union_unbox_f64 failed")
+                                                })?;
+                                            let f64_val = match unboxed.try_as_basic_value() {
+                                                inkwell::values::ValueKind::Basic(bv) => bv,
+                                                _ => {
+                                                    return Err(Diagnostic::simple_boxed(
+                                                        Severity::Error,
+                                                        "union_unbox_f64 returned non-basic value",
+                                                    ));
+                                                }
+                                            };
+                                            // Decrement RC for the boxed pointer (we extracted the value)
+                                            let rc_dec_fn = self.get_rc_dec();
+                                            let _ = self.builder.build_call(
+                                                rc_dec_fn,
+                                                &[boxed_ptr.into()],
+                                                "rc_dec_tuple_elem",
+                                            );
+                                            return Ok(f64_val);
+                                        }
+                                        crate::types::OatsType::String
+                                        | crate::types::OatsType::NominalStruct(_)
+                                        | crate::types::OatsType::Array(_) => {
+                                            // For pointer types, return the boxed pointer directly
+                                            self.returned_ownership.set(true);
+                                            return Ok(boxed_ptr.as_basic_value_enum());
+                                        }
+                                        _ => {
+                                            // For other types, try to unbox or return pointer
+                                            self.returned_ownership.set(true);
+                                            return Ok(boxed_ptr.as_basic_value_enum());
+                                        }
+                                    }
+                                }
+
+                                // For non-tuple nominal types (object literals), use direct field access
                                 // compute offset like in dot-member lowering
                                 let hdr_size = self
                                     .i64_t
@@ -141,6 +418,8 @@ impl<'a> CodeGen<'a> {
                                     .map_err(|_| Diagnostic::error("operation failed"))?;
                                 match field_ty {
                                     crate::types::OatsType::Number => {
+                                        // Cast to generic pointer type and load as f64
+                                        // Use generic pointer type like other parts of the codebase
                                         let f64_ptr = self
                                             .builder
                                             .build_pointer_cast(
@@ -733,6 +1012,7 @@ impl<'a> CodeGen<'a> {
                                                 .replace(field_key);
                                         }
                                     }
+                                    self.returned_ownership.set(false);
                                     return Ok(loaded.as_basic_value_enum());
                                 }
                                 crate::types::OatsType::Union(_) => {

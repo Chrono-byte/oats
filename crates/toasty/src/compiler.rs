@@ -93,6 +93,8 @@ pub fn invoke_oatsc(options: &CompileOptions) -> Result<Option<PathBuf>> {
     // Add flags
     if options.emit_object_only {
         args.push(crate::cli_flags::flags::EMIT_OBJECT_ONLY.to_string());
+        // When emitting object only, also emit the object file to disk
+        args.push(crate::cli_flags::flags::EMIT_OBJ.to_string());
     }
 
     // Execute command

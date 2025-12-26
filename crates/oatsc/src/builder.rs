@@ -497,6 +497,7 @@ pub fn run_from_args(
         current_label: RefCell::new(None),
         rta_results: Some(rta_results),
         uses_async: Cell::new(false),
+        returned_ownership: Cell::new(false),
     };
 
     // Note: class field metadata is computed per-class when emitting
@@ -907,6 +908,9 @@ pub fn run_from_args(
 
     // Try to emit a host `main` into the module so no external shim is
     // required. Recompute IR after emission.
+    // Even when emit_object_only is true, if we found a main function,
+    // we should emit the host main (this is needed for entry point modules
+    // in multi-module builds).
     let emitted_host_main = if let Some(sig) = func_sig {
         codegen.emit_host_main(&sig.params, &sig.ret)
     } else {
@@ -933,7 +937,10 @@ pub fn run_from_args(
 
     // Determine if IR and object files should be emitted
     let emit_ir = options.as_ref().is_some_and(|o| o.emit_ir);
-    let emit_obj = options.as_ref().is_some_and(|o| o.emit_obj);
+    // When emit_object_only is true, we should also emit the object file to disk
+    // so it can be used by the linker
+    let emit_obj = options.as_ref().is_some_and(|o| o.emit_obj)
+        || options.as_ref().is_some_and(|o| o.emit_object_only);
 
     let out_ll = format!("{out_dir}/{src_filename}.ll");
     let out_exe = if let Some(opts) = options {

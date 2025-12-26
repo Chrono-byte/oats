@@ -53,25 +53,20 @@ pub(crate) struct LocalVarInfo<'a> {
 
 impl<'a> super::CodeGen<'a> {
     /// Compute an i8* offset from a base pointer.
+    /// Uses GEP to preserve pointer provenance for alias analysis and GC safety.
     pub(crate) fn offset_i8_ptr(
         &self,
         base: inkwell::values::PointerValue<'a>,
         offset: u64,
         name: &str,
     ) -> crate::diagnostics::DiagnosticResult<inkwell::values::PointerValue<'a>> {
-        let base_addr = self
-            .builder
-            .build_ptr_to_int(base, self.i64_t, &format!("{name}_addr"))
-            .map_err(|_| Diagnostic::error("ptr_to_int failed"))?;
         let offset_val = self.i64_t.const_int(offset, false);
-        let addr = self
-            .builder
-            .build_int_add(base_addr, offset_val, &format!("{name}_addr_off"))
-            .map_err(|_| Diagnostic::error("int_add failed"))?;
-        let ptr = self
-            .builder
-            .build_int_to_ptr(addr, self.i8ptr_t, name)
-            .map_err(|_| Diagnostic::error("int_to_ptr failed"))?;
+        // Use GEP instead of ptrtoint/add/inttoptr to preserve pointer provenance
+        let ptr = unsafe {
+            self.builder
+                .build_gep(self.i8_t, base, &[offset_val], name)
+                .map_err(|_| Diagnostic::error("GEP failed"))?
+        };
         Ok(ptr)
     }
 
@@ -224,18 +219,12 @@ impl<'a> super::CodeGen<'a> {
         obj_ptr: inkwell::values::PointerValue<'a>,
     ) -> crate::diagnostics::DiagnosticResult<inkwell::values::PointerValue<'a>> {
         let header_offset = self.i64_t.const_int(16, false);
-        let ptr_int = self
-            .builder
-            .build_ptr_to_int(obj_ptr, self.i64_t, "str_obj_int")
-            .map_err(|_| Diagnostic::error("LLVM builder error"))?;
-        let data_ptr_int = self
-            .builder
-            .build_int_add(ptr_int, header_offset, "str_data_int")
-            .map_err(|_| Diagnostic::error("LLVM builder error"))?;
-        let data_ptr = self
-            .builder
-            .build_int_to_ptr(data_ptr_int, self.i8ptr_t, "str_data_ptr")
-            .map_err(|_| Diagnostic::error("LLVM builder error"))?;
+        // Use GEP instead of ptrtoint/add/inttoptr to preserve pointer provenance
+        let data_ptr = unsafe {
+            self.builder
+                .build_gep(self.i8_t, obj_ptr, &[header_offset], "str_data_ptr")
+                .map_err(|_| Diagnostic::error("GEP failed"))?
+        };
         Ok(data_ptr)
     }
 
@@ -786,28 +775,34 @@ impl<'a> super::CodeGen<'a> {
         // Initialize header: rc=1, type_tag=3 (closure/env-like)
         let type_tag_val = 3u64 << 49;
         let header_val = self.i64_t.const_int(type_tag_val | 1u64, false);
-        let _ = self.builder.build_store(obj_ptr, header_val);
+        // Cast obj_ptr to i64* for aligned store
+        let header_ptr = self
+            .builder
+            .build_pointer_cast(
+                obj_ptr,
+                self.context.ptr_type(Default::default()),
+                "header_ptr",
+            )
+            .map_err(|_| {
+                crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "pointer cast failed")
+            })?;
+        let store_inst = self
+            .builder
+            .build_store(header_ptr, header_val)
+            .map_err(|_| {
+                crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "store failed")
+            })?;
+        let _ = store_inst.set_alignment(8);
 
-        // Zero-init meta slot
-        let obj_ptr_int = self
-            .builder
-            .build_ptr_to_int(malloc_ret, self.i64_t, "obj_addr_for_zero")
-            .map_err(|_| {
-                crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "ptr_to_int failed")
-            })?;
+        // Zero-init meta slot using GEP
         let off_meta = self.i64_t.const_int(header_size, false);
-        let meta_addr = self
-            .builder
-            .build_int_add(obj_ptr_int, off_meta, "meta_addr")
-            .map_err(|_| {
-                crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "int_add failed")
-            })?;
-        let meta_ptr = self
-            .builder
-            .build_int_to_ptr(meta_addr, self.i8ptr_t, "meta_ptr")
-            .map_err(|_| {
-                crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "int_to_ptr failed")
-            })?;
+        let meta_ptr = unsafe {
+            self.builder
+                .build_gep(self.i8_t, obj_ptr, &[off_meta], "meta_ptr")
+                .map_err(|_| {
+                    crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "GEP failed")
+                })?
+        };
         let null_ptr = self.i8ptr_t.const_null();
         let _ = self
             .builder
@@ -818,21 +813,14 @@ impl<'a> super::CodeGen<'a> {
             // compute offset
             let field_offset = header_size + meta_slot + (i as u64 * 8);
             let off_const = self.i64_t.const_int(field_offset, false);
-            let field_addr = self
-                .builder
-                .build_int_add(obj_ptr_int, off_const, "field_addr")
-                .map_err(|_| {
-                    crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "int_add failed")
-                })?;
-            let field_ptr_cast = self
-                .builder
-                .build_int_to_ptr(field_addr, self.i8ptr_t, "field_ptr")
-                .map_err(|_| {
-                    crate::diagnostics::Diagnostic::simple_boxed(
-                        Severity::Error,
-                        "int_to_ptr failed",
-                    )
-                })?;
+            // Use GEP instead of ptrtoint/add/inttoptr
+            let field_ptr_cast = unsafe {
+                self.builder
+                    .build_gep(self.i8_t, obj_ptr, &[off_const], "field_ptr")
+                    .map_err(|_| {
+                        crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "GEP failed")
+                    })?
+            };
 
             // Ensure val is pointer-like; if it's not an i8* (heap object pointer),
             // cast it to i8* for storage but DO NOT adjust refcounts for non-heap
@@ -938,36 +926,22 @@ impl<'a> super::CodeGen<'a> {
     }
 
     // Helper: compute an i8* pointer by adding a 64-bit byte offset to a base i8*.
-    // We prefer ptr_to_int + add + int_to_ptr sequences for consistent byte-offset
-    // arithmetic across the codegen (avoids subtle differences when using GEP
-    // with i8 element indices). `base` must be an i8* pointer value.
+    // Uses GEP to preserve pointer provenance for alias analysis and GC safety.
+    // `base` must be an i8* pointer value.
     pub(crate) fn i8_ptr_from_offset_i64(
         &self,
         base: inkwell::values::PointerValue<'a>,
         offset: inkwell::values::IntValue<'a>,
         name: &str,
     ) -> crate::diagnostics::DiagnosticResult<inkwell::values::PointerValue<'a>> {
-        // ptrtoint base -> i64
-        let obj_ptr_int = self
-            .builder
-            .build_ptr_to_int(base, self.i64_t, "obj_addr_for_gep")
-            .map_err(|_| {
-                crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "ptr_to_int failed")
-            })?;
-        // add offset
-        let field_addr = self
-            .builder
-            .build_int_add(obj_ptr_int, offset, "field_addr_for_gep")
-            .map_err(|_| {
-                crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "int_add failed")
-            })?;
-        // inttoptr -> i8*
-        let field_ptr = self
-            .builder
-            .build_int_to_ptr(field_addr, self.i8ptr_t, name)
-            .map_err(|_| {
-                crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "int_to_ptr failed")
-            })?;
+        // Use GEP instead of ptrtoint/add/inttoptr to preserve pointer provenance
+        let field_ptr = unsafe {
+            self.builder
+                .build_gep(self.i8_t, base, &[offset], name)
+                .map_err(|_| {
+                    crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "GEP failed")
+                })?
+        };
         Ok(field_ptr)
     }
 
@@ -1030,28 +1004,34 @@ impl<'a> super::CodeGen<'a> {
         // Initialize header
         let type_tag_val = 3u64 << 49;
         let header_val = self.i64_t.const_int(type_tag_val | 1u64, false);
-        let _ = self.builder.build_store(obj_ptr, header_val);
+        // Cast obj_ptr to i64* for aligned store
+        let header_ptr = self
+            .builder
+            .build_pointer_cast(
+                obj_ptr,
+                self.context.ptr_type(Default::default()),
+                "header_ptr",
+            )
+            .map_err(|_| {
+                crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "pointer cast failed")
+            })?;
+        let store_inst = self
+            .builder
+            .build_store(header_ptr, header_val)
+            .map_err(|_| {
+                crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "store failed")
+            })?;
+        let _ = store_inst.set_alignment(8);
 
-        // Zero-init meta slot
-        let obj_ptr_int = self
-            .builder
-            .build_ptr_to_int(malloc_ret, self.i64_t, "obj_addr_for_zero")
-            .map_err(|_| {
-                crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "ptr_to_int failed")
-            })?;
+        // Zero-init meta slot using GEP
         let off_meta = self.i64_t.const_int(header_size, false);
-        let meta_addr = self
-            .builder
-            .build_int_add(obj_ptr_int, off_meta, "meta_addr")
-            .map_err(|_| {
-                crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "int_add failed")
-            })?;
-        let meta_ptr = self
-            .builder
-            .build_int_to_ptr(meta_addr, self.i8ptr_t, "meta_ptr")
-            .map_err(|_| {
-                crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "int_to_ptr failed")
-            })?;
+        let meta_ptr = unsafe {
+            self.builder
+                .build_gep(self.i8_t, obj_ptr, &[off_meta], "meta_ptr")
+                .map_err(|_| {
+                    crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "GEP failed")
+                })?
+        };
         let null_ptr = self.i8ptr_t.const_null();
         let _ = self
             .builder
@@ -1059,25 +1039,17 @@ impl<'a> super::CodeGen<'a> {
 
         // Store fn_ptr (idx 0) and env_ptr (idx 1) as pointer fields, and store
         // ret_tag (i64) into idx 2.
-        // compute base int
         for (i, slot_val) in [fn_ptr, env_ptr].iter().enumerate() {
             let field_offset = header_size + meta_slot + (i as u64 * 8);
             let off_const = self.i64_t.const_int(field_offset, false);
-            let field_addr = self
-                .builder
-                .build_int_add(obj_ptr_int, off_const, "field_addr")
-                .map_err(|_| {
-                    crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "int_add failed")
-                })?;
-            let field_ptr_cast = self
-                .builder
-                .build_int_to_ptr(field_addr, self.i8ptr_t, "field_ptr")
-                .map_err(|_| {
-                    crate::diagnostics::Diagnostic::simple_boxed(
-                        Severity::Error,
-                        "int_to_ptr failed",
-                    )
-                })?;
+            // Use GEP instead of ptrtoint/add/inttoptr
+            let field_ptr_cast = unsafe {
+                self.builder
+                    .build_gep(self.i8_t, obj_ptr, &[off_const], "field_ptr")
+                    .map_err(|_| {
+                        crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "GEP failed")
+                    })?
+            };
 
             // Cast slot_val to i8* if necessary and store
             let mut store_val = *slot_val;
@@ -1112,23 +1084,29 @@ impl<'a> super::CodeGen<'a> {
         // store ret_tag into idx 2 as i64
         let ret_offset = header_size + meta_slot + (2u64 * 8);
         let off_ret = self.i64_t.const_int(ret_offset, false);
-        let ret_addr = self
-            .builder
-            .build_int_add(obj_ptr_int, off_ret, "ret_addr")
-            .map_err(|_| {
-                crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "int_add failed")
-            })?;
+        // Use GEP instead of ptrtoint/add/inttoptr
+        let ret_ptr_i8 = unsafe {
+            self.builder
+                .build_gep(self.i8_t, obj_ptr, &[off_ret], "ret_ptr_i8")
+                .map_err(|_| {
+                    crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "GEP failed")
+                })?
+        };
         let ret_ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
         let ret_ptr = self
             .builder
-            .build_int_to_ptr(ret_addr, ret_ptr_ty, "ret_ptr")
+            .build_pointer_cast(ret_ptr_i8, ret_ptr_ty, "ret_ptr")
             .map_err(|_| {
-                crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "int_to_ptr failed")
+                crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "pointer cast failed")
             })?;
         let ret_const = self.i64_t.const_int(ret_tag, false);
-        let _ = self
+        let store_inst = self
             .builder
-            .build_store(ret_ptr, ret_const.as_basic_value_enum());
+            .build_store(ret_ptr, ret_const.as_basic_value_enum())
+            .map_err(|_| {
+                crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "store failed")
+            })?;
+        let _ = store_inst.set_alignment(8);
 
         Ok(obj_ptr)
     }

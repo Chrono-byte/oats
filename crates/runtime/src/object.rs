@@ -141,7 +141,7 @@ pub extern "C" fn union_box_f64(v: f64) -> *mut c_void {
         debug_assert!((mem as usize).is_multiple_of(std::mem::align_of::<u64>()));
         let header_ptr = ptr::with_exposed_provenance_mut::<u64>(mem as usize);
         let type_tag: u64 = 1u64 << HEADER_TYPE_TAG_SHIFT;
-        let refcount: u64 = 1u64;
+        let refcount: u64 = 0u64;
         *header_ptr = header_with_weak(type_tag | refcount, 1);
 
         // store dtor pointer at offset +8
@@ -185,7 +185,7 @@ pub unsafe extern "C" fn union_box_ptr(p: *mut c_void) -> *mut c_void {
         debug_assert!((mem as usize).is_multiple_of(std::mem::align_of::<u64>()));
         let header_ptr = ptr::with_exposed_provenance_mut::<u64>(mem as usize);
         let type_tag: u64 = 1u64 << HEADER_TYPE_TAG_SHIFT;
-        let refcount: u64 = 1u64;
+        let refcount: u64 = 0u64;
         *header_ptr = header_with_weak(type_tag | refcount, 1);
 
         // store dtor

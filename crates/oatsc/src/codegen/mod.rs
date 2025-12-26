@@ -283,6 +283,8 @@ pub struct CodeGen<'a> {
     pub rta_results: Option<crate::rta::RTAResults>,
     /// Whether this compilation uses async/await
     pub uses_async: Cell<bool>,
+    /// Whether the last expression returned a +1 ownership stake
+    pub returned_ownership: Cell<bool>,
 }
 
 impl<'a> CodeGen<'a> {
@@ -676,6 +678,17 @@ impl<'a> CodeGen<'a> {
                     false,
                 );
                 self.module.add_function("array_set_ptr", fn_type, None)
+            },
+            std::convert::identity,
+        )
+    }
+
+    fn get_array_to_string(&self) -> FunctionValue<'a> {
+        self.module.get_function("array_to_string").map_or_else(
+            || {
+                // array_to_string(arr_ptr: i8*) -> i8*
+                let fn_type = self.i8ptr_t.fn_type(&[self.i8ptr_t.into()], false);
+                self.module.add_function("array_to_string", fn_type, None)
             },
             std::convert::identity,
         )

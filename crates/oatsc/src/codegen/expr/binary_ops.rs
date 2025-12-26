@@ -319,6 +319,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     .build_call(rc_dec_fn, &[right_str.into()], "rc_dec_tmp_right")
                                     .ok();
                             }
+                            self.returned_ownership.set(true);
                             return Ok(bv);
                         }
                         _ => {
@@ -449,7 +450,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             };
                         let either = call_site.try_as_basic_value();
                         match either {
-                            inkwell::values::ValueKind::Basic(bv) => Ok(bv),
+                            inkwell::values::ValueKind::Basic(bv) => {
+                                self.returned_ownership.set(true);
+                                Ok(bv)
+                            }
                             _ => Err(Diagnostic::simple_boxed(
                                 Severity::Error,
                                 "operation not supported (bin strcat result)",

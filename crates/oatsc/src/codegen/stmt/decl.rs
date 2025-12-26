@@ -70,29 +70,39 @@ impl<'a> crate::codegen::CodeGen<'a> {
             .type_annotation
             .as_ref()
             .map(|ta| &ta.type_annotation);
-        if let Some(ty) = ty_opt
-            && let Some(mapped) = crate::types::map_ts_type_with_aliases(
+        eprintln!(
+            "DEBUG: resolve_decl_type: ty_opt is_some = {}",
+            ty_opt.is_some()
+        );
+        if let Some(ty) = ty_opt {
+            eprintln!("DEBUG: Calling map_ts_type_with_aliases for type annotation");
+            if let Some(mapped) = crate::types::map_ts_type_with_aliases(
                 ty,
                 Some(&*self.type_aliases.borrow()),
                 Some(&*self.symbol_table.borrow()),
-            )
-        {
-            declared_mapped = Some(mapped.clone());
-            if let crate::types::OatsType::Union(_) = &mapped {
-                declared_union = Some(mapped.clone());
+            ) {
+                eprintln!("DEBUG: map_ts_type_with_aliases returned: {:?}", mapped);
+                declared_mapped = Some(mapped.clone());
+                if let crate::types::OatsType::Union(_) = &mapped {
+                    declared_union = Some(mapped.clone());
+                }
+                if let crate::types::OatsType::Weak(_) = &mapped {
+                    declared_is_weak = true;
+                }
+                if let crate::types::OatsType::NominalStruct(n) = &mapped {
+                    declared_nominal = Some(n.clone());
+                }
+                // If the declared type is an Array, tag the local with
+                // a sentinel nominal so lowering sites (like println)
+                // can detect arrays at compile time.
+                if let crate::types::OatsType::Array(_) = &mapped {
+                    declared_nominal = Some("__oats_array".to_string());
+                }
+            } else {
+                eprintln!("DEBUG: map_ts_type_with_aliases returned None");
             }
-            if let crate::types::OatsType::Weak(_) = &mapped {
-                declared_is_weak = true;
-            }
-            if let crate::types::OatsType::NominalStruct(n) = &mapped {
-                declared_nominal = Some(n.clone());
-            }
-            // If the declared type is an Array, tag the local with
-            // a sentinel nominal so lowering sites (like println)
-            // can detect arrays at compile time.
-            if let crate::types::OatsType::Array(_) = &mapped {
-                declared_nominal = Some("__oats_array".to_string());
-            }
+        } else {
+            eprintln!("DEBUG: No type annotation found");
         }
 
         // Compute inferred type from initializer if present
@@ -137,6 +147,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
             // can detect arrays at compile time.
             if let crate::types::OatsType::Array(_) = &effective_type {
                 declared_nominal = Some("__oats_array".to_string());
+            }
+            // If the declared type is a Tuple, register it as a nominal type
+            // so element access can use field type information
+            if let crate::types::OatsType::Tuple(_) = &effective_type {
+                // Will be set by handle_tuple_init if it handles the initialization
             }
         }
 
@@ -279,10 +294,22 @@ impl<'a> crate::codegen::CodeGen<'a> {
         param_map: &HashMap<String, u32>,
         locals_stack: &mut LocalsStackLocal<'a>,
     ) -> crate::diagnostics::DiagnosticResult<bool> {
+        eprintln!(
+            "DEBUG: handle_tuple_init called: var={}, declared_mapped={:?}",
+            var_ctx.name, declared_mapped
+        );
+        let is_tuple_type = matches!(declared_mapped, Some(crate::types::OatsType::Tuple(_)));
+        let is_array_expr = matches!(init, Expression::ArrayExpression(_));
+        eprintln!(
+            "DEBUG: is_tuple_type={}, is_array_expr={}",
+            is_tuple_type, is_array_expr
+        );
         let Some(crate::types::OatsType::Tuple(elem_types)) = declared_mapped else {
+            eprintln!("DEBUG: handle_tuple_init returning false (not tuple type)");
             return Ok(false);
         };
         let Expression::ArrayExpression(arr_lit) = init else {
+            eprintln!("DEBUG: handle_tuple_init returning false (not array expression)");
             return Ok(false);
         };
 
@@ -332,7 +359,51 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "pointer cast failed")
             })?;
         let header_val = self.i64_t.const_int(1u64, false);
-        let _ = self.builder.build_store(header_ptr, header_val);
+        let store = self.builder.build_store(header_ptr, header_val);
+        if let Ok(st) = store {
+            st.set_alignment(8).map_err(|_| {
+                crate::diagnostics::Diagnostic::simple_boxed(
+                    Severity::Error,
+                    "failed to set alignment",
+                )
+            })?;
+        }
+
+        // Initialize meta_slot (offset 8) to null
+        let meta_offset = self.i64_t.const_int(8u64, false);
+        let meta_ptr_cast = unsafe {
+            self.builder
+                .build_gep(self.i8_t, malloc_ret, &[meta_offset], "meta_ptr_gep")
+                .map_err(|_| {
+                    crate::diagnostics::Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "GEP failed for meta_slot",
+                    )
+                })?
+        };
+        let meta_slot_ptr = self
+            .builder
+            .build_pointer_cast(
+                meta_ptr_cast,
+                self.context.ptr_type(AddressSpace::default()),
+                "meta_slot_ptr",
+            )
+            .map_err(|_| {
+                crate::diagnostics::Diagnostic::simple_boxed(
+                    Severity::Error,
+                    "pointer cast failed for meta_slot",
+                )
+            })?;
+        let null_ptr = self.i8ptr_t.const_null();
+        let meta_store = self.builder.build_store(meta_slot_ptr, null_ptr);
+        if let Ok(st) = meta_store {
+            st.set_alignment(8).map_err(|_| {
+                crate::diagnostics::Diagnostic::simple_boxed(
+                    Severity::Error,
+                    "failed to set alignment for meta_slot",
+                )
+            })?;
+        }
 
         // For each element in the array literal, lower and store
         for (i, elem) in arr_lit.elements.iter().enumerate() {
@@ -344,31 +415,18 @@ impl<'a> crate::codegen::CodeGen<'a> {
             };
             let ev = self.lower_expr(expr, function, param_map, locals_stack)?;
             let offset = header_size + meta_slot + (i as u64 * 8);
-            let obj_addr = self
-                .builder
-                .build_ptr_to_int(malloc_ret, self.i64_t, "obj_addr")
-                .map_err(|_| {
-                    crate::diagnostics::Diagnostic::simple_boxed(
-                        Severity::Error,
-                        "ptr_to_int failed",
-                    )
-                })?;
             let offset_const = self.i64_t.const_int(offset, false);
-            let field_addr = self
-                .builder
-                .build_int_add(obj_addr, offset_const, "field_addr")
-                .map_err(|_| {
-                    crate::diagnostics::Diagnostic::simple_boxed(Severity::Error, "int_add failed")
-                })?;
-            let field_ptr = self
-                .builder
-                .build_int_to_ptr(field_addr, self.i8ptr_t, "field_ptr")
-                .map_err(|_| {
-                    crate::diagnostics::Diagnostic::simple_boxed(
-                        Severity::Error,
-                        "int_to_ptr failed",
-                    )
-                })?;
+            // Use GEP instead of ptrtoint/add/inttoptr to preserve pointer provenance
+            let field_ptr = unsafe {
+                self.builder
+                    .build_gep(self.i8_t, malloc_ret, &[offset_const], "field_ptr")
+                    .map_err(|_| {
+                        crate::diagnostics::Diagnostic::simple_boxed(
+                            Severity::Error,
+                            "GEP failed during tuple element store",
+                        )
+                    })?
+            };
             // Store element into slot using same logic as object literal
             // Use the declared element type to choose storage
             let field_ty = elem_types.get(i).ok_or_else(|| {
@@ -394,13 +452,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             );
             return Ok(false);
         };
-        // increment rc for stored pointer (unless elided)
-        if !self.should_elide_rc_for_local(&var_ctx.name) {
-            let rc_inc = self.get_rc_inc();
-            let _ = self
-                .builder
-                .build_call(rc_inc, &[malloc_ret.into()], "rc_inc_local");
-        }
+        // No rc_inc for fresh allocation (header initialized with RC=1)
         let _ = self
             .builder
             .build_store(alloca, malloc_ret.as_basic_value_enum());
@@ -417,7 +469,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     || !var_ctx.is_mut_decl,
                 is_weak: var_ctx.declared_is_weak,
                 nominal: Some(gen_name),
-                oats_type: var_ctx.declared_union.clone(),
+                oats_type: {
+                    // BUG FIX: Store the tuple type, not declared_union!
+                    Some(crate::types::OatsType::Tuple(elem_types.clone()))
+                },
             },
         );
         Ok(true)
@@ -453,6 +508,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         "expected numeric value for tuple number element",
                     ));
                 };
+                // Cast to generic pointer type and store f64
+                // Use generic pointer type like other parts of the codebase
                 let f64_ptr_ty = self.context.ptr_type(AddressSpace::default());
                 let elem_f64_ptr = self
                     .builder
@@ -479,10 +536,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         && let inkwell::values::ValueKind::Basic(bv2) = cs2.try_as_basic_value()
                     {
                         let boxed_ptr = bv2.into_pointer_value();
-                        let rc_inc = self.get_rc_inc();
-                        let _ =
-                            self.builder
-                                .build_call(rc_inc, &[boxed_ptr.into()], "rc_inc_field");
+                        // union_box_f64 returns +1 reference, no rc_inc needed
                         let boxed_bv = inkwell::values::BasicValueEnum::PointerValue(boxed_ptr);
                         let _ = self.builder.build_store(field_ptr, boxed_bv);
                     }
@@ -495,10 +549,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         && let inkwell::values::ValueKind::Basic(bv2) = cs2.try_as_basic_value()
                     {
                         let boxed_ptr = bv2.into_pointer_value();
-                        let rc_inc = self.get_rc_inc();
-                        let _ =
-                            self.builder
-                                .build_call(rc_inc, &[boxed_ptr.into()], "rc_inc_field");
+                        // union_box_ptr returns +1 reference, no rc_inc needed
                         let boxed_bv = inkwell::values::BasicValueEnum::PointerValue(boxed_ptr);
                         let _ = self.builder.build_store(field_ptr, boxed_bv);
                     }
@@ -517,8 +568,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
             | crate::types::OatsType::Weak(_)
             | crate::types::OatsType::Promise(_) => {
                 if let inkwell::values::BasicValueEnum::PointerValue(p) = ev {
-                    let rc_inc = self.get_rc_inc();
-                    let _ = self.builder.build_call(rc_inc, &[p.into()], "rc_inc_field");
+                    if !self.returned_ownership.get() {
+                        let rc_inc = self.get_rc_inc();
+                        let _ = self.builder.build_call(rc_inc, &[p.into()], "rc_inc_field");
+                    }
                     let _ = self.builder.build_store(field_ptr, ev);
                 } else {
                     return Err(crate::diagnostics::Diagnostic::simple_boxed(
@@ -568,6 +621,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         && let inkwell::values::ValueKind::Basic(bv) = cs.try_as_basic_value()
                     {
                         val = bv;
+                        self.returned_ownership.set(true);
                     }
                     allocated_ty = self.i8ptr_t.as_basic_type_enum();
                 } else if val.get_type().is_int_type() {
@@ -586,6 +640,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                     cs.try_as_basic_value()
                             {
                                 val = bv;
+                                self.returned_ownership.set(true);
                             }
                         }
                     }
@@ -1537,7 +1592,15 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 )
                 .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "cast failed"))?;
             let static_header = self.i64_t.const_int(1u64 << 32, false);
-            let _ = self.builder.build_store(header_ptr, static_header);
+            let store = self.builder.build_store(header_ptr, static_header);
+            if let Ok(st) = store {
+                st.set_alignment(8).map_err(|_| {
+                    crate::diagnostics::Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "failed to set alignment",
+                    )
+                })?;
+            }
 
             // Initialize meta slot (field count)
             let meta_i8ptr = self
@@ -1552,7 +1615,15 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 )
                 .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "cast failed"))?;
             let field_count_val = self.i64_t.const_int(rest_field_count as u64, false);
-            let _ = self.builder.build_store(meta_ptr, field_count_val);
+            let store = self.builder.build_store(meta_ptr, field_count_val);
+            if let Ok(st) = store {
+                st.set_alignment(8).map_err(|_| {
+                    crate::diagnostics::Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "failed to set alignment",
+                    )
+                })?;
+            }
 
             // Copy each remaining field from source to rest object
             for (rest_idx, (field_idx, (field_name, _field_ty))) in
@@ -1618,7 +1689,15 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     )
                     .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "cast failed"))?;
 
-                let _ = self.builder.build_store(rest_field_ptr, src_field_val);
+                let store = self.builder.build_store(rest_field_ptr, src_field_val);
+                if let Ok(st) = store {
+                    st.set_alignment(8).map_err(|_| {
+                        crate::diagnostics::Diagnostic::simple_boxed(
+                            Severity::Error,
+                            "failed to set alignment",
+                        )
+                    })?;
+                }
             }
 
             // Create alloca for rest binding
@@ -1752,8 +1831,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 let is_mut_decl = matches!(var_decl.kind, VariableDeclarationKind::Let);
 
                 // Resolve type information
+                eprintln!("DEBUG: Variable declaration for: {}", name);
                 let type_info = self.resolve_decl_type(decl)?;
                 let declared_mapped = type_info.declared_mapped;
+                eprintln!("DEBUG: declared_mapped = {:?}", declared_mapped);
                 let declared_union = type_info.declared_union;
                 let declared_is_weak = type_info.declared_is_weak;
                 let mut declared_nominal = type_info.declared_nominal;
@@ -1792,6 +1873,10 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     }
 
                     // Handle tuple initialization
+                    eprintln!(
+                        "DEBUG: Before handle_tuple_init: var={}, declared_mapped={:?}",
+                        name, declared_mapped
+                    );
                     let var_ctx = VarDeclContext {
                         name: name.clone(),
                         var_decl,
@@ -1800,14 +1885,37 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         declared_union: declared_union.clone(),
                         declared_nominal: declared_nominal.clone(),
                     };
-                    if self.handle_tuple_init(
+                    // For tuples, register nominal name and field types even if stored as array
+                    let tuple_nominal =
+                        if let Some(crate::types::OatsType::Tuple(elem_types)) = &declared_mapped {
+                            let fname = function.get_name().to_str().unwrap_or("<fn>");
+                            let gen_name = format!("tuple_{}_{}", fname, name);
+                            // Register field list under class_fields as ("0", type0), ...
+                            let mut fields: Vec<(String, crate::types::OatsType)> = Vec::new();
+                            for (i, et) in elem_types.iter().enumerate() {
+                                fields.push((format!("{i}"), et.clone()));
+                            }
+                            self.class_fields
+                                .borrow_mut()
+                                .insert(gen_name.clone(), fields);
+                            Some(gen_name)
+                        } else {
+                            None
+                        };
+
+                    let tuple_init_result = self.handle_tuple_init(
                         init,
                         &declared_mapped,
                         &var_ctx,
                         function,
                         param_map,
                         locals_stack,
-                    )? {
+                    )?;
+                    eprintln!(
+                        "DEBUG: handle_tuple_init returned: {} for var={}",
+                        tuple_init_result, name
+                    );
+                    if tuple_init_result {
                         continue;
                     }
 
@@ -1850,6 +1958,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         if val.get_type().is_pointer_type()
                             && let BasicValueEnum::PointerValue(pv) = val
                             && !self.should_elide_rc_for_local(&name)
+                            && !self.returned_ownership.get()
                         {
                             let rc_inc = self.get_rc_inc();
                             let _ = self
@@ -1863,6 +1972,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         } else {
                             // mark initialized in locals; is_const=false by default
                             // For `let`/`const` declarations, insert into current scope (block-scoped)
+                            // Use tuple nominal name if this is a tuple declaration
+                            let final_nominal = tuple_nominal
+                                .as_ref()
+                                .or(declared_nominal.as_ref())
+                                .cloned();
                             self.insert_local_current_scope(
                                 locals_stack,
                                 crate::codegen::helpers::LocalVarInfo {
@@ -1876,10 +1990,17 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         VariableDeclarationKind::Const
                                     ) || !is_mut_decl,
                                     is_weak: declared_is_weak,
-                                    nominal: declared_nominal.clone(),
-                                    oats_type: declared_mapped
-                                        .clone()
-                                        .or(Some(init_inferred.clone())),
+                                    nominal: final_nominal,
+                                    // Store tuple type information for first-class tuple recognition
+                                    oats_type: {
+                                        if let Some(crate::types::OatsType::Tuple(_)) =
+                                            &declared_mapped
+                                        {
+                                            declared_mapped.clone()
+                                        } else {
+                                            declared_mapped.clone().or(Some(init_inferred.clone()))
+                                        }
+                                    },
                                 },
                             );
                         }

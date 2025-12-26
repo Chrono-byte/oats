@@ -221,46 +221,23 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 };
 
                                 // compute slot address: state_base + (16 + slot_idx*8)
-                                let base_int = match self.builder.build_ptr_to_int(
-                                    state_ptr,
-                                    self.i64_t,
-                                    "state_addr",
-                                ) {
-                                    Ok(v) => v,
-                                    Err(_) => {
-                                        return Err(Diagnostic::simple_boxed(
-                                            Severity::Error,
-                                            "ptr_to_int failed when saving locals",
-                                        ));
-                                    }
-                                };
                                 let off_const =
                                     self.i64_t.const_int(16 + (*slot_idx as u64 * 8), false);
-                                let slot_addr_int = match self.builder.build_int_add(
-                                    base_int,
-                                    off_const,
-                                    "slot_addr",
-                                ) {
-                                    Ok(v) => v,
-                                    Err(_) => {
-                                        return Err(Diagnostic::simple_boxed(
-                                            Severity::Error,
-                                            "int_add failed when saving locals",
-                                        ));
-                                    }
-                                };
-                                let slot_ptr = match self.builder.build_int_to_ptr(
-                                    slot_addr_int,
-                                    self.i8ptr_t,
-                                    "slot_ptr_save",
-                                ) {
-                                    Ok(p) => p,
-                                    Err(_) => {
-                                        return Err(Diagnostic::simple_boxed(
-                                            Severity::Error,
-                                            "int_to_ptr failed when saving locals",
-                                        ));
-                                    }
+                                // Use GEP instead of ptrtoint/add/inttoptr to preserve pointer provenance
+                                let slot_ptr = unsafe {
+                                    self.builder
+                                        .build_gep(
+                                            self.i8_t,
+                                            state_ptr,
+                                            &[off_const],
+                                            "slot_ptr_save",
+                                        )
+                                        .map_err(|_| {
+                                            crate::diagnostics::Diagnostic::simple_boxed(
+                                                Severity::Error,
+                                                "GEP failed when saving locals",
+                                            )
+                                        })?
                                 };
 
                                 match ty {
@@ -309,89 +286,33 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         + (param_count * 8)
                         + (local_slot_count * 8)
                         + ((u64::from(resume_idx) - 1) * 8);
-                    let base_int = match self.builder.build_ptr_to_int(
-                        state_ptr,
-                        self.i64_t,
-                        "await_promise_state_addr",
-                    ) {
-                        Ok(v) => v,
-                        Err(_) => {
-                            return Err(Diagnostic::simple_boxed(
-                                Severity::Error,
-                                "ptr_to_int failed when saving awaited promise",
-                            ));
-                        }
-                    };
                     let off_const = self.i64_t.const_int(await_slot_offset, false);
-                    let slot_addr_int = match self.builder.build_int_add(
-                        base_int,
-                        off_const,
-                        "await_promise_slot_addr",
-                    ) {
-                        Ok(v) => v,
-                        Err(_) => {
-                            return Err(Diagnostic::simple_boxed(
-                                Severity::Error,
-                                "int_add failed when saving awaited promise",
-                            ));
-                        }
-                    };
-                    let slot_ptr = match self.builder.build_int_to_ptr(
-                        slot_addr_int,
-                        self.i8ptr_t,
-                        "await_promise_slot_ptr",
-                    ) {
-                        Ok(p) => p,
-                        Err(_) => {
-                            return Err(Diagnostic::simple_boxed(
-                                Severity::Error,
-                                "int_to_ptr failed when saving awaited promise",
-                            ));
-                        }
+                    // Use GEP instead of ptrtoint/add/inttoptr to preserve pointer provenance
+                    let slot_ptr = unsafe {
+                        self.builder
+                            .build_gep(self.i8_t, state_ptr, &[off_const], "await_promise_slot_ptr")
+                            .map_err(|_| {
+                                crate::diagnostics::Diagnostic::simple_boxed(
+                                    Severity::Error,
+                                    "GEP failed when saving awaited promise",
+                                )
+                            })?
                     };
                     // Store the promise pointer
                     let _ = self.builder.build_store(slot_ptr, pv.as_basic_value_enum());
 
                     // store resume index into state field at offset 8
-                    let base_int = match self.builder.build_ptr_to_int(
-                        state_ptr,
-                        self.i64_t,
-                        "state_addr_store",
-                    ) {
-                        Ok(v) => v,
-                        Err(_) => {
-                            return Err(Diagnostic::simple_boxed(
-                                Severity::Error,
-                                "ptr_to_int failed when storing state index",
-                            ));
-                        }
-                    };
                     let state_off = self.i64_t.const_int(8, false);
-                    let state_field_int = match self.builder.build_int_add(
-                        base_int,
-                        state_off,
-                        "state_field_addr_store",
-                    ) {
-                        Ok(v) => v,
-                        Err(_) => {
-                            return Err(Diagnostic::simple_boxed(
-                                Severity::Error,
-                                "int_add failed when storing state index",
-                            ));
-                        }
-                    };
-                    let state_field_ptr = match self.builder.build_int_to_ptr(
-                        state_field_int,
-                        self.context.ptr_type(inkwell::AddressSpace::default()),
-                        "state_field_ptr_store",
-                    ) {
-                        Ok(p) => p,
-                        Err(_) => {
-                            return Err(Diagnostic::simple_boxed(
-                                Severity::Error,
-                                "int_to_ptr failed when storing state index",
-                            ));
-                        }
+                    // Use GEP instead of ptrtoint/add/inttoptr to preserve pointer provenance
+                    let state_field_ptr = unsafe {
+                        self.builder
+                            .build_gep(self.i8_t, state_ptr, &[state_off], "state_field_ptr_store")
+                            .map_err(|_| {
+                                crate::diagnostics::Diagnostic::simple_boxed(
+                                    Severity::Error,
+                                    "GEP failed when storing state index",
+                                )
+                            })?
                     };
                     let resume_val = self.i32_t.const_int(u64::from(resume_idx), false);
                     let _ = self.builder.build_store(state_field_ptr, resume_val);

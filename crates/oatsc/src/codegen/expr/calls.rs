@@ -319,7 +319,7 @@ impl<'a> CodeGen<'a> {
                         ));
                     }
                 };
-                // console.log returns void, so return a dummy value
+                self.returned_ownership.set(true);
                 Ok(self.f64_t.const_float(0.0).as_basic_value_enum())
             } else {
                 Err(Diagnostic::simple_with_span_boxed(
@@ -399,13 +399,24 @@ impl<'a> CodeGen<'a> {
             ));
         }
 
+        eprintln!(
+            "DEBUG: console.log called with {} arguments",
+            call.arguments.len()
+        );
         // Handle single argument - dispatch based on type
         if call.arguments.len() == 1
             && let Some(expr) = call.arguments[0].as_expression()
         {
+            eprintln!("DEBUG: console.log: single argument path");
             // Get the type of the expression for union handling
             let expr_type = self.infer_type_from_expr(expr)?;
             let arg_val = self.lower_expr(expr, function, param_map, locals)?;
+            eprintln!(
+                "DEBUG: console.log: arg_val type: is_float={}, is_pointer={}, is_int={}",
+                arg_val.is_float_value(),
+                arg_val.is_pointer_value(),
+                arg_val.is_int_value()
+            );
 
             match arg_val {
                 BasicValueEnum::PointerValue(pv) => {
@@ -596,6 +607,66 @@ impl<'a> CodeGen<'a> {
                         self.builder.position_at_end(cont_block);
                         return Ok(self.f64_t.const_float(0.0).as_basic_value_enum());
                     }
+                    // Check if this is an array or tuple that needs conversion to string
+                    if matches!(
+                        expr_type,
+                        crate::types::OatsType::Array(_) | crate::types::OatsType::Tuple(_)
+                    ) {
+                        // Convert array/tuple to string using array_to_string
+                        let array_to_string_fn = self.get_array_to_string();
+                        let str_result = match self.builder.build_call(
+                            array_to_string_fn,
+                            &[pv.into()],
+                            "array_to_string_console",
+                        ) {
+                            Ok(call) => call,
+                            Err(_) => {
+                                return Err(Diagnostic::simple_with_span_boxed(
+                                    Severity::Error,
+                                    "failed to convert array/tuple to string",
+                                    call.span.start as usize,
+                                ));
+                            }
+                        };
+                        let str_ptr = match str_result.try_as_basic_value() {
+                            inkwell::values::ValueKind::Basic(bv) => bv.into_pointer_value(),
+                            _ => {
+                                return Err(Diagnostic::simple_with_span_boxed(
+                                    Severity::Error,
+                                    "array_to_string returned non-pointer",
+                                    call.span.start as usize,
+                                ));
+                            }
+                        };
+                        if let Some(fv) = self
+                            .module
+                            .get_function(crate::runtime_functions::names::STD_CONSOLE_LOG)
+                        {
+                            let _ =
+                                self.builder
+                                    .build_call(fv, &[str_ptr.into()], "console_log_array");
+                            // Decrement refcount for the string returned by array_to_string
+                            let rc_dec_str_fn =
+                                self.module.get_function("rc_dec_str").ok_or_else(|| {
+                                    Diagnostic::simple_with_span_boxed(
+                                        Severity::Error,
+                                        "rc_dec_str not found",
+                                        call.span.start as usize,
+                                    )
+                                })?;
+                            let _ = self.builder.build_call(
+                                rc_dec_str_fn,
+                                &[str_ptr.into()],
+                                "rc_dec_str_array",
+                            );
+                            return Ok(self.f64_t.const_float(0.0).as_basic_value_enum());
+                        }
+                        return Err(Diagnostic::simple_with_span_boxed(
+                            Severity::Error,
+                            "oats_std_console_log not found",
+                            call.span.start as usize,
+                        ));
+                    }
                     // Regular string pointer
                     if let Some(fv) = self
                         .module
@@ -611,19 +682,32 @@ impl<'a> CodeGen<'a> {
                     ));
                 }
                 BasicValueEnum::FloatValue(fv_val) => {
+                    eprintln!(
+                        "DEBUG: console.log: FloatValue path, calling oats_std_console_log_number"
+                    );
                     // Number - use number version
                     if let Some(fv) = self.module.get_function("oats_std_console_log_number") {
-                        self.builder
-                            .build_call(fv, &[fv_val.into()], "console_log_number")
-                            .map_err(|e| {
-                                Diagnostic::simple_with_span_boxed(
-                                    Severity::Error,
-                                    format!("Failed to build console.log call: {e:?}"),
-                                    call.span.start as usize,
-                                )
-                            })?;
+                        let call_result =
+                            self.builder
+                                .build_call(fv, &[fv_val.into()], "console_log_number");
+                        eprintln!(
+                            "DEBUG: console.log: build_call result: {:?}",
+                            call_result.is_ok()
+                        );
+                        call_result.map_err(|e| {
+                            eprintln!("DEBUG: console.log: build_call failed: {:?}", e);
+                            Diagnostic::simple_with_span_boxed(
+                                Severity::Error,
+                                format!("Failed to build console.log call: {e:?}"),
+                                call.span.start as usize,
+                            )
+                        })?;
+                        eprintln!(
+                            "DEBUG: console.log: successfully called oats_std_console_log_number"
+                        );
                         return Ok(self.f64_t.const_float(0.0).as_basic_value_enum());
                     }
+                    eprintln!("DEBUG: console.log: oats_std_console_log_number not found");
                     return Err(Diagnostic::simple_with_span_boxed(
                         Severity::Error,
                         "oats_std_console_log_number not found",
@@ -680,13 +764,69 @@ impl<'a> CodeGen<'a> {
             }
         }
 
-        // Multiple arguments - convert all to strings and concatenate, or use first
-        // Currently handles first argument only (can be extended later)
-        if let Some(expr) = call.arguments[0].as_expression() {
-            let arg_val = self.lower_expr(expr, function, param_map, locals)?;
-            // Convert to string pointer if needed
-            let str_ptr = match arg_val {
-                BasicValueEnum::PointerValue(pv) => pv,
+        // Multiple arguments - convert all to strings and concatenate
+        eprintln!(
+            "DEBUG: console.log: multiple arguments path (processing {} arguments)",
+            call.arguments.len()
+        );
+
+        // Ensure str_concat is available
+        self.gen_str_concat();
+        let concat_fn = self.module.get_function("str_concat").ok_or_else(|| {
+            Diagnostic::simple_with_span_boxed(
+                Severity::Error,
+                "str_concat not found",
+                call.span.start as usize,
+            )
+        })?;
+
+        // Helper to convert an argument value to a string pointer
+        let convert_arg_to_string = |arg_val: BasicValueEnum<'a>,
+                                     expr_type: &crate::types::OatsType|
+         -> crate::diagnostics::DiagnosticResult<(
+            inkwell::values::PointerValue<'a>,
+            bool,
+        )> {
+            // Returns (string_pointer, is_temporary_needs_cleanup)
+            let is_array_or_tuple = matches!(
+                expr_type,
+                crate::types::OatsType::Array(_) | crate::types::OatsType::Tuple(_)
+            );
+
+            match arg_val {
+                BasicValueEnum::PointerValue(pv) => {
+                    if is_array_or_tuple {
+                        // Convert array/tuple to string using array_to_string
+                        let array_to_string_fn = self.get_array_to_string();
+                        let str_result = match self.builder.build_call(
+                            array_to_string_fn,
+                            &[pv.into()],
+                            "array_to_string_console_multi",
+                        ) {
+                            Ok(call) => call,
+                            Err(_) => {
+                                return Err(Diagnostic::simple_with_span_boxed(
+                                    Severity::Error,
+                                    "failed to convert array/tuple to string",
+                                    call.span.start as usize,
+                                ));
+                            }
+                        };
+                        let str_ptr = match str_result.try_as_basic_value() {
+                            inkwell::values::ValueKind::Basic(bv) => bv.into_pointer_value(),
+                            _ => {
+                                return Err(Diagnostic::simple_with_span_boxed(
+                                    Severity::Error,
+                                    "array_to_string returned non-pointer",
+                                    call.span.start as usize,
+                                ));
+                            }
+                        };
+                        Ok((str_ptr, true)) // Temporary string, needs cleanup
+                    } else {
+                        Ok((pv, false)) // Regular string, no cleanup needed
+                    }
+                }
                 BasicValueEnum::FloatValue(fv) => {
                     // Convert number to string
                     let num_to_str = self.get_number_to_string();
@@ -699,7 +839,7 @@ impl<'a> CodeGen<'a> {
                                 "failed to convert number to string",
                             )
                         })?;
-                    match str_call.try_as_basic_value() {
+                    let str_ptr = match str_call.try_as_basic_value() {
                         inkwell::values::ValueKind::Basic(BasicValueEnum::PointerValue(p)) => p,
                         _ => {
                             return Err(Diagnostic::simple_boxed(
@@ -707,27 +847,213 @@ impl<'a> CodeGen<'a> {
                                 "number_to_string returned non-pointer",
                             ));
                         }
-                    }
+                    };
+                    Ok((str_ptr, true)) // Temporary string, needs cleanup
                 }
-                _ => {
-                    return Err(Diagnostic::simple_with_span_boxed(
-                        Severity::Error,
-                        "unsupported console.log argument type",
-                        call.span.start as usize,
-                    ));
+                BasicValueEnum::IntValue(iv) => {
+                    // Convert int to f64, then to string
+                    let f64_val = if iv.get_type().get_bit_width() == 32 {
+                        self.builder
+                            .build_signed_int_to_float(iv, self.f64_t, "i32_to_f64")
+                            .map_err(|_| {
+                                Diagnostic::simple_boxed(
+                                    Severity::Error,
+                                    "failed to convert i32 to float",
+                                )
+                            })?
+                    } else {
+                        self.builder
+                            .build_signed_int_to_float(iv, self.f64_t, "i64_to_f64")
+                            .map_err(|_| {
+                                Diagnostic::simple_boxed(
+                                    Severity::Error,
+                                    "failed to convert int to float",
+                                )
+                            })?
+                    };
+                    let num_to_str = self.get_number_to_string();
+                    let str_call = self
+                        .builder
+                        .build_call(num_to_str, &[f64_val.into()], "num_to_str")
+                        .map_err(|_| {
+                            Diagnostic::simple_boxed(
+                                Severity::Error,
+                                "failed to convert number to string",
+                            )
+                        })?;
+                    let str_ptr = match str_call.try_as_basic_value() {
+                        inkwell::values::ValueKind::Basic(BasicValueEnum::PointerValue(p)) => p,
+                        _ => {
+                            return Err(Diagnostic::simple_boxed(
+                                Severity::Error,
+                                "number_to_string returned non-pointer",
+                            ));
+                        }
+                    };
+                    Ok((str_ptr, true)) // Temporary string, needs cleanup
                 }
-            };
+                _ => Err(Diagnostic::simple_with_span_boxed(
+                    Severity::Error,
+                    format!("unsupported console.log argument type: {:?}", arg_val),
+                    call.span.start as usize,
+                )),
+            }
+        };
 
-            // str_ptr is already a data pointer (offset +16 from object base)
-            // String literals, str_concat, and number_to_string all return data pointers
-            // oats_std_console_log expects a pointer to the actual string data
+        // Process all arguments: convert each to string and concatenate
+        let mut result_str: Option<inkwell::values::PointerValue<'a>> = None;
+        let mut result_is_tmp = false;
+        let mut temp_strings: Vec<(inkwell::values::PointerValue<'a>, bool)> = Vec::new();
+
+        for (i, arg) in call.arguments.iter().enumerate() {
+            if let Some(expr) = arg.as_expression() {
+                eprintln!("DEBUG: console.log: processing argument {}", i);
+                let expr_type = self.infer_type_from_expr(expr)?;
+                let arg_val = self.lower_expr(expr, function, param_map, locals)?;
+                eprintln!(
+                    "DEBUG: console.log: arg[{}] type: is_float={}, is_pointer={}, is_int={}",
+                    i,
+                    arg_val.is_float_value(),
+                    arg_val.is_pointer_value(),
+                    arg_val.is_int_value()
+                );
+
+                let (str_ptr, is_tmp) = convert_arg_to_string(arg_val, &expr_type)?;
+                eprintln!(
+                    "DEBUG: console.log: arg[{}] converted to string, is_tmp={}",
+                    i, is_tmp
+                );
+                temp_strings.push((str_ptr, is_tmp));
+
+                if let Some(left) = result_str {
+                    eprintln!(
+                        "DEBUG: console.log: concatenating arg[{}] with previous result",
+                        i
+                    );
+                    // Concatenate with previous result
+                    let concat_result = self
+                        .builder
+                        .build_call(concat_fn, &[left.into(), str_ptr.into()], "concat_arg")
+                        .map_err(|_| {
+                            eprintln!("DEBUG: console.log: concat failed for arg[{}]", i);
+                            Diagnostic::simple_with_span_boxed(
+                                Severity::Error,
+                                "failed to concatenate strings",
+                                call.span.start as usize,
+                            )
+                        })?;
+                    eprintln!("DEBUG: console.log: concat succeeded for arg[{}]", i);
+
+                    let new_result = match concat_result.try_as_basic_value() {
+                        inkwell::values::ValueKind::Basic(bv) => {
+                            eprintln!(
+                                "DEBUG: console.log: concat returned Basic value, converting to pointer"
+                            );
+                            bv.into_pointer_value()
+                        }
+                        _ => {
+                            eprintln!("DEBUG: console.log: concat returned non-Basic value");
+                            return Err(Diagnostic::simple_with_span_boxed(
+                                Severity::Error,
+                                "concat returned non-pointer",
+                                call.span.start as usize,
+                            ));
+                        }
+                    };
+                    eprintln!(
+                        "DEBUG: console.log: new_result pointer obtained, storing in result_str"
+                    );
+
+                    // Clean up the previous left operand if it was temporary
+                    // Use rc_dec_str for strings (not rc_dec)
+                    // NOTE: We clean up AFTER storing the new result, so the new result is safe
+                    if result_is_tmp
+                        && let Some(rc_dec_str_fn) = self.module.get_function("rc_dec_str")
+                    {
+                        eprintln!("DEBUG: console.log: cleaning up temporary left operand");
+                        let _ = self
+                            .builder
+                            .build_call(rc_dec_str_fn, &[left.into()], "rc_dec_left_tmp")
+                            .ok();
+                    }
+                    // Clean up the current right operand if it was temporary
+                    if is_tmp && let Some(rc_dec_str_fn) = self.module.get_function("rc_dec_str") {
+                        eprintln!("DEBUG: console.log: cleaning up temporary right operand");
+                        let _ = self
+                            .builder
+                            .build_call(rc_dec_str_fn, &[str_ptr.into()], "rc_dec_right_tmp")
+                            .ok();
+                    }
+
+                    // str_concat returns a new string with RC=1 (data pointer format)
+                    // We don't need to increment it - we'll decrement it after printing
+                    result_str = Some(new_result);
+                    result_is_tmp = true; // Concatenation creates a new temporary string
+                    eprintln!(
+                        "DEBUG: console.log: result_str updated with new_result, result_is_tmp={}",
+                        result_is_tmp
+                    );
+                } else {
+                    // First argument - use it as the initial result
+                    eprintln!(
+                        "DEBUG: console.log: using first argument as initial result, is_tmp={}",
+                        is_tmp
+                    );
+                    result_str = Some(str_ptr);
+                    result_is_tmp = is_tmp;
+                }
+            } else {
+                return Err(Diagnostic::simple_with_span_boxed(
+                    Severity::Error,
+                    "console.log requires expression arguments",
+                    call.span.start as usize,
+                ));
+            }
+        }
+
+        // Print the final concatenated string
+        if let Some(final_str) = result_str {
+            eprintln!(
+                "DEBUG: console.log: final_str is Some, result_is_tmp={}",
+                result_is_tmp
+            );
             if let Some(fv) = self
                 .module
                 .get_function(crate::runtime_functions::names::STD_CONSOLE_LOG)
             {
-                let _ = self
+                eprintln!("DEBUG: console.log: printing final concatenated string");
+                // IMPORTANT: Don't clean up before printing - the runtime needs the string to be valid
+                let call_result = self
                     .builder
-                    .build_call(fv, &[str_ptr.into()], "console_log");
+                    .build_call(fv, &[final_str.into()], "console_log");
+                eprintln!(
+                    "DEBUG: console.log: build_call result: {:?}",
+                    call_result.is_ok()
+                );
+
+                // Only clean up AFTER printing if it was temporary
+                // Use rc_dec_str for strings (not rc_dec)
+                if result_is_tmp {
+                    eprintln!("DEBUG: console.log: cleaning up temporary final string");
+                    let rc_dec_str_fn =
+                        self.module.get_function("rc_dec_str").ok_or_else(|| {
+                            Diagnostic::simple_with_span_boxed(
+                                Severity::Error,
+                                "rc_dec_str not found",
+                                call.span.start as usize,
+                            )
+                        })?;
+                    let _ = self.builder.build_call(
+                        rc_dec_str_fn,
+                        &[final_str.into()],
+                        "rc_dec_final_str",
+                    );
+                } else {
+                    eprintln!(
+                        "DEBUG: console.log: final string is not temporary, skipping cleanup"
+                    );
+                }
+
                 Ok(self.f64_t.const_float(0.0).as_basic_value_enum())
             } else {
                 Err(Diagnostic::simple_with_span_boxed(
@@ -739,7 +1065,7 @@ impl<'a> CodeGen<'a> {
         } else {
             Err(Diagnostic::simple_with_span_boxed(
                 Severity::Error,
-                "console.log requires expression arguments",
+                "console.log: no arguments to process",
                 call.span.start as usize,
             ))
         }
@@ -1835,10 +2161,12 @@ impl<'a> CodeGen<'a> {
             let either = cs.try_as_basic_value();
             if let inkwell::values::ValueKind::Basic(bv) = either {
                 self.last_expr_origin_local.borrow_mut().take();
+                self.returned_ownership.set(true);
                 return Ok(bv);
             }
             let zero = self.f64_t.const_float(0.0);
             self.last_expr_origin_local.borrow_mut().take();
+            self.returned_ownership.set(true);
             return Ok(zero.as_basic_value_enum());
         }
 

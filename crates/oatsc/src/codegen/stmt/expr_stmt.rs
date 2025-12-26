@@ -27,9 +27,18 @@ impl<'a> crate::codegen::CodeGen<'a> {
         param_map: &HashMap<String, u32>,
         locals_stack: &mut Vec<HashMap<String, LocalEntry<'a>>>,
     ) -> crate::diagnostics::DiagnosticResult<bool> {
-        // Evaluate expression for side-effects. Errors must be propagated
-        // to ensure compilation fails when codegen cannot proceed.
-        self.lower_expr(&expr_stmt.expression, function, param_map, locals_stack)?;
+        // Evaluate expression for side-effects.
+        let val = self.lower_expr(&expr_stmt.expression, function, param_map, locals_stack)?;
+
+        // If the expression returned a new ownership stake (+1) but the result is discarded,
+        // we must decrement its reference count to avoid a memory leak.
+        if self.returned_ownership.get() && val.is_pointer_value() {
+            let rc_dec = self.get_rc_dec();
+            let _ = self
+                .builder
+                .build_call(rc_dec, &[val.into()], "rc_dec_discarded");
+        }
+
         Ok(false)
     }
 }

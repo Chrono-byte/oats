@@ -78,6 +78,9 @@ pub use crate::array::{array_alloc, array_to_string};
 // Re-export string functions
 pub use crate::string::{heap_str_from_cstr, rc_dec_str};
 
+// Re-export number functions
+pub use crate::number::*;
+
 // Re-export utils functions
 pub use crate::utils::stringify_value_raw;
 

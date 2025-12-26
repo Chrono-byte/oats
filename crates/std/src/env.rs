@@ -15,34 +15,27 @@ pub unsafe extern "C" fn oats_std_env_get_var(name: *const c_char) -> *mut c_cha
         return std::ptr::null_mut();
     }
 
-    let name_str = match unsafe { std::ffi::CStr::from_ptr(name).to_str() } {
-        Ok(s) => s,
-        Err(_) => return std::ptr::null_mut(),
+    let Ok(name_str) = (unsafe { std::ffi::CStr::from_ptr(name).to_str() }) else {
+        return std::ptr::null_mut();
     };
 
-    match std::env::var(name_str) {
-        Ok(value) => match std::ffi::CString::new(value) {
-            Ok(cstring) => cstring.into_raw(),
-            Err(_) => std::ptr::null_mut(),
-        },
-        Err(_) => std::ptr::null_mut(),
-    }
+    std::env::var(name_str)
+        .ok()
+        .and_then(|value| std::ffi::CString::new(value).ok())
+        .map_or(std::ptr::null_mut(), std::ffi::CString::into_raw)
 }
 
 /// Get current executable path (caller must free)
 /// #[`oats_export`]
 #[no_mangle]
 pub extern "C" fn oats_std_env_current_exe() -> *mut c_char {
-    match std::env::current_exe() {
-        Ok(path) => {
+    std::env::current_exe()
+        .ok()
+        .and_then(|path| {
             let path_str = path.to_string_lossy();
-            match std::ffi::CString::new(path_str.as_ref()) {
-                Ok(cstring) => cstring.into_raw(),
-                Err(_) => std::ptr::null_mut(),
-            }
-        }
-        Err(_) => std::ptr::null_mut(),
-    }
+            std::ffi::CString::new(path_str.as_ref()).ok()
+        })
+        .map_or(std::ptr::null_mut(), std::ffi::CString::into_raw)
 }
 
 /// Set environment variable
@@ -60,9 +53,8 @@ pub unsafe extern "C" fn oats_std_env_set_var(
         return -1;
     }
 
-    let name_str = match unsafe { std::ffi::CStr::from_ptr(name).to_str() } {
-        Ok(s) => s,
-        Err(_) => return -1,
+    let Ok(name_str) = (unsafe { std::ffi::CStr::from_ptr(name).to_str() }) else {
+        return -1;
     };
 
     let value_str = if value.is_null() {
@@ -90,9 +82,8 @@ pub unsafe extern "C" fn oats_std_env_remove_var(name: *const c_char) -> libc::c
         return -1;
     }
 
-    let name_str = match unsafe { std::ffi::CStr::from_ptr(name).to_str() } {
-        Ok(s) => s,
-        Err(_) => return -1,
+    let Ok(name_str) = (unsafe { std::ffi::CStr::from_ptr(name).to_str() }) else {
+        return -1;
     };
 
     std::env::remove_var(name_str);

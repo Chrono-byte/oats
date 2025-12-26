@@ -22,9 +22,8 @@ pub unsafe extern "C" fn oats_std_process_exec(
         return std::ptr::null_mut();
     }
 
-    let program_str = match unsafe { CStr::from_ptr(program).to_str() } {
-        Ok(s) => s,
-        Err(_) => return std::ptr::null_mut(),
+    let Ok(program_str) = (unsafe { CStr::from_ptr(program).to_str() }) else {
+        return std::ptr::null_mut();
     };
 
     let mut cmd = Command::new(program_str);
@@ -47,10 +46,7 @@ pub unsafe extern "C" fn oats_std_process_exec(
             let stderr = String::from_utf8_lossy(&output.stderr);
             let combined = format!("STDOUT:\n{stdout}\nSTDERR:\n{stderr}");
 
-            match CString::new(combined) {
-                Ok(cstring) => cstring.into_raw(),
-                Err(_) => std::ptr::null_mut(),
-            }
+            CString::new(combined).map_or(std::ptr::null_mut(), CString::into_raw)
         }
         Err(_) => std::ptr::null_mut(),
     }
@@ -74,9 +70,8 @@ pub unsafe extern "C" fn oats_std_process_exec_status(
         return -1;
     }
 
-    let program_str = match unsafe { CStr::from_ptr(program).to_str() } {
-        Ok(s) => s,
-        Err(_) => return -1,
+    let Ok(program_str) = (unsafe { CStr::from_ptr(program).to_str() }) else {
+        return -1;
     };
 
     let mut cmd = Command::new(program_str);
@@ -93,10 +88,8 @@ pub unsafe extern "C" fn oats_std_process_exec_status(
         }
     }
 
-    match cmd.status() {
-        Ok(status) => status.code().unwrap_or(-1),
-        Err(_) => -1,
-    }
+    cmd.status()
+        .map_or(-1, |status| status.code().unwrap_or(-1))
 }
 
 /// Check if a command exists in PATH
@@ -112,9 +105,8 @@ pub unsafe extern "C" fn oats_std_process_command_exists(cmd: *const c_char) -> 
         return 0;
     }
 
-    let cmd_str = match unsafe { CStr::from_ptr(cmd).to_str() } {
-        Ok(s) => s,
-        Err(_) => return 0,
+    let Ok(cmd_str) = (unsafe { CStr::from_ptr(cmd).to_str() }) else {
+        return 0;
     };
 
     match Command::new(cmd_str).arg("--version").output() {
@@ -127,14 +119,8 @@ pub unsafe extern "C" fn oats_std_process_command_exists(cmd: *const c_char) -> 
 /// #[`oats_export`]
 #[no_mangle]
 pub extern "C" fn oats_std_process_get_current_dir() -> *mut c_char {
-    match std::env::current_dir() {
-        Ok(path) => {
-            let path_str = path.to_string_lossy();
-            match CString::new(path_str.as_ref()) {
-                Ok(cstring) => cstring.into_raw(),
-                Err(_) => std::ptr::null_mut(),
-            }
-        }
-        Err(_) => std::ptr::null_mut(),
-    }
+    std::env::current_dir().map_or(std::ptr::null_mut(), |path| {
+        let path_str = path.to_string_lossy();
+        CString::new(path_str.as_ref()).map_or(std::ptr::null_mut(), CString::into_raw)
+    })
 }

@@ -246,9 +246,7 @@ unsafe fn rc_dec_handle_zero_refcount(obj_ptr: *mut c_void, old_header: u64, sho
     if type_tag == 1 {
         let dtor_addr = obj_ptr as usize + std::mem::size_of::<u64>();
         // Adding 8 bytes to 8-byte aligned pointer maintains alignment
-        debug_assert!(
-            dtor_addr.is_multiple_of(std::mem::align_of::<*mut c_void>())
-        );
+        debug_assert!(dtor_addr.is_multiple_of(std::mem::align_of::<*mut c_void>()));
         let dtor_ptr_ptr = dtor_addr as *mut *mut c_void;
         let dtor_raw = unsafe { *dtor_ptr_ptr };
         if !dtor_raw.is_null() {
@@ -282,7 +280,8 @@ unsafe fn rc_dec_handle_zero_refcount(obj_ptr: *mut c_void, old_header: u64, sho
                 let _ = io::stderr().write_all(
                     format!(
                         "[oats runtime] rc_dec: invalid destructor pointer {dtor_raw:p}, skipping\n"
-                    ).as_bytes(),
+                    )
+                    .as_bytes(),
                 );
                 let _ = io::stderr().flush();
             }

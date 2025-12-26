@@ -235,21 +235,9 @@ fn format_js_number(num: f64) -> String {
     // For other numbers, use fixed-point notation
     // JavaScript typically shows up to 15 significant digits
     let formatted = if num.fract() == 0.0 {
-        // For whole numbers, format as integer
-        // Check if number fits in i64 range to avoid truncation
-        // i64::MAX = 9223372036854775807, i64::MIN = -9223372036854775808
-        const MAX_I64_AS_F64: f64 = 9_223_372_036_854_775_807.0;
-        const MIN_I64_AS_F64: f64 = -9_223_372_036_854_775_808.0;
-        if (MIN_I64_AS_F64..=MAX_I64_AS_F64).contains(&num) {
-            // Safe to convert: number is within i64 range
-            // Use truncation which is safe here since we've verified the range
-            #[allow(clippy::cast_possible_truncation)]
-            let num_i64 = num.trunc() as i64;
-            format!("{num_i64}")
-        } else {
-            // For numbers outside i64 range, format as float without decimal
-            format!("{num:.0}")
-        }
+        // For whole numbers, format with 0 decimal places
+        // This handles both cases: within i64 range and outside
+        format!("{num:.0}")
     } else {
         format!("{num:.15}")
     };
@@ -300,36 +288,6 @@ pub const extern "C" fn number_is_infinite(num: f64) -> i64 {
 /// `str_ptr` must be a valid pointer to a null-terminated C string.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn number_parse_float(str_ptr: *const c_char) -> f64 {
-    // Helper function to convert u64 to f64 with proper handling of precision loss
-    // f64 can exactly represent integers up to 2^53 (9007199254740992)
-    // For values <= 2^53, the conversion is exact (no precision loss)
-    // For larger values, precision loss is unavoidable but we round to nearest representable value
-    #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    fn u64_to_f64_safe(n: u64) -> f64 {
-        // Helper function to convert u64 to f64 with proper handling of precision loss
-        // f64 can exactly represent integers up to 2^53 (9007199254740992)
-        // For values <= 2^53, the conversion is exact (no precision loss)
-        // For larger values, precision loss is unavoidable but we round to nearest representable value
-        const MAX_EXACT_F64_U64: u64 = 1u64 << 53; // 2^53 = 9007199254740992
-        // Convert u64 to f64
-        if n <= MAX_EXACT_F64_U64 {
-            // Exact conversion for values <= 2^53
-            // This conversion is lossless for integers in this range
-            let result = n as f64;
-            // Verify the conversion was exact (sanity check)
-            let check_value = result as u64;
-            debug_assert_eq!(
-                check_value, n,
-                "u64 to f64 conversion should be exact for n <= 2^53"
-            );
-            result
-        } else {
-            // For values > 2^53, precision loss is unavoidable
-            // This rounds to the nearest representable f64 value
-            n as f64
-        }
-    }
-
     if str_ptr.is_null() {
         return f64::NAN;
     }
@@ -340,18 +298,31 @@ pub unsafe extern "C" fn number_parse_float(str_ptr: *const c_char) -> f64 {
         return f64::NAN;
     };
 
-    // Handle hexadecimal notation (0x, 0X)
-    if str_slice.starts_with("0x") || str_slice.starts_with("0X") {
-        // Parse as hex and convert to f64
-        u64::from_str_radix(&str_slice[2..], 16).map_or(f64::NAN, u64_to_f64_safe)
-    } else if str_slice.starts_with("0o") || str_slice.starts_with("0O") {
-        // Parse as octal and convert to f64
-        u64::from_str_radix(&str_slice[2..], 8).map_or(f64::NAN, u64_to_f64_safe)
-    } else if str_slice.starts_with("0b") || str_slice.starts_with("0B") {
-        // Parse as binary and convert to f64
-        u64::from_str_radix(&str_slice[2..], 2).map_or(f64::NAN, u64_to_f64_safe)
+    // Handle special number formats that require integer parsing first
+    if str_slice.starts_with("0x")
+        || str_slice.starts_with("0X")
+        || str_slice.starts_with("0o")
+        || str_slice.starts_with("0O")
+        || str_slice.starts_with("0b")
+        || str_slice.starts_with("0B")
+    {
+        // For these formats, we need to parse as integer first due to potential precision loss
+        let (radix, prefix_len) = if str_slice.starts_with("0x") || str_slice.starts_with("0X") {
+            (16, 2)
+        } else if str_slice.starts_with("0o") || str_slice.starts_with("0O") {
+            (8, 2)
+        } else {
+            (2, 2)
+        };
+        u64::from_str_radix(&str_slice[prefix_len..], radix)
+            .map(|n| {
+                // Convert u64 to f64 by parsing the decimal string representation
+                // This handles precision loss for large integers correctly, matching JavaScript behavior
+                n.to_string().parse::<f64>().unwrap_or(f64::NAN)
+            })
+            .unwrap_or(f64::NAN)
     } else {
-        // Parse as decimal (float)
+        // Parse as decimal (float) - let Rust's parser handle precision
         str_slice.parse::<f64>().unwrap_or(f64::NAN)
     }
 }

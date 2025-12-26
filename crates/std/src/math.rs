@@ -213,14 +213,30 @@ pub const extern "C" fn oats_std_math_bit_not(a: i64) -> i64 {
 
 /// Left shift
 /// #[`oats_export`]
+///
+/// # Panics
+///
+/// Panics if the shift amount cannot be converted to u32 (which should never happen
+/// due to clamping).
 #[no_mangle]
 pub extern "C" fn oats_std_math_shl(a: i64, b: i64) -> i64 {
-    a << (b as u32).min(63)
+    let shift_amount = b.clamp(0, 63);
+    // shift_amount is guaranteed to be 0 <= shift_amount <= 63 due to clamp(0, 63)
+    let shift = u32::try_from(shift_amount).expect("shift_amount should be 0-63");
+    a << shift
 }
 
 /// Right shift
 /// #[`oats_export`]
+///
+/// # Panics
+///
+/// Panics if the shift amount cannot be converted to u32 (which should never happen
+/// due to clamping).
 #[no_mangle]
 pub extern "C" fn oats_std_math_shr(a: i64, b: i64) -> i64 {
-    a >> (b as u32).min(63)
+    let shift_amount = b.clamp(0, 63);
+    // shift_amount is guaranteed to be 0 <= shift_amount <= 63 due to clamp(0, 63)
+    let shift = u32::try_from(shift_amount).expect("shift_amount should be 0-63");
+    a >> shift
 }

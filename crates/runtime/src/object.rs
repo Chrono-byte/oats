@@ -130,7 +130,9 @@ pub extern "C" fn union_box_f64(v: f64) -> *mut c_void {
     unsafe {
         // layout: header(8) | dtor_ptr(8) | discrim(8) | payload(8)
         let total = 8 * 4;
-        let mem = runtime_malloc(usize::try_from(total).expect("total size must fit in usize") as size_t).cast::<u8>();
+        let mem =
+            runtime_malloc(usize::try_from(total).expect("total size must fit in usize") as size_t)
+                .cast::<u8>();
         if mem.is_null() {
             return ptr::null_mut();
         }
@@ -176,7 +178,9 @@ pub extern "C" fn union_box_f64(v: f64) -> *mut c_void {
 pub unsafe extern "C" fn union_box_ptr(p: *mut c_void) -> *mut c_void {
     unsafe {
         let total = 8 * 4;
-        let mem = runtime_malloc(usize::try_from(total).expect("total size must fit in usize") as size_t).cast::<u8>();
+        let mem =
+            runtime_malloc(usize::try_from(total).expect("total size must fit in usize") as size_t)
+                .cast::<u8>();
         if mem.is_null() {
             return ptr::null_mut();
         }

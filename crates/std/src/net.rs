@@ -31,22 +31,16 @@ pub unsafe extern "C" fn oats_std_net_http_get(url: *const c_char) -> *mut c_cha
         return std::ptr::null_mut();
     }
 
-    let url_str = match unsafe { std::ffi::CStr::from_ptr(url).to_str() } {
-        Ok(s) => s,
-        Err(_) => return std::ptr::null_mut(),
+    let Ok(url_str) = (unsafe { std::ffi::CStr::from_ptr(url).to_str() }) else {
+        return std::ptr::null_mut();
     };
 
     // Use reqwest blocking client for HTTP requests
-    match reqwest::blocking::get(url_str) {
-        Ok(response) => match response.text() {
-            Ok(body) => match std::ffi::CString::new(body) {
-                Ok(cstring) => cstring.into_raw(),
-                Err(_) => std::ptr::null_mut(),
-            },
-            Err(_) => std::ptr::null_mut(),
-        },
-        Err(_) => std::ptr::null_mut(),
-    }
+    reqwest::blocking::get(url_str)
+        .ok()
+        .and_then(|response| response.text().ok())
+        .and_then(|body| std::ffi::CString::new(body).ok())
+        .map_or(std::ptr::null_mut(), std::ffi::CString::into_raw)
 }
 
 /// Check if URL is reachable
@@ -62,27 +56,22 @@ pub unsafe extern "C" fn oats_std_net_url_reachable(url: *const c_char) -> libc:
         return 0;
     }
 
-    let url_str = match unsafe { std::ffi::CStr::from_ptr(url).to_str() } {
-        Ok(s) => s,
-        Err(_) => return 0,
+    let Ok(url_str) = (unsafe { std::ffi::CStr::from_ptr(url).to_str() }) else {
+        return 0;
     };
 
     // Use reqwest to actually test connectivity with a HEAD request
     // HEAD is more efficient than GET for just checking reachability
-    let client = match reqwest::blocking::Client::builder()
+    let Ok(client) = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(5))
         .build()
-    {
-        Ok(c) => c,
-        Err(_) => return 0,
+    else {
+        return 0;
     };
 
-    match client.head(url_str).send() {
-        Ok(response) => {
-            i32::from(response.status().is_success() || response.status().is_redirection())
-        }
-        Err(_) => 0,
-    }
+    client.head(url_str).send().map_or(0, |response| {
+        i32::from(response.status().is_success() || response.status().is_redirection())
+    })
 }
 
 /// HTTP POST request (returns response body as string).
@@ -117,9 +106,8 @@ pub unsafe extern "C" fn oats_std_net_http_post(
         return std::ptr::null_mut();
     }
 
-    let url_str = match unsafe { std::ffi::CStr::from_ptr(url).to_str() } {
-        Ok(s) => s,
-        Err(_) => return std::ptr::null_mut(),
+    let Ok(url_str) = (unsafe { std::ffi::CStr::from_ptr(url).to_str() }) else {
+        return std::ptr::null_mut();
     };
 
     let body_str = if body.is_null() {
@@ -133,16 +121,16 @@ pub unsafe extern "C" fn oats_std_net_http_post(
 
     let client = reqwest::blocking::Client::new();
 
-    match client.post(url_str).body(body_str.to_string()).send() {
-        Ok(response) => match response.text() {
-            Ok(body) => match std::ffi::CString::new(body) {
-                Ok(cstring) => cstring.into_raw(),
-                Err(_) => std::ptr::null_mut(),
-            },
-            Err(_) => std::ptr::null_mut(),
-        },
-        Err(_) => std::ptr::null_mut(),
-    }
+    client
+        .post(url_str)
+        .body(body_str.to_string())
+        .send()
+        .map_or(std::ptr::null_mut(), |response| {
+            response.text().map_or(std::ptr::null_mut(), |body| {
+                std::ffi::CString::new(body)
+                    .map_or(std::ptr::null_mut(), std::ffi::CString::into_raw)
+            })
+        })
 }
 
 /// HTTP POST request with JSON body (returns response body as string).
@@ -177,9 +165,8 @@ pub unsafe extern "C" fn oats_std_net_http_post_json(
         return std::ptr::null_mut();
     }
 
-    let url_str = match unsafe { std::ffi::CStr::from_ptr(url).to_str() } {
-        Ok(s) => s,
-        Err(_) => return std::ptr::null_mut(),
+    let Ok(url_str) = (unsafe { std::ffi::CStr::from_ptr(url).to_str() }) else {
+        return std::ptr::null_mut();
     };
 
     let json_str = if json_body.is_null() {
@@ -193,19 +180,15 @@ pub unsafe extern "C" fn oats_std_net_http_post_json(
 
     let client = reqwest::blocking::Client::new();
 
-    match client
+    client
         .post(url_str)
         .header("Content-Type", "application/json")
         .body(json_str.to_string())
         .send()
-    {
-        Ok(response) => match response.text() {
-            Ok(body) => match std::ffi::CString::new(body) {
-                Ok(cstring) => cstring.into_raw(),
-                Err(_) => std::ptr::null_mut(),
-            },
-            Err(_) => std::ptr::null_mut(),
-        },
-        Err(_) => std::ptr::null_mut(),
-    }
+        .map_or(std::ptr::null_mut(), |response| {
+            response.text().map_or(std::ptr::null_mut(), |body| {
+                std::ffi::CString::new(body)
+                    .map_or(std::ptr::null_mut(), std::ffi::CString::into_raw)
+            })
+        })
 }

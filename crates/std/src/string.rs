@@ -19,14 +19,12 @@ pub unsafe extern "C" fn oats_std_string_split(
         return std::ptr::null_mut();
     }
 
-    let str_val = match CStr::from_ptr(str).to_str() {
-        Ok(s) => s,
-        Err(_) => return std::ptr::null_mut(),
+    let Ok(str_val) = CStr::from_ptr(str).to_str() else {
+        return std::ptr::null_mut();
     };
 
-    let delim = match CStr::from_ptr(delimiter).to_str() {
-        Ok(s) => s,
-        Err(_) => return std::ptr::null_mut(),
+    let Ok(delim) = CStr::from_ptr(delimiter).to_str() else {
+        return std::ptr::null_mut();
     };
 
     let parts: Vec<String> = str_val
@@ -150,27 +148,21 @@ pub unsafe extern "C" fn oats_std_string_replace(
         return std::ptr::null_mut();
     }
 
-    let str_val = match CStr::from_ptr(str).to_str() {
-        Ok(s) => s,
-        Err(_) => return std::ptr::null_mut(),
+    let Ok(str_val) = CStr::from_ptr(str).to_str() else {
+        return std::ptr::null_mut();
     };
 
-    let from_str = match CStr::from_ptr(from).to_str() {
-        Ok(s) => s,
-        Err(_) => return std::ptr::null_mut(),
+    let Ok(from_str) = CStr::from_ptr(from).to_str() else {
+        return std::ptr::null_mut();
     };
 
-    let to_str = match CStr::from_ptr(to).to_str() {
-        Ok(s) => s,
-        Err(_) => return std::ptr::null_mut(),
+    let Ok(to_str) = CStr::from_ptr(to).to_str() else {
+        return std::ptr::null_mut();
     };
 
     let replaced = str_val.replace(from_str, to_str);
 
-    match CString::new(replaced) {
-        Ok(cstring) => cstring.into_raw(),
-        Err(_) => std::ptr::null_mut(),
-    }
+    CString::new(replaced).map_or(std::ptr::null_mut(), std::ffi::CString::into_raw)
 }
 
 /// Trim whitespace from both ends (caller must free result)
@@ -186,17 +178,13 @@ pub unsafe extern "C" fn oats_std_string_trim(str: *const c_char) -> *mut c_char
         return std::ptr::null_mut();
     }
 
-    let str_val = match CStr::from_ptr(str).to_str() {
-        Ok(s) => s,
-        Err(_) => return std::ptr::null_mut(),
+    let Ok(str_val) = CStr::from_ptr(str).to_str() else {
+        return std::ptr::null_mut();
     };
 
     let trimmed = str_val.trim();
 
-    match CString::new(trimmed) {
-        Ok(cstring) => cstring.into_raw(),
-        Err(_) => std::ptr::null_mut(),
-    }
+    CString::new(trimmed).map_or(std::ptr::null_mut(), CString::into_raw)
 }
 
 /// Get length of string
@@ -232,14 +220,12 @@ pub unsafe extern "C" fn oats_std_string_contains(
         return 0;
     }
 
-    let str_val = match CStr::from_ptr(str).to_str() {
-        Ok(s) => s,
-        Err(_) => return 0,
+    let Ok(str_val) = CStr::from_ptr(str).to_str() else {
+        return 0;
     };
 
-    let sub = match CStr::from_ptr(substring).to_str() {
-        Ok(s) => s,
-        Err(_) => return 0,
+    let Ok(sub) = CStr::from_ptr(substring).to_str() else {
+        return 0;
     };
 
     i32::from(str_val.contains(sub))
@@ -257,17 +243,13 @@ pub unsafe extern "C" fn oats_std_string_to_uppercase(str: *const c_char) -> *mu
         return std::ptr::null_mut();
     }
 
-    let str_val = match CStr::from_ptr(str).to_str() {
-        Ok(s) => s,
-        Err(_) => return std::ptr::null_mut(),
+    let Ok(str_val) = CStr::from_ptr(str).to_str() else {
+        return std::ptr::null_mut();
     };
 
     let upper = str_val.to_uppercase();
 
-    match CString::new(upper) {
-        Ok(cstring) => cstring.into_raw(),
-        Err(_) => std::ptr::null_mut(),
-    }
+    CString::new(upper).map_or(std::ptr::null_mut(), CString::into_raw)
 }
 
 /// Convert string to lowercase (caller must free result)
@@ -282,17 +264,13 @@ pub unsafe extern "C" fn oats_std_string_to_lowercase(str: *const c_char) -> *mu
         return std::ptr::null_mut();
     }
 
-    let str_val = match CStr::from_ptr(str).to_str() {
-        Ok(s) => s,
-        Err(_) => return std::ptr::null_mut(),
+    let Ok(str_val) = CStr::from_ptr(str).to_str() else {
+        return std::ptr::null_mut();
     };
 
     let lower = str_val.to_lowercase();
 
-    match CString::new(lower) {
-        Ok(cstring) => cstring.into_raw(),
-        Err(_) => std::ptr::null_mut(),
-    }
+    CString::new(lower).map_or(std::ptr::null_mut(), CString::into_raw)
 }
 
 /// Check if string starts with prefix
@@ -310,14 +288,12 @@ pub unsafe extern "C" fn oats_std_string_starts_with(
         return 0;
     }
 
-    let str_val = match CStr::from_ptr(str).to_str() {
-        Ok(s) => s,
-        Err(_) => return 0,
+    let Ok(str_val) = CStr::from_ptr(str).to_str() else {
+        return 0;
     };
 
-    let prefix_str = match CStr::from_ptr(prefix).to_str() {
-        Ok(s) => s,
-        Err(_) => return 0,
+    let Ok(prefix_str) = CStr::from_ptr(prefix).to_str() else {
+        return 0;
     };
 
     i32::from(str_val.starts_with(prefix_str))
@@ -338,14 +314,12 @@ pub unsafe extern "C" fn oats_std_string_ends_with(
         return 0;
     }
 
-    let str_val = match CStr::from_ptr(str).to_str() {
-        Ok(s) => s,
-        Err(_) => return 0,
+    let Ok(str_val) = CStr::from_ptr(str).to_str() else {
+        return 0;
     };
 
-    let suffix_str = match CStr::from_ptr(suffix).to_str() {
-        Ok(s) => s,
-        Err(_) => return 0,
+    let Ok(suffix_str) = CStr::from_ptr(suffix).to_str() else {
+        return 0;
     };
 
     i32::from(str_val.ends_with(suffix_str))
@@ -363,20 +337,21 @@ pub unsafe extern "C" fn oats_std_string_find(str: *const c_char, substring: *co
         return -1;
     }
 
-    let str_val = match CStr::from_ptr(str).to_str() {
-        Ok(s) => s,
-        Err(_) => return -1,
+    let Ok(str_val) = CStr::from_ptr(str).to_str() else {
+        return -1;
     };
 
-    let sub = match CStr::from_ptr(substring).to_str() {
-        Ok(s) => s,
-        Err(_) => return -1,
+    let Ok(sub) = CStr::from_ptr(substring).to_str() else {
+        return -1;
     };
 
-    match str_val.find(sub) {
-        Some(idx) => idx as i64,
-        None => -1,
-    }
+    str_val.find(sub).map_or(-1, |idx| {
+        if idx > i64::MAX as usize {
+            -1 // Indicate overflow (very unlikely)
+        } else {
+            idx as i64
+        }
+    })
 }
 
 /// Get substring (caller must free result)
@@ -395,9 +370,8 @@ pub unsafe extern "C" fn oats_std_string_substring(
         return std::ptr::null_mut();
     }
 
-    let str_val = match CStr::from_ptr(str).to_str() {
-        Ok(s) => s,
-        Err(_) => return std::ptr::null_mut(),
+    let Ok(str_val) = CStr::from_ptr(str).to_str() else {
+        return std::ptr::null_mut();
     };
 
     if start >= str_val.len() || end > str_val.len() || start > end {
@@ -406,10 +380,7 @@ pub unsafe extern "C" fn oats_std_string_substring(
 
     let substring = &str_val[start..end];
 
-    match CString::new(substring) {
-        Ok(cstring) => cstring.into_raw(),
-        Err(_) => std::ptr::null_mut(),
-    }
+    CString::new(substring).map_or(std::ptr::null_mut(), CString::into_raw)
 }
 
 /// Repeat string n times (caller must free result)
@@ -424,15 +395,11 @@ pub unsafe extern "C" fn oats_std_string_repeat(str: *const c_char, count: usize
         return std::ptr::null_mut();
     }
 
-    let str_val = match CStr::from_ptr(str).to_str() {
-        Ok(s) => s,
-        Err(_) => return std::ptr::null_mut(),
+    let Ok(str_val) = CStr::from_ptr(str).to_str() else {
+        return std::ptr::null_mut();
     };
 
     let repeated = str_val.repeat(count);
 
-    match CString::new(repeated) {
-        Ok(cstring) => cstring.into_raw(),
-        Err(_) => std::ptr::null_mut(),
-    }
+    CString::new(repeated).map_or(std::ptr::null_mut(), CString::into_raw)
 }

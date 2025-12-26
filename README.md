@@ -109,7 +109,7 @@ cargo build --workspace
 cargo test --workspace
 
 # Run the end-to-end tests
-./scripts/run_all_proper_tests.sh
+# there is a test suite member called e2e_tests.rs that runs the end-to-end tests
 ```
 
 ## License

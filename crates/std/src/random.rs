@@ -11,10 +11,11 @@ thread_local! {
 }
 
 fn init_rng() -> u64 {
-    let seed = match SystemTime::now().duration_since(UNIX_EPOCH) {
-        Ok(duration) => duration.as_nanos() as u64,
-        Err(_) => 0,
-    };
+    let seed = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| {
+            duration.as_nanos().min(u128::from(u64::MAX)) as u64
+        });
     RNG_STATE.with(|state| {
         let mut s = match state.lock() {
             Ok(guard) => guard,
@@ -40,13 +41,14 @@ fn next_random() -> u64 {
             }
         };
         if *s == 0 {
-            *s = match SystemTime::now().duration_since(UNIX_EPOCH) {
-                Ok(duration) => duration.as_nanos() as u64,
-                Err(_) => 0,
-            };
+            *s = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_or(0, |duration| {
+                    duration.as_nanos().min(u128::from(u64::MAX)) as u64
+                });
         }
         // LCG parameters (same as used in glibc)
-        *s = s.wrapping_mul(1103515245).wrapping_add(12345) & 0x7fffffff;
+        *s = s.wrapping_mul(1_103_515_245).wrapping_add(12_345) & 0x7fff_ffff;
         *s
     })
 }
@@ -84,7 +86,7 @@ pub extern "C" fn oats_std_random_int(max: u64) -> u64 {
 pub extern "C" fn oats_std_random_float() -> c_double {
     init_rng();
     let r = next_random();
-    (r as c_double) / c_double::from(0x7fffffff)
+    (r as c_double) / c_double::from(0x7fff_ffff)
 }
 
 /// Generate a random floating point number between min and max

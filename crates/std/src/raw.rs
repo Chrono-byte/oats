@@ -33,4 +33,115 @@ extern "C" {
 
     #[link_name = "number_to_string"]
     pub fn number_to_string(num: f64) -> *mut c_char;
+
+}
+
+// Number function implementations that call the runtime
+#[no_mangle]
+pub const extern "C" fn number_epsilon() -> f64 {
+    runtime::number_epsilon()
+}
+
+#[no_mangle]
+pub const extern "C" fn number_max_safe_integer() -> f64 {
+    runtime::number_max_safe_integer()
+}
+
+#[no_mangle]
+pub const extern "C" fn number_max_value() -> f64 {
+    runtime::number_max_value()
+}
+
+#[no_mangle]
+pub const extern "C" fn number_min_safe_integer() -> f64 {
+    runtime::number_min_safe_integer()
+}
+
+#[no_mangle]
+pub const extern "C" fn number_min_value() -> f64 {
+    runtime::number_min_value()
+}
+
+#[no_mangle]
+pub const extern "C" fn number_nan() -> f64 {
+    runtime::number_nan()
+}
+
+#[no_mangle]
+pub const extern "C" fn number_negative_infinity() -> f64 {
+    runtime::number_negative_infinity()
+}
+
+#[no_mangle]
+pub const extern "C" fn number_positive_infinity() -> f64 {
+    runtime::number_positive_infinity()
+}
+
+#[no_mangle]
+pub extern "C" fn number_is_nan_static(num: f64) -> i64 {
+    runtime::number_is_nan_static(num)
+}
+
+#[no_mangle]
+pub extern "C" fn number_is_finite_static(num: f64) -> i64 {
+    runtime::number_is_finite_static(num)
+}
+
+#[no_mangle]
+pub extern "C" fn number_is_integer(num: f64) -> i64 {
+    runtime::number_is_integer(num)
+}
+
+#[no_mangle]
+pub extern "C" fn number_is_safe_integer(num: f64) -> i64 {
+    runtime::number_is_safe_integer(num)
+}
+
+/// # Safety
+/// `str_ptr` must be a valid pointer to a null-terminated C string.
+#[no_mangle]
+pub unsafe extern "C" fn number_parse_float_static(str_ptr: *const c_char) -> f64 {
+    unsafe { runtime::number_parse_float_static(str_ptr) }
+}
+
+/// # Safety
+/// `str_ptr` must be a valid pointer to a null-terminated C string.
+#[no_mangle]
+pub unsafe extern "C" fn number_parse_int(str_ptr: *const c_char, radix: f64) -> f64 {
+    unsafe { runtime::number_parse_int(str_ptr, radix) }
+}
+
+#[no_mangle]
+pub extern "C" fn number_to_fixed(num: f64, fraction_digits: f64) -> *mut c_char {
+    runtime::number_to_fixed(num, fraction_digits)
+}
+
+#[no_mangle]
+pub extern "C" fn number_to_exponential(num: f64, fraction_digits: f64) -> *mut c_char {
+    runtime::number_to_exponential(num, fraction_digits)
+}
+
+#[no_mangle]
+pub extern "C" fn number_to_precision(num: f64, precision: f64) -> *mut c_char {
+    runtime::number_to_precision(num, precision)
+}
+
+#[no_mangle]
+pub extern "C" fn number_to_locale_string(num: f64) -> *mut c_char {
+    runtime::number_to_locale_string(num)
+}
+
+#[no_mangle]
+pub extern "C" fn number_value_of(num: f64) -> f64 {
+    runtime::number_value_of(num)
+}
+
+#[no_mangle]
+pub extern "C" fn number_new(value: f64) -> *mut std::ffi::c_void {
+    runtime::number_new(value)
+}
+
+#[no_mangle]
+pub extern "C" fn number_value(num_obj: *mut std::ffi::c_void) -> f64 {
+    runtime::number_value(num_obj)
 }

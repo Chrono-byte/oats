@@ -5,6 +5,7 @@
 ## Current Status
 
 Oats implements TypeScript/JavaScript with:
+
 - Language: classes, async/await, generics, unions, interfaces, enums, destructuring, template literals
 - Types: full primitive set (integers, floats, char), tuples, promises, weak/unowned references
 - Memory: ARC with cycle collection, escape analysis for RC elimination
@@ -149,6 +150,7 @@ Pointer rules and ARC semantics:
 ## Reference Counting & Memory Management
 
 ARC discipline (compiler responsibilities):
+
 - Strong is the default: storing a pointer in a field/local must emit `rc_inc` for the new value and `rc_dec` for the old value (if any) before overwrite.
 - Overwriting a pointer: `rc_dec` the old value before replacing it.
 - Returning from a function: release (`rc_dec`) any function-scoped strong locals before returning.
@@ -205,7 +207,6 @@ Runtime exposes helpers for allocation, string/array ops, RC ops, and a cycle co
 - `cargo test --workspace`
 - Snapshot tests via `cargo insta review` / `cargo insta accept` for IR changes.
 - Fuzzing (`cargo +nightly fuzz run fuzz_parser`) to cover parser robustness.
-- Example smoke tests via `./scripts/run_all_proper_tests.sh` when making runtime or codegen changes.
 
 ## Quick Reference
 
@@ -224,11 +225,13 @@ Source → Parser → Type Checker → Code Generator → LLVM IR → Object Fil
 ```
 
 **Strengths:**
+
 - Clear separation between `oats_parser`, `oats_ast`, `oatsc` (compiler), `runtime`, and `toasty` (build system)
 - Well-defined interfaces between components
 - Modular design allows independent development
 
 **Observations:**
+
 - `builder.rs` is quite large (1370+ lines) and handles multiple concerns
 - Could split into smaller modules: compilation orchestration, linking
 - Note: Package-level concerns (manifest parsing, dependency resolution) are handled by `toasty`, not `oatsc`
@@ -309,6 +312,7 @@ Type system is well-designed. Some type checking could be more strict (see TODOs
 ## Performance Considerations
 
 **Compilation Performance:**
+
 - Single-pass parsing
 - Const evaluation and interning (reduces code size)
 - Escape analysis (optimizes RC operations)
@@ -316,6 +320,7 @@ Type system is well-designed. Some type checking could be more strict (see TODOs
 Could optimize LLVM IR generation and improve const evaluation caching. Module caching and parallelization are handled by `toasty` at the package level.
 
 **Runtime Performance:**
+
 - ARC with escape analysis optimization
 - Cycle collector runs in background
 - Efficient object layouts

@@ -6,10 +6,11 @@ use libc::c_longlong;
 /// #[`oats_export`]
 #[no_mangle]
 pub extern "C" fn oats_std_time_now() -> c_longlong {
-    match std::time::SystemTime::now().duration_since(std::time::SystemTime::UNIX_EPOCH) {
-        Ok(duration) => duration.as_secs() as c_longlong,
-        Err(_) => 0,
-    }
+    std::time::SystemTime::now()
+        .duration_since(std::time::SystemTime::UNIX_EPOCH)
+        .map_or(0, |duration| {
+            duration.as_secs().min(i64::MAX as u64) as c_longlong
+        })
 }
 
 /// Sleep for specified milliseconds
@@ -25,20 +26,18 @@ pub extern "C" fn oats_std_time_sleep_ms(ms: c_longlong) {
 /// #[`oats_export`]
 #[no_mangle]
 pub extern "C" fn oats_std_time_now_nanos() -> c_longlong {
-    match std::time::SystemTime::now().duration_since(std::time::SystemTime::UNIX_EPOCH) {
-        Ok(duration) => duration.as_nanos() as c_longlong,
-        Err(_) => 0,
-    }
+    std::time::SystemTime::now()
+        .duration_since(std::time::SystemTime::UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_nanos() as c_longlong)
 }
 
 /// Get current Unix timestamp in milliseconds
 /// #[`oats_export`]
 #[no_mangle]
 pub extern "C" fn oats_std_time_now_millis() -> c_longlong {
-    match std::time::SystemTime::now().duration_since(std::time::SystemTime::UNIX_EPOCH) {
-        Ok(duration) => duration.as_millis() as c_longlong,
-        Err(_) => 0,
-    }
+    std::time::SystemTime::now()
+        .duration_since(std::time::SystemTime::UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_millis() as c_longlong)
 }
 
 /// Sleep for specified seconds
@@ -68,10 +67,8 @@ pub extern "C" fn oats_std_time_format_rfc3339(timestamp: c_longlong) -> *mut li
     match dt {
         chrono::LocalResult::Single(dt) => {
             let formatted = dt.to_rfc3339();
-            match std::ffi::CString::new(formatted) {
-                Ok(cstring) => cstring.into_raw(),
-                Err(_) => std::ptr::null_mut(),
-            }
+            std::ffi::CString::new(formatted)
+                .map_or(std::ptr::null_mut(), std::ffi::CString::into_raw)
         }
         _ => std::ptr::null_mut(),
     }
@@ -93,8 +90,5 @@ pub unsafe extern "C" fn oats_std_time_parse_rfc3339(
 
     let str_val = (unsafe { std::ffi::CStr::from_ptr(rfc3339_str).to_str() }).unwrap_or_default();
 
-    match chrono::DateTime::parse_from_rfc3339(str_val) {
-        Ok(dt) => dt.timestamp(),
-        Err(_) => -1,
-    }
+    chrono::DateTime::parse_from_rfc3339(str_val).map_or(-1, |dt| dt.timestamp())
 }

@@ -72,6 +72,48 @@ pub mod names {
     /// Number.parseInt static method: `number_parse_int(i8*, i64) -> f64`
     pub const NUMBER_PARSE_INT: &str = "number_parse_int";
 
+    /// Number.EPSILON: `number_epsilon() -> f64`
+    pub const NUMBER_EPSILON: &str = "number_epsilon";
+
+    /// `Number.MAX_SAFE_INTEGER`: `number_max_safe_integer() -> f64`
+    pub const NUMBER_MAX_SAFE_INTEGER: &str = "number_max_safe_integer";
+
+    /// `Number.MAX_VALUE`: `number_max_value() -> f64`
+    pub const NUMBER_MAX_VALUE: &str = "number_max_value";
+
+    /// `Number.MIN_SAFE_INTEGER`: `number_min_safe_integer() -> f64`
+    pub const NUMBER_MIN_SAFE_INTEGER: &str = "number_min_safe_integer";
+
+    /// `Number.MIN_VALUE`: `number_min_value() -> f64`
+    pub const NUMBER_MIN_VALUE: &str = "number_min_value";
+
+    /// Number.NaN: `number_nan() -> f64`
+    pub const NUMBER_NAN: &str = "number_nan";
+
+    /// `Number.NEGATIVE_INFINITY`: `number_negative_infinity() -> f64`
+    pub const NUMBER_NEGATIVE_INFINITY: &str = "number_negative_infinity";
+
+    /// `Number.POSITIVE_INFINITY`: `number_positive_infinity() -> f64`
+    pub const NUMBER_POSITIVE_INFINITY: &str = "number_positive_infinity";
+
+    /// Number.isSafeInteger: `number_is_safe_integer(f64) -> i64`
+    pub const NUMBER_IS_SAFE_INTEGER: &str = "number_is_safe_integer";
+
+    /// Number.prototype.toFixed: `number_to_fixed(f64, f64) -> i8*`
+    pub const NUMBER_TO_FIXED: &str = "number_to_fixed";
+
+    /// Number.prototype.toExponential: `number_to_exponential(f64, f64) -> i8*`
+    pub const NUMBER_TO_EXPONENTIAL: &str = "number_to_exponential";
+
+    /// Number.prototype.toPrecision: `number_to_precision(f64, f64) -> i8*`
+    pub const NUMBER_TO_PRECISION: &str = "number_to_precision";
+
+    /// Number.prototype.toLocaleString: `number_to_locale_string(f64) -> i8*`
+    pub const NUMBER_TO_LOCALE_STRING: &str = "number_to_locale_string";
+
+    /// Number.prototype.valueOf: `number_value_of(f64) -> f64`
+    pub const NUMBER_VALUE_OF: &str = "number_value_of";
+
     /// Create Number object: `number_new(f64) -> i8*`
     pub const NUMBER_NEW: &str = "number_new";
 

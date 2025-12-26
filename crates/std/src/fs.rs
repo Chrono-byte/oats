@@ -34,18 +34,14 @@ pub unsafe extern "C" fn oats_std_fs_read_file(path: *const c_char) -> *mut c_ch
         return std::ptr::null_mut();
     }
 
-    let path_str = match unsafe { CStr::from_ptr(path).to_str() } {
-        Ok(s) => s,
-        Err(_) => return std::ptr::null_mut(),
+    let Ok(path_str) = (unsafe { CStr::from_ptr(path).to_str() }) else {
+        return std::ptr::null_mut();
     };
 
-    match fs::read_to_string(path_str) {
-        Ok(content) => match CString::new(content) {
-            Ok(cstring) => cstring.into_raw(),
-            Err(_) => std::ptr::null_mut(),
-        },
-        Err(_) => std::ptr::null_mut(),
-    }
+    fs::read_to_string(path_str)
+        .ok()
+        .and_then(|content| CString::new(content).ok())
+        .map_or(std::ptr::null_mut(), std::ffi::CString::into_raw)
 }
 
 /// Write string to file
@@ -64,21 +60,20 @@ pub unsafe extern "C" fn oats_std_fs_write_file(
         return -1;
     }
 
-    let path_str = match unsafe { CStr::from_ptr(path).to_str() } {
-        Ok(s) => s,
-        Err(_) => return -1,
+    let Ok(path_str) = (unsafe { CStr::from_ptr(path).to_str() }) else {
+        return -1;
     };
 
     let content_str = unsafe { CStr::from_ptr(content).to_string_lossy() };
 
-    match fs::write(path_str, content_str.as_bytes()) {
-        Ok(()) => 0,
-        Err(e) => match e.kind() {
+    fs::write(path_str, content_str.as_bytes()).map_or_else(
+        |e| match e.kind() {
             std::io::ErrorKind::NotFound => -2,
             std::io::ErrorKind::PermissionDenied => -3,
             _ => -1,
         },
-    }
+        |()| 0,
+    )
 }
 
 /// Check if file exists
@@ -94,9 +89,8 @@ pub unsafe extern "C" fn oats_std_fs_file_exists(path: *const c_char) -> libc::c
         return 0;
     }
 
-    let path_str = match unsafe { CStr::from_ptr(path).to_str() } {
-        Ok(s) => s,
-        Err(_) => return 0,
+    let Ok(path_str) = (unsafe { CStr::from_ptr(path).to_str() }) else {
+        return 0;
     };
 
     i32::from(std::path::Path::new(path_str).exists())
@@ -115,19 +109,18 @@ pub unsafe extern "C" fn oats_std_fs_create_dir_all(path: *const c_char) -> libc
         return -1;
     }
 
-    let path_str = match unsafe { CStr::from_ptr(path).to_str() } {
-        Ok(s) => s,
-        Err(_) => return -1,
+    let Ok(path_str) = (unsafe { CStr::from_ptr(path).to_str() }) else {
+        return -1;
     };
 
-    match fs::create_dir_all(path_str) {
-        Ok(()) => 0,
-        Err(e) => match e.kind() {
+    fs::create_dir_all(path_str).map_or_else(
+        |e| match e.kind() {
             std::io::ErrorKind::NotFound => -2,
             std::io::ErrorKind::PermissionDenied => -3,
             _ => -1,
         },
-    }
+        |()| 0,
+    )
 }
 
 /// Remove file
@@ -143,19 +136,18 @@ pub unsafe extern "C" fn oats_std_fs_remove_file(path: *const c_char) -> libc::c
         return -1;
     }
 
-    let path_str = match unsafe { CStr::from_ptr(path).to_str() } {
-        Ok(s) => s,
-        Err(_) => return -1,
+    let Ok(path_str) = (unsafe { CStr::from_ptr(path).to_str() }) else {
+        return -1;
     };
 
-    match fs::remove_file(path_str) {
-        Ok(()) => 0,
-        Err(e) => match e.kind() {
+    fs::remove_file(path_str).map_or_else(
+        |e| match e.kind() {
             std::io::ErrorKind::NotFound => -2,
             std::io::ErrorKind::PermissionDenied => -3,
             _ => -1,
         },
-    }
+        |()| 0,
+    )
 }
 
 /// Remove directory (must be empty)
@@ -171,19 +163,18 @@ pub unsafe extern "C" fn oats_std_fs_remove_dir(path: *const c_char) -> libc::c_
         return -1;
     }
 
-    let path_str = match unsafe { CStr::from_ptr(path).to_str() } {
-        Ok(s) => s,
-        Err(_) => return -1,
+    let Ok(path_str) = (unsafe { CStr::from_ptr(path).to_str() }) else {
+        return -1;
     };
 
-    match fs::remove_dir(path_str) {
-        Ok(()) => 0,
-        Err(e) => match e.kind() {
+    fs::remove_dir(path_str).map_or_else(
+        |e| match e.kind() {
             std::io::ErrorKind::NotFound => -2,
             std::io::ErrorKind::PermissionDenied => -3,
             _ => -1,
         },
-    }
+        |()| 0,
+    )
 }
 
 /// Remove directory recursively
@@ -199,19 +190,18 @@ pub unsafe extern "C" fn oats_std_fs_remove_dir_all(path: *const c_char) -> libc
         return -1;
     }
 
-    let path_str = match unsafe { CStr::from_ptr(path).to_str() } {
-        Ok(s) => s,
-        Err(_) => return -1,
+    let Ok(path_str) = (unsafe { CStr::from_ptr(path).to_str() }) else {
+        return -1;
     };
 
-    match fs::remove_dir_all(path_str) {
-        Ok(()) => 0,
-        Err(e) => match e.kind() {
+    fs::remove_dir_all(path_str).map_or_else(
+        |e| match e.kind() {
             std::io::ErrorKind::NotFound => -2,
             std::io::ErrorKind::PermissionDenied => -3,
             _ => -1,
         },
-    }
+        |()| 0,
+    )
 }
 
 /// Check if path is a directory
@@ -226,9 +216,8 @@ pub unsafe extern "C" fn oats_std_fs_is_dir(path: *const c_char) -> libc::c_int 
         return 0;
     }
 
-    let path_str = match unsafe { CStr::from_ptr(path).to_str() } {
-        Ok(s) => s,
-        Err(_) => return 0,
+    let Ok(path_str) = (unsafe { CStr::from_ptr(path).to_str() }) else {
+        return 0;
     };
 
     i32::from(std::path::Path::new(path_str).is_dir())
@@ -246,9 +235,8 @@ pub unsafe extern "C" fn oats_std_fs_is_file(path: *const c_char) -> libc::c_int
         return 0;
     }
 
-    let path_str = match unsafe { CStr::from_ptr(path).to_str() } {
-        Ok(s) => s,
-        Err(_) => return 0,
+    let Ok(path_str) = (unsafe { CStr::from_ptr(path).to_str() }) else {
+        return 0;
     };
 
     i32::from(std::path::Path::new(path_str).is_file())
@@ -266,15 +254,13 @@ pub unsafe extern "C" fn oats_std_fs_file_size(path: *const c_char) -> i64 {
         return -1;
     }
 
-    let path_str = match unsafe { CStr::from_ptr(path).to_str() } {
-        Ok(s) => s,
-        Err(_) => return -1,
+    let Ok(path_str) = (unsafe { CStr::from_ptr(path).to_str() }) else {
+        return -1;
     };
 
-    match fs::metadata(path_str) {
-        Ok(metadata) => metadata.len() as i64,
-        Err(_) => -1,
-    }
+    fs::metadata(path_str).map_or(-1, |metadata| {
+        i64::try_from(metadata.len()).unwrap_or(i64::MAX)
+    })
 }
 
 /// List directory entries (returns array of strings, caller must free each)
@@ -289,9 +275,8 @@ pub unsafe extern "C" fn oats_std_fs_read_dir(path: *const c_char) -> *mut *mut 
         return std::ptr::null_mut();
     }
 
-    let path_str = match unsafe { CStr::from_ptr(path).to_str() } {
-        Ok(s) => s,
-        Err(_) => return std::ptr::null_mut(),
+    let Ok(path_str) = (unsafe { CStr::from_ptr(path).to_str() }) else {
+        return std::ptr::null_mut();
     };
 
     let entries: Vec<String> = match fs::read_dir(path_str) {

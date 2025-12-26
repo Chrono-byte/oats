@@ -17,9 +17,9 @@ pub unsafe extern "C" fn oats_std_hash_string(str: *const c_char) -> u64 {
         return 0;
     }
 
-    let str_val = match unsafe { CStr::from_ptr(str).to_str() } {
-        Ok(s) => s,
-        Err(_) => return 0,
+    let str_result = unsafe { CStr::from_ptr(str).to_str() };
+    let Ok(str_val) = str_result else {
+        return 0;
     };
 
     let mut hasher = DefaultHasher::new();
@@ -71,25 +71,24 @@ pub extern "C" fn oats_std_hash_i64(value: i64) -> u64 {
 /// #[`oats_export`]
 #[no_mangle]
 pub unsafe extern "C" fn oats_std_hash_sha256_string(str: *const c_char) -> *mut c_char {
+    use sha2::{Digest, Sha256};
+
     if str.is_null() {
         return std::ptr::null_mut();
     }
 
-    let str_val = match unsafe { CStr::from_ptr(str).to_str() } {
-        Ok(s) => s,
-        Err(_) => return std::ptr::null_mut(),
+    let str_result = unsafe { CStr::from_ptr(str).to_str() };
+    let Ok(str_val) = str_result else {
+        return std::ptr::null_mut();
     };
-
-    use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
     hasher.update(str_val.as_bytes());
     let result = hasher.finalize();
     let hex = hex::encode(result);
 
-    match CString::new(hex) {
-        Ok(cstring) => cstring.into_raw(),
-        Err(_) => std::ptr::null_mut(),
-    }
+    CString::new(hex)
+        .map(CString::into_raw)
+        .unwrap_or(std::ptr::null_mut())
 }
 
 /// Compute SHA-256 hash of bytes (returns hex string, caller must free)
@@ -100,19 +99,19 @@ pub unsafe extern "C" fn oats_std_hash_sha256_string(str: *const c_char) -> *mut
 /// #[`oats_export`]
 #[no_mangle]
 pub unsafe extern "C" fn oats_std_hash_sha256_bytes(bytes: *const u8, len: usize) -> *mut c_char {
+    use sha2::{Digest, Sha256};
+
     if bytes.is_null() || len == 0 {
         return std::ptr::null_mut();
     }
 
     let slice = unsafe { std::slice::from_raw_parts(bytes, len) };
-    use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
     hasher.update(slice);
     let result = hasher.finalize();
     let hex = hex::encode(result);
 
-    match CString::new(hex) {
-        Ok(cstring) => cstring.into_raw(),
-        Err(_) => std::ptr::null_mut(),
-    }
+    CString::new(hex)
+        .map(CString::into_raw)
+        .unwrap_or(std::ptr::null_mut())
 }

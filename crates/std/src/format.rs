@@ -20,9 +20,8 @@ pub unsafe extern "C" fn oats_std_format_string(
         return std::ptr::null_mut();
     }
 
-    let format_str = match unsafe { CStr::from_ptr(format).to_str() } {
-        Ok(s) => s,
-        Err(_) => return std::ptr::null_mut(),
+    let Ok(format_str) = (unsafe { CStr::from_ptr(format).to_str() }) else {
+        return std::ptr::null_mut();
     };
 
     // Simple placeholder replacement: {} -> argument
@@ -49,10 +48,7 @@ pub unsafe extern "C" fn oats_std_format_string(
         }
     }
 
-    match CString::new(result) {
-        Ok(cstring) => cstring.into_raw(),
-        Err(_) => std::ptr::null_mut(),
-    }
+    CString::new(result).map_or(std::ptr::null_mut(), std::ffi::CString::into_raw)
 }
 
 /// Format with a number (caller must free result)
@@ -67,17 +63,13 @@ pub unsafe extern "C" fn oats_std_format_number(format: *const c_char, value: f6
         return std::ptr::null_mut();
     }
 
-    let format_str = match unsafe { CStr::from_ptr(format).to_str() } {
-        Ok(s) => s,
-        Err(_) => return std::ptr::null_mut(),
+    let Ok(format_str) = (unsafe { CStr::from_ptr(format).to_str() }) else {
+        return std::ptr::null_mut();
     };
 
     let result = format_str.replace("{}", &value.to_string());
 
-    match CString::new(result) {
-        Ok(cstring) => cstring.into_raw(),
-        Err(_) => std::ptr::null_mut(),
-    }
+    CString::new(result).map_or(std::ptr::null_mut(), std::ffi::CString::into_raw)
 }
 
 /// Format with an integer (caller must free result)
@@ -92,15 +84,11 @@ pub unsafe extern "C" fn oats_std_format_int(format: *const c_char, value: i64) 
         return std::ptr::null_mut();
     }
 
-    let format_str = match unsafe { CStr::from_ptr(format).to_str() } {
-        Ok(s) => s,
-        Err(_) => return std::ptr::null_mut(),
+    let Ok(format_str) = (unsafe { CStr::from_ptr(format).to_str() }) else {
+        return std::ptr::null_mut();
     };
 
     let result = format_str.replace("{}", &value.to_string());
 
-    match CString::new(result) {
-        Ok(cstring) => cstring.into_raw(),
-        Err(_) => std::ptr::null_mut(),
-    }
+    CString::new(result).map_or(std::ptr::null_mut(), std::ffi::CString::into_raw)
 }

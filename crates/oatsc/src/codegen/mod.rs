@@ -145,6 +145,34 @@ pub struct CodeGen<'a> {
     pub fn_number_parse_float_static: RefCell<Option<FunctionValue<'a>>>,
     /// Runtime function: `number_parse_int`
     pub fn_number_parse_int: RefCell<Option<FunctionValue<'a>>>,
+    /// Runtime function: `number_epsilon`
+    pub fn_number_epsilon: RefCell<Option<FunctionValue<'a>>>,
+    /// Runtime function: `number_max_safe_integer`
+    pub fn_number_max_safe_integer: RefCell<Option<FunctionValue<'a>>>,
+    /// Runtime function: `number_max_value`
+    pub fn_number_max_value: RefCell<Option<FunctionValue<'a>>>,
+    /// Runtime function: `number_min_safe_integer`
+    pub fn_number_min_safe_integer: RefCell<Option<FunctionValue<'a>>>,
+    /// Runtime function: `number_min_value`
+    pub fn_number_min_value: RefCell<Option<FunctionValue<'a>>>,
+    /// Runtime function: `number_nan`
+    pub fn_number_nan: RefCell<Option<FunctionValue<'a>>>,
+    /// Runtime function: `number_negative_infinity`
+    pub fn_number_negative_infinity: RefCell<Option<FunctionValue<'a>>>,
+    /// Runtime function: `number_positive_infinity`
+    pub fn_number_positive_infinity: RefCell<Option<FunctionValue<'a>>>,
+    /// Runtime function: `number_is_safe_integer`
+    pub fn_number_is_safe_integer: RefCell<Option<FunctionValue<'a>>>,
+    /// Runtime function: `number_to_fixed`
+    pub fn_number_to_fixed: RefCell<Option<FunctionValue<'a>>>,
+    /// Runtime function: `number_to_exponential`
+    pub fn_number_to_exponential: RefCell<Option<FunctionValue<'a>>>,
+    /// Runtime function: `number_to_precision`
+    pub fn_number_to_precision: RefCell<Option<FunctionValue<'a>>>,
+    /// Runtime function: `number_to_locale_string`
+    pub fn_number_to_locale_string: RefCell<Option<FunctionValue<'a>>>,
+    /// Runtime function: `number_value_of`
+    pub fn_number_value_of: RefCell<Option<FunctionValue<'a>>>,
     /// Runtime function: `union_box_f64`
     pub fn_union_box_f64: RefCell<Option<FunctionValue<'a>>>,
     /// Runtime function: `union_box_ptr`
@@ -910,6 +938,236 @@ impl<'a> CodeGen<'a> {
             .add_function(crate::runtime_functions::names::MALLOC, fn_type, None);
         *self.fn_malloc.borrow_mut() = Some(f);
         f
+    }
+
+    fn get_number_epsilon(&self) -> FunctionValue<'a> {
+        self.module
+            .get_function(crate::runtime_functions::names::NUMBER_EPSILON)
+            .map_or_else(
+                || {
+                    let fn_type = self.f64_t.fn_type(&[], false);
+                    self.module.add_function(
+                        crate::runtime_functions::names::NUMBER_EPSILON,
+                        fn_type,
+                        None,
+                    )
+                },
+                std::convert::identity,
+            )
+    }
+
+    fn get_number_max_safe_integer(&self) -> FunctionValue<'a> {
+        self.module
+            .get_function(crate::runtime_functions::names::NUMBER_MAX_SAFE_INTEGER)
+            .map_or_else(
+                || {
+                    let fn_type = self.f64_t.fn_type(&[], false);
+                    self.module.add_function(
+                        crate::runtime_functions::names::NUMBER_MAX_SAFE_INTEGER,
+                        fn_type,
+                        None,
+                    )
+                },
+                std::convert::identity,
+            )
+    }
+
+    fn get_number_max_value(&self) -> FunctionValue<'a> {
+        self.module
+            .get_function(crate::runtime_functions::names::NUMBER_MAX_VALUE)
+            .map_or_else(
+                || {
+                    let fn_type = self.f64_t.fn_type(&[], false);
+                    self.module.add_function(
+                        crate::runtime_functions::names::NUMBER_MAX_VALUE,
+                        fn_type,
+                        None,
+                    )
+                },
+                std::convert::identity,
+            )
+    }
+
+    fn get_number_min_safe_integer(&self) -> FunctionValue<'a> {
+        self.module
+            .get_function(crate::runtime_functions::names::NUMBER_MIN_SAFE_INTEGER)
+            .map_or_else(
+                || {
+                    let fn_type = self.f64_t.fn_type(&[], false);
+                    self.module.add_function(
+                        crate::runtime_functions::names::NUMBER_MIN_SAFE_INTEGER,
+                        fn_type,
+                        None,
+                    )
+                },
+                std::convert::identity,
+            )
+    }
+
+    fn get_number_min_value(&self) -> FunctionValue<'a> {
+        self.module
+            .get_function(crate::runtime_functions::names::NUMBER_MIN_VALUE)
+            .map_or_else(
+                || {
+                    let fn_type = self.f64_t.fn_type(&[], false);
+                    self.module.add_function(
+                        crate::runtime_functions::names::NUMBER_MIN_VALUE,
+                        fn_type,
+                        None,
+                    )
+                },
+                std::convert::identity,
+            )
+    }
+
+    fn get_number_nan(&self) -> FunctionValue<'a> {
+        self.module
+            .get_function(crate::runtime_functions::names::NUMBER_NAN)
+            .map_or_else(
+                || {
+                    let fn_type = self.f64_t.fn_type(&[], false);
+                    self.module.add_function(
+                        crate::runtime_functions::names::NUMBER_NAN,
+                        fn_type,
+                        None,
+                    )
+                },
+                std::convert::identity,
+            )
+    }
+
+    fn get_number_negative_infinity(&self) -> FunctionValue<'a> {
+        self.module
+            .get_function(crate::runtime_functions::names::NUMBER_NEGATIVE_INFINITY)
+            .map_or_else(
+                || {
+                    let fn_type = self.f64_t.fn_type(&[], false);
+                    self.module.add_function(
+                        crate::runtime_functions::names::NUMBER_NEGATIVE_INFINITY,
+                        fn_type,
+                        None,
+                    )
+                },
+                std::convert::identity,
+            )
+    }
+
+    fn get_number_positive_infinity(&self) -> FunctionValue<'a> {
+        self.module
+            .get_function(crate::runtime_functions::names::NUMBER_POSITIVE_INFINITY)
+            .map_or_else(
+                || {
+                    let fn_type = self.f64_t.fn_type(&[], false);
+                    self.module.add_function(
+                        crate::runtime_functions::names::NUMBER_POSITIVE_INFINITY,
+                        fn_type,
+                        None,
+                    )
+                },
+                std::convert::identity,
+            )
+    }
+
+    fn get_number_is_safe_integer(&self) -> FunctionValue<'a> {
+        self.module
+            .get_function(crate::runtime_functions::names::NUMBER_IS_SAFE_INTEGER)
+            .map_or_else(
+                || {
+                    let fn_type = self.i64_t.fn_type(&[self.f64_t.into()], false);
+                    self.module.add_function(
+                        crate::runtime_functions::names::NUMBER_IS_SAFE_INTEGER,
+                        fn_type,
+                        None,
+                    )
+                },
+                std::convert::identity,
+            )
+    }
+
+    fn get_number_to_fixed(&self) -> FunctionValue<'a> {
+        self.module
+            .get_function(crate::runtime_functions::names::NUMBER_TO_FIXED)
+            .map_or_else(
+                || {
+                    let fn_type = self
+                        .i8ptr_t
+                        .fn_type(&[self.f64_t.into(), self.f64_t.into()], false);
+                    self.module.add_function(
+                        crate::runtime_functions::names::NUMBER_TO_FIXED,
+                        fn_type,
+                        None,
+                    )
+                },
+                std::convert::identity,
+            )
+    }
+
+    fn get_number_to_exponential(&self) -> FunctionValue<'a> {
+        self.module
+            .get_function(crate::runtime_functions::names::NUMBER_TO_EXPONENTIAL)
+            .map_or_else(
+                || {
+                    let fn_type = self
+                        .i8ptr_t
+                        .fn_type(&[self.f64_t.into(), self.f64_t.into()], false);
+                    self.module.add_function(
+                        crate::runtime_functions::names::NUMBER_TO_EXPONENTIAL,
+                        fn_type,
+                        None,
+                    )
+                },
+                std::convert::identity,
+            )
+    }
+
+    fn get_number_to_precision(&self) -> FunctionValue<'a> {
+        self.module
+            .get_function(crate::runtime_functions::names::NUMBER_TO_PRECISION)
+            .map_or_else(
+                || {
+                    let fn_type = self
+                        .i8ptr_t
+                        .fn_type(&[self.f64_t.into(), self.f64_t.into()], false);
+                    self.module.add_function(
+                        crate::runtime_functions::names::NUMBER_TO_PRECISION,
+                        fn_type,
+                        None,
+                    )
+                },
+                std::convert::identity,
+            )
+    }
+
+    fn get_number_to_locale_string(&self) -> FunctionValue<'a> {
+        self.module
+            .get_function(crate::runtime_functions::names::NUMBER_TO_LOCALE_STRING)
+            .map_or_else(
+                || {
+                    let fn_type = self.i8ptr_t.fn_type(&[self.f64_t.into()], false);
+                    self.module.add_function(
+                        crate::runtime_functions::names::NUMBER_TO_LOCALE_STRING,
+                        fn_type,
+                        None,
+                    )
+                },
+                std::convert::identity,
+            )
+    }
+
+    fn get_number_value_of(&self) -> FunctionValue<'a> {
+        self.module
+            .get_function(crate::runtime_functions::names::NUMBER_VALUE_OF)
+            .map_or_else(
+                || {
+                    let fn_type = self.f64_t.fn_type(&[self.f64_t.into()], false);
+                    self.module.add_function(
+                        crate::runtime_functions::names::NUMBER_VALUE_OF,
+                        fn_type,
+                        None,
+                    )
+                },
+                std::convert::identity,
+            )
     }
 
     // Generic function monomorphization and type inference methods are

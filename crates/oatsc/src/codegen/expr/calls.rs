@@ -757,6 +757,17 @@ impl<'a> CodeGen<'a> {
     ) -> crate::diagnostics::DiagnosticResult<inkwell::values::BasicValueEnum<'a>> {
         let (obj_name, method_name) = method_info;
         if let Ok(obj_val) = self.lower_expr(obj_expr, function, param_map, locals) {
+            // Special handling for Number instance methods
+            if obj_val.is_float_value() {
+                return self.lower_number_instance_method(
+                    method_name,
+                    obj_val.into_float_value(),
+                    call,
+                    function,
+                    param_map,
+                    locals,
+                );
+            }
             // Support weak reference helpers
             if method_name == "downgrade" {
                 if !call.arguments.is_empty() {
@@ -918,6 +929,221 @@ impl<'a> CodeGen<'a> {
                     "Ensure the object is properly initialized before calling methods on it",
                 ),
             ))
+        }
+    }
+
+    /// Lower Number instance method calls (`num.toString()`, `num.toFixed()`, etc.)
+    fn lower_number_instance_method(
+        &self,
+        method_name: &str,
+        num_val: inkwell::values::FloatValue<'a>,
+        call: &CallExpr,
+        function: inkwell::values::FunctionValue<'a>,
+        param_map: &HashMap<String, u32>,
+        locals: &mut Vec<HashMap<String, LocalEntry<'a>>>,
+    ) -> crate::diagnostics::DiagnosticResult<inkwell::values::BasicValueEnum<'a>> {
+        match method_name {
+            "toString" => {
+                if !call.arguments.is_empty() {
+                    return Err(Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "Number.prototype.toString takes no arguments",
+                    ));
+                }
+                let to_str_fn = self.get_number_to_string();
+                let cs =
+                    self.builder
+                        .build_call(to_str_fn, &[num_val.into()], "number_to_string_call");
+                if let Ok(cs) = cs
+                    && let inkwell::values::ValueKind::Basic(bv) = cs.try_as_basic_value()
+                {
+                    Ok(bv)
+                } else {
+                    Err(Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "number_to_string call failed",
+                    ))
+                }
+            }
+            "toFixed" => {
+                if call.arguments.len() > 1 {
+                    return Err(Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "Number.prototype.toFixed takes at most one argument",
+                    ));
+                }
+                let fraction_digits = if call.arguments.is_empty() {
+                    // Default to 0
+                    self.f64_t.const_float(0.0)
+                } else if let Some(expr) = call.arguments[0].as_expression() {
+                    let arg_val = self.lower_expr(expr, function, param_map, locals)?;
+                    if let Some(fv) = self.coerce_to_f64(arg_val) {
+                        fv
+                    } else {
+                        return Err(Diagnostic::simple_boxed(
+                            Severity::Error,
+                            "Number.prototype.toFixed argument must be coercible to number",
+                        ));
+                    }
+                } else {
+                    return Err(Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "Number.prototype.toFixed requires an expression argument",
+                    ));
+                };
+
+                let to_fixed_fn = self.get_number_to_fixed();
+                let cs = self.builder.build_call(
+                    to_fixed_fn,
+                    &[num_val.into(), fraction_digits.into()],
+                    "number_to_fixed_call",
+                );
+                if let Ok(cs) = cs
+                    && let inkwell::values::ValueKind::Basic(bv) = cs.try_as_basic_value()
+                {
+                    Ok(bv)
+                } else {
+                    Err(Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "number_to_fixed call failed",
+                    ))
+                }
+            }
+            "toExponential" => {
+                if call.arguments.len() > 1 {
+                    return Err(Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "Number.prototype.toExponential takes at most one argument",
+                    ));
+                }
+                let fraction_digits = if call.arguments.is_empty() {
+                    // No argument means undefined (use default formatting)
+                    self.f64_t.const_float(f64::NAN)
+                } else if let Some(expr) = call.arguments[0].as_expression() {
+                    let arg_val = self.lower_expr(expr, function, param_map, locals)?;
+                    if let Some(fv) = self.coerce_to_f64(arg_val) {
+                        fv
+                    } else {
+                        return Err(Diagnostic::simple_boxed(
+                            Severity::Error,
+                            "Number.prototype.toExponential argument must be coercible to number",
+                        ));
+                    }
+                } else {
+                    return Err(Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "Number.prototype.toExponential requires an expression argument",
+                    ));
+                };
+
+                let to_exp_fn = self.get_number_to_exponential();
+                let cs = self.builder.build_call(
+                    to_exp_fn,
+                    &[num_val.into(), fraction_digits.into()],
+                    "number_to_exponential_call",
+                );
+                if let Ok(cs) = cs
+                    && let inkwell::values::ValueKind::Basic(bv) = cs.try_as_basic_value()
+                {
+                    Ok(bv)
+                } else {
+                    Err(Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "number_to_exponential call failed",
+                    ))
+                }
+            }
+            "toPrecision" => {
+                if call.arguments.len() != 1 {
+                    return Err(Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "Number.prototype.toPrecision requires exactly one argument",
+                    ));
+                }
+                if let Some(expr) = call.arguments[0].as_expression() {
+                    let arg_val = self.lower_expr(expr, function, param_map, locals)?;
+                    let precision_val = if let Some(fv) = self.coerce_to_f64(arg_val) {
+                        fv
+                    } else {
+                        return Err(Diagnostic::simple_boxed(
+                            Severity::Error,
+                            "Number.prototype.toPrecision argument must be coercible to number",
+                        ));
+                    };
+
+                    let to_prec_fn = self.get_number_to_precision();
+                    let cs = self.builder.build_call(
+                        to_prec_fn,
+                        &[num_val.into(), precision_val.into()],
+                        "number_to_precision_call",
+                    );
+                    if let Ok(cs) = cs
+                        && let inkwell::values::ValueKind::Basic(bv) = cs.try_as_basic_value()
+                    {
+                        Ok(bv)
+                    } else {
+                        Err(Diagnostic::simple_boxed(
+                            Severity::Error,
+                            "number_to_precision call failed",
+                        ))
+                    }
+                } else {
+                    Err(Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "Number.prototype.toPrecision requires an expression argument",
+                    ))
+                }
+            }
+            "toLocaleString" => {
+                if !call.arguments.is_empty() {
+                    return Err(Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "Number.prototype.toLocaleString takes no arguments",
+                    ));
+                }
+                let to_locale_fn = self.get_number_to_locale_string();
+                let cs = self.builder.build_call(
+                    to_locale_fn,
+                    &[num_val.into()],
+                    "number_to_locale_string_call",
+                );
+                if let Ok(cs) = cs
+                    && let inkwell::values::ValueKind::Basic(bv) = cs.try_as_basic_value()
+                {
+                    Ok(bv)
+                } else {
+                    Err(Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "number_to_locale_string call failed",
+                    ))
+                }
+            }
+            "valueOf" => {
+                if !call.arguments.is_empty() {
+                    return Err(Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "Number.prototype.valueOf takes no arguments",
+                    ));
+                }
+                let value_of_fn = self.get_number_value_of();
+                let cs =
+                    self.builder
+                        .build_call(value_of_fn, &[num_val.into()], "number_value_of_call");
+                if let Ok(cs) = cs
+                    && let inkwell::values::ValueKind::Basic(bv) = cs.try_as_basic_value()
+                {
+                    Ok(bv)
+                } else {
+                    Err(Diagnostic::simple_boxed(
+                        Severity::Error,
+                        "number_value_of call failed",
+                    ))
+                }
+            }
+            _ => Err(Diagnostic::simple_boxed(
+                Severity::Error,
+                format!("Unknown Number method: {method_name}"),
+            )),
         }
     }
 

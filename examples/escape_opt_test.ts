@@ -44,7 +44,7 @@ export function test_multiple_locals(): void {
 
 export function test_reassignment(): number {
     // Reassigned local that doesn't escape
-    let mut c: Counter = new Counter();
+    let c: Counter = new Counter();
     c.increment();
     c = new Counter();
     c.increment();

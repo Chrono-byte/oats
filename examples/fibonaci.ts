@@ -6,7 +6,7 @@ export function fibonacci(n: number): number {
 }
 
 export function main(): number {
-    for (let mut i: number = 1; i <= 20; i = i + 1) {
+    for (let i: number = 1; i <= 20; i = i + 1) {
         let fib_i: number = fibonacci(i);
         print_f64(fib_i);
     }

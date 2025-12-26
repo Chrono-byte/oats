@@ -1,15 +1,15 @@
 export function main(): number {
-    let x = 5;
+    let x: number | string = 5;
     let y = 0.1;
     let s = "hello";
-    let mut arr = [1, 2, 3];
+    let arr = [1, 2, 3];
 
     console.log(x);
     console.log(y);
     console.log(s);
     console.log(arr[0]);
 
-    let x = "hello";
+    x = "hello";
     console.log(x);
 
     return 0;

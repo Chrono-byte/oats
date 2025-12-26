@@ -376,8 +376,9 @@ pub fn lower_array<'a>(
                     // The runtime increments the stored pointer. We must
                     // release our temporary ownership returned by
                     // `union_box_f64` to avoid leaking one refcount.
-                    utils::rc::rc_dec_value(codegen, boxed_ptr, "rc_dec_boxed_tmp")
-                        .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "operation failed"))?;
+                    utils::rc::rc_dec_value(codegen, boxed_ptr, "rc_dec_boxed_tmp").map_err(
+                        |_| Diagnostic::simple_boxed(Severity::Error, "operation failed"),
+                    )?;
                 }
                 _ => {
                     return Err(Diagnostic::simple_with_span_boxed(
@@ -595,7 +596,11 @@ pub fn lower_object<'a>(
                                         let rc_inc = codegen.get_rc_inc();
                                         codegen
                                             .builder
-                                            .build_call(rc_inc, &[boxed_ptr.into()], "rc_inc_spread_union")
+                                            .build_call(
+                                                rc_inc,
+                                                &[boxed_ptr.into()],
+                                                "rc_inc_spread_union",
+                                            )
                                             .map_err(|_| {
                                                 Diagnostic::simple_with_span_boxed(
                                                     Severity::Error,
@@ -1016,14 +1021,13 @@ pub fn lower_template<'a>(
             // then rc_dec it now that concat consumed it.
             let rc_dec_fn = codegen.get_rc_dec();
             if expr_str_is_num_tmp {
-                utils::rc::rc_dec_value(codegen, expr_str, "rc_dec_expr_tmp")
-                    .map_err(|_| {
-                        Diagnostic::simple_with_span_boxed(
-                            Severity::Error,
-                            "failed to build rc_dec call",
-                            tpl.span.start as usize,
-                        )
-                    })?;
+                utils::rc::rc_dec_value(codegen, expr_str, "rc_dec_expr_tmp").map_err(|_| {
+                    Diagnostic::simple_with_span_boxed(
+                        Severity::Error,
+                        "failed to build rc_dec call",
+                        tpl.span.start as usize,
+                    )
+                })?;
             }
 
             // The concatenation created a new `new_res`. The previous `left`

@@ -233,7 +233,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             && let Expression::Identifier(ident) = &new_expr.callee
         {
             let cname = ident.name.to_string();
-            
+
             // Check if this is a generic class instantiation and monomorphize if needed
             let actual_class_name = if let Some(type_args) = &new_expr.type_arguments {
                 // This is a generic instantiation - monomorphize the class
@@ -265,7 +265,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             } else {
                 cname
             };
-            
+
             // Resolve class name through symbol table
             let class_name = if let Some(crate::types::Symbol::Type { mangled_name }) =
                 self.symbol_table.borrow().get(&actual_class_name)
@@ -845,7 +845,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             // Increment RC for the nested array
                             let rc_inc = self.get_rc_inc();
                             self.builder
-                                .build_call(rc_inc, &[nested_arr_ptr.into()], &format!("rc_inc_nested_arr_elem_{idx}"))
+                                .build_call(
+                                    rc_inc,
+                                    &[nested_arr_ptr.into()],
+                                    &format!("rc_inc_nested_arr_elem_{idx}"),
+                                )
                                 .map_err(|_| {
                                     crate::diagnostics::Diagnostic::simple_boxed(
                                         Severity::Error,
@@ -909,7 +913,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             // Increment RC for the nested object
                             let rc_inc = self.get_rc_inc();
                             self.builder
-                                .build_call(rc_inc, &[nested_obj_ptr.into()], &format!("rc_inc_nested_obj_elem_{idx}"))
+                                .build_call(
+                                    rc_inc,
+                                    &[nested_obj_ptr.into()],
+                                    &format!("rc_inc_nested_obj_elem_{idx}"),
+                                )
                                 .map_err(|_| {
                                     crate::diagnostics::Diagnostic::simple_boxed(
                                         Severity::Error,
@@ -1403,7 +1411,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     if let BasicValueEnum::PointerValue(loaded_ptr) = loaded {
                         let rc_inc = self.get_rc_inc();
                         self.builder
-                            .build_call(rc_inc, &[loaded_ptr.into()], &format!("rc_inc_{binding_name}"))
+                            .build_call(
+                                rc_inc,
+                                &[loaded_ptr.into()],
+                                &format!("rc_inc_{binding_name}"),
+                            )
                             .map_err(|_| {
                                 crate::diagnostics::Diagnostic::simple_boxed(
                                     Severity::Error,
@@ -1462,7 +1474,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         // Increment RC for the nested object
                         let rc_inc = self.get_rc_inc();
                         self.builder
-                            .build_call(rc_inc, &[nested_obj_ptr.into()], &format!("rc_inc_nested_{prop_name}"))
+                            .build_call(
+                                rc_inc,
+                                &[nested_obj_ptr.into()],
+                                &format!("rc_inc_nested_{prop_name}"),
+                            )
                             .map_err(|_| {
                                 crate::diagnostics::Diagnostic::simple_boxed(
                                     Severity::Error,
@@ -1532,7 +1548,11 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         // Increment RC for the nested array
                         let rc_inc = self.get_rc_inc();
                         self.builder
-                            .build_call(rc_inc, &[nested_arr_ptr.into()], &format!("rc_inc_nested_arr_{prop_name}"))
+                            .build_call(
+                                rc_inc,
+                                &[nested_arr_ptr.into()],
+                                &format!("rc_inc_nested_arr_{prop_name}"),
+                            )
                             .map_err(|_| {
                                 crate::diagnostics::Diagnostic::simple_boxed(
                                     Severity::Error,

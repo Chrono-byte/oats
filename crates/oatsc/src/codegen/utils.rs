@@ -25,7 +25,9 @@ pub mod rc {
         codegen
             .builder
             .build_call(rc_inc, &[ptr.into()], name)
-            .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "failed to build rc_inc call"))?;
+            .map_err(|_| {
+                Diagnostic::simple_boxed(Severity::Error, "failed to build rc_inc call")
+            })?;
         Ok(())
     }
 
@@ -39,7 +41,9 @@ pub mod rc {
         codegen
             .builder
             .build_call(rc_dec, &[ptr.into()], name)
-            .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "failed to build rc_dec call"))?;
+            .map_err(|_| {
+                Diagnostic::simple_boxed(Severity::Error, "failed to build rc_dec call")
+            })?;
         Ok(())
     }
 }

@@ -168,16 +168,12 @@ fn handle_single_file_emit_object_only(
 }
 
 /// Find or generate metadata file for a module
-fn find_or_generate_metadata(
-    prev_module: &str,
-    out_dir: &str,
-) -> Option<String> {
+fn find_or_generate_metadata(prev_module: &str, out_dir: &str) -> Option<String> {
     let module_stem = std::path::Path::new(prev_module)
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("module");
-    let potential_meta =
-        std::path::Path::new(out_dir).join(format!("{module_stem}_pkg.oats.meta"));
+    let potential_meta = std::path::Path::new(out_dir).join(format!("{module_stem}_pkg.oats.meta"));
 
     if potential_meta.exists() {
         Some(potential_meta.to_string_lossy().to_string())
@@ -194,8 +190,8 @@ fn find_or_generate_metadata(
                     .collect::<Vec<_>>()
                     .join("\n");
 
-                let meta_file = std::path::Path::new(out_dir)
-                    .join(format!("{module_stem}.oats.meta"));
+                let meta_file =
+                    std::path::Path::new(out_dir).join(format!("{module_stem}.oats.meta"));
 
                 if let Err(e) = std::fs::write(&meta_file, meta_content) {
                     eprintln!(

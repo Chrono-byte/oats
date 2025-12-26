@@ -135,7 +135,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
             // Create an array of string keys at compile time
             // We'll create a static array of string pointers
-            let keys_array = self.create_string_keys_array(&field_names, for_in.span.start as usize)?;
+            let keys_array =
+                self.create_string_keys_array(&field_names, for_in.span.start as usize)?;
 
             // Create loop variable (string pointer)
             let loop_var_alloca = self

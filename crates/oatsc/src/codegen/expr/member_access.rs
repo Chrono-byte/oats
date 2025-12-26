@@ -168,7 +168,11 @@ impl<'a> CodeGen<'a> {
                                         // Increment RC for the returned pointer
                                         let rc_inc_fn = self.get_rc_inc();
                                         self.builder
-                                            .build_call(rc_inc_fn, &[boxed_ptr.into()], "rc_inc_tuple_elem")
+                                            .build_call(
+                                                rc_inc_fn,
+                                                &[boxed_ptr.into()],
+                                                "rc_inc_tuple_elem",
+                                            )
                                             .map_err(|_| {
                                                 Diagnostic::simple_boxed(
                                                     Severity::Error,
@@ -219,7 +223,11 @@ impl<'a> CodeGen<'a> {
                                                 // Decrement RC for the boxed pointer (we extracted the value)
                                                 let rc_dec_fn = self.get_rc_dec();
                                                 self.builder
-                                                    .build_call(rc_dec_fn, &[boxed_ptr.into()], "rc_dec_tuple_elem")
+                                                    .build_call(
+                                                        rc_dec_fn,
+                                                        &[boxed_ptr.into()],
+                                                        "rc_dec_tuple_elem",
+                                                    )
                                                     .map_err(|_| {
                                                         Diagnostic::simple_boxed(
                                                             Severity::Error,
@@ -345,7 +353,11 @@ impl<'a> CodeGen<'a> {
                                     // Increment RC for the returned pointer
                                     let rc_inc_fn = self.get_rc_inc();
                                     self.builder
-                                        .build_call(rc_inc_fn, &[boxed_ptr.into()], "rc_inc_tuple_elem")
+                                        .build_call(
+                                            rc_inc_fn,
+                                            &[boxed_ptr.into()],
+                                            "rc_inc_tuple_elem",
+                                        )
                                         .map_err(|_| {
                                             Diagnostic::simple_boxed(
                                                 Severity::Error,
@@ -379,7 +391,11 @@ impl<'a> CodeGen<'a> {
                                             // Decrement RC for the boxed pointer (we extracted the value)
                                             let rc_dec_fn = self.get_rc_dec();
                                             self.builder
-                                                .build_call(rc_dec_fn, &[boxed_ptr.into()], "rc_dec_tuple_elem")
+                                                .build_call(
+                                                    rc_dec_fn,
+                                                    &[boxed_ptr.into()],
+                                                    "rc_dec_tuple_elem",
+                                                )
                                                 .map_err(|_| {
                                                     Diagnostic::simple_boxed(
                                                         Severity::Error,

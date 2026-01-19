@@ -1,24 +1,10 @@
 use crate::codegen::CodeGen;
 use crate::diagnostics::{Diagnostic, Severity};
-use crate::types::OatsType;
-use inkwell::types::BasicTypeEnum;
 use inkwell::values::{BasicValue, BasicValueEnum, FunctionValue};
 use oxc_ast::ast::{Expression, NewExpression};
 use std::collections::HashMap;
 
-// LocalEntry now includes an Option<String> for an optional nominal type name
-// LocalEntry now includes an Option<OatsType> for union tracking
-
-type LocalEntry<'a> = (
-    inkwell::values::PointerValue<'a>,
-    BasicTypeEnum<'a>,
-    bool,
-    bool,
-    bool,
-    Option<String>,
-    Option<OatsType>,
-);
-type LocalsStackLocal<'a> = Vec<HashMap<String, LocalEntry<'a>>>;
+use crate::codegen::common_types::LocalsStackLocal;
 
 impl<'a> CodeGen<'a> {
     pub(super) fn lower_new_expr(

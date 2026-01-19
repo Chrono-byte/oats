@@ -9,16 +9,7 @@ use inkwell::values::{BasicValueEnum, FunctionValue};
 use oxc_ast::ast::SequenceExpression;
 use std::collections::HashMap;
 
-type LocalEntry<'a> = (
-    inkwell::values::PointerValue<'a>,
-    inkwell::types::BasicTypeEnum<'a>,
-    bool,
-    bool,
-    bool,
-    Option<String>,
-    Option<crate::types::OatsType>,
-);
-type LocalsStackLocal<'a> = Vec<std::collections::HashMap<String, LocalEntry<'a>>>;
+use crate::codegen::common_types::LocalsStackLocal;
 
 impl<'a> CodeGen<'a> {
     /// Lowers a sequence expression (comma operator).
@@ -46,11 +37,6 @@ impl<'a> CodeGen<'a> {
         }
 
         // Return the value of the last expression
-        self.lower_expr(
-            seq.expressions.get(seq.expressions.len() - 1).unwrap(),
-            function,
-            param_map,
-            locals,
-        )
+        self.lower_expr(seq.expressions.last().unwrap(), function, param_map, locals)
     }
 }

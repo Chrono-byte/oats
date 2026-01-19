@@ -21,30 +21,4 @@ pub mod enums;
 pub mod functions;
 pub mod generator_handling;
 
-// Type alias for the `locals_stack` used during statement lowering.
-//
-// This is a stack of scopes, where each scope maps local variable names to
-// a tuple containing:
-// - PointerValue: the alloca or pointer to the variable's storage.
-// - BasicTypeEnum: the LLVM type of the variable.
-// - bool: is this variable mutable (declared with `let`; `let` is immutable by default, use `let mut` for mutation)
-// - bool: is this variable a function parameter
-// - bool: is this variable declared as Weak<T> (for reference counting)
-// - Option<String>: if the variable is of a NominalStruct type, the name of
-//   that nominal type; otherwise None. This helps member lowering resolve
-//   fields without fallback heuristics.
-// - Option<OatsType>: the high-level OatsType, for unions
-pub type LocalsStackLocal<'a> = Vec<
-    std::collections::HashMap<
-        String,
-        (
-            inkwell::values::PointerValue<'a>,
-            inkwell::types::BasicTypeEnum<'a>,
-            bool,
-            bool,
-            bool,
-            Option<String>,
-            Option<crate::types::OatsType>,
-        ),
-    >,
->;
+use crate::codegen::common_types::LocalsStackLocal;

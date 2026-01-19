@@ -2,24 +2,11 @@ use crate::codegen::CodeGen;
 use crate::diagnostics::{Diagnostic, Severity};
 use crate::types::OatsType;
 use inkwell::AddressSpace;
-use inkwell::types::BasicTypeEnum;
-use inkwell::values::{BasicValue, BasicValueEnum, FunctionValue, PointerValue, ValueKind};
+use inkwell::values::{BasicValue, BasicValueEnum, FunctionValue, ValueKind};
 use oxc_ast::ast::Expression;
 use std::collections::HashMap;
 
-// LocalEntry now includes an Option<String> for an optional nominal type name
-// LocalEntry now includes an Option<OatsType> for union tracking
-
-type LocalEntry<'a> = (
-    PointerValue<'a>,
-    BasicTypeEnum<'a>,
-    bool,
-    bool,
-    bool,
-    Option<String>,
-    Option<crate::types::OatsType>,
-);
-type LocalsStackLocal<'a> = Vec<HashMap<String, LocalEntry<'a>>>;
+use crate::codegen::common_types::LocalsStackLocal;
 
 impl<'a> CodeGen<'a> {
     pub(super) fn lower_member_expr(
@@ -291,7 +278,7 @@ impl<'a> CodeGen<'a> {
                         if let Some(param_types) = self.fn_param_types.borrow().get(fname)
                             && !param_types.is_empty()
                             && let crate::types::OatsType::NominalStruct(n) =
-                                param_types.get(0).unwrap()
+                                param_types.first().unwrap()
                         {
                             class_name_opt = Some(n.clone());
                         }
@@ -802,7 +789,7 @@ impl<'a> CodeGen<'a> {
                             if let Some(param_types) = self.fn_param_types.borrow().get(fname)
                                 && !param_types.is_empty()
                             {
-                                match param_types.get(0).unwrap() {
+                                match param_types.first().unwrap() {
                                     crate::types::OatsType::NominalStruct(n) => {
                                         class_name_opt = Some(n.clone());
                                     }
@@ -852,7 +839,7 @@ impl<'a> CodeGen<'a> {
                         if let Some(param_types) = self.fn_param_types.borrow().get(fname)
                             && !param_types.is_empty()
                         {
-                            match param_types.get(0).unwrap() {
+                            match param_types.first().unwrap() {
                                 crate::types::OatsType::NominalStruct(n) => {
                                     class_name_opt = Some(n.clone());
                                 }

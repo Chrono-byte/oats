@@ -4,23 +4,10 @@ use inkwell::values::FunctionValue;
 use std::collections::HashMap;
 
 use inkwell::builder::Builder;
-use inkwell::types::BasicTypeEnum;
 use inkwell::values::{BasicValue, PointerValue};
 use oxc_ast::ast::{BinaryOperator, Expression, UnaryOperator};
 
-// LocalEntry now includes an Option<String> for an optional nominal type name
-// LocalEntry now includes an Option<OatsType> for union tracking
-
-type LocalEntry<'a> = (
-    PointerValue<'a>,
-    BasicTypeEnum<'a>,
-    bool,
-    bool,
-    bool,
-    Option<String>,
-    Option<crate::types::OatsType>,
-);
-type LocalsStackLocal<'a> = Vec<HashMap<String, LocalEntry<'a>>>;
+use crate::codegen::common_types::LocalsStackLocal;
 
 impl<'a> crate::codegen::CodeGen<'a> {
     pub(super) fn lower_binary_expr(

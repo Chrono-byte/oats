@@ -11,16 +11,7 @@ use inkwell::values::{BasicValue, BasicValueEnum, FunctionValue};
 use oxc_ast::ast::Expression;
 use std::collections::HashMap;
 
-type LocalEntry<'a> = (
-    inkwell::values::PointerValue<'a>,
-    inkwell::types::BasicTypeEnum<'a>,
-    bool,
-    bool,
-    bool,
-    Option<String>,
-    Option<crate::types::OatsType>,
-);
-type LocalsStackLocal<'a> = Vec<std::collections::HashMap<String, LocalEntry<'a>>>;
+use crate::codegen::common_types::LocalsStackLocal;
 
 impl<'a> CodeGen<'a> {
     /// Lowers an optional member expression (`obj?.prop`, `arr?.[0]`, or `func?.()`).
@@ -253,7 +244,7 @@ impl<'a> CodeGen<'a> {
                 let fname = function.get_name().to_str().unwrap_or_default();
                 if let Some(param_types) = self.fn_param_types.borrow().get(fname)
                     && !param_types.is_empty()
-                    && let crate::types::OatsType::NominalStruct(n) = param_types.get(0).unwrap()
+                    && let crate::types::OatsType::NominalStruct(n) = param_types.first().unwrap()
                 {
                     class_name_opt = Some(n.clone());
                 }

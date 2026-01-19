@@ -10,16 +10,7 @@ use inkwell::values::{BasicValue, BasicValueEnum, FunctionValue};
 use oxc_ast::ast::Super;
 use std::collections::HashMap;
 
-type LocalEntry<'a> = (
-    inkwell::values::PointerValue<'a>,
-    inkwell::types::BasicTypeEnum<'a>,
-    bool,
-    bool,
-    bool,
-    Option<String>,
-    Option<crate::types::OatsType>,
-);
-type LocalsStackLocal<'a> = Vec<std::collections::HashMap<String, LocalEntry<'a>>>;
+use crate::codegen::common_types::LocalsStackLocal;
 
 impl<'a> CodeGen<'a> {
     /// Lowers a super expression.

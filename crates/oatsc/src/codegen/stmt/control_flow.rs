@@ -1,20 +1,11 @@
 use inkwell::values::FunctionValue;
 use std::collections::HashMap;
 
-use crate::types::OatsType;
 use oxc_ast::ast::{
     DoWhileStatement, ForStatement, ForStatementInit, IfStatement, Statement, WhileStatement,
 };
 
-type LocalEntry<'a> = (
-    inkwell::values::PointerValue<'a>,
-    inkwell::types::BasicTypeEnum<'a>,
-    bool,
-    bool,
-    bool,
-    Option<String>,
-    Option<OatsType>,
-);
+use crate::codegen::common_types::LocalEntry;
 // A stack of per-scope local maps.
 //
 // Each entry in the vector is a HashMap representing a lexical scope's

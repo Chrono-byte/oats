@@ -3,7 +3,6 @@ resolver = "2"
 members = ["crates/oatsc", "crates/runtime", "crates/std", "crates/toasty"]
 
 [workspace.lints.rust]
-# Compiler development often needs unsafe code for FFI and LLVM bindings
 unsafe_code = "allow"
 
 [workspace.lints.clippy]
@@ -21,7 +20,7 @@ complexity = { level = "warn", priority = 1 }
 
 # Style - compilers often use certain patterns
 enum_glob_use = "warn"
-too_many_arguments = "allow" # AST nodes often have many fields
+too_many_arguments = "warn" # AST nodes often have many fields
 missing_docs_in_private_items = "allow" # Initial development
 
 # Match patterns - allow some flexibility for AST/IR processing
@@ -46,6 +45,7 @@ doc_markdown = "warn"
 type_complexity = "allow" # Complex AST types are common
 cognitive_complexity = "warn" # Still warn about overly complex functions
 no_mangle_with_rust_abi = "allow" # Required for FFI exports
+unused_variables = "warn"
 
 # Disable overly strict lints that don't apply well to compilers
 # pedantic = { level = "warn", priority = 1 }  # Enable selectively

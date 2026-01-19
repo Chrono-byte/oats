@@ -19,9 +19,6 @@ use inkwell::values::BasicValueEnum;
 use inkwell::values::FunctionValue;
 use std::collections::HashMap;
 
-use inkwell::types::BasicTypeEnum;
-use inkwell::values::PointerValue;
-
 pub mod arrow_expr;
 pub mod async_expr;
 pub mod binary_ops;
@@ -40,19 +37,7 @@ pub mod this;
 pub mod unary_ops;
 pub mod yield_expr;
 
-// LocalEntry now includes an Option<String> for an optional nominal type name
-// LocalEntry now includes an Option<OatsType> for union tracking
-
-type LocalEntry<'a> = (
-    PointerValue<'a>,
-    BasicTypeEnum<'a>,
-    bool,
-    bool,
-    bool,
-    Option<String>,
-    Option<crate::types::OatsType>,
-);
-type LocalsStackLocal<'a> = Vec<HashMap<String, LocalEntry<'a>>>;
+use crate::codegen::common_types::LocalsStackLocal;
 
 impl<'a> crate::codegen::CodeGen<'a> {
     /// Main expression lowering function.
@@ -220,7 +205,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         if let Some(param_types) = self.fn_param_types.borrow().get(fname)
                             && !param_types.is_empty()
                             && let crate::types::OatsType::NominalStruct(n) =
-                                param_types.get(0).unwrap()
+                                param_types.first().unwrap()
                         {
                             Some(n.clone())
                         } else {
@@ -273,7 +258,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         if let Some(param_types) = self.fn_param_types.borrow().get(fname)
                             && !param_types.is_empty()
                             && let crate::types::OatsType::NominalStruct(n) =
-                                param_types.get(0).unwrap()
+                                param_types.first().unwrap()
                         {
                             Some(n.clone())
                         } else {

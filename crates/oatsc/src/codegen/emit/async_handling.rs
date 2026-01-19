@@ -290,8 +290,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             }
         }
         // Reserve one 8-byte slot per live local name (after param slots)
-        let local_slot_count = all_live_names.len();
-        let _total_slots = param_count + local_slot_count;
+        let _local_slot_count = all_live_names.len();
 
         // Prepare resume/cont block vectors sized to number of awaits
         let mut resume_blocks: Vec<inkwell::basic_block::BasicBlock<'a>> = Vec::new();
@@ -415,15 +414,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         // We need to build a param_map with u32 indices for lower_stmts
         let param_map: HashMap<String, u32> = HashMap::new();
 
-        type LocalEntry<'a> = (
-            inkwell::values::PointerValue<'a>,
-            inkwell::types::BasicTypeEnum<'a>,
-            bool,                           // is_mutable
-            bool,                           // is_param
-            bool,                           // is_weak
-            Option<String>,                 // nominal type name
-            Option<crate::types::OatsType>, // oats_type for unions
-        );
+        use crate::codegen::common_types::LocalEntry;
         let mut locals_stack: Vec<HashMap<String, LocalEntry<'a>>> = vec![HashMap::new()];
 
         // Keep a copy of the poll function's locals stack so resume blocks

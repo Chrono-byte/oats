@@ -4,15 +4,7 @@ use inkwell::values::{BasicValueEnum, FunctionValue};
 use oxc_ast::ast::{BindingPatternKind, ForOfStatement, ForStatementLeft, Statement};
 use std::collections::HashMap;
 
-type LocalEntry<'a> = (
-    inkwell::values::PointerValue<'a>,
-    inkwell::types::BasicTypeEnum<'a>,
-    bool,
-    bool,
-    bool,
-    Option<String>,
-    Option<crate::types::OatsType>,
-);
+use crate::codegen::common_types::LocalEntry;
 // A stack of per-scope local maps.
 //
 // Each entry in the vector is a HashMap representing a lexical scope's
@@ -35,7 +27,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         if let ForStatementLeft::VariableDeclaration(var_decl) = &forof.left
             && var_decl.declarations.len() == 1
         {
-            let decl = var_decl.declarations.get(0).unwrap();
+            let decl = var_decl.declarations.first().unwrap();
             let loop_var_name = match &decl.id.kind {
                 BindingPatternKind::BindingIdentifier(ident) => ident.name.to_string(),
                 _ => {

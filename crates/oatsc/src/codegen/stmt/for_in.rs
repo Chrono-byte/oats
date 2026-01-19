@@ -8,15 +8,7 @@ use inkwell::values::{BasicValueEnum, FunctionValue};
 use oxc_ast::ast::{BindingPatternKind, Expression, ForInStatement, ForStatementLeft, Statement};
 use std::collections::HashMap;
 
-type LocalEntry<'a> = (
-    inkwell::values::PointerValue<'a>,
-    inkwell::types::BasicTypeEnum<'a>,
-    bool,
-    bool,
-    bool,
-    Option<String>,
-    Option<crate::types::OatsType>,
-);
+use crate::codegen::common_types::LocalEntry;
 
 impl<'a> crate::codegen::CodeGen<'a> {
     pub(crate) fn lower_for_in_stmt(
@@ -31,7 +23,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         if let ForStatementLeft::VariableDeclaration(var_decl) = &for_in.left
             && var_decl.declarations.len() == 1
         {
-            let decl = var_decl.declarations.get(0).unwrap();
+            let decl = var_decl.declarations.first().unwrap();
             let loop_var_name = match &decl.id.kind {
                 BindingPatternKind::BindingIdentifier(ident) => ident.name.to_string(),
                 _ => {

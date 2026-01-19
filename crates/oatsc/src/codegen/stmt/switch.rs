@@ -8,16 +8,7 @@ use crate::diagnostics::Diagnostic;
 use inkwell::values::FunctionValue;
 use std::collections::HashMap;
 
-type LocalEntry<'a> = (
-    inkwell::values::PointerValue<'a>,
-    inkwell::types::BasicTypeEnum<'a>,
-    bool,
-    bool,
-    bool,
-    Option<String>,
-    Option<crate::types::OatsType>,
-);
-type LocalsStackLocal<'a> = Vec<HashMap<String, LocalEntry<'a>>>;
+use crate::codegen::common_types::LocalsStackLocal;
 
 impl<'a> crate::codegen::CodeGen<'a> {
     pub(crate) fn lower_switch_stmt(

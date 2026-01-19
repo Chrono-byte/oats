@@ -28,16 +28,7 @@ pub(crate) const fn extract_basic_value_from_valuekind(
     }
 }
 
-type LocalEntry<'a> = (
-    inkwell::values::PointerValue<'a>,
-    BasicTypeEnum<'a>,
-    bool,
-    bool,
-    bool, // is_weak
-    Option<String>,
-    Option<crate::types::OatsType>,
-);
-type LocalsStackLocal<'a> = Vec<HashMap<String, LocalEntry<'a>>>;
+use crate::codegen::common_types::{LocalEntry, LocalsStackLocal};
 
 /// Parameters for inserting a local variable into the current scope.
 pub(crate) struct LocalVarInfo<'a> {

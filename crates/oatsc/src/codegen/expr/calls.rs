@@ -1,8 +1,6 @@
 use crate::codegen::CodeGen;
 use crate::diagnostics::{Diagnostic, Severity};
-use crate::types::OatsType;
 use inkwell::AddressSpace;
-use inkwell::types::BasicTypeEnum;
 use inkwell::values::{BasicValue, BasicValueEnum, PointerValue};
 use oxc_ast::ast::{
     CallExpression, Expression, IdentifierReference, NewExpression, StaticMemberExpression,
@@ -11,15 +9,7 @@ use std::collections::HashMap;
 
 type CallExpr<'a> = CallExpression<'a>;
 
-type LocalEntry<'a> = (
-    PointerValue<'a>,
-    BasicTypeEnum<'a>,
-    bool,
-    bool,
-    bool,
-    Option<String>,
-    Option<OatsType>,
-);
+use crate::codegen::common_types::LocalEntry;
 
 impl<'a> CodeGen<'a> {
     /// Lower Call expression (function calls, method calls, super calls, closures).
@@ -215,7 +205,7 @@ impl<'a> CodeGen<'a> {
         if obj_name == "Promise" && prop_name == "resolve" && call.arguments.len() == 1 {
             let arg_expr = call
                 .arguments
-                .get(0)
+                .first()
                 .unwrap()
                 .as_expression()
                 .ok_or_else(|| {
@@ -418,7 +408,7 @@ impl<'a> CodeGen<'a> {
         );
         // Handle single argument - dispatch based on type
         if call.arguments.len() == 1
-            && let Some(expr) = call.arguments.get(0).unwrap().as_expression()
+            && let Some(expr) = call.arguments.first().unwrap().as_expression()
         {
             eprintln!("DEBUG: console.log: single argument path");
             // Get the type of the expression for union handling
@@ -1356,7 +1346,7 @@ impl<'a> CodeGen<'a> {
                 let fraction_digits = if call.arguments.is_empty() {
                     // Default to 0
                     self.f64_t.const_float(0.0)
-                } else if let Some(expr) = call.arguments.get(0).unwrap().as_expression() {
+                } else if let Some(expr) = call.arguments.first().unwrap().as_expression() {
                     let arg_val = self.lower_expr(expr, function, param_map, locals)?;
                     if let Some(fv) = self.coerce_to_f64(arg_val) {
                         fv
@@ -1400,7 +1390,7 @@ impl<'a> CodeGen<'a> {
                 let fraction_digits = if call.arguments.is_empty() {
                     // No argument means undefined (use default formatting)
                     self.f64_t.const_float(f64::NAN)
-                } else if let Some(expr) = call.arguments.get(0).unwrap().as_expression() {
+                } else if let Some(expr) = call.arguments.first().unwrap().as_expression() {
                     let arg_val = self.lower_expr(expr, function, param_map, locals)?;
                     if let Some(fv) = self.coerce_to_f64(arg_val) {
                         fv
@@ -1441,7 +1431,7 @@ impl<'a> CodeGen<'a> {
                         "Number.prototype.toPrecision requires exactly one argument",
                     ));
                 }
-                if let Some(expr) = call.arguments.get(0).unwrap().as_expression() {
+                if let Some(expr) = call.arguments.first().unwrap().as_expression() {
                     let arg_val = self.lower_expr(expr, function, param_map, locals)?;
                     let precision_val = if let Some(fv) = self.coerce_to_f64(arg_val) {
                         fv
@@ -1620,7 +1610,7 @@ impl<'a> CodeGen<'a> {
         let has_nested = self.nested_generic_fns.borrow().contains_key(&fn_name);
         if has_nested
             && !call.arguments.is_empty()
-            && let Some(first_arg_expr) = call.arguments.get(0).unwrap().as_expression()
+            && let Some(first_arg_expr) = call.arguments.first().unwrap().as_expression()
         {
             // Try to infer the type of the first argument to determine T
             let mut inferred_opt = None;
@@ -1756,18 +1746,18 @@ impl<'a> CodeGen<'a> {
                         call.span.start as usize,
                     ));
                 }
-                let arg_expr = call
-                    .arguments
-                    .get(0)
-                    .unwrap()
-                    .as_expression()
-                    .ok_or_else(|| {
-                        Diagnostic::simple_with_span_boxed(
-                            Severity::Error,
-                            "Number.isNaN requires an expression argument",
-                            call.span.start as usize,
-                        )
-                    })?;
+                let arg_expr =
+                    call.arguments
+                        .first()
+                        .unwrap()
+                        .as_expression()
+                        .ok_or_else(|| {
+                            Diagnostic::simple_with_span_boxed(
+                                Severity::Error,
+                                "Number.isNaN requires an expression argument",
+                                call.span.start as usize,
+                            )
+                        })?;
                 let arg_val = self.lower_expr(arg_expr, function, param_map, locals)?;
                 let num_val = self.coerce_to_f64(arg_val).ok_or_else(|| {
                     Diagnostic::simple_with_span_boxed(
@@ -1800,18 +1790,18 @@ impl<'a> CodeGen<'a> {
                         call.span.start as usize,
                     ));
                 }
-                let arg_expr = call
-                    .arguments
-                    .get(0)
-                    .unwrap()
-                    .as_expression()
-                    .ok_or_else(|| {
-                        Diagnostic::simple_with_span_boxed(
-                            Severity::Error,
-                            "Number.isFinite requires an expression argument",
-                            call.span.start as usize,
-                        )
-                    })?;
+                let arg_expr =
+                    call.arguments
+                        .first()
+                        .unwrap()
+                        .as_expression()
+                        .ok_or_else(|| {
+                            Diagnostic::simple_with_span_boxed(
+                                Severity::Error,
+                                "Number.isFinite requires an expression argument",
+                                call.span.start as usize,
+                            )
+                        })?;
                 let arg_val = self.lower_expr(arg_expr, function, param_map, locals)?;
                 let num_val = self.coerce_to_f64(arg_val).ok_or_else(|| {
                     Diagnostic::simple_with_span_boxed(
@@ -1844,18 +1834,18 @@ impl<'a> CodeGen<'a> {
                         call.span.start as usize,
                     ));
                 }
-                let arg_expr = call
-                    .arguments
-                    .get(0)
-                    .unwrap()
-                    .as_expression()
-                    .ok_or_else(|| {
-                        Diagnostic::simple_with_span_boxed(
-                            Severity::Error,
-                            "Number.isInteger requires an expression argument",
-                            call.span.start as usize,
-                        )
-                    })?;
+                let arg_expr =
+                    call.arguments
+                        .first()
+                        .unwrap()
+                        .as_expression()
+                        .ok_or_else(|| {
+                            Diagnostic::simple_with_span_boxed(
+                                Severity::Error,
+                                "Number.isInteger requires an expression argument",
+                                call.span.start as usize,
+                            )
+                        })?;
                 let arg_val = self.lower_expr(arg_expr, function, param_map, locals)?;
                 let num_val = self.coerce_to_f64(arg_val).ok_or_else(|| {
                     Diagnostic::simple_with_span_boxed(
@@ -1888,18 +1878,18 @@ impl<'a> CodeGen<'a> {
                         call.span.start as usize,
                     ));
                 }
-                let arg_expr = call
-                    .arguments
-                    .get(0)
-                    .unwrap()
-                    .as_expression()
-                    .ok_or_else(|| {
-                        Diagnostic::simple_with_span_boxed(
-                            Severity::Error,
-                            "Number.parseFloat requires an expression argument",
-                            call.span.start as usize,
-                        )
-                    })?;
+                let arg_expr =
+                    call.arguments
+                        .first()
+                        .unwrap()
+                        .as_expression()
+                        .ok_or_else(|| {
+                            Diagnostic::simple_with_span_boxed(
+                                Severity::Error,
+                                "Number.parseFloat requires an expression argument",
+                                call.span.start as usize,
+                            )
+                        })?;
                 let arg_val = self.lower_expr(arg_expr, function, param_map, locals)?;
 
                 // Convert argument to string pointer
@@ -1961,18 +1951,18 @@ impl<'a> CodeGen<'a> {
                         call.span.start as usize,
                     ));
                 }
-                let str_expr = call
-                    .arguments
-                    .get(0)
-                    .unwrap()
-                    .as_expression()
-                    .ok_or_else(|| {
-                        Diagnostic::simple_with_span_boxed(
-                            Severity::Error,
-                            "Number.parseInt first argument must be an expression",
-                            call.span.start as usize,
-                        )
-                    })?;
+                let str_expr =
+                    call.arguments
+                        .first()
+                        .unwrap()
+                        .as_expression()
+                        .ok_or_else(|| {
+                            Diagnostic::simple_with_span_boxed(
+                                Severity::Error,
+                                "Number.parseInt first argument must be an expression",
+                                call.span.start as usize,
+                            )
+                        })?;
                 let str_val = self.lower_expr(str_expr, function, param_map, locals)?;
 
                 // Convert first argument to string pointer

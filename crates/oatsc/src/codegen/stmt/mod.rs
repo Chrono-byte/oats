@@ -25,24 +25,7 @@ pub mod try_catch;
 use inkwell::values::FunctionValue;
 use std::collections::HashMap;
 
-type LocalEntry<'a> = (
-    inkwell::values::PointerValue<'a>,
-    inkwell::types::BasicTypeEnum<'a>,
-    bool,
-    bool,
-    bool,
-    Option<String>,
-    Option<crate::types::OatsType>,
-);
-// A stack of per-scope local maps.
-//
-// Each entry in the vector is a HashMap representing a lexical scope's
-// locals. The maps store `LocalEntry` tuples describing the alloca pointer,
-// the ABI type of the slot, initialization flag, const flag, whether the
-// local is a Weak<T> (affects RC semantics), an optional nominal type
-// name used to guide member access lowering, and an optional OatsType
-// for union tracking.
-type LocalsStackLocal<'a> = Vec<HashMap<String, LocalEntry<'a>>>;
+use crate::codegen::common_types::LocalsStackLocal;
 
 impl<'a> crate::codegen::CodeGen<'a> {
     /// Lower a sequence of statements into `function`.

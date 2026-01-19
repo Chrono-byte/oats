@@ -5,23 +5,9 @@ use std::collections::HashMap;
 
 use inkwell::AddressSpace;
 use inkwell::types::BasicType;
-use inkwell::types::BasicTypeEnum;
 use inkwell::values::BasicValue;
-use inkwell::values::PointerValue;
 
-// LocalEntry now includes an Option<String> for an optional nominal type name
-// LocalEntry now includes an Option<OatsType> for union tracking
-
-type LocalEntry<'a> = (
-    PointerValue<'a>,
-    BasicTypeEnum<'a>,
-    bool,
-    bool,
-    bool,
-    Option<String>,
-    Option<crate::types::OatsType>,
-);
-type LocalsStackLocal<'a> = Vec<HashMap<String, LocalEntry<'a>>>;
+use crate::codegen::common_types::LocalsStackLocal;
 
 // Use the shared helper from codegen::helpers
 use crate::codegen::helpers::extract_basic_value_from_valuekind;
@@ -277,7 +263,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         if let Some(param_types) = self.fn_param_types.borrow().get(fname)
                             && !param_types.is_empty()
                             && let crate::types::OatsType::NominalStruct(n) =
-                                param_types.get(0).unwrap()
+                                param_types.first().unwrap()
                         {
                             class_name_opt = Some(n.clone());
                         }
@@ -660,7 +646,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         if let Some(param_types) = self.fn_param_types.borrow().get(fname)
                             && !param_types.is_empty()
                             && let crate::types::OatsType::NominalStruct(n) =
-                                param_types.get(0).unwrap()
+                                param_types.first().unwrap()
                         {
                             class_name_opt = Some(n.clone());
                         }

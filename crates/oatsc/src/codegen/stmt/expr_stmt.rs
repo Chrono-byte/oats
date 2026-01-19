@@ -1,15 +1,7 @@
 use inkwell::values::FunctionValue;
 use std::collections::HashMap;
 
-type LocalEntry<'a> = (
-    inkwell::values::PointerValue<'a>,
-    inkwell::types::BasicTypeEnum<'a>,
-    bool,
-    bool,
-    bool,
-    Option<String>,
-    Option<crate::types::OatsType>,
-);
+use crate::codegen::common_types::LocalEntry;
 // A stack of per-scope local maps.
 //
 // Each entry in the vector is a HashMap representing a lexical scope's

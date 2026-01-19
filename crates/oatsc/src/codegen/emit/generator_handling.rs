@@ -513,15 +513,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         // Create param allocas for next_f and load parameters from state slots
         let mut param_map: HashMap<String, u32> = HashMap::new();
 
-        type LocalEntry<'a> = (
-            inkwell::values::PointerValue<'a>,
-            inkwell::types::BasicTypeEnum<'a>,
-            bool,
-            bool,
-            bool,
-            Option<String>,
-            Option<crate::types::OatsType>,
-        );
+        use crate::codegen::common_types::LocalEntry;
         let mut locals_stack: Vec<HashMap<String, LocalEntry<'a>>> = vec![HashMap::new()];
 
         // Load each parameter from state and create allocas

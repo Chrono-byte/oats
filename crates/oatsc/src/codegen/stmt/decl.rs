@@ -16,7 +16,7 @@ struct DeclTypeInfo {
     declared_union: Option<crate::types::OatsType>,
     declared_is_weak: bool,
     declared_nominal: Option<String>,
-    init_inferred: Option<crate::types::OatsType>,
+    init_inferred: Option<crate::types::OatsType>, // kept for compatibility but always None in strict mode
     // effective_type is computed and used locally but not stored/accessed elsewhere
     // Keeping it for potential future use or debugging
     #[allow(dead_code)]
@@ -88,54 +88,37 @@ impl<'a> crate::codegen::CodeGen<'a> {
             eprintln!("DEBUG: No type annotation found");
         }
 
-        // Compute inferred type from initializer if present
-        let init_inferred = decl
-            .init
-            .as_ref()
-            .map(|init| crate::types::infer_type(None, Some(init)));
-
-        // Require either explicit type annotation or initializer for inference
-        if declared_mapped.is_none() && init_inferred.is_none() {
+        // In strict mode, require explicit type annotation - no inference from initializers
+        if declared_mapped.is_none() {
             return Err(crate::diagnostics::Diagnostic::simple_boxed(
                 Severity::Error,
-                "Variable declaration requires explicit type annotation or initializer",
+                "Variable declaration requires explicit type annotation",
             ));
         }
 
-        // Determine effective type: declared takes precedence, then inferred
-        let effective_type = declared_mapped
-            .as_ref()
-            .or(init_inferred.as_ref())
-            .ok_or_else(|| {
-                crate::diagnostics::Diagnostic::simple_boxed(
-                    Severity::Error,
-                    "Internal error: variable type resolution failed (this should not happen)",
-                )
-            })?
-            .clone();
+        // Use only the explicitly declared type
+        let effective_type = declared_mapped.as_ref().unwrap().clone();
 
-        // If no explicit type annotation, set flags from inferred type
-        if declared_mapped.is_none() {
-            if let crate::types::OatsType::Union(_) = &effective_type {
-                declared_union = Some(effective_type.clone());
-            }
-            if let crate::types::OatsType::Weak(_) = &effective_type {
-                declared_is_weak = true;
-            }
-            if let crate::types::OatsType::NominalStruct(n) = &effective_type {
-                declared_nominal = Some(n.clone());
-            }
-            // If the inferred type is an Array, tag the local with
-            // a sentinel nominal so lowering sites (like println)
-            // can detect arrays at compile time.
-            if let crate::types::OatsType::Array(_) = &effective_type {
-                declared_nominal = Some("__oats_array".to_string());
-            }
-            // If the declared type is a Tuple, register it as a nominal type
-            // so element access can use field type information
-            if let crate::types::OatsType::Tuple(_) = &effective_type {
-                // Will be set by handle_tuple_init if it handles the initialization
-            }
+        // Set flags from the explicitly declared type
+        if let crate::types::OatsType::Union(_) = &effective_type {
+            declared_union = Some(effective_type.clone());
+        }
+        if let crate::types::OatsType::Weak(_) = &effective_type {
+            declared_is_weak = true;
+        }
+        if let crate::types::OatsType::NominalStruct(n) = &effective_type {
+            declared_nominal = Some(n.clone());
+        }
+        // If declared type is an Array, tag the local with
+        // a sentinel nominal so lowering sites (like println)
+        // can detect arrays at compile time.
+        if let crate::types::OatsType::Array(_) = &effective_type {
+            declared_nominal = Some("__oats_array".to_string());
+        }
+        // If declared type is a Tuple, register it as a nominal type
+        // so element access can use field type information
+        if let crate::types::OatsType::Tuple(_) = &effective_type {
+            // Will be set by handle_tuple_init if it handles initialization
         }
 
         Ok(DeclTypeInfo {
@@ -143,7 +126,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             declared_union,
             declared_is_weak,
             declared_nominal,
-            init_inferred,
+            init_inferred: None,
             effective_type,
         })
     }
@@ -186,9 +169,12 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     && let PropertyKey::Identifier(id) = &kv.key
                 {
                     let fname = id.name.to_string();
-                    // Try to infer the field type from the initializer expression.
-                    let fty = crate::types::infer_type(None, Some(&kv.value));
-                    fields.push((fname, fty));
+                    // For object literals, we still need to infer from the value since
+                    // TypeScript object literal properties don't have type annotations
+                    let fty_opt = crate::types::infer_type(None, Some(&kv.value));
+                    if let Some(fty) = fty_opt {
+                        fields.push((fname, fty));
+                    }
                 }
             }
             if !fields.is_empty() {
@@ -1899,23 +1885,23 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 let declared_union = type_info.declared_union;
                 let declared_is_weak = type_info.declared_is_weak;
                 let mut declared_nominal = type_info.declared_nominal;
-                let init_inferred = type_info.init_inferred;
 
                 // Processing var decl: {} kind={:?}
-
                 if let Some(init) = &decl.init {
                     // Handle const evaluation
                     if self.handle_const_decl(init, var_decl, &name)? {
                         continue;
                     }
 
-                    // Infer a local OatsType from the initializer expression
-                    let init_inferred = init_inferred
+                    // In strict mode, use the explicitly declared type instead of inference
+                    let effective_type = declared_mapped
                         .as_ref()
-                        .ok_or_else(|| crate::diagnostics::Diagnostic::simple_boxed(
-                            Severity::Error,
-                            "Internal error: failed to infer type from initializer (this should not happen)",
-                        ))?
+                        .ok_or_else(|| {
+                            crate::diagnostics::Diagnostic::simple_boxed(
+                                Severity::Error,
+                                "Variable declaration has no type information",
+                            )
+                        })?
                         .clone();
 
                     // Handle object literal initialization
@@ -2059,7 +2045,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                         {
                                             declared_mapped.clone()
                                         } else {
-                                            declared_mapped.clone().or(Some(init_inferred.clone()))
+                                            Some(effective_type.clone())
                                         }
                                     },
                                 },

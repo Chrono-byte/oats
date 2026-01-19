@@ -852,23 +852,73 @@ pub fn run_from_args(
             continue;
         }
 
-        // For arrows, infer the signature if missing
+        // For arrows, require explicit parameter and return types
         let mut param_types = Vec::new();
         for p in &arrow.params.items {
             if let Some(ann) = &p.pattern.type_annotation
                 && let Some(ty) = crate::types::map_ts_type(&ann.type_annotation)
             {
                 param_types.push(ty);
-                continue;
+            } else {
+                let param_name = match &p.pattern.kind {
+                    oxc_ast::ast::BindingPatternKind::BindingIdentifier(ident) => {
+                        ident.name.as_str()
+                    }
+                    _ => "parameter",
+                };
+                let diag = crate::diagnostics::Diagnostic::error(format!(
+                    "Arrow function parameter '{}' requires explicit type annotation",
+                    param_name
+                ))
+                .with_code("E2001")
+                .with_label(crate::diagnostics::Label {
+                    span: crate::diagnostics::Span {
+                        start: p.span.start as usize,
+                        end: p.span.end as usize,
+                    },
+                    message: "Parameter type annotation is required".into(),
+                });
+                crate::diagnostics::emit_diagnostic(&diag, Some(&parsed_mod.source));
+                return Err(anyhow::anyhow!(
+                    "Arrow function parameter type annotation required"
+                ));
             }
-            param_types.push(crate::types::OatsType::Number);
         }
 
         let ret_type = if let Some(ann) = &arrow.return_type {
-            crate::types::map_ts_type(&ann.type_annotation)
-                .unwrap_or(crate::types::OatsType::Number)
+            if let Some(ty) = crate::types::map_ts_type(&ann.type_annotation) {
+                ty
+            } else {
+                let diag = crate::diagnostics::Diagnostic::error(
+                    "Arrow function has unsupported return type",
+                )
+                .with_code("E2002")
+                .with_label(crate::diagnostics::Label {
+                    span: crate::diagnostics::Span {
+                        start: ann.span.start as usize,
+                        end: ann.span.end as usize,
+                    },
+                    message: "Return type is not supported".into(),
+                });
+                crate::diagnostics::emit_diagnostic(&diag, Some(&parsed_mod.source));
+                return Err(anyhow::anyhow!("Arrow function return type not supported"));
+            }
         } else {
-            crate::types::OatsType::Number
+            let diag = crate::diagnostics::Diagnostic::error(
+                "Arrow function requires explicit return type annotation",
+            )
+            .with_code("E2003")
+            .with_label(crate::diagnostics::Label {
+                span: crate::diagnostics::Span {
+                    start: arrow.span.start as usize,
+                    end: arrow.span.end as usize,
+                },
+                message: "Arrow function return type annotation is required".into(),
+            });
+            crate::diagnostics::emit_diagnostic(&diag, Some(&parsed_mod.source));
+            return Err(anyhow::anyhow!(
+                "Arrow function return type annotation required"
+            ));
         };
 
         let sig = crate::types::FunctionSig {

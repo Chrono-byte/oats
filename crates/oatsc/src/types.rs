@@ -884,7 +884,7 @@ pub fn check_function_strictness(
                         param_types.push(mapped);
                         continue;
                     }
-                    // Type annotation present but unsupported
+                    // Type annotation present but unsupported - fail compilation
                     diagnostics.push(
                         Diagnostic::error("Unsupported parameter type")
                             .with_code("E1003")
@@ -899,10 +899,9 @@ pub fn check_function_strictness(
                                 message: format!("Parameter '{}' has unsupported type", ident.name),
                             }),
                     );
-                    // Continue with default to allow compilation to proceed
-                    param_types.push(OatsType::Number);
+                    return Ok((None, diagnostics));
                 } else {
-                    // Missing type annotation - emit warning but allow compilation
+                    // Missing type annotation - emit error and fail compilation
                     diagnostics.push(
                         Diagnostic::error("Missing parameter type annotation")
                             .with_code("E1004")
@@ -917,7 +916,7 @@ pub fn check_function_strictness(
                                 ),
                             }),
                     );
-                    param_types.push(OatsType::Number);
+                    return Ok((None, diagnostics));
                 }
             }
             BindingPatternKind::ArrayPattern(_) => {
@@ -941,7 +940,7 @@ pub fn check_function_strictness(
                                             .into(),
                                 }),
                         );
-                        param_types.push(OatsType::Array(Box::new(OatsType::Number)));
+                        return Ok((None, diagnostics));
                     }
                 } else {
                     diagnostics.push(
@@ -957,7 +956,7 @@ pub fn check_function_strictness(
                                         .into(),
                             }),
                     );
-                    param_types.push(OatsType::Array(Box::new(OatsType::Number)));
+                    return Ok((None, diagnostics));
                 }
             }
             BindingPatternKind::ObjectPattern(_) => {
@@ -981,7 +980,7 @@ pub fn check_function_strictness(
                                             .into(),
                                 }),
                         );
-                        param_types.push(OatsType::StructLiteral(Vec::new()));
+                        return Ok((None, diagnostics));
                     }
                 } else {
                     diagnostics.push(
@@ -997,7 +996,7 @@ pub fn check_function_strictness(
                                         .into(),
                             }),
                     );
-                    param_types.push(OatsType::StructLiteral(Vec::new()));
+                    return Ok((None, diagnostics));
                 }
             }
             BindingPatternKind::AssignmentPattern(_) => {
@@ -1020,7 +1019,7 @@ pub fn check_function_strictness(
                                         .into(),
                                 }),
                         );
-                        param_types.push(OatsType::Array(Box::new(OatsType::Number)));
+                        return Ok((None, diagnostics));
                     }
                 } else {
                     diagnostics.push(
@@ -1034,7 +1033,7 @@ pub fn check_function_strictness(
                                 message: "Rest parameters must have type annotations".into(),
                             }),
                     );
-                    param_types.push(OatsType::Array(Box::new(OatsType::Number)));
+                    return Ok((None, diagnostics));
                 }
             }
         }
@@ -1050,41 +1049,36 @@ pub fn check_function_strictness(
     ))
 }
 
-/// Performs comprehensive type inference using multiple information sources.
+/// Performs type checking with strict explicit type requirements.
 ///
-/// This function implements a fallback hierarchy for type inference, attempting
-/// to determine the most accurate type representation by consulting Oats
-/// type annotations first, then expression-based inference, and finally falling
-/// back to conservative defaults.
+/// This function requires explicit type annotations and will not perform any
+/// inference or fallback to default types. All types must be explicitly specified.
 ///
 /// # Arguments
 /// * `ts_type` - Optional Oats type annotation
-/// * `expr` - Optional expression for inference
+/// * `_expr` - Optional expression (not used for inference in strict mode)
 ///
 /// # Returns
-/// The most specific `OatsType` that can be determined from available information
+/// The explicitly annotated `OatsType` if provided, otherwise compilation should fail
 ///
-/// # Inference Priority
-/// 1. **Oats type annotations**: Explicit type information (highest priority)
-/// 2. **Expression inference**: Types derived from literal values and patterns
-/// 3. **Generic fallback**: Conservative `Generic` type when inference fails
-///
-/// Note: Expression-based inference is currently limited. For full inference,
-/// use the codegen-level inference functions.
+/// # Type Requirements
+/// - **Explicit annotations only**: All types must be explicitly specified
+/// - **No inference**: No type inference is performed
+/// - **No fallback**: No default types are provided when annotations are missing
 #[must_use]
-pub fn infer_type(ts_type: Option<&TSType<'_>>, _expr: Option<&Expression<'_>>) -> OatsType {
-    // First priority: explicit Oats type annotation
+pub fn infer_type(
+    ts_type: Option<&TSType<'_>>,
+    _expr: Option<&Expression<'_>>,
+) -> Option<OatsType> {
+    // Only allow explicit type annotations
     if let Some(ts_ty) = ts_type
         && let Some(oats_type) = map_ts_type(ts_ty)
     {
-        return oats_type;
+        return Some(oats_type);
     }
 
-    // Expression inference removed - it used old AST types and is not currently
-    // compatible with oxc_ast. Use codegen-level inference for expression types.
-
-    // Fallback: default to Number (most conservative common type)
-    OatsType::Number
+    // No type annotation provided - return None to indicate failure
+    None
 }
 
 /// Applies inferred type substitutions to resolve generic placeholders.

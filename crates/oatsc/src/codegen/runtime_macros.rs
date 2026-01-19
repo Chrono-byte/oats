@@ -10,18 +10,7 @@
 /// - `$function_name`: Name of the runtime function constant
 /// - `$param_types`: Array of parameter types for the function signature
 /// - `$return_type`: Return type of the function
-/// - `$doc`: Documentation string for the function
-///
-/// # Example
-/// ```rust
-/// declare_runtime_function!(
-///     fn_rc_inc,
-///     crate::runtime_functions::names::RC_INC,
-///     &[self.i8ptr_t.into()],
-///     self.context.void_type(),
-///     "Runtime function: `rc_inc`"
-/// );
-/// ```
+/// - `$doc`: Documentation string for the functio
 #[macro_export]
 macro_rules! declare_runtime_function {
     (

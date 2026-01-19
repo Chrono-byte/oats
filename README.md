@@ -32,13 +32,6 @@ Installing LLVM 18:
 ```bash
 sudo dnf install llvm18 llvm18-devel clang18
 ```
-
-**Arch Linux**:
-
-```bash
-sudo pacman -S llvm18 clang
-```
-
 ### Quick Start (Recommended)
 
 The easiest way is to use `toasty` standalone.
@@ -62,7 +55,7 @@ toasty build add.ts
 toasty run add.ts
 ```
 
-The runtime gets cached in `~/.ts/runtime/` so subsequent builds are faster.
+The runtime gets cached in `~/.oats/runtime/` so subsequent builds are faster.
 
 Environment variables:
 
@@ -77,7 +70,7 @@ git clone https://gitlab.com/Chrono-byte/oats.git
 cd oats
 
 # Build everything
-cargo build --workspace --release
+cargo build --workspace
 
 # Run an example
 cargo run -p toasty --release -- run examples/add.ts

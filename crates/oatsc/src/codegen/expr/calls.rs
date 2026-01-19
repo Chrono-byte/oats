@@ -1620,8 +1620,8 @@ impl<'a> CodeGen<'a> {
                     inferred_opt = oats_type;
                 }
             } else {
-                // Fallback to basic inference
-                inferred_opt = Some(crate::types::infer_type(None, Some(first_arg_expr)));
+                // In strict mode, inference from expressions is not allowed
+                inferred_opt = crate::types::infer_type(None, Some(first_arg_expr));
             }
 
             if let Some(inferred) = inferred_opt

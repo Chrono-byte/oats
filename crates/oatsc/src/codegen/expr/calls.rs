@@ -972,21 +972,20 @@ impl<'a> CodeGen<'a> {
                         })?;
                     eprintln!("DEBUG: console.log: concat succeeded for arg[{}]", i);
 
-                    let new_result = match concat_result.try_as_basic_value() {
-                        inkwell::values::ValueKind::Basic(bv) => {
-                            eprintln!(
-                                "DEBUG: console.log: concat returned Basic value, converting to pointer"
-                            );
-                            bv.into_pointer_value()
-                        }
-                        _ => {
-                            eprintln!("DEBUG: console.log: concat returned non-Basic value");
-                            return Err(Diagnostic::simple_with_span_boxed(
-                                Severity::Error,
-                                "concat returned non-pointer",
-                                call.span.start as usize,
-                            ));
-                        }
+                    let new_result = if let inkwell::values::ValueKind::Basic(bv) =
+                        concat_result.try_as_basic_value()
+                    {
+                        eprintln!(
+                            "DEBUG: console.log: concat returned Basic value, converting to pointer"
+                        );
+                        bv.into_pointer_value()
+                    } else {
+                        eprintln!("DEBUG: console.log: concat returned non-Basic value");
+                        return Err(Diagnostic::simple_with_span_boxed(
+                            Severity::Error,
+                            "concat returned non-pointer",
+                            call.span.start as usize,
+                        ));
                     };
                     eprintln!(
                         "DEBUG: console.log: new_result pointer obtained, storing in result_str"

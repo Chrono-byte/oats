@@ -83,6 +83,9 @@ impl<'a> super::CodeGen<'a> {
         match t {
             OatsType::Number => self.f64_t.as_basic_type_enum(),
             OatsType::Boolean => self.bool_t.as_basic_type_enum(),
+            OatsType::Undefined | OatsType::Null => self.i8ptr_t.as_basic_type_enum(),
+            OatsType::BigInt => self.i64_t.as_basic_type_enum(), // For now, represent as i64
+            OatsType::Symbol => self.i8ptr_t.as_basic_type_enum(),
             OatsType::String
             | OatsType::NominalStruct(_)
             | OatsType::StructLiteral(_)
@@ -101,7 +104,7 @@ impl<'a> super::CodeGen<'a> {
                 // Option<number> be lowered efficiently and enables correct
                 // monomorphization for generics like T | undefined where T=number.
                 match &**inner {
-                    OatsType::Number => self.map_type_to_llvm(inner),
+                    OatsType::Number | OatsType::BigInt => self.map_type_to_llvm(inner),
                     OatsType::Union(parts) => {
                         let any_ptr = parts.iter().any(|p| {
                             matches!(
@@ -118,6 +121,9 @@ impl<'a> super::CodeGen<'a> {
                                     | OatsType::Enum(_, _)
                                     | OatsType::ProcessId
                                     | OatsType::MonitorRef
+                                    | OatsType::Undefined
+                                    | OatsType::Null
+                                    | OatsType::Symbol
                             )
                         });
                         if any_ptr {

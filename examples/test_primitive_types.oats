@@ -1,0 +1,14 @@
+// Test the new primitive types
+let u: undefined = undefined;
+let n: null = null;
+let b: bigint = 123n;
+let s: symbol = Symbol("test");
+
+console.log(typeof u); // should be "undefined"
+console.log(typeof n); // should be "object" (JavaScript quirk)
+console.log(typeof b); // should be "bigint"  
+console.log(typeof s); // should be "symbol"
+
+export function main(): void {
+    console.log("Primitive types test completed");
+}

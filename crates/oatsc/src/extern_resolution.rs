@@ -67,16 +67,17 @@ pub fn resolve_external_dependencies<'ctx>(
 
         for symbol in symbols {
             // Get function signature or emit warning for missing metadata
-            let (param_types, ret_type) = match external_function_signatures.get(&symbol).cloned() {
-                Some(sig) => sig,
-                None => {
-                    // Missing signature metadata - warn and use conservative default
-                    eprintln!(
-                        "Warning: No type signature found for external function '{}'. Using conservative default (all params: number, return: number). Add metadata entry to avoid incorrect code generation.",
-                        symbol
-                    );
-                    (vec![], OatsType::Number)
-                }
+            let (param_types, ret_type) = if let Some(sig) =
+                external_function_signatures.get(&symbol).cloned()
+            {
+                sig
+            } else {
+                // Missing signature metadata - warn and use conservative default
+                eprintln!(
+                    "Warning: No type signature found for external function '{}'. Using conservative default (all params: number, return: number). Add metadata entry to avoid incorrect code generation.",
+                    symbol
+                );
+                (vec![], OatsType::Number)
             };
 
             // Convert OatsType to LLVM types
@@ -121,6 +122,12 @@ fn map_oats_type_to_llvm<'ctx>(
     match ty {
         OatsType::Number => context.f64_type().into(),
         OatsType::Boolean => context.bool_type().into(),
+        OatsType::Undefined | OatsType::Null => {
+            // undefined and null are singleton values, represent as pointers
+            context.ptr_type(inkwell::AddressSpace::default()).into()
+        }
+        OatsType::BigInt => context.i64_type().into(), // For now, represent as i64 (could be extended to arbitrary precision)
+        OatsType::Symbol => context.ptr_type(inkwell::AddressSpace::default()).into(), // Symbols are unique references
         OatsType::String => context.ptr_type(inkwell::AddressSpace::default()).into(),
         OatsType::Array(_) => context.ptr_type(inkwell::AddressSpace::default()).into(),
         OatsType::Tuple(_) => context.ptr_type(inkwell::AddressSpace::default()).into(),
@@ -202,6 +209,10 @@ fn parse_oats_type_from_string(type_str: &str) -> OatsType {
         "number" => OatsType::Number,
         "boolean" => OatsType::Boolean,
         "string" => OatsType::String,
+        "undefined" => OatsType::Undefined,
+        "null" => OatsType::Null,
+        "bigint" => OatsType::BigInt,
+        "symbol" => OatsType::Symbol,
         "void" => OatsType::Void,
         _ => OatsType::Number, // Default
     }

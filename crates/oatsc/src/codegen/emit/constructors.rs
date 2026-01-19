@@ -95,6 +95,9 @@ impl crate::codegen::CodeGen<'_> {
         for pty in &param_types_vec {
             let llvm_ty = match pty {
                 OatsType::Number => self.f64_t.into(),
+                OatsType::Boolean => self.bool_t.into(),
+                OatsType::Undefined | OatsType::Null | OatsType::Symbol => self.i8ptr_t.into(),
+                OatsType::BigInt => self.i64_t.into(),
                 OatsType::String
                 | OatsType::NominalStruct(_)
                 | OatsType::StructLiteral(_)
@@ -107,7 +110,6 @@ impl crate::codegen::CodeGen<'_> {
                 | OatsType::Enum(_, _)
                 | OatsType::ProcessId
                 | OatsType::MonitorRef => self.i8ptr_t.into(),
-                OatsType::Boolean => self.bool_t.into(),
                 OatsType::Union(parts) => {
                     let any_ptr = parts.iter().any(|p| {
                         matches!(

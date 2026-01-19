@@ -203,14 +203,15 @@ impl<'a> CodeGen<'a> {
                                                             "union_unbox_f64 failed",
                                                         )
                                                     })?;
-                                                let f64_val = match unboxed.try_as_basic_value() {
-                                                    inkwell::values::ValueKind::Basic(bv) => {
+                                                let f64_val =
+                                                    if let inkwell::values::ValueKind::Basic(bv) =
+                                                        unboxed.try_as_basic_value()
+                                                    {
                                                         eprintln!(
                                                             "DEBUG: Successfully unboxed f64 value"
                                                         );
                                                         bv
-                                                    }
-                                                    _ => {
+                                                    } else {
                                                         eprintln!(
                                                             "DEBUG: union_unbox_f64 returned non-basic value"
                                                         );
@@ -218,8 +219,7 @@ impl<'a> CodeGen<'a> {
                                                             Severity::Error,
                                                             "union_unbox_f64 returned non-basic value",
                                                         ));
-                                                    }
-                                                };
+                                                    };
                                                 // Decrement RC for the boxed pointer (we extracted the value)
                                                 let rc_dec_fn = self.get_rc_dec();
                                                 self.builder

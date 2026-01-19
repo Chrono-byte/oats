@@ -27,9 +27,50 @@ fn test_oats_type_string() {
 }
 
 #[test]
+fn test_oats_type_undefined() {
+    let ty = OatsType::Undefined;
+    assert_eq!(ty, OatsType::Undefined);
+}
+
+#[test]
+fn test_oats_type_null() {
+    let ty = OatsType::Null;
+    assert_eq!(ty, OatsType::Null);
+}
+
+#[test]
+fn test_oats_type_bigint() {
+    let ty = OatsType::BigInt;
+    assert_eq!(ty, OatsType::BigInt);
+}
+
+#[test]
+fn test_oats_type_symbol() {
+    let ty = OatsType::Symbol;
+    assert_eq!(ty, OatsType::Symbol);
+}
+
+#[test]
 fn test_oats_type_void() {
     let ty = OatsType::Void;
     assert_eq!(ty, OatsType::Void);
+}
+
+#[test]
+fn test_oats_type_union_with_primitives() {
+    let ty = OatsType::Union(vec![
+        OatsType::Number,
+        OatsType::String,
+        OatsType::Boolean,
+        OatsType::Undefined,
+        OatsType::Null,
+        OatsType::BigInt,
+        OatsType::Symbol,
+    ]);
+    match ty {
+        OatsType::Union(parts) => assert_eq!(parts.len(), 7),
+        _ => panic!("Expected Union type"),
+    }
 }
 
 #[test]

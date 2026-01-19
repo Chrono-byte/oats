@@ -628,46 +628,43 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         self.i8ptr_t.into()
                     }
                 };
-                match pty_basic {
-                    inkwell::types::BasicTypeEnum::FloatType(_) => {
-                        let fv = arg_val.into_float_value();
-                        let box_fn = self.get_union_box_f64();
-                        let cs = match self.builder.build_call(
-                            box_fn,
-                            &[fv.into()],
-                            &format!("box_f64_store_{i}"),
-                        ) {
-                            Ok(cs) => cs,
-                            Err(_) => {
+                if let inkwell::types::BasicTypeEnum::FloatType(_) = pty_basic {
+                    let fv = arg_val.into_float_value();
+                    let box_fn = self.get_union_box_f64();
+                    let cs = match self.builder.build_call(
+                        box_fn,
+                        &[fv.into()],
+                        &format!("box_f64_store_{i}"),
+                    ) {
+                        Ok(cs) => cs,
+                        Err(_) => {
+                            return Err(crate::diagnostics::Diagnostic::simple_boxed(
+                                Severity::Error,
+                                "union_box_f64 call failed when storing captures",
+                            ));
+                        }
+                    };
+                    let boxed_ptr =
+                        match extract_basic_value_from_valuekind(cs.try_as_basic_value()) {
+                            Some(bv) => bv.into_pointer_value(),
+                            None => {
                                 return Err(crate::diagnostics::Diagnostic::simple_boxed(
                                     Severity::Error,
-                                    "union_box_f64 call failed when storing captures",
+                                    "boxing returned no value",
                                 ));
                             }
                         };
-                        let boxed_ptr =
-                            match extract_basic_value_from_valuekind(cs.try_as_basic_value()) {
-                                Some(bv) => bv.into_pointer_value(),
-                                None => {
-                                    return Err(crate::diagnostics::Diagnostic::simple_boxed(
-                                        Severity::Error,
-                                        "boxing returned no value",
-                                    ));
-                                }
-                            };
-                        let store = self
-                            .builder
-                            .build_store(slot_ptr, boxed_ptr.as_basic_value_enum());
-                        if let Ok(st) = store {
-                            let _ = st.set_alignment(8);
-                        }
+                    let store = self
+                        .builder
+                        .build_store(slot_ptr, boxed_ptr.as_basic_value_enum());
+                    if let Ok(st) = store {
+                        let _ = st.set_alignment(8);
                     }
-                    _ => {
-                        // store pointer-like or integer param directly into i8* slot
-                        let store = self.builder.build_store(slot_ptr, arg_val);
-                        if let Ok(st) = store {
-                            let _ = st.set_alignment(8);
-                        }
+                } else {
+                    // store pointer-like or integer param directly into i8* slot
+                    let store = self.builder.build_store(slot_ptr, arg_val);
+                    if let Ok(st) = store {
+                        let _ = st.set_alignment(8);
                     }
                 }
             }

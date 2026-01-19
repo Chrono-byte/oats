@@ -341,6 +341,12 @@ pub fn run_from_args(
                 .map(|ty| match ty {
                     crate::types::OatsType::Number => context.f64_type().into(),
                     crate::types::OatsType::Boolean => context.bool_type().into(),
+                    crate::types::OatsType::Undefined
+                    | crate::types::OatsType::Null
+                    | crate::types::OatsType::Symbol => {
+                        context.ptr_type(inkwell::AddressSpace::default()).into()
+                    }
+                    crate::types::OatsType::BigInt => context.i64_type().into(),
                     crate::types::OatsType::String => {
                         context.ptr_type(inkwell::AddressSpace::default()).into()
                     }
@@ -355,6 +361,12 @@ pub fn run_from_args(
                 let ret_llvm_type = match ret_type {
                     crate::types::OatsType::Number => context.f64_type().into(),
                     crate::types::OatsType::Boolean => context.bool_type().into(),
+                    crate::types::OatsType::Undefined
+                    | crate::types::OatsType::Null
+                    | crate::types::OatsType::Symbol => {
+                        context.ptr_type(inkwell::AddressSpace::default()).into()
+                    }
+                    crate::types::OatsType::BigInt => context.i64_type().into(),
                     crate::types::OatsType::String => {
                         context.ptr_type(inkwell::AddressSpace::default()).into()
                     }

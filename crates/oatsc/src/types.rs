@@ -310,6 +310,10 @@ pub fn map_ts_type_with_aliases(
                     "number" => return Some(OatsType::Number),
                     "boolean" => return Some(OatsType::Boolean),
                     "string" => return Some(OatsType::String),
+                    "undefined" => return Some(OatsType::Undefined),
+                    "null" => return Some(OatsType::Null),
+                    "bigint" => return Some(OatsType::BigInt),
+                    "symbol" => return Some(OatsType::Symbol),
 
                     // Process-related types
                     "ProcessId" => return Some(OatsType::ProcessId),

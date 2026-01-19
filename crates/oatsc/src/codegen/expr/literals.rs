@@ -928,20 +928,18 @@ pub fn lower_template<'a>(
                             tpl.span.start as usize,
                         )
                     })?;
-                let tmp_ptr = match call_site.try_as_basic_value() {
-                    inkwell::values::ValueKind::Basic(bv) => {
+                let tmp_ptr =
+                    if let inkwell::values::ValueKind::Basic(bv) = call_site.try_as_basic_value() {
                         eprintln!("DEBUG: number_to_string succeeded, got pointer");
                         bv.into_pointer_value()
-                    }
-                    _ => {
+                    } else {
                         eprintln!("DEBUG: number_to_string returned no value");
                         return Err(Diagnostic::simple_with_span_boxed(
                             Severity::Error,
                             "num_to_str returned no value",
                             tpl.span.start as usize,
                         ));
-                    }
-                };
+                    };
                 // Number->string returns a fresh heap string; remember
                 // that
                 // Number->string returns a fresh heap string; remember

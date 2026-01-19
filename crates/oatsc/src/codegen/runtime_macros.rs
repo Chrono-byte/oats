@@ -1,12 +1,12 @@
 //! Runtime function getter macros
 //!
 //! This module provides macros to eliminate boilerplate code for runtime function
-//! getter methods in the CodeGen struct.
+//! getter methods in the `CodeGen` struct.
 
 /// Macro to generate a runtime function getter with caching
 ///
 /// # Arguments
-/// - `$field_name`: Name of the RefCell<Option<FunctionValue>> field in CodeGen
+/// - `$field_name`: Name of the `RefCell`<Option<FunctionValue>> field in `CodeGen`
 /// - `$function_name`: Name of the runtime function constant
 /// - `$param_types`: Array of parameter types for the function signature
 /// - `$return_type`: Return type of the function

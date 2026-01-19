@@ -187,7 +187,6 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             )
                         })?;
                 }
-
                 crate::types::OatsType::Boolean => {
                     let zero = self.bool_t.const_int(0, false);
                     self.builder
@@ -196,6 +195,31 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             crate::diagnostics::Diagnostic::simple_boxed(
                                 Severity::Error,
                                 "Failed to build implicit return (bool)",
+                            )
+                        })?;
+                }
+                crate::types::OatsType::BigInt => {
+                    let zero = self.i64_t.const_int(0, false);
+                    self.builder
+                        .build_return(Some(&zero.as_basic_value_enum()))
+                        .map_err(|_| {
+                            crate::diagnostics::Diagnostic::simple_boxed(
+                                Severity::Error,
+                                "Failed to build implicit return (bigint)",
+                            )
+                        })?;
+                }
+                crate::types::OatsType::Undefined
+                | crate::types::OatsType::Null
+                | crate::types::OatsType::Symbol => {
+                    // Return null pointer for these singleton/reference types
+                    let nullp = self.i8ptr_t.const_null();
+                    self.builder
+                        .build_return(Some(&nullp.as_basic_value_enum()))
+                        .map_err(|_| {
+                            crate::diagnostics::Diagnostic::simple_boxed(
+                                Severity::Error,
+                                "Failed to build implicit return (ptr)",
                             )
                         })?;
                 }

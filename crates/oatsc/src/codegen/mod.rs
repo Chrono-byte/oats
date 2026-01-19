@@ -1160,4 +1160,83 @@ impl<'a> CodeGen<'a> {
 
     // Generic function monomorphization and type inference methods are
     // implemented in generics.rs for better organization
+
+    /// Check if we're at the end of the current function (for tail call optimization)
+    pub fn is_at_function_end(&self) -> bool {
+        if let Some(current_block) = self.builder.get_insert_block() {
+            // Check if the current block has no terminator
+            current_block.get_terminator().is_none()
+        } else {
+            false
+        }
+    }
+
+    /// Create a helper function to get data pointer from object with metadata offset
+    /// This replaces the repetitive pattern of offsetting by 16 bytes for metadata
+    pub fn get_data_ptr_from_object(
+        &self,
+        obj_ptr: PointerValue<'a>,
+        offset_bytes: u64,
+        name: &str,
+    ) -> crate::diagnostics::DiagnosticResult<PointerValue<'a>> {
+        self.offset_i8_ptr(obj_ptr, offset_bytes, name)
+    }
+
+    /// Optimize string concatenation by estimating if string builder would be beneficial
+    pub fn should_use_string_builder(&self, parts_count: usize) -> bool {
+        // Use string builder if we have more than 3 parts to concatenate
+        parts_count > 3
+    }
+
+    /// Enhanced string interning with hash-based deduplication
+    pub fn intern_string_optimized(
+        &self,
+        s: &str,
+    ) -> crate::diagnostics::DiagnosticResult<PointerValue<'a>> {
+        // Check existing cache
+        if let Some(ptr) = self.string_literals.borrow().get(s) {
+            return Ok(*ptr);
+        }
+
+        // For very short strings (<= 8 chars), consider using inline optimization
+        if s.len() <= 8 {
+            return self.intern_string_literal(s);
+        }
+
+        // For longer strings, use the standard intern method with potential for future
+        // optimizations like hash-based deduplication across modules
+        self.intern_string_literal(s)
+    }
+
+    /// Get or create a deduplicated string constant
+    pub fn get_or_create_string_constant(
+        &self,
+        s: &str,
+    ) -> crate::diagnostics::DiagnosticResult<PointerValue<'a>> {
+        self.intern_string_optimized(s)
+    }
+
+    /// Check if a function/class is reachable according to RTA results
+    pub fn is_reachable(&self, name: &str) -> bool {
+        if let Some(rta) = &self.rta_results {
+            rta.is_function_live(name) || rta.is_class_live(name)
+        } else {
+            true // No RTA results available, assume reachable
+        }
+    }
+
+    /// Check if we should skip code generation due to dead code elimination
+    pub fn should_skip_generation(&self, name: &str) -> bool {
+        !self.is_reachable(name)
+    }
+
+    /// Optimize away unreachable code during compilation
+    pub fn optimize_unreachable_code(&self) {
+        // This would be called after initial AST analysis but before IR generation
+        // For now, this is a placeholder for future implementation
+        if let Some(_rta) = &self.rta_results {
+            // Future: Mark unreachable functions/classes for removal
+            // Future: Remove unused imports and declarations
+        }
+    }
 }

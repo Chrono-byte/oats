@@ -68,12 +68,8 @@ pub fn lower_lit<'a>(
             );
             gv.set_initializer(&initializer);
 
-            // Return pointer to the data section (offset +16 bytes)
-            let gv_i8 = codegen
-                .builder
-                .build_pointer_cast(gv.as_pointer_value(), codegen.i8ptr_t, "str_data_base")
-                .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "pointer cast failed"))?;
-            if let Ok(ptr) = codegen.offset_i8_ptr(gv_i8, 16, "strptr") {
+            // Return pointer to the data section using helper function
+            if let Ok(ptr) = codegen.get_data_ptr_from_object(gv.as_pointer_value(), 16, "strptr") {
                 // store pointer in cache for future reuse
                 codegen.string_literals.borrow_mut().insert(key, ptr);
                 return Ok(ptr.as_basic_value_enum());
@@ -830,11 +826,7 @@ pub fn lower_template<'a>(
             gv.set_initializer(&initializer);
 
             // Return pointer to data section (offset +16 bytes)
-            let gv_i8 = codegen
-                .builder
-                .build_pointer_cast(gv.as_pointer_value(), codegen.i8ptr_t, "str_data_base")
-                .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "pointer cast failed"))?;
-            match codegen.offset_i8_ptr(gv_i8, 16, "strptr") {
+            match codegen.get_data_ptr_from_object(gv.as_pointer_value(), 16, "strptr") {
                 Ok(ptr) => {
                     codegen.string_literals.borrow_mut().insert(key, ptr);
                     Ok(ptr)

@@ -179,6 +179,237 @@ pub mod constants {
     }
 }
 
+/// String builder optimization helpers
+pub mod string_builder {
+    use super::{CodeGen, Diagnostic, PointerValue, Severity};
+
+    /// A string builder that pre-allocates a buffer and avoids multiple concatenations
+    pub struct StringBuilder<'a> {
+        codegen: &'a CodeGen<'a>,
+        buffer_ptr: Option<PointerValue<'a>>,
+        capacity: inkwell::values::IntValue<'a>,
+        length: inkwell::values::IntValue<'a>,
+        is_temporary: bool,
+    }
+
+    impl<'a> StringBuilder<'a> {
+        /// Create a new string builder with estimated capacity
+        pub fn new(
+            codegen: &'a CodeGen<'a>,
+            estimated_capacity: u64,
+        ) -> crate::diagnostics::DiagnosticResult<Self> {
+            let buffer_ptr = super::memory::allocate_memory(
+                codegen,
+                codegen.i64_t.const_int(estimated_capacity, false),
+                "str_builder_buf",
+            )?;
+
+            let header_ptr = unsafe {
+                codegen
+                    .builder
+                    .build_gep(
+                        codegen.i8_t,
+                        buffer_ptr,
+                        &[codegen.i64_t.const_int(0, false)],
+                        "str_builder_header",
+                    )
+                    .map_err(|_| {
+                        Diagnostic::simple_boxed(Severity::Error, "failed to build GEP for header")
+                    })?
+            };
+            let header_i64_ptr = codegen
+                .builder
+                .build_pointer_cast(
+                    header_ptr,
+                    codegen.context.ptr_type(inkwell::AddressSpace::default()),
+                    "header_i64_ptr",
+                )
+                .map_err(|_| {
+                    Diagnostic::simple_boxed(Severity::Error, "failed to cast header pointer")
+                })?;
+            let header_val = codegen.i64_t.const_int(1, false);
+            codegen
+                .builder
+                .build_store(header_i64_ptr, header_val)
+                .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "failed to store header"))?;
+
+            let length_ptr = unsafe {
+                codegen
+                    .builder
+                    .build_gep(
+                        codegen.i8_t,
+                        buffer_ptr,
+                        &[codegen.i64_t.const_int(8, false)],
+                        "str_builder_len",
+                    )
+                    .map_err(|_| {
+                        Diagnostic::simple_boxed(Severity::Error, "failed to build GEP for length")
+                    })?
+            };
+            let length_i64_ptr = codegen
+                .builder
+                .build_pointer_cast(
+                    length_ptr,
+                    codegen.context.ptr_type(inkwell::AddressSpace::default()),
+                    "length_i64_ptr",
+                )
+                .map_err(|_| {
+                    Diagnostic::simple_boxed(Severity::Error, "failed to cast length pointer")
+                })?;
+            let length_val = codegen.i64_t.const_int(0, false);
+            codegen
+                .builder
+                .build_store(length_i64_ptr, length_val)
+                .map_err(|_| Diagnostic::simple_boxed(Severity::Error, "failed to store length"))?;
+
+            Ok(Self {
+                codegen,
+                buffer_ptr: Some(buffer_ptr),
+                capacity: codegen.i64_t.const_int(estimated_capacity, false),
+                length: length_val,
+                is_temporary: true,
+            })
+        }
+
+        /// Append a string to the builder (simplified version)
+        pub fn append_str(
+            &mut self,
+            str_ptr: PointerValue<'a>,
+        ) -> crate::diagnostics::DiagnosticResult<()> {
+            let strcat_fn = self
+                .codegen
+                .module
+                .get_function("str_concat")
+                .ok_or_else(|| {
+                    Diagnostic::simple_boxed(Severity::Error, "str_concat function not found")
+                })?;
+
+            let current_ptr = self.get_current_string()?;
+            let call_site = self
+                .codegen
+                .builder
+                .build_call(
+                    strcat_fn,
+                    &[current_ptr.into(), str_ptr.into()],
+                    "builder_append",
+                )
+                .map_err(|_| {
+                    Diagnostic::simple_boxed(Severity::Error, "failed to append to string builder")
+                })?;
+
+            match call_site.try_as_basic_value() {
+                inkwell::values::ValueKind::Basic(bv) => {
+                    self.buffer_ptr = Some(bv.into_pointer_value());
+                    Ok(())
+                }
+                _ => Err(Diagnostic::simple_boxed(
+                    Severity::Error,
+                    "str_concat returned non-pointer in builder",
+                )),
+            }
+        }
+
+        /// Get current string pointer
+        fn get_current_string(&self) -> crate::diagnostics::DiagnosticResult<PointerValue<'a>> {
+            if let Some(ptr) = self.buffer_ptr {
+                self.codegen.offset_i8_ptr(ptr, 16, "current_str")
+            } else {
+                self.codegen.intern_string_literal("")
+            }
+        }
+
+        /// Finalize and return the built string
+        pub fn finalize(self) -> crate::diagnostics::DiagnosticResult<PointerValue<'a>> {
+            self.get_current_string()
+        }
+    }
+}
+
+/// Function attribute optimizations
+pub mod function_attributes {
+    use super::CodeGen;
+
+    /// Add optimization attributes to a function for better LLVM optimization
+    pub fn add_optimization_attributes<'a>(
+        codegen: &CodeGen<'a>,
+        function: inkwell::values::FunctionValue<'a>,
+        is_pure: bool,
+        is_readonly: bool,
+        is_nofree: bool,
+        will_return: bool,
+    ) {
+        use inkwell::attributes::Attribute;
+
+        let add_attr = |attr_name: &str| {
+            let attr_id = Attribute::get_named_enum_kind_id(attr_name);
+            function.add_attribute(
+                inkwell::attributes::AttributeLoc::Function,
+                codegen.context.create_enum_attribute(attr_id, 0),
+            );
+        };
+
+        add_attr("nounwind");
+
+        if is_pure {
+            add_attr("pure");
+        }
+
+        if is_readonly {
+            add_attr("readonly");
+        }
+
+        if is_nofree {
+            add_attr("nofree");
+        }
+
+        if will_return {
+            add_attr("willreturn");
+        }
+    }
+}
+
+/// Constant folding optimization helpers
+pub mod constant_folding {
+    use super::CodeGen;
+    use inkwell::values::BasicValue;
+
+    /// Try to fold a binary operation at compile time
+    pub fn try_fold_binary_op<'a>(
+        codegen: &CodeGen<'a>,
+        left: inkwell::values::BasicValueEnum<'a>,
+        right: inkwell::values::BasicValueEnum<'a>,
+        op: &oxc_ast::ast::BinaryOperator,
+    ) -> Option<inkwell::values::BasicValueEnum<'a>> {
+        use oxc_ast::ast::BinaryOperator;
+
+        if !left.is_const() || !right.is_const() {
+            return None;
+        }
+
+        match (left, right) {
+            (
+                inkwell::values::BasicValueEnum::FloatValue(lf),
+                inkwell::values::BasicValueEnum::FloatValue(rf),
+            ) => {
+                let (l, _) = lf.get_constant()?;
+                let (r, _) = rf.get_constant()?;
+
+                let result = match op {
+                    BinaryOperator::Addition => l + r,
+                    BinaryOperator::Subtraction => l - r,
+                    BinaryOperator::Multiplication => l * r,
+                    BinaryOperator::Division => l / r,
+                    BinaryOperator::Remainder => l % r,
+                    _ => return None,
+                };
+
+                Some(codegen.f64_t.const_float(result).as_basic_value_enum())
+            }
+            _ => None,
+        }
+    }
+}
+
 /// Variable resolution helpers
 pub mod variables {
     use super::{BasicValueEnum, CodeGen, FunctionValue, HashMap, OatsType, PointerValue};

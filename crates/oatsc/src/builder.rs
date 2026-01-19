@@ -943,35 +943,14 @@ pub fn run_from_args(
             })?;
     }
 
-    // Emit the user's exported `main` under an internal symbol name to avoid
-    // conflicting with the C runtime entrypoint. The script must export
-    // `main`, but `oats_main` is generated as the emitted symbol the host
-    // runtime will call.
+    // Emit the user's exported `main` directly as the C entry point.
+    // Generate main with C ABI (i32, i8**) instead of a separate wrapper.
     if let (Some(func), Some(sig)) = (func_decl, func_sig.as_ref()) {
-        codegen
-            .gen_function_ir(
-                crate::runtime_functions::names::OATS_MAIN,
-                func,
-                &sig.params,
-                &sig.ret,
-                None,
-            )
-            .map_err(|d| {
-                crate::diagnostics::emit_diagnostic(&d, Some(source.as_str()));
-                anyhow::anyhow!("{}", d.message)
-            })?;
+        codegen.emit_main_function(func, &sig.ret).map_err(|d| {
+            crate::diagnostics::emit_diagnostic(&d, Some(source.as_str()));
+            anyhow::anyhow!("{}", d.message)
+        })?;
     }
-
-    // Try to emit a host `main` into the module so no external shim is
-    // required. Recompute IR after emission.
-    // Even when emit_object_only is true, if we found a main function,
-    // we should emit the host main (this is needed for entry point modules
-    // in multi-module builds).
-    let emitted_host_main = if let Some(sig) = func_sig {
-        codegen.emit_host_main(&sig.params, &sig.ret)
-    } else {
-        false
-    };
 
     // Note: LLVM optimizations are now applied directly in the compiler before object emission
     // Check if we should dump IR for debugging before optimization
@@ -1154,8 +1133,8 @@ pub fn run_from_args(
     // Get runtime libraries (runtime + std)
     let rust_libs = crate::linking::get_runtime_libraries()?;
 
-    // Locate or compile rt_main object
-    let rt_main_obj = crate::linking::locate_rt_main(&out_dir, emitted_host_main)?;
+    // Locate or compile rt_main object (not needed since we emit main directly)
+    let rt_main_obj = crate::linking::locate_rt_main(&out_dir)?;
 
     // For linking, the object file must be on disk. Write to temp file if emit_obj is false.
     let (link_obj_path, is_temp) = if emit_obj {

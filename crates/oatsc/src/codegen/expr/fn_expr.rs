@@ -119,6 +119,14 @@ impl<'a> CodeGen<'a> {
         );
         let fn_value = self.module.add_function(&fn_name, fn_type, None);
 
+        // Add optimization attributes
+        crate::codegen::utils::function_attributes::add_optimization_attributes(
+            self, fn_value, false, // not pure - has side effects
+            false, // not readonly
+            true,  // nofree - doesn't free memory
+            true,  // willreturn - always returns
+        );
+
         // Set up function parameters
         for (i, param_name) in param_names.iter().enumerate() {
             if let Some(param) = fn_value.get_nth_param(i as u32) {

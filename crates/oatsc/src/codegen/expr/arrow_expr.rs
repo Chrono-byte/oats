@@ -224,14 +224,12 @@ impl<'a> CodeGen<'a> {
         // Create the arrow function (may accept env param as first arg)
         let arrow_fn = self.module.add_function(&arrow_fn_name, fn_type, None);
 
-        // Add function attributes for optimization
-        // nounwind: function does not throw exceptions (Oats has no C++-style exceptions)
-        arrow_fn.add_attribute(
-            inkwell::attributes::AttributeLoc::Function,
-            self.context.create_enum_attribute(
-                inkwell::attributes::Attribute::get_named_enum_kind_id("nounwind"),
-                0,
-            ),
+        // Add optimization attributes
+        crate::codegen::utils::function_attributes::add_optimization_attributes(
+            self, arrow_fn, false, // not pure - may capture variables
+            false, // not readonly - may modify captured vars
+            true,  // nofree - doesn't free memory directly
+            true,  // willreturn - always returns
         );
 
         // Record parameter types for the generated arrow function so

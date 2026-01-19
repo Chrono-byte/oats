@@ -413,6 +413,20 @@ impl<'a> crate::codegen::CodeGen<'a> {
             Ok(iv.as_basic_value_enum())
         };
 
+        // Try constant folding first
+        if let Some(folded) =
+            crate::codegen::utils::constant_folding::try_fold_binary_op(self, l, r, &bin.operator)
+        {
+            return Ok(folded);
+        }
+
+        // Try constant folding first
+        if let Some(folded) =
+            crate::codegen::utils::constant_folding::try_fold_binary_op(self, l, r, &bin.operator)
+        {
+            return Ok(folded);
+        }
+
         // Try float path by coercing ints/bools to float as needed
         if let (Some(lf), Some(rf)) = (self.coerce_to_f64(l), self.coerce_to_f64(r)) {
             if let Ok(v) = float_bin(&self.builder, lf, rf, &bin.operator) {

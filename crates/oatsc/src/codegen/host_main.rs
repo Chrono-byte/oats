@@ -1,122 +1,79 @@
-//! Host main function generation.
+//! Main function generation.
 //!
-//! This module handles emitting a C-compatible `main` function that calls
-//! the generated `oats_main` symbol. This allows Oats programs to be
-//! compiled as standalone executables.
+//! This module handles emitting the C-compatible `main` entry point that directly
+//! contains the user's main function body, without creating a separate function.
 
 use crate::codegen::CodeGen;
-use crate::diagnostics::{Diagnostic, Severity};
+use crate::diagnostics::Diagnostic;
+use std::collections::HashMap;
 
 impl<'a> CodeGen<'a> {
-    /// Emit a simple C-compatible `main` function that calls the generated `oats_main` symbol.
+    /// Emit the main function with C ABI, inlining the user's main function body directly.
     ///
-    /// This covers the common case where user scripts export `function main(): number` with no params.
-    /// Returns `true` to indicate we emitted a host main so the driver will skip linking an external `rt_main.o`.
-    pub fn emit_host_main(
+    /// This generates:
+    ///   define i32 @main(i32 %argc, ptr %argv) {
+    ///     entry:
+    ///       <user's main body statements, excluding final return>
+    ///       ret i32 0
+    ///   }
+    pub fn emit_main_function(
         &self,
-        _params: &[crate::types::OatsType],
-        _ret: &crate::types::OatsType,
-    ) -> bool {
-        // Build function type: i32 with (i32, i8**) params
+        func_decl: &'a oxc_ast::ast::Function<'a>,
+        _ret_type: &crate::types::OatsType,
+    ) -> crate::diagnostics::DiagnosticResult<()> {
         let i32_t = self.context.i32_type();
         let argv_type = self.context.ptr_type(inkwell::AddressSpace::default());
+
         let main_fn = self.module.add_function(
             "main",
             i32_t.fn_type(&[i32_t.into(), argv_type.into()], false),
             None,
         );
+
+        main_fn.add_attribute(
+            inkwell::attributes::AttributeLoc::Function,
+            self.context.create_enum_attribute(
+                inkwell::attributes::Attribute::get_named_enum_kind_id("nounwind"),
+                0,
+            ),
+        );
+
         let entry = self.context.append_basic_block(main_fn, "entry");
         self.builder.position_at_end(entry);
 
-        // Call oats_main (user defined or generated main function)
-        let Some(oats_main) = self.module.get_function("oats_main") else {
-            crate::diagnostics::emit_diagnostic(
-                &Diagnostic::simple_boxed(
-                    Severity::Error,
-                    "oats_main symbol should be generated before host main",
-                ),
-                Some(self.source),
-            );
-            // Do not emit main if internal error
-            return false;
-        };
+        // Scan for nested functions and arrow functions in the body
+        if let Some(body) = &func_decl.body {
+            self.gen_nested_decls(&body.statements, "main")?;
+        }
 
-        let call_result = self
-            .builder
-            .build_call(oats_main, &[], "call_oats_main")
-            .inspect_err(|_e| {
-                crate::diagnostics::emit_diagnostic(
-                    &Diagnostic::simple_boxed(Severity::Error, "failed to build call to oats_main"),
-                    Some(self.source),
-                );
-            });
+        // Set up empty parameter map since main has no parameters from user perspective
+        let param_map: HashMap<String, u32> = HashMap::new();
+        let mut locals_stack = vec![HashMap::new()];
 
-        match call_result {
-            Ok(call_ret) => {
-                // Try to extract the return value (number/void)
-                let either = call_ret.try_as_basic_value();
-                if let inkwell::values::ValueKind::Basic(bv) = either {
-                    // Always coerce to i32 for program exit code
-                    let exit_code = self.coerce_return_value_to_i32(bv, i32_t);
-                    let _ = self.builder.build_return(Some(&exit_code));
-                } else {
-                    // oats_main returns void? Return exit code 0
-                    let _ = self.builder.build_return(Some(&i32_t.const_int(0, false)));
+        // Lower the main function body directly into the entry block,
+        // but exclude the final return statement if present (we'll emit our own i32 return)
+        if let Some(body) = &func_decl.body {
+            let statements_to_lower = if body.statements.is_empty() {
+                &body.statements[..]
+            } else {
+                // Check if the last statement is a return statement
+                match &body.statements[body.statements.len() - 1] {
+                    oxc_ast::ast::Statement::ReturnStatement(_) => {
+                        // Exclude the final return statement
+                        &body.statements[..body.statements.len() - 1]
+                    }
+                    _ => &body.statements[..],
                 }
-                true
-            }
-            Err(_) => {
-                // Already emitted a diagnostic above
-                false
-            }
-        }
-    }
+            };
 
-    /// Coerce any return value from `oats_main` to i32 for use as exit code.
-    fn coerce_return_value_to_i32(
-        &self,
-        bv: inkwell::values::BasicValueEnum<'a>,
-        i32_t: inkwell::types::IntType<'a>,
-    ) -> inkwell::values::IntValue<'a> {
-        if bv.get_type().is_int_type() {
-            // Truncate or bitcast to i32 if needed
-            let rv_int = bv.into_int_value();
-            self.builder
-                .build_int_truncate_or_bit_cast(rv_int, i32_t, "ret_i32")
-                .map_or_else(
-                    |_| {
-                        crate::diagnostics::emit_diagnostic(
-                            &Diagnostic::simple_boxed(
-                                Severity::Error,
-                                "int cast failed when building host main",
-                            ),
-                            Some(self.source),
-                        );
-                        i32_t.const_int(0, false)
-                    },
-                    std::convert::identity,
-                )
-        } else if bv.get_type().is_float_type() {
-            // cast float to i32 via fptosi
-            let fv = bv.into_float_value();
-            self.builder
-                .build_float_to_signed_int(fv, i32_t, "f_to_i")
-                .map_or_else(
-                    |_| {
-                        crate::diagnostics::emit_diagnostic(
-                            &Diagnostic::simple_boxed(
-                                Severity::Error,
-                                "float->int conversion failed in host main",
-                            ),
-                            Some(self.source),
-                        );
-                        i32_t.const_int(0, false)
-                    },
-                    std::convert::identity,
-                )
-        } else {
-            // pointer or unknown return -> return 0
-            i32_t.const_int(0, false)
+            let _emitted_terminator =
+                self.lower_stmts(statements_to_lower, main_fn, &param_map, &mut locals_stack)?;
         }
+
+        // Always emit a return i32 0 for the C entry point
+        self.emit_rc_dec_for_locals(&locals_stack)?;
+        let _ = self.builder.build_return(Some(&i32_t.const_int(0, false)));
+
+        Ok(())
     }
 }

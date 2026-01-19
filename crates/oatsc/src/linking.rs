@@ -9,7 +9,6 @@ use inkwell::module::Module;
 use inkwell::targets::{
     CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine,
 };
-use std::path::Path;
 use std::process::Command;
 
 /// Configuration for object file generation and linking.
@@ -205,30 +204,13 @@ pub fn get_runtime_libraries() -> Result<Vec<String>> {
 
 /// Locates the runtime main object file.
 ///
-/// # Arguments
-/// * `out_dir` - Output directory (unused, kept for API compatibility)
-/// * `emitted_host_main` - Whether host main was emitted into the module
+/// Since we now emit main directly into the module, this always returns
+/// an empty string (no external rt_main.o needed).
 ///
 /// # Returns
-/// Path to `rt_main.o`, or empty string if not needed
-pub fn locate_rt_main(_out_dir: &str, emitted_host_main: bool) -> Result<String> {
-    if emitted_host_main {
-        return Ok(String::new());
-    }
-
-    // Look for rt_main.o in standard locations
-    let candidates = [
-        "rt_main.o",
-        "/usr/lib/rt_main.o",
-        "/usr/local/lib/rt_main.o",
-    ];
-    for candidate in &candidates {
-        if Path::new(candidate).exists() {
-            return Ok(candidate.to_string());
-        }
-    }
-
-    anyhow::bail!("rt_main.o not found. Please install the Oats runtime or set the correct path.");
+/// Empty string since main is always emitted directly
+pub fn locate_rt_main(_out_dir: &str) -> Result<String> {
+    Ok(String::new())
 }
 
 /// Links object files into a final executable.

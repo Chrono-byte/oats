@@ -23,10 +23,10 @@ pub type LocalsStack = Vec<HashMap<String, OatsType>>;
 /// Key variants and their meaning:
 /// - `Number` -> numeric `f64` values.
 /// - `Boolean` -> boolean values (represented as i1/i64 in places).
-/// - `I8`, `U8`, `I16`, `U16`, `I32`, `U32`, `I64`, `U64` -> signed/unsigned integer types.
-/// - `F32`, `F64` -> floating point types.
-/// - `Isize`, `Usize` -> architecture-sized signed/unsigned integer types.
-/// - `Char` -> Unicode scalar value.
+/// - `Undefined` -> undefined value (JavaScript primitive).
+/// - `Null` -> null value (JavaScript primitive).
+/// - `BigInt` -> arbitrary precision integers (JavaScript ES2020+).
+/// - `Symbol` -> unique symbol values (JavaScript ES6+).
 /// - `Union(Vec<OatsType>)` -> tagged unions. Codegen represents unions as
 ///   either `f64` (numeric-only unions) or `i8*` pointer slots when any arm
 ///   is pointer-like. Numeric arms can be boxed into runtime union objects
@@ -46,28 +46,16 @@ pub type LocalsStack = Vec<HashMap<String, OatsType>>;
 pub enum OatsType {
     // Number type
     Number,
-    // Number object type (boxed number with methods)
-    NumberObject,
     // Boolean type
     Boolean,
-    // Character type
-    Char,
-    // Signed integer types
-    I8,
-    I16,
-    I32,
-    I64,
-    // Unsigned integer types
-    U8,
-    U16,
-    U32,
-    U64,
-    // Floating point types
-    F32,
-    F64,
-    // Architecture-sized integer types
-    Isize,
-    Usize,
+    // Undefined type (only value is undefined)
+    Undefined,
+    // Null type (only value is null)
+    Null,
+    // BigInt type for arbitrary precision integers
+    BigInt,
+    // Symbol type for unique symbols
+    Symbol,
     // Union of multiple possible types (e.g. number | string)
     Union(Vec<Self>),
     // Array of element type (e.g. number[])
@@ -322,9 +310,7 @@ pub fn map_ts_type_with_aliases(
                     "number" => return Some(OatsType::Number),
                     "boolean" => return Some(OatsType::Boolean),
                     "string" => return Some(OatsType::String),
-                    "char" => return Some(OatsType::Char),
-                    // Number constructor
-                    "Number" => return Some(OatsType::NumberObject),
+
                     // Process-related types
                     "ProcessId" => return Some(OatsType::ProcessId),
                     "MonitorRef" => return Some(OatsType::MonitorRef),

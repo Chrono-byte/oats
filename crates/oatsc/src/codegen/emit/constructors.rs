@@ -94,14 +94,7 @@ impl crate::codegen::CodeGen<'_> {
         let mut llvm_param_types = Vec::new();
         for pty in &param_types_vec {
             let llvm_ty = match pty {
-                OatsType::Number | OatsType::F64 => self.f64_t.into(),
-                OatsType::F32 => self.f32_t.into(),
-                OatsType::I64 | OatsType::U64 | OatsType::Isize | OatsType::Usize => {
-                    self.i64_t.into()
-                }
-                OatsType::I32 | OatsType::U32 => self.i32_t.into(),
-                OatsType::I16 | OatsType::U16 => self.i16_t.into(),
-                OatsType::I8 | OatsType::U8 | OatsType::Char => self.i8_t.into(),
+                OatsType::Number => self.f64_t.into(),
                 OatsType::String
                 | OatsType::NominalStruct(_)
                 | OatsType::StructLiteral(_)
@@ -146,8 +139,8 @@ impl crate::codegen::CodeGen<'_> {
                     // Return a fallback type to avoid panicking, but this indicates a bug.
                     self.i8ptr_t.into()
                 }
-                OatsType::GenericInstance { .. } | OatsType::NumberObject => {
-                    // Generic instances and NumberObject are specialized, so treat as pointer types
+                OatsType::GenericInstance { .. } => {
+                    // Generic instances are specialized, so treat as pointer types
                     self.i8ptr_t.into()
                 }
             };

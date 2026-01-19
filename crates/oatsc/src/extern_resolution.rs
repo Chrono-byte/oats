@@ -119,16 +119,7 @@ fn map_oats_type_to_llvm<'ctx>(
     ty: &OatsType,
 ) -> inkwell::types::BasicMetadataTypeEnum<'ctx> {
     match ty {
-        OatsType::Number | OatsType::F64 => context.f64_type().into(),
-        OatsType::F32 => context.f32_type().into(),
-        OatsType::I64 => context.i64_type().into(),
-        OatsType::U64 => context.i64_type().into(),
-        OatsType::I32 => context.i32_type().into(),
-        OatsType::U32 => context.i32_type().into(),
-        OatsType::I16 => context.i16_type().into(),
-        OatsType::U16 => context.i16_type().into(),
-        OatsType::I8 => context.i8_type().into(),
-        OatsType::U8 => context.i8_type().into(),
+        OatsType::Number => context.f64_type().into(),
         OatsType::Boolean => context.bool_type().into(),
         OatsType::String => context.ptr_type(inkwell::AddressSpace::default()).into(),
         OatsType::Array(_) => context.ptr_type(inkwell::AddressSpace::default()).into(),
@@ -143,13 +134,10 @@ fn map_oats_type_to_llvm<'ctx>(
         OatsType::GenericInstance { .. } => {
             context.ptr_type(inkwell::AddressSpace::default()).into()
         }
-        OatsType::NumberObject => context.ptr_type(inkwell::AddressSpace::default()).into(),
         OatsType::ProcessId | OatsType::MonitorRef => context.i64_type().into(),
         OatsType::Union(_) | OatsType::Generic(_) => {
             context.ptr_type(inkwell::AddressSpace::default()).into()
         }
-        OatsType::Char => context.i32_type().into(),
-        OatsType::Isize | OatsType::Usize => context.i64_type().into(),
         // Note: Void types can't be used as parameter types in external function declarations.
         // They're only valid as return types, which is handled separately.
         // If void somehow appears here, it's an error in metadata - use i8ptr as fallback.
@@ -211,11 +199,7 @@ pub fn parse_function_signature_from_metadata(line: &str) -> Option<(String, Fun
 /// Parses an Oats type from a string representation.
 fn parse_oats_type_from_string(type_str: &str) -> OatsType {
     match type_str.trim() {
-        "f64" => OatsType::F64,
-        "f32" => OatsType::F32,
-        "i64" => OatsType::I64,
-        "i32" => OatsType::I32,
-        "i8" => OatsType::I8,
+        "number" => OatsType::Number,
         "boolean" => OatsType::Boolean,
         "string" => OatsType::String,
         "void" => OatsType::Void,

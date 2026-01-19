@@ -176,7 +176,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         )
                     })?;
                 }
-                crate::types::OatsType::Number | crate::types::OatsType::F64 => {
+                crate::types::OatsType::Number => {
                     let zero = self.f64_t.const_float(0.0);
                     self.builder
                         .build_return(Some(&zero.as_basic_value_enum()))
@@ -187,66 +187,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                             )
                         })?;
                 }
-                crate::types::OatsType::F32 => {
-                    let zero = self.f32_t.const_float(0.0);
-                    self.builder
-                        .build_return(Some(&zero.as_basic_value_enum()))
-                        .map_err(|_| {
-                            crate::diagnostics::Diagnostic::simple_boxed(
-                                Severity::Error,
-                                "Failed to build implicit return (f32)",
-                            )
-                        })?;
-                }
-                crate::types::OatsType::I64
-                | crate::types::OatsType::U64
-                | crate::types::OatsType::Isize
-                | crate::types::OatsType::Usize => {
-                    let zero = self.i64_t.const_int(0, false);
-                    self.builder
-                        .build_return(Some(&zero.as_basic_value_enum()))
-                        .map_err(|_| {
-                            crate::diagnostics::Diagnostic::simple_boxed(
-                                Severity::Error,
-                                "Failed to build implicit return (i64)",
-                            )
-                        })?;
-                }
-                crate::types::OatsType::I32 | crate::types::OatsType::U32 => {
-                    let zero = self.i32_t.const_int(0, false);
-                    self.builder
-                        .build_return(Some(&zero.as_basic_value_enum()))
-                        .map_err(|_| {
-                            crate::diagnostics::Diagnostic::simple_boxed(
-                                Severity::Error,
-                                "Failed to build implicit return (i32)",
-                            )
-                        })?;
-                }
-                crate::types::OatsType::I16 | crate::types::OatsType::U16 => {
-                    let zero = self.i16_t.const_int(0, false);
-                    self.builder
-                        .build_return(Some(&zero.as_basic_value_enum()))
-                        .map_err(|_| {
-                            crate::diagnostics::Diagnostic::simple_boxed(
-                                Severity::Error,
-                                "Failed to build implicit return (i16)",
-                            )
-                        })?;
-                }
-                crate::types::OatsType::I8
-                | crate::types::OatsType::U8
-                | crate::types::OatsType::Char => {
-                    let zero = self.i8_t.const_int(0, false);
-                    self.builder
-                        .build_return(Some(&zero.as_basic_value_enum()))
-                        .map_err(|_| {
-                            crate::diagnostics::Diagnostic::simple_boxed(
-                                Severity::Error,
-                                "Failed to build implicit return (i8)",
-                            )
-                        })?;
-                }
+
                 crate::types::OatsType::Boolean => {
                     let zero = self.bool_t.const_int(0, false);
                     self.builder

@@ -27,35 +27,9 @@ fn test_oats_type_string() {
 }
 
 #[test]
-fn test_oats_type_char() {
-    let ty = OatsType::Char;
-    assert_eq!(ty, OatsType::Char);
-}
-
-#[test]
 fn test_oats_type_void() {
     let ty = OatsType::Void;
     assert_eq!(ty, OatsType::Void);
-}
-
-#[test]
-fn test_oats_type_integer_types() {
-    assert_eq!(OatsType::I8, OatsType::I8);
-    assert_eq!(OatsType::I16, OatsType::I16);
-    assert_eq!(OatsType::I32, OatsType::I32);
-    assert_eq!(OatsType::I64, OatsType::I64);
-    assert_eq!(OatsType::U8, OatsType::U8);
-    assert_eq!(OatsType::U16, OatsType::U16);
-    assert_eq!(OatsType::U32, OatsType::U32);
-    assert_eq!(OatsType::U64, OatsType::U64);
-    assert_eq!(OatsType::Isize, OatsType::Isize);
-    assert_eq!(OatsType::Usize, OatsType::Usize);
-}
-
-#[test]
-fn test_oats_type_float_types() {
-    assert_eq!(OatsType::F32, OatsType::F32);
-    assert_eq!(OatsType::F64, OatsType::F64);
 }
 
 #[test]

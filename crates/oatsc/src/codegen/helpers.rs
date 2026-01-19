@@ -81,14 +81,7 @@ impl<'a> super::CodeGen<'a> {
     /// Panics for `Void` as it cannot be used as a parameter/alloca type.
     pub(crate) fn map_type_to_llvm(&self, t: &OatsType) -> BasicTypeEnum<'a> {
         match t {
-            OatsType::Number | OatsType::F64 => self.f64_t.as_basic_type_enum(),
-            OatsType::F32 => self.f32_t.as_basic_type_enum(),
-            OatsType::I64 | OatsType::U64 | OatsType::Isize | OatsType::Usize => {
-                self.i64_t.as_basic_type_enum()
-            }
-            OatsType::I32 | OatsType::U32 => self.i32_t.as_basic_type_enum(),
-            OatsType::I16 | OatsType::U16 => self.i16_t.as_basic_type_enum(),
-            OatsType::I8 | OatsType::U8 | OatsType::Char => self.i8_t.as_basic_type_enum(),
+            OatsType::Number => self.f64_t.as_basic_type_enum(),
             OatsType::Boolean => self.bool_t.as_basic_type_enum(),
             OatsType::String
             | OatsType::NominalStruct(_)
@@ -101,28 +94,14 @@ impl<'a> super::CodeGen<'a> {
             | OatsType::Enum(_, _)
             // ProcessId and MonitorRef are represented as i8* (pointers to heap-allocated u64)
             | OatsType::ProcessId
-            | OatsType::MonitorRef
-            | OatsType::NumberObject => self.i8ptr_t.as_basic_type_enum(),
+            | OatsType::MonitorRef => self.i8ptr_t.as_basic_type_enum(),
             OatsType::Option(inner) => {
                 // If the inner type is numeric (or a union of numeric-only arms),
                 // represent Option<number> using the numeric ABI (f64). This lets
                 // Option<number> be lowered efficiently and enables correct
                 // monomorphization for generics like T | undefined where T=number.
                 match &**inner {
-                    OatsType::Number
-                    | OatsType::F64
-                    | OatsType::F32
-                    | OatsType::I64
-                    | OatsType::U64
-                    | OatsType::I32
-                    | OatsType::U32
-                    | OatsType::I16
-                    | OatsType::U16
-                    | OatsType::I8
-                    | OatsType::U8
-                    | OatsType::Isize
-                    | OatsType::Usize
-                    | OatsType::Char => self.map_type_to_llvm(inner),
+                    OatsType::Number => self.map_type_to_llvm(inner),
                     OatsType::Union(parts) => {
                         let any_ptr = parts.iter().any(|p| {
                             matches!(

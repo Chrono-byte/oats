@@ -18,6 +18,9 @@ pub unsafe extern "C" fn oats_std_promise_new(_executor: *mut c_void) -> *mut c_
 /// Resolve Promise with value
 ///
 /// Note: Requires Promise runtime support.
+///
+/// # Safety
+/// `value` must be a valid pointer to the value to resolve the Promise with.
 #[no_mangle]
 pub unsafe extern "C" fn oats_std_promise_resolve(_value: *mut c_void) -> *mut c_void {
     // Placeholder
@@ -27,6 +30,9 @@ pub unsafe extern "C" fn oats_std_promise_resolve(_value: *mut c_void) -> *mut c
 /// Reject Promise with error
 ///
 /// Note: Requires Promise runtime support.
+///
+/// # Safety
+/// `error` must be a valid pointer to the error to reject the Promise with.
 #[no_mangle]
 pub unsafe extern "C" fn oats_std_promise_reject(_error: *mut c_void) -> *mut c_void {
     // Placeholder
@@ -36,6 +42,9 @@ pub unsafe extern "C" fn oats_std_promise_reject(_error: *mut c_void) -> *mut c_
 /// Chain Promise with then callback
 ///
 /// Note: Requires Promise runtime support.
+///
+/// # Safety
+/// `on_fulfilled` and `on_rejected` must be valid pointers to the callbacks to chain the Promise with.
 #[no_mangle]
 pub unsafe extern "C" fn oats_std_promise_then(
     _promise: *mut c_void,
@@ -49,6 +58,9 @@ pub unsafe extern "C" fn oats_std_promise_then(
 /// Handle Promise rejection with catch callback
 ///
 /// Note: Requires Promise runtime support.
+///
+/// # Safety
+/// `on_rejected` must be a valid pointer to the callback to handle the Promise rejection.
 #[no_mangle]
 pub unsafe extern "C" fn oats_std_promise_catch(
     _promise: *mut c_void,
@@ -61,6 +73,9 @@ pub unsafe extern "C" fn oats_std_promise_catch(
 /// Execute callback regardless of Promise outcome
 ///
 /// Note: Requires Promise runtime support.
+///
+/// # Safety
+/// `on_finally` must be a valid pointer to the callback to execute regardless of the Promise outcome.
 #[no_mangle]
 pub unsafe extern "C" fn oats_std_promise_finally(
     _promise: *mut c_void,
@@ -73,6 +88,9 @@ pub unsafe extern "C" fn oats_std_promise_finally(
 /// Wait for all Promises
 ///
 /// Note: Requires Promise runtime support.
+///
+/// # Safety
+/// `on_finally` must be a valid pointer to the callback to execute regardless of the Promise outcome.
 #[no_mangle]
 pub unsafe extern "C" fn oats_std_promise_all(_promises: *mut c_void) -> *mut c_void {
     // Placeholder
@@ -82,6 +100,9 @@ pub unsafe extern "C" fn oats_std_promise_all(_promises: *mut c_void) -> *mut c_
 /// Wait for all Promises to settle
 ///
 /// Note: Requires Promise runtime support.
+///
+/// # Safety
+/// `on_finally` must be a valid pointer to the callback to execute regardless of the Promise outcome.
 #[no_mangle]
 pub unsafe extern "C" fn oats_std_promise_allSettled(_promises: *mut c_void) -> *mut c_void {
     // Placeholder
@@ -91,8 +112,26 @@ pub unsafe extern "C" fn oats_std_promise_allSettled(_promises: *mut c_void) -> 
 /// Race multiple Promises
 ///
 /// Note: Requires Promise runtime support.
+///
+/// # Safety
+/// `on_finally` must be a valid pointer to the callback to execute regardless of the Promise outcome.
 #[no_mangle]
 pub unsafe extern "C" fn oats_std_promise_race(_promises: *mut c_void) -> *mut c_void {
+    // Placeholder
+    std::ptr::null_mut()
+}
+
+/// Perform an operation on a Promise
+///
+/// Note: Requires Promise runtime support.
+///
+/// # Safety
+/// `on_finally` must be a valid pointer to the callback to execute regardless of the Promise outcome.
+#[no_mangle]
+pub unsafe extern "C" fn oats_std_promise_operation(
+    _promise: *mut c_void,
+    _operation: *mut c_void,
+) -> *mut c_void {
     // Placeholder
     std::ptr::null_mut()
 }

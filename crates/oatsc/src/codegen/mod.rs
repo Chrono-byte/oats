@@ -40,52 +40,27 @@ use inkwell::values::PointerValue;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
+pub mod common_types;
 pub mod emit;
 pub mod escape;
 pub mod expr;
+#[macro_use]
+pub mod error_macros;
 pub mod generics;
 pub mod helpers;
 pub mod host_main;
 pub mod runtime_decls;
+#[macro_use]
+pub mod runtime_macros;
 pub mod stmt;
 pub mod utils;
 
-// Locals are represented as a tuple (ptr, ty, initialized, is_const) in many
-// helper modules. Use the same alias here so different files agree on the
-// in-memory representation of the locals stack.
-// LocalEntry now carries an optional OatsType as the seventh element for union tracking.
-
-type LocalEntry<'a> = (
-    PointerValue<'a>,               // alloca ptr
-    BasicTypeEnum<'a>,              // LLVM type
-    bool,                           // is_initialized
-    bool,                           // is_const
-    bool,                           // is_weak
-    Option<String>,                 // nominal type name
-    Option<crate::types::OatsType>, // OatsType for unions
-);
-type LocalsStackLocal<'a> = Vec<std::collections::HashMap<String, LocalEntry<'a>>>;
-
-/// Context for loop control flow (break/continue).
-#[derive(Clone)]
-pub struct LoopContext<'a> {
-    /// Target block for `continue` statements
-    pub continue_block: inkwell::basic_block::BasicBlock<'a>,
-    /// Target block for `break` statements
-    pub break_block: inkwell::basic_block::BasicBlock<'a>,
-    /// Index into `locals_stack` marking the first scope belonging to this loop.
-    /// Used to limit RC decrements when breaking/continuing.
-    pub locals_start: usize,
-    /// Optional label for labeled break/continue
-    pub label: Option<String>,
-}
+// Import common types to maintain backward compatibility
+pub use common_types::{EnumVariantMap, LocalEntry, LocalsStackLocal, LoopContext, TypeAliasMap};
 
 /// Main code generation context holding LLVM state and caches.
 ///
 /// See module-level documentation for architecture overview.
-type EnumVariantMap = HashMap<String, Vec<(String, Vec<crate::types::OatsType>)>>;
-type TypeAliasMap<'a> = HashMap<String, (Option<Vec<String>>, &'a oxc_ast::ast::TSType<'a>)>;
-
 pub struct CodeGen<'a> {
     /// LLVM context
     pub context: &'a Context,

@@ -421,7 +421,7 @@ impl Collector {
                 return; // Skip oversized arrays
             }
             let data_start = unsafe { (o as *mut u8).add(crate::ARRAY_HEADER_SIZE) };
-            for i in 0..len as usize {
+            for i in 0..len {
                 // Validate element offset calculation to prevent overflow
                 let Some(elem_offset) = i.checked_mul(std::mem::size_of::<*mut std::ffi::c_void>())
                 else {

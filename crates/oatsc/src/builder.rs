@@ -339,13 +339,7 @@ pub fn run_from_args(
             let llvm_param_types: Vec<inkwell::types::BasicMetadataTypeEnum> = param_types
                 .iter()
                 .map(|ty| match ty {
-                    crate::types::OatsType::Number | crate::types::OatsType::F64 => {
-                        context.f64_type().into()
-                    }
-                    crate::types::OatsType::F32 => context.f32_type().into(),
-                    crate::types::OatsType::I64 => context.i64_type().into(),
-                    crate::types::OatsType::I32 => context.i32_type().into(),
-                    crate::types::OatsType::I8 => context.i8_type().into(),
+                    crate::types::OatsType::Number => context.f64_type().into(),
                     crate::types::OatsType::Boolean => context.bool_type().into(),
                     crate::types::OatsType::String => {
                         context.ptr_type(inkwell::AddressSpace::default()).into()
@@ -359,13 +353,7 @@ pub fn run_from_args(
                 void_t.fn_type(&llvm_param_types, false)
             } else {
                 let ret_llvm_type = match ret_type {
-                    crate::types::OatsType::Number | crate::types::OatsType::F64 => {
-                        context.f64_type().into()
-                    }
-                    crate::types::OatsType::F32 => context.f32_type().into(),
-                    crate::types::OatsType::I64 => context.i64_type().into(),
-                    crate::types::OatsType::I32 => context.i32_type().into(),
-                    crate::types::OatsType::I8 => context.i8_type().into(),
+                    crate::types::OatsType::Number => context.f64_type().into(),
                     crate::types::OatsType::Boolean => context.bool_type().into(),
                     crate::types::OatsType::String => {
                         context.ptr_type(inkwell::AddressSpace::default()).into()

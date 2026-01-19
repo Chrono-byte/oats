@@ -241,7 +241,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 let next_case_idx = case_idx + 1;
                 if next_case_idx < switch_stmt.cases.len() {
                     // Fall through to next case
-                    let next_case = &switch_stmt.cases[next_case_idx];
+                    let next_case = switch_stmt.cases.get(next_case_idx).unwrap();
                     let next_block = if next_case.test.is_some() {
                         case_blocks
                             .iter()

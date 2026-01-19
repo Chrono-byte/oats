@@ -79,7 +79,7 @@ pub fn run_from_args(
 ) -> Result<Option<String>> {
     // Resolve source file location from arguments, options, or environment
     let src_path = if args.len() > 1 {
-        args[1].clone()
+        args.get(1).unwrap().clone()
     } else if let Some(opts) = options {
         opts.src_file.clone()
     } else if let Ok(p) = std::env::var("OATS_SRC_FILE") {
@@ -170,7 +170,7 @@ pub fn run_from_args(
             if let Statement::VariableDeclaration(vdecl) = stmt
                 && vdecl.declarations.len() == 1
             {
-                let decl = &vdecl.declarations[0];
+                let decl = vdecl.declarations.first().unwrap();
                 if let BindingPatternKind::BindingIdentifier(binding_ident) = &decl.id.kind
                     && let Some(init_expr) = &decl.init
                     && let Expression::ArrowFunctionExpression(arrow) = init_expr
@@ -767,8 +767,8 @@ pub fn run_from_args(
                 for id in ids {
                     if let Some(&j) = name_to_idx.get(&id) {
                         // edge j -> i (j must be evaluated before i)
-                        adj[j].push(i);
-                        indeg[i] += 1;
+                        adj.get_mut(j).unwrap().push(i);
+                        *indeg.get_mut(i).unwrap() += 1;
                     }
                 }
             }
@@ -783,9 +783,9 @@ pub fn run_from_args(
             let mut order: Vec<usize> = Vec::new();
             while let Some(u) = q.pop_front() {
                 order.push(u);
-                for &v in &adj[u] {
-                    indeg[v] -= 1;
-                    if indeg[v] == 0 {
+                for &v in adj.get(u).unwrap() {
+                    *indeg.get_mut(v).unwrap() -= 1;
+                    if *indeg.get(v).unwrap() == 0 {
                         q.push_back(v);
                     }
                 }

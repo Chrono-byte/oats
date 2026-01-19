@@ -219,7 +219,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         let fname = function.get_name().to_str().unwrap_or_default();
                         if let Some(param_types) = self.fn_param_types.borrow().get(fname)
                             && !param_types.is_empty()
-                            && let crate::types::OatsType::NominalStruct(n) = &param_types[0]
+                            && let crate::types::OatsType::NominalStruct(n) =
+                                param_types.get(0).unwrap()
                         {
                             Some(n.clone())
                         } else {
@@ -236,7 +237,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 let idx = *param_idx as usize;
                                 if idx < param_types.len()
                                     && let crate::types::OatsType::NominalStruct(n) =
-                                        &param_types[idx]
+                                        param_types.get(idx).unwrap()
                                 {
                                     Some(n.clone())
                                 } else {
@@ -271,7 +272,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                         let fname = function.get_name().to_str().unwrap_or_default();
                         if let Some(param_types) = self.fn_param_types.borrow().get(fname)
                             && !param_types.is_empty()
-                            && let crate::types::OatsType::NominalStruct(n) = &param_types[0]
+                            && let crate::types::OatsType::NominalStruct(n) =
+                                param_types.get(0).unwrap()
                         {
                             Some(n.clone())
                         } else {
@@ -288,7 +290,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                                 let idx = *param_idx as usize;
                                 if idx < param_types.len()
                                     && let crate::types::OatsType::NominalStruct(n) =
-                                        &param_types[idx]
+                                        param_types.get(idx).unwrap()
                                 {
                                     Some(n.clone())
                                 } else {

@@ -295,10 +295,11 @@ pub fn map_ts_type_with_aliases(
 ) -> Option<OatsType> {
     match ty {
         TSType::TSNumberKeyword(_) => Some(OatsType::Number),
-        TSType::TSVoidKeyword(_) => Some(OatsType::Void),
+        TSType::TSVoidKeyword(_) | TSType::TSUndefinedKeyword(_) | TSType::TSNullKeyword(_) => {
+            Some(OatsType::Void)
+        }
         TSType::TSBooleanKeyword(_) => Some(OatsType::Boolean),
         TSType::TSStringKeyword(_) => Some(OatsType::String),
-        TSType::TSUndefinedKeyword(_) | TSType::TSNullKeyword(_) => Some(OatsType::Void),
         TSType::TSTypeReference(type_ref) => {
             let TSTypeName::IdentifierReference(ident) = &type_ref.type_name else {
                 // QualifiedName and ThisExpression not yet supported
@@ -459,7 +460,7 @@ pub fn map_ts_type_with_aliases(
                 if let Some(idx) = nullish_idx {
                     let other_idx = 1 - idx;
                     if let Some(mapped) =
-                        map_ts_type_with_aliases(&ut.types[other_idx], type_aliases, symbols)
+                        map_ts_type_with_aliases(ut.types.get(other_idx)?, type_aliases, symbols)
                     {
                         return Some(OatsType::Option(Box::new(mapped)));
                     }

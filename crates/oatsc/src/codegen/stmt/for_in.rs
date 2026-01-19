@@ -31,7 +31,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
         if let ForStatementLeft::VariableDeclaration(var_decl) = &for_in.left
             && var_decl.declarations.len() == 1
         {
-            let decl = &var_decl.declarations[0];
+            let decl = var_decl.declarations.get(0).unwrap();
             let loop_var_name = match &decl.id.kind {
                 BindingPatternKind::BindingIdentifier(ident) => ident.name.to_string(),
                 _ => {

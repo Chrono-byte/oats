@@ -797,7 +797,7 @@ impl<'a> CodeGen<'a> {
             if let Some(param_types) = self.fn_param_types.borrow().get(function_name) {
                 let idx_usize = idx as usize;
                 if idx_usize < param_types.len() {
-                    let pty = &param_types[idx_usize];
+                    let pty = param_types.get(idx_usize).unwrap();
                     if let crate::types::OatsType::Union(parts) = pty {
                         // If any part is pointer-like, the ABI for this param is i8*
                         let any_ptr = parts.iter().any(|p| {

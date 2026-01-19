@@ -465,7 +465,8 @@ pub fn lower_object<'a>(
                     {
                         let idx = *param_idx as usize;
                         if idx < param_types.len()
-                            && let crate::types::OatsType::NominalStruct(n) = &param_types[idx]
+                            && let crate::types::OatsType::NominalStruct(n) =
+                                param_types.get(idx).unwrap()
                         {
                             class_name_opt = Some(n.clone());
                         }
@@ -897,7 +898,8 @@ pub fn lower_template<'a>(
             // We'll also consult `last_expr_origin_local` which other
             // paths set when the lowered expr was an identifier/param.
             // Lowering interpolated expression
-            let expr_val = codegen.lower_expr(&tpl.expressions[i], function, param_map, locals)?;
+            let expr_val =
+                codegen.lower_expr(tpl.expressions.get(i).unwrap(), function, param_map, locals)?;
             eprintln!(
                 "DEBUG: Template expr[{}] lowered: is_float={}, is_pointer={}, is_int={}",
                 i,

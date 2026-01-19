@@ -21,8 +21,8 @@ complexity = { level = "warn", priority = 1 }
 
 # Style - compilers often use certain patterns
 enum_glob_use = "warn"
-too_many_arguments = "allow"  # AST nodes often have many fields
-missing_docs_in_private_items = "allow"  # Initial development
+too_many_arguments = "allow" # AST nodes often have many fields
+missing_docs_in_private_items = "allow" # Initial development
 
 # Match patterns - allow some flexibility for AST/IR processing
 single_match = "warn"
@@ -40,12 +40,12 @@ match_bool = "warn"
 needless_bool = "deny"
 
 # Allowances for compiler development
-indexing_slicing = "warn"  # Common in codegen
-min_ident_chars = "allow"  # AST/IR often uses short names
+indexing_slicing = "warn" # Common in codegen
+min_ident_chars = "allow" # AST/IR often uses short names
 doc_markdown = "warn"
-type_complexity = "allow"     # Complex AST types are common
+type_complexity = "allow" # Complex AST types are common
 cognitive_complexity = "warn" # Still warn about overly complex functions
-no_mangle_with_rust_abi = "allow"  # Required for FFI exports
+no_mangle_with_rust_abi = "allow" # Required for FFI exports
 
 # Disable overly strict lints that don't apply well to compilers
 # pedantic = { level = "warn", priority = 1 }  # Enable selectively

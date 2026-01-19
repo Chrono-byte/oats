@@ -749,7 +749,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             &*self.async_cont_blocks.borrow(),
         ) {
             for (i, rb) in resume_vec.iter().enumerate() {
-                let cont_bb = cont_vec[i];
+                let cont_bb = *cont_vec.get(i).unwrap();
                 self.builder.position_at_end(*rb);
                 if let Some(live_set) = live_sets.get(i) {
                     for name in live_set {

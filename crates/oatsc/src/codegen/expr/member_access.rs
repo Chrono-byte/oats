@@ -280,7 +280,7 @@ impl<'a> CodeGen<'a> {
                                 let idx = *param_idx as usize;
                                 if idx < param_types.len()
                                     && let crate::types::OatsType::NominalStruct(n) =
-                                        &param_types[idx]
+                                        param_types.get(idx).unwrap()
                                 {
                                     class_name_opt = Some(n.clone());
                                 }
@@ -290,7 +290,8 @@ impl<'a> CodeGen<'a> {
                         let fname = function.get_name().to_str().unwrap_or_default();
                         if let Some(param_types) = self.fn_param_types.borrow().get(fname)
                             && !param_types.is_empty()
-                            && let crate::types::OatsType::NominalStruct(n) = &param_types[0]
+                            && let crate::types::OatsType::NominalStruct(n) =
+                                param_types.get(0).unwrap()
                         {
                             class_name_opt = Some(n.clone());
                         }
@@ -619,7 +620,7 @@ impl<'a> CodeGen<'a> {
                                     let pidx = *idx_p as usize;
                                     if pidx < param_types.len()
                                         && let crate::types::OatsType::Array(inner) =
-                                            &param_types[pidx]
+                                            param_types.get(pidx).unwrap()
                                         && matches!(**inner, crate::types::OatsType::Number)
                                     {
                                         prefer_f64 = true;
@@ -801,7 +802,7 @@ impl<'a> CodeGen<'a> {
                             if let Some(param_types) = self.fn_param_types.borrow().get(fname)
                                 && !param_types.is_empty()
                             {
-                                match &param_types[0] {
+                                match param_types.get(0).unwrap() {
                                     crate::types::OatsType::NominalStruct(n) => {
                                         class_name_opt = Some(n.clone());
                                     }
@@ -817,7 +818,7 @@ impl<'a> CodeGen<'a> {
                             if let Some(param_types) = self.fn_param_types.borrow().get(fname) {
                                 let idx = *param_idx as usize;
                                 if idx < param_types.len() {
-                                    match &param_types[idx] {
+                                    match param_types.get(idx).unwrap() {
                                         crate::types::OatsType::NominalStruct(n) => {
                                             class_name_opt = Some(n.clone());
                                         }
@@ -851,7 +852,7 @@ impl<'a> CodeGen<'a> {
                         if let Some(param_types) = self.fn_param_types.borrow().get(fname)
                             && !param_types.is_empty()
                         {
-                            match &param_types[0] {
+                            match param_types.get(0).unwrap() {
                                 crate::types::OatsType::NominalStruct(n) => {
                                     class_name_opt = Some(n.clone());
                                 }

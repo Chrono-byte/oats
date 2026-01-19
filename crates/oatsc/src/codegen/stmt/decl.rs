@@ -1019,7 +1019,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     if let Some(param_types) = self.fn_param_types.borrow().get(fname) {
                         let idx = *param_idx as usize;
                         if idx < param_types.len() {
-                            if let crate::types::OatsType::Array(elem_ty) = &param_types[idx] {
+                            if let crate::types::OatsType::Array(elem_ty) =
+                                param_types.get(idx).unwrap()
+                            {
                                 match **elem_ty {
                                     crate::types::OatsType::Number => (
                                         self.i32_t.const_int(8, false),
@@ -1287,7 +1289,8 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 if let Some(param_types) = self.fn_param_types.borrow().get(fname) {
                     let idx = *param_idx as usize;
                     if idx < param_types.len()
-                        && let crate::types::OatsType::NominalStruct(n) = &param_types[idx]
+                        && let crate::types::OatsType::NominalStruct(n) =
+                            param_types.get(idx).unwrap()
                     {
                         class_name_opt = Some(n.clone());
                     }

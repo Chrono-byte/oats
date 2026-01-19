@@ -122,7 +122,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     // Fallback: create local cont block if no async context
                     self.context.append_basic_block(function, "await_cont")
                 },
-                |cont_blocks| cont_blocks[(resume_idx - 1) as usize],
+                |cont_blocks| *cont_blocks.get((resume_idx - 1) as usize).unwrap(),
             );
 
             match self

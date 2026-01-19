@@ -546,7 +546,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     )
                 })?;
 
-            let llvm_ty_meta = llvm_param_types[i];
+            let llvm_ty_meta = *llvm_param_types.get(i).unwrap();
             let llvm_ty: inkwell::types::BasicTypeEnum = match llvm_ty_meta {
                 inkwell::types::BasicMetadataTypeEnum::FloatType(ft) => ft.into(),
                 inkwell::types::BasicMetadataTypeEnum::IntType(it) => it.into(),
@@ -649,7 +649,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             };
 
             let _ = self.builder.build_store(param_alloca, loaded);
-            locals_stack[0].insert(
+            locals_stack.get_mut(0).unwrap().insert(
                 param_name,
                 (param_alloca, llvm_ty, true, false, false, None, None),
             );
@@ -673,7 +673,9 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
             // Lower initial segment (before first yield)
             while stmt_idx < body.statements.len() {
-                if yield_idx < yield_positions.len() && stmt_idx == yield_positions[yield_idx] {
+                if yield_idx < yield_positions.len()
+                    && stmt_idx == *yield_positions.get(yield_idx).unwrap()
+                {
                     // We've reached a yield point - lower up to (but not including) this statement
                     // The yield will be handled by lower_expr when we lower the statement
                     break;
@@ -681,7 +683,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
 
                 // Lower this statement
                 if self.lower_stmt(
-                    &body.statements[stmt_idx],
+                    body.statements.get(stmt_idx).unwrap(),
                     next_f,
                     &param_map,
                     &mut locals_stack,
@@ -693,11 +695,13 @@ impl<'a> crate::codegen::CodeGen<'a> {
             }
 
             // If we hit a yield, handle it
-            if yield_idx < yield_positions.len() && stmt_idx == yield_positions[yield_idx] {
+            if yield_idx < yield_positions.len()
+                && stmt_idx == *yield_positions.get(yield_idx).unwrap()
+            {
                 // Lower the statement containing the yield
                 // The yield expression will save state and return
                 let _ = self.lower_stmt(
-                    &body.statements[stmt_idx],
+                    body.statements.get(stmt_idx).unwrap(),
                     next_f,
                     &param_map,
                     &mut locals_stack,
@@ -717,7 +721,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             if let Some(live_sets) = self.generator_yield_live_sets.borrow().as_ref()
                 && resume_idx < live_sets.len()
             {
-                let live_set = &live_sets[resume_idx];
+                let live_set = live_sets.get(resume_idx).unwrap();
                 if let Some(local_name_to_slot) =
                     self.generator_local_name_to_slot.borrow().as_ref()
                 {
@@ -834,7 +838,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
             }
 
             // Branch to continuation block
-            let cont_bb = cont_blocks[resume_idx];
+            let cont_bb = *cont_blocks.get(resume_idx).unwrap();
             let _ = self
                 .builder
                 .build_unconditional_branch(cont_bb)
@@ -857,13 +861,13 @@ impl<'a> crate::codegen::CodeGen<'a> {
                 if let Some(body) = &func_decl.body {
                     // Find the next yield position (if any)
                     let next_yield_pos = if resume_idx + 1 < yield_positions.len() {
-                        Some(yield_positions[resume_idx + 1])
+                        Some(*yield_positions.get(resume_idx + 1).unwrap())
                     } else {
                         None
                     };
 
                     // Find where to start (after the yield statement)
-                    let start_pos = yield_positions[resume_idx] + 1;
+                    let start_pos = *yield_positions.get(resume_idx).unwrap() + 1;
                     let end_pos = match next_yield_pos {
                         Some(pos) => pos,
                         None => body.statements.len(),
@@ -873,7 +877,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     let mut hit_terminator = false;
                     for i in start_pos..end_pos {
                         if self.lower_stmt(
-                            &body.statements[i],
+                            body.statements.get(i).unwrap(),
                             next_f,
                             &param_map,
                             &mut cont_locals_stack,
@@ -1031,7 +1035,7 @@ impl<'a> crate::codegen::CodeGen<'a> {
                     )
                 })?;
 
-            let llvm_ty_meta = llvm_param_types[i];
+            let llvm_ty_meta = *llvm_param_types.get(i).unwrap();
             if let inkwell::types::BasicMetadataTypeEnum::FloatType(_) = llvm_ty_meta {
                 // Box f64 into union
                 let fv = param_val.into_float_value();

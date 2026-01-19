@@ -41,13 +41,13 @@ impl<'a> CodeGen<'a> {
         }
 
         // Evaluate all expressions except the last (for side effects)
-        for expr in &seq.expressions[..seq.expressions.len() - 1] {
+        for expr in seq.expressions.get(..seq.expressions.len() - 1).unwrap() {
             self.lower_expr(expr, function, param_map, locals)?;
         }
 
         // Return the value of the last expression
         self.lower_expr(
-            &seq.expressions[seq.expressions.len() - 1],
+            seq.expressions.get(seq.expressions.len() - 1).unwrap(),
             function,
             param_map,
             locals,

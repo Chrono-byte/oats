@@ -227,9 +227,9 @@ pub fn report_error_span(
                 }
             } else if i == idx {
                 // First line of multi-line span - show carets to end of line
-                if col < lines[idx].len() {
+                if col < lines.get(idx).unwrap().len() {
                     caret.push('^');
-                    for _ in (col + 1)..lines[idx].len() {
+                    for _ in (col + 1)..lines.get(idx).unwrap().len() {
                         caret.push('~');
                     }
                 }
@@ -240,7 +240,7 @@ pub fn report_error_span(
                 }
             } else {
                 // Middle line of multi-line span - show tildes across the whole line
-                for _ in 0..lines[i].len() {
+                for _ in 0..lines.get(i).unwrap().len() {
                     caret.push('~');
                 }
             }

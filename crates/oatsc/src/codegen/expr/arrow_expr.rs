@@ -367,7 +367,8 @@ impl<'a> CodeGen<'a> {
                     {
                         let idx_usize = *idx as usize;
                         if idx_usize < param_types.len()
-                            && let crate::types::OatsType::Weak(_) = &param_types[idx_usize]
+                            && let crate::types::OatsType::Weak(_) =
+                                param_types.get(idx_usize).unwrap()
                         {
                             is_weak = true;
                         }
